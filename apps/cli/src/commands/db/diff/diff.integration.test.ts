@@ -710,8 +710,25 @@ describe("db diff", () => {
       expect(s.databaseDiffCalls).toHaveLength(1);
       expect(stderr(s.out)).toContain("No schema changes found");
       expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
-      expect(stderr(s.out)).toContain("supabase db schema declarative sync");
+      expect(stderr(s.out)).toContain("Run supabase db schema declarative sync to generate");
       expect(stderr(s.out)).toContain("or pass --use-migra to diff them with migra");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("skips the ignored-files note for a tree exported by declarative generate", () => {
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/schemas/public.sql": "create table declared ();\n",
+        "supabase/schemas/.pgdelta-export.json": '{"redactSecrets":false,"scope":"database"}\n',
+      },
+      format: "json",
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(stderr(s.out)).not.toContain("are not read");
+      const success = s.out.messages.find((message) => message.type === "success");
+      expect(success?.data).toHaveProperty("advisories");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -732,6 +749,7 @@ describe("db diff", () => {
         "supabase/schemas/public.sql",
       );
       expect(err).toContain("declarative schema files in supabase/schemas are not read");
+      expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
       expect(err).toContain("or pass --use-migra to diff them with migra");
     }),
   );
@@ -743,6 +761,7 @@ describe("db diff", () => {
         "supabase/decl/public.sql",
       );
       expect(err).toContain("declarative schema files in supabase/decl are not read");
+      expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
       expect(err).not.toContain("--use-migra");
     }),
   );
@@ -1897,13 +1916,13 @@ describe("db diff", () => {
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
-  it.effect("accepts --use-migra=false on the stack backend and reaches the stack shadow", () => {
+  it.effect("accepts --use-migra=false on the stack backend and proceeds to stack services", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
       expect(stderr(s.out)).toContain("Creating shadow database...");
-      // The fixture's StackApi is a placeholder, so the run stops exactly when it asks for the
-      // pg-delta stack shadow; any other failure means the flag was handled differently.
+      // The fixture's stack services are placeholders, so the run stops at its first stack call
+      // after the engine check; a typed error here would mean the flag was rejected.
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) return;
       expect(Cause.pretty(exit.cause)).toContain("Stack services must not run");

@@ -68,7 +68,7 @@ import {
   type PgDeltaEndpoint,
   type PgDeltaRenderedFile,
 } from "../shared/pgdelta-engine.service.ts";
-import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
+import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../shared/pgdelta-files.ts";
 import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import {
   type PgDeltaContext,
@@ -105,8 +105,12 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
 const declarativeBaselineNote = (displayPath: string) =>
   `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
-const declarativeFilesIgnoredNote = (displayPath: string, suggestMigra: boolean) =>
-  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua("supabase db schema declarative sync")} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.\n`;
+const declarativeFilesIgnoredNote = (
+  displayPath: string,
+  suggestMigra: boolean,
+  syncNeedsExperimental: boolean,
+) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua(`supabase db schema declarative sync${syncNeedsExperimental ? " --experimental" : ""}`)} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.\n`;
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
@@ -718,12 +722,23 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           (cfg.pgDelta.enabled ||
             path.normalize(declarativeDir) === path.join("supabase", "schemas"));
         const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
-        yield* output.raw(
-          writesMigration
-            ? declarativeBaselineNote(displayPath)
-            : declarativeFilesIgnoredNote(displayPath, suggestMigra),
-          "stderr",
-        );
+        if (writesMigration) {
+          yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+        } else {
+          // An export manifest means the tree already comes from `declarative generate`/`sync`,
+          // so the transition note would only repeat on every routine diff.
+          const exportManifest = yield* ReadPgDeltaExportManifest(
+            fs,
+            path,
+            declarativeDirAbsolute,
+          ).pipe(Effect.orElseSucceed(() => undefined));
+          if (exportManifest === undefined) {
+            yield* output.raw(
+              declarativeFilesIgnoredNote(displayPath, suggestMigra, !cfg.pgDelta.enabled),
+              "stderr",
+            );
+          }
+        }
       }
     }
     if (out.length < 2) {

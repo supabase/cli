@@ -170,8 +170,10 @@ the raw SQL. Bundled pg-delta reports the best-effort
 `DeclarativeSchemaNotUsedAsDiffBaseline` advisory when declarative files exist and
 the diff either writes a non-empty `--file` migration or targets the local database.
 In text mode the same condition prints a stderr note: the `-f` baseline note for a
-written migration, otherwise a note that the files are not read, pointing to
-`supabase db schema declarative sync` and, when migra would read that directory (no
+written migration, otherwise (unless the directory has a `.pgdelta-export.json` export
+manifest) a note that the files are not read, pointing to
+`supabase db schema declarative sync` (with `--experimental` when config disables pg-delta)
+and, when migra would read that directory (no
 `schema_paths`, and pg-delta enabled in config or the directory is `supabase/schemas`; never
 on the stack backend), `--use-migra`.
 
