@@ -4,7 +4,7 @@
  */
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { resolveCliConfigSubtree } from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -806,7 +806,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       config.functions,
       { values: projectEnvValues ?? {} },
       "functions",
-      { goViperCompat: true },
     );
     const configDeclaredFunctions = toPlainFunctionRecord(resolvedFunctions);
     const configFunctions = yield* inferFunctionsManifest({
@@ -1542,7 +1541,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             config.edge_runtime,
             { values: projectEnvValues ?? {} },
             "edge_runtime",
-            { goViperCompat: true },
           );
           // Every `config.Secret`-typed field must be decrypted unconditionally so the Edge
           // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates

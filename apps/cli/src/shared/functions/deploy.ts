@@ -68,7 +68,7 @@ import {
   toDockerPath,
   toSlash,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
@@ -104,10 +104,10 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly dashboardUrl: string;
   /**
    * `undefined` for library callers; the CLI injects
-   * `functionsGoConfigCompat` so this file never imports the command tree
-   * directly — see {@link FunctionsGoConfigCompat}.
+   * `functionsLocalConfigLoader` so this file never imports the command tree
+   * directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
   readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
@@ -2505,7 +2505,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
 
   if (flags.functionNames.length > 0) {
@@ -2534,7 +2534,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
     // past `dependencies.projectRoot` for either load, so they can never resolve two
     // different projects.
-    search: dependencies.goConfigCompat === undefined,
+    search: dependencies.localConfigLoader === undefined,
   });
   const configDeclaredFunctions = deployConfig?.functions ?? {};
   const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);

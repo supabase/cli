@@ -619,7 +619,7 @@ project_id = "short"
 
   it.live("warns on stderr for a deprecated auth.external provider", () => {
     // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-    // `Console.error` only when `goViperCompat` is set.
+    // `Console.error` only under the CLI's config-loading semantics.
     const { layer } = setup();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     return Effect.gen(function* () {

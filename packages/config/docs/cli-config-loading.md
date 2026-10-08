@@ -260,13 +260,13 @@ These helpers do two things at once:
 `resolveCliConfigSubtree` walks recursively through objects, arrays, and records, so it also
 resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
-An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
-`SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity CLI sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
-`.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
+An optional `cliCompat` flag switches the `env(NAME)` matcher from the default, strict
+`SCREAMING_SNAKE_CASE`-only pattern to the Supabase CLI's case-agnostic `^env\((.*)\)$` form; only
+`apps/cli` sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+`.`/`./effect` take no options parameter at all (CLI-2234) — `cliCompat` is internal-only,
 typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
 `@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
-accept it; `apps/cli`'s Go-parity call sites import from there instead.
+accept it; `apps/cli` imports from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant

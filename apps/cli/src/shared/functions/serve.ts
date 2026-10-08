@@ -9,11 +9,6 @@ import {
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
 import {
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
-} from "@supabase/config/internal";
-import {
   defaultJwtSecret,
   defaultPublishableKey,
   defaultSecretKey,
@@ -48,6 +43,11 @@ import {
   isContainerNotFoundMessage,
   spawnContainerCli,
 } from "../../command-internal/container-cli.ts";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+} from "../../command-internal/cli-config-load.ts";
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
@@ -88,7 +88,7 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
@@ -183,13 +183,11 @@ export interface FunctionsServeDependencies {
   readonly debug: boolean;
   readonly networkId: Option.Option<string>;
   readonly projectIdOverride: Option.Option<string>;
-  readonly goViperCompat: boolean;
   /**
    * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
-   * Distinct from `goViperCompat` above, which only gates `env(...)` interpolation.
+   * never imports the command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
   /** Overrides the shutdown-grace and log-retry timers; production leaves this unset. */
   readonly timers?: FunctionsServeTimers;
 }
@@ -709,14 +707,13 @@ const finalizeAuthArtifacts = Effect.fn("functions.serve.finalizeAuthArtifacts")
 const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
-  goViperCompat: boolean,
-  goConfigCompat: FunctionsGoConfigCompat | undefined,
+  localConfigLoader: FunctionsLocalConfigLoader | undefined,
 ) {
   const path = yield* Path.Path;
   // Keeps `.env` discovery, config load, and functions-manifest inference
   // from resolving three different roots: the CLI's `search: false` must
   // match `loadFunctionsCliConfig`'s own options exactly (see below).
-  const searchAncestors = goConfigCompat === undefined;
+  const searchAncestors = localConfigLoader === undefined;
   const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot, {
     search: searchAncestors,
   });
@@ -735,41 +732,34 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   // `search`/`tomlOnly` here must match `loadFunctionsCliConfig`'s own
   // options below exactly, or the two loads can resolve two different files,
   // silently mixing fields from two different projects. Library callers
-  // (`goConfigCompat === undefined`) keep the package defaults unchanged.
+  // (`localConfigLoader === undefined`) keep the package defaults unchanged.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
     ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
-    goViperCompat,
     search: searchAncestors,
-    ...(goConfigCompat === undefined ? {} : { tomlOnly: true }),
+    ...(localConfigLoader === undefined ? {} : { tomlOnly: true }),
   });
   const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
   const auth =
     projectEnv === null
       ? toPlainAuthConfig(baseConfig.auth)
-      : toPlainAuthConfig(
-          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
-        );
+      : toPlainAuthConfig(yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth"));
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
       : toPlainEdgeRuntimeConfig(
-          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
-            goViperCompat,
-          }),
+          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime"),
         );
   const apiPort =
     projectEnv === null
       ? baseConfig.api.port
-      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
+      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api")).port;
   const configDeclaredFunctions =
     projectEnv === null
       ? toPlainFunctionRecord(baseConfig.functions)
       : toPlainFunctionRecord(
-          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions", {
-            goViperCompat,
-          }),
+          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions"),
         );
   const configForManifest: CliConfig = {
     ...baseConfig,
@@ -784,9 +774,7 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
     projectEnv === null
       ? (baseConfig.project_id ?? "")
       : (reveal(
-          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
-            goViperCompat,
-          }),
+          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id"),
         ) ?? "");
   const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
   const fallbackProjectId = path.basename(path.resolve(projectRoot));
@@ -798,12 +786,12 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   // project dotenv, so a project setting it only in `.env` gets a different
   // Docker network than `deploy`/`download`/`start` — a silently broken `serve`.
   const goContext =
-    goConfigCompat === undefined
+    localConfigLoader === undefined
       ? undefined
       : yield* loadFunctionsCliConfig({
           projectRoot,
           projectRef,
-          goConfigCompat,
+          localConfigLoader,
         });
 
   return {
@@ -2006,8 +1994,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,
-    input.dependencies.goViperCompat,
-    input.dependencies.goConfigCompat,
+    input.dependencies.localConfigLoader,
   );
   const projectId = resolved.projectId;
   const containerId = localDockerId("edge_runtime", projectId);

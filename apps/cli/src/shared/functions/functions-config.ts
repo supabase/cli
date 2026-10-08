@@ -7,7 +7,7 @@ import { normalizeProjectId } from "./functions-docker.ts";
 /**
  * Config resolution context shared by the `functions` Docker paths
  * (`deploy`, `download`, `serve`). Callers that inject
- * {@link FunctionsGoConfigCompat} additionally run the config/dotenv
+ * {@link FunctionsLocalConfigLoader} additionally run the config/dotenv
  * validation pipeline `start`/`stop`/`status` already share; callers that
  * omit it keep the plain `loadCliConfig` behavior.
  */
@@ -25,7 +25,7 @@ interface FunctionsCliConfigContext {
  * without this shared module importing the command tree's validation
  * machinery directly. `undefined` disables the hook.
  */
-export interface FunctionsGoConfigCompat {
+export interface FunctionsLocalConfigLoader {
   readonly load: (input: {
     readonly projectRoot: string;
     readonly projectRef: string | undefined;
@@ -43,18 +43,18 @@ export interface FunctionsGoConfigCompat {
 
 /**
  * Loads project config for a `functions` command. Callers that provide
- * `goConfigCompat` run its dotenv/config-validate pipeline before any
+ * `localConfigLoader` run its dotenv/config-validate pipeline before any
  * Docker/API work; callers that don't fall back to `loadCliConfig`.
  */
 export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function* (input: {
   readonly projectRoot: string;
   readonly projectRef: string | undefined;
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
 }) {
   yield* Effect.annotateCurrentSpan({
-    "config.go_compat": input.goConfigCompat !== undefined,
+    "config.local_validation": input.localConfigLoader !== undefined,
   });
-  if (input.goConfigCompat === undefined) {
+  if (input.localConfigLoader === undefined) {
     const path = yield* Path.Path;
     const loaded = yield* loadCliConfig(
       input.projectRoot,
@@ -73,7 +73,7 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
     } satisfies FunctionsCliConfigContext;
   }
 
-  const context = yield* input.goConfigCompat.load({
+  const context = yield* input.localConfigLoader.load({
     projectRoot: input.projectRoot,
     projectRef: input.projectRef,
   });

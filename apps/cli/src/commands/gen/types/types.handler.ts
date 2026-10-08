@@ -1,5 +1,5 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
@@ -256,7 +256,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const loadConfig = (projectRef?: string) =>
     loadCliConfig(cliSettings.workdir, {
       ...(projectRef === undefined ? {} : { projectRef }),
-      goViperCompat: true,
       search: shouldSearchAncestors(cliSettings),
     }).pipe(
       // `cause.path` names the actual failed file; `loadCliConfig` probes `config.json`

@@ -1,5 +1,5 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../command-internal/cli-config-load.ts";
 import { Config, Effect, FileSystem, Option, Path } from "effect";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
 import { goJsonKindName } from "../../command-internal/go-json.ts";
@@ -346,7 +346,6 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   });
   const loaded = yield* loadCliConfig(cwd, {
     cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
-    goViperCompat: true,
     // `cwd` is already resolved (`CommandSettings.workdir`); `search: false` avoids climbing
     // again, which would otherwise find an ancestor project's config when `--workdir` points
     // below another project's root. `tomlOnly: true` because there is no JSON config format.

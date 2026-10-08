@@ -568,7 +568,7 @@ jwt_secret = "env(lowercase_secret)"
     }
   });
 
-  test("resolveCliConfigValue resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+  test("resolveCliConfigValue resolves a lowercase-named env() reference when cliCompat is true", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -592,7 +592,7 @@ jwt_secret = "env(lowercase_secret)"
           loaded!.config.auth.jwt_secret,
           projectEnv!,
           "auth.jwt_secret",
-          { goViperCompat: true },
+          { cliCompat: true },
         ),
       );
 

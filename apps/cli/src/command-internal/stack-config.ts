@@ -1,5 +1,5 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { resolveCliConfigSubtree } from "./cli-config-load.ts";
 import { validateCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -1029,7 +1029,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             config.env,
             { values: context.projectEnvValues },
             `functions.${name}.env`,
-            { goViperCompat: true },
           ).pipe(
             Effect.map(
               (env) =>

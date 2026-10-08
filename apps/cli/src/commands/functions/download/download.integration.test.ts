@@ -38,7 +38,7 @@ import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
 import { downloadFunctions } from "../../../shared/functions/download.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
 import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
@@ -2277,7 +2277,7 @@ describe("functions download", () => {
             api: platformApi,
             projectRoot: tempRoot.current,
             rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed(PROJECT_ID),
             styleWarning: (text) => `<warn>${text}</warn>`,

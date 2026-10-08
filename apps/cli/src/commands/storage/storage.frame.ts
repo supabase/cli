@@ -1,5 +1,8 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
+import {
+  loadCliConfig,
+  type CliConfigLoadOptions,
+} from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -50,10 +53,10 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
-  const loadOptions: InternalLoadCliConfigOptions =
+  const loadOptions: CliConfigLoadOptions =
     projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
+      ? { projectRef, search: shouldSearchAncestors(cliSettings) }
+      : { search: shouldSearchAncestors(cliSettings) };
   const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
     Effect.catchTag(
       "CliConfigParseError",

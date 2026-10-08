@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
 import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -2818,7 +2818,6 @@ describe("seed buckets", () => {
           ],
         });
         const loaded = yield* loadCliConfig(tmp.current, {
-          goViperCompat: true,
           search: false,
         }).pipe(Effect.provide(BunServices.layer));
         if (loaded === null) {

@@ -3,6 +3,8 @@ import { expect, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path, PlatformError } from "effect";
 import { fileURLToPath } from "node:url";
 
+const cliConfigLoadFile = "command-internal/cli-config-load.ts";
+
 const srcDir = fileURLToPath(new URL("../..", import.meta.url));
 
 const layout = Effect.gen(function* () {
@@ -132,6 +134,37 @@ layer(BunServices.layer)("code structure", (it) => {
           const resolved = resolveImport(path, filePath, specifier);
           if (resolved.startsWith(commandsDir)) {
             violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
+          }
+        }
+      }
+
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("routes CLI config loading through the single cli-config-load wrapper", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { path } = yield* layout;
+      const guardedNames =
+        /\b(?:loadCliConfig|resolveCliConfigValue|resolveCliConfigSubtree|decodeCliConfigDocumentForValidationEffect)\b/;
+      const internalImport =
+        /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']@supabase\/config\/internal["']/g;
+      const compatOption = ["cli", "Compat"].join("");
+      const violations: Array<string> = [];
+
+      for (const filePath of (yield* walk(srcDir)).filter((file) => file.endsWith(".ts"))) {
+        const relativeFile = path.relative(srcDir, filePath).split(path.sep).join("/");
+        if (relativeFile === cliConfigLoadFile) continue;
+        const source = yield* fs.readFileString(filePath);
+        if (source.includes(compatOption)) {
+          violations.push(`${relativeFile} mentions ${compatOption}`);
+        }
+        for (const match of source.matchAll(internalImport)) {
+          if (guardedNames.test(match[1]!)) {
+            violations.push(
+              `${relativeFile} imports a config loader from @supabase/config/internal`,
+            );
           }
         }
       }

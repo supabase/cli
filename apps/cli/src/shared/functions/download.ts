@@ -28,7 +28,7 @@ import {
   resolveFunctionsDockerImage,
   runChildProcess,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
@@ -99,9 +99,9 @@ interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
    * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
+   * never imports the command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
   /**
    * Fallback edge-runtime image tag used when the project config doesn't
    * pin `edge_runtime.deno_version` to `1`. Mirrors `deploy.ts`'s own
@@ -873,7 +873,7 @@ const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntime
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,

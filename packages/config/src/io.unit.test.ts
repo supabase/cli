@@ -459,8 +459,6 @@ stack = true
     }
   });
 
-  // Go-parity callers (legacy `status`/`stop`) pass `tomlOnly: true` so a stray `config.json`
-  // never wins over `config.toml`.
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
     const cwd = makeTempProject();
     const jsonPath = await runConfigEffect(configJsonPath(cwd));
@@ -1103,7 +1101,7 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
 
   test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
     // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
-    // when `goViperCompat` is set, not just via `env(...)`.
+    // when `cliCompat` is set, not just via `env(...)`.
     const cwd = makeTempProject();
 
     try {
@@ -1117,7 +1115,7 @@ additional_redirect_urls = "http://a,http://b"
 `,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1139,7 +1137,7 @@ additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
       );
       await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1160,7 +1158,7 @@ additional_redirect_urls = ""
 `,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1290,9 +1288,9 @@ port = "env(SUPABASE_DB_PORT_TEST)"
     }
   });
 
-  // Pins pre-Go-parity default behavior, so `packages/stack` and the functions manifest (which
-  // don't pass `goViperCompat`) don't inherit the Go-parity CLI's stricter/wider semantics.
-  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
+  // Pins the strict default so callers that don't pass `cliCompat` don't inherit the CLI's
+  // config-loading semantics.
+  test("loads successfully with a duplicate [remotes.*] project_id when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1345,7 +1343,7 @@ runtime = "deno"
     }
   });
 
-  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
+  test("loads successfully with an invalid [remotes.*] project_id format when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1367,7 +1365,7 @@ project_id = "not-a-ref"
     }
   });
 
-  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", async () => {
+  test("does not split a comma-separated string literal for an array field when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1398,7 +1396,7 @@ additional_redirect_urls = "http://a,http://b"
     }
   });
 
-  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", async () => {
+  test("does not warn on a deprecated provider (but still strips it) when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
     const warnings: Array<string> = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
@@ -1425,7 +1423,7 @@ enabled = true
     }
   });
 
-  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", async () => {
+  test("does not resolve a lowercase-named env() reference when cliCompat is omitted", async () => {
     const previous = process.env.lowercase_ref_default_off_test;
     process.env.lowercase_ref_default_off_test = "lowercase-ref-value";
     const cwd = makeTempProject();
@@ -1449,7 +1447,7 @@ enabled = true
     }
   });
 
-  test("resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+  test("resolves a lowercase-named env() reference when cliCompat is true", async () => {
     const previous = process.env.lowercase_ref_default_on_test;
     process.env.lowercase_ref_default_on_test = "lowercase-ref-value";
     const cwd = makeTempProject();
@@ -1461,7 +1459,7 @@ enabled = true
         `project_id = "env(lowercase_ref_default_on_test)"\n`,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.project_id).toBe("lowercase-ref-value");
     } finally {
       if (previous === undefined) {
@@ -1938,7 +1936,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1951,8 +1949,8 @@ project_id = "dupref"
     }
   });
 
-  // `goViperCompat` is required even though `projectRef` is passed: the duplicate/format checks
-  // are gated solely on `goViperCompat`, not on whether a remote is being selected.
+  // `cliCompat` is required even though `projectRef` is passed: the duplicate/format checks
+  // are gated solely on `cliCompat`, not on whether a remote is being selected.
   test("rejects duplicate project_id across remotes with Go's message", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
@@ -1964,7 +1962,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "dupref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "dupref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1993,7 +1991,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "previewref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -2021,7 +2019,7 @@ max_rows = 2
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "previewref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -2045,7 +2043,7 @@ project_id = "not-a-ref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
           Effect.provide(BunServices.layer),
         ),
@@ -2113,13 +2111,13 @@ enabled = true
   });
 
   test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
-    // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
+    // Env-var matching is case-agnostic when `cliCompat` is set; without it, the strict
     // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
     const previous = process.env.project_id;
     process.env.project_id = "lowercase-ref";
     const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
     try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.project_id).toBe("lowercase-ref");
     } finally {
       if (previous === undefined) {
@@ -2646,7 +2644,7 @@ describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", ()
 [auth.external.slack]
 enabled = true
 `,
-      { goViperCompat: true },
+      { cliCompat: true },
     );
 
     expect("slack" in loaded.config.auth.external).toBe(false);
@@ -2668,7 +2666,7 @@ enabled = true
 [auth.external.linkedin]
 enabled = true
 `,
-      { goViperCompat: true },
+      { cliCompat: true },
     );
 
     expect("linkedin" in loaded.config.auth.external).toBe(false);
@@ -2915,7 +2913,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(
         { project_id: "abc123" },
-        { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+        { cliCompat: true, path: "supabase/config.toml", format: "toml" },
       ),
     );
     expect(config.project_id).toBe("abc123");
@@ -2928,7 +2926,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const exit = await Effect.runPromiseExit(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }).pipe(Effect.provide(BunServices.layer)),
@@ -2960,7 +2958,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),
@@ -2985,7 +2983,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
             project_id: "abc123",
             db: { major_version: "env(SUPABASE_VALIDATION_PG_VERSION_TEST)" },
           },
-          { goViperCompat: true, path, format: "toml" },
+          { cliCompat: true, path, format: "toml" },
         ),
       );
       expect(config.db.major_version).toBe(16);
@@ -3013,7 +3011,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),
@@ -3033,7 +3031,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const exit = await Effect.runPromiseExit(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
         remoteName: "staging",
@@ -3064,7 +3062,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),

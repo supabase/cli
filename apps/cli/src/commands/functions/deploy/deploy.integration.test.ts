@@ -36,7 +36,7 @@ import {
   shouldChmodBundleOutputDirectory,
 } from "../../../shared/functions/deploy.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
@@ -1444,7 +1444,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -2047,7 +2047,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",

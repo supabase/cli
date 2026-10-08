@@ -817,7 +817,7 @@ additional_redirect_urls = "http://a,http://b"
   it.live("warns on stderr for a deprecated auth.external provider", () =>
     Effect.gen(function* () {
       // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-      // `Console.error` only when `goViperCompat` is set.
+      // `Console.error` only under the CLI's config-loading semantics.
       yield* writeSupabaseFile(
         tempRoot.current,
         "config.toml",
