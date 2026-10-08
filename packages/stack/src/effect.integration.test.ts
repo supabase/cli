@@ -41,9 +41,9 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-// Below the native backend range (10000-19999), the automatic public range (20000-32767) and every
-// OS ephemeral range, so neither another stack's claim nor an outbound socket can already hold it.
-const FIXED_API_PORT = 8_913;
+// Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
+// test's auto allocation nor an outbound socket can already hold it.
+const FIXED_API_PORT = 9_393;
 
 it.live("registers and discovers saved definitions without inventing live observations", () =>
   Effect.gen(function* () {

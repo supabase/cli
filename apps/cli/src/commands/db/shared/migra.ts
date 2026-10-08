@@ -166,7 +166,7 @@ const loadTargetUserSchemas = Effect.fn("Migra.loadTargetUserSchemas")(function*
   connectOptions: DbConnectOptions,
 ) {
   const connection = yield* DbConnection;
-  const input = parseConnectionString(target);
+  const input = yield* parseConnectionString(target);
   if (input === undefined) {
     return yield* new MigraSchemaLoadError({
       message: "failed to list schemas: invalid target connection string",
