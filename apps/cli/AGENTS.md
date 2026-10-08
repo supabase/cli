@@ -82,6 +82,15 @@ Every applicable command must preserve these invariants:
    `--output-format`, as established by `config diff` and `config pull`.
 7. Preserve telemetry names, timing, identity, and payloads; see [Telemetry](#telemetry).
 
+## Config values
+
+Read config and `SUPABASE_*` values through `CliConfigValues` (`snapshot.get(CliConfigKeys.<path>)`),
+which resolves flag > shell env > project `.env*` > config > default. Bind a flag that sets a config
+key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Never read
+`process.env` or a registry env name directly; `code-structure.unit.test.ts` and the `oxlint`
+`process.env` ban fail the build. To add a key, a flag or an exception, see
+[ADR 0031](../../docs/adr/0031-config-value-precedence.md).
+
 ## Experimental feature registration
 
 Resolve opt-in booleans with `command-internal/experimental-feature.ts`: environment `1`/`0`

@@ -2,12 +2,12 @@
 
 ## Files Read
 
-| Path                                                 | Format        | When                                                                                             |
-| ---------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------ |
-| `supabase/.temp/project-ref`                         | plain text    | when the checkout is linked and no explicit ref is already loaded                                |
-| `supabase/config.toml` and project environment files | TOML / dotenv | legacy service overrides, linked remote config, or stack PostgreSQL major selection              |
-| Docker client context/config metadata                | JSON          | when the shared local project context resolves the Docker hostname; no daemon connection is made |
-| `~/.supabase/access-token`                           | plain text    | when `SUPABASE_ACCESS_TOKEN` is unset and keyring access falls back to the home token file       |
+| Path                                                                   | Format               | When                                                                                             |
+| ---------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| `supabase/.temp/project-ref`                                           | plain text           | when the checkout is linked and no explicit ref is already loaded                                |
+| `supabase/config.json` or `config.toml`, and project environment files | JSON / TOML / dotenv | legacy service overrides, linked remote config, or stack PostgreSQL major selection              |
+| Docker client context/config metadata                                  | JSON                 | when the shared local project context resolves the Docker hostname; no daemon connection is made |
+| `~/.supabase/access-token`                                             | plain text           | when `SUPABASE_ACCESS_TOKEN` is unset and keyring access falls back to the home token file       |
 
 ## Files Written
 
@@ -85,6 +85,7 @@ TS-only NDJSON success event with the same `{ services: [...] }` payload.
 
 ## Notes
 
+- Config values resolve as flag > shell env > project `.env*` > config (`config.json` over `config.toml`) > default (ADR 0031). An invalid config value or `SUPABASE_*` override is reported as the configuration failure described below.
 - Backend selection follows canonical experimental-feature routing: `SUPABASE_EXPERIMENTAL_STACK=1|0` takes precedence over `experimental.stack`; unset or empty uses project config, and an invalid environment value fails. Output fields and serializers stay the same.
 - The legacy backend uses its baked-in service matrix and honors its existing config/version overrides. The stack backend lists services from the installed CLI artifact catalog using canonical `ghcr.io/supabase/cli/...` image names and catalog versions, reported as the upstream version without a slim revision suffix (`-rN`). Native and Docker runtimes use the same catalog versions. Since the catalog belongs to the installed CLI, an older launched CLI or a newer/mirrored stack image may differ from this inventory. The command does not inspect running containers, image pulls, service health, or live stack state.
 - For stack mode, PostgreSQL uses the configured major version or `SUPABASE_DB_MAJOR_VERSION` (15 or 17). Invalid configuration or an unsupported PostgreSQL major warns with the cause and falls back to default catalog versions; absent config uses defaults. Legacy image pins, slim-image rewriting, and remote image overrides do not affect stack results.

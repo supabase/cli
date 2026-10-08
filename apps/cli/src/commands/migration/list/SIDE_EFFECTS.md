@@ -22,10 +22,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                 | Required?                                               |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode          | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DB_PASSWORD`           | password for direct database connection | no                                                      |
+| Variable                | Purpose                                                                          | Required?                                               |
+| ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`  | password for the linked database connection (`--password`/`-p` takes precedence) | no                                                      |
 
 ## Exit Codes
 
@@ -33,6 +33,7 @@
 | ---- | ------------------------------------------------------------------------ |
 | `0`  | success                                                                  |
 | `1`  | database connection failure                                              |
+| `1`  | `--password` with `--db-url` or `--local`                                |
 | `1`  | failed to open migrations directory                                      |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
@@ -59,7 +60,12 @@ Same structured `migrations` result delivered as an NDJSON `result` event.
 - `--linked` (default true) lists migrations from the linked project via direct DB connection.
 - `--local` lists migrations applied to the local database.
 - `--db-url` targets a specific database URL directly.
-- `--password` / `-p` sets the DB password (also reads `DB_PASSWORD` env var).
+- **`--password`** is rejected with `--db-url` (and with `--local`): `if any flags in the group
+[<target> password] are set none of the others can be; [<target> password] were all set`,
+  exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
+  `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
+  (stderr `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.`), and a
+  temporary login role is minted instead (ADR 0031).
 - `--db-url`, `--linked`, and `--local` are mutually exclusive.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
   overrides ONLY the linked-ref resolution used for the connection (flag >

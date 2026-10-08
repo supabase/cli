@@ -84,7 +84,7 @@ live shadow available.
 
 ## Environment Variables
 
-`SUPABASE_YES`, `DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
+`SUPABASE_YES`, `SUPABASE_DB_PASSWORD` (`--linked` only), `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
 `DOCKER_HOST`/`DOCKER_CONTEXT`/`DOCKER_CONFIG`, `SUPABASE_NETWORK_ID`,
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
 `SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
@@ -96,6 +96,7 @@ live shadow available.
 | `0`   | success — **including** the single-migration no-op **and** a declined remote-baseline prompt                                                                                                                                                                  |
 | `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure; flag-group conflicts |
 | `1`   | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                                                                                                                      |
+| `1`   | `--password` with `--db-url` or `--local`                                                                                                                                                                                                                     |
 | `130` | SIGINT                                                                                                                                                                                                                                                        |
 
 ## Output
@@ -142,8 +143,13 @@ code or the rest of the payload.
 
 ## Notes
 
-- `--local` defaults **true**; `[db-url linked local]` and
-  `[db-url password]` are the two mutually-exclusive flag groups.
+- `--local` defaults **true**; `[db-url linked local]` is the mutually-exclusive target group.
+- **`--password`** is rejected with `--db-url` (and, because the default target is local, with `--local`): `if any flags in the group
+[<target> password] are set none of the others can be; [<target> password] were all set`,
+  exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
+  `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
+  (stderr `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.`), and a
+  temporary login role is minted instead (ADR 0031).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
   overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:

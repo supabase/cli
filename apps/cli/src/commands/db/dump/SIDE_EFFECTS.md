@@ -7,14 +7,14 @@ image), to stdout or `--file`.
 
 ## Files Read
 
-| Path                              | Format     | When                                                                                                                                         |
-| --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)                                                                                          |
-| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present                                                                                    |
-| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
-| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
-| `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
-| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
+| Path                                    | Format      | When                                                                                                                                         |
+| --------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.json` or `config.toml` | JSON / TOML | always, `config.json` preferred (db port/password/major_version, project_id)                                                                 |
+| `supabase/.temp/postgres-version`       | plain text  | always (best-effort) — pins the pg image tag when present                                                                                    |
+| `supabase/.temp/pooler-url`             | plain text  | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
+| `~/.supabase/access-token`              | plain text  | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
+| `supabase/.temp/project-ref`            | plain text  | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
+| `supabase/.env*`                        | dotenv      | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`; shell values win)                                                                 |
 
 ## Files Written
 
@@ -33,15 +33,15 @@ image), to stdout or `--file`.
 
 ## Environment Variables
 
-| Variable                                                                      | Purpose                                                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
-| `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                    |
-| `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
-| `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
-| `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                             |
-| `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
+| Variable                                             | Purpose                                                                                                                                                                                                                            |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password; ignored for a target other than the linked project (see Notes)                                                                                                                                                 |
+| `SUPABASE_ACCESS_TOKEN`                              | `--linked` auth                                                                                                                                                                                                                    |
+| `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
+| `SUPABASE_USE_SLIM_IMAGES`                           | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
+| `DOCKER_HOST`                                        | docker daemon endpoint                                                                                                                                                                                                             |
+| `MSYSTEM`, `TERM_PROGRAM`                            | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
 
 ## Exit Codes
 
@@ -50,6 +50,7 @@ image), to stdout or `--file`.
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                                |
+| `1`  | `--password` with `--db-url` or `--local`                                                                                                                             |
 
 ## Output
 
@@ -81,6 +82,11 @@ shell inherits the suppressing variables and is missed.
 
 ## Notes / Divergences
 
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+  (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
+  `--linked`) > default. The linked-database password env is withheld when the target differs
+  from `.temp/project-ref`: stderr gets `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.` and a temporary login role is minted. `--password` is rejected with
+  `--db-url` or `--local`, which carry their own credentials.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.

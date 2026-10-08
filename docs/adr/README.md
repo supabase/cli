@@ -117,3 +117,4 @@ Why did we choose this approach?
 ```
 
 > **Note**: Additional sections (Implementation Notes, Open Questions, Verification Checklist) may be added as needed.
+> | 0031 | [Config Value Precedence](0031-config-value-precedence.md) | proposed |
