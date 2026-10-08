@@ -3,7 +3,6 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
-  experimentalFeatureEnv,
   resolveExperimentalFeature,
 } from "../../command-internal/experimental-feature.ts";
 import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
@@ -19,7 +18,6 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const experimentalStack = yield* resolveExperimentalFeature({
     feature: "stack",
     configValue: Effect.succeed(false),
-    env: yield* experimentalFeatureEnv("stack"),
   });
 
   const result = yield* initProject({

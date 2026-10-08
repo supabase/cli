@@ -6,7 +6,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../shared/git/git-root.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { loadCliProjectEnvFiles } from "../../../shared/config/cli-config-env.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
@@ -217,8 +218,10 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
   return yield* Effect.gen(function* () {
     // Loaded here (not above) so a malformed `.env` still flushes telemetry: `SUPABASE_YES`
     // in `supabase/.env` must be able to auto-confirm the overwrite prompt below.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
+    const projectEnv = yield* loadCliProjectEnvFiles(cliSettings.workdir).pipe(
+      Effect.mapError((cause) => new DbConfigLoadError({ message: cause.message })),
+    );
+    const yes = yield* resolveYesWithProjectEnv({ ...projectEnv.values });
     // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliSettings.workdir);

@@ -1,12 +1,11 @@
-import { Effect, type FileSystem, Match, Option, type Path } from "effect";
+import { Effect, FileSystem, Match, Path } from "effect";
 import * as SmolToml from "smol-toml";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { envRefName, envRefValue } from "../../../command-internal/db-config.toml-read.ts";
 import {
-  configEnvOption,
-  envRefName,
-  envRefValue,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+  loadCliProjectEnvFiles,
+  readShellEnvironment,
+} from "../../../shared/config/cli-config-env.ts";
 import type { InspectRule } from "./report.rules.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
@@ -91,15 +90,19 @@ export const readInspectRules = Effect.fnUntraced(function* (
 
   const RULE_FIELDS = ["query", "name", "pass", "fail"] as const;
 
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const toLoadError = (cause: { readonly message: string }) =>
+    new DbConfigLoadError({ message: cause.message });
+  const shell = yield* readShellEnvironment().pipe(Effect.mapError(toLoadError));
+  const projectEnv = yield* loadCliProjectEnvFiles(workdir, { shell }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.mapError(toLoadError),
+  );
   const expandEnv = Effect.fnUntraced(function* (value: string) {
     const name = envRefName(value);
     if (name === undefined) return value;
-    const fromEnv = yield* configEnvOption(name);
-    return envRefValue(
-      value,
-      Option.getOrElse(fromEnv, () => projectEnv[name]),
-    );
+    yield* shell.load([name]).pipe(Effect.mapError(toLoadError));
+    return envRefValue(value, shell.get(name) ?? projectEnv.values[name]);
   });
 
   const rules: Array<InspectRule> = [];

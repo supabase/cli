@@ -1,8 +1,11 @@
-import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { Effect, FileSystem, Schema } from "effect";
+import { findCliProjectPaths, type CliConfig } from "@supabase/config/effect";
+import { Effect, FileSystem, Option } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import {
+  describeConfigSnapshotFailure,
+  loadConfigSnapshotContext,
+} from "../../command-internal/config-snapshot-context.ts";
 import {
   resolveStorageCredentials,
   storageGatewayFetch,
@@ -16,7 +19,6 @@ import {
 } from "../../command-internal/storage-url.ts";
 import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
 import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
   StorageInvalidUrlError,
@@ -30,8 +32,6 @@ import {
  * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
-const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-
 interface LoadedStorageConfig {
   readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
@@ -39,22 +39,29 @@ interface LoadedStorageConfig {
 }
 
 /**
- * Loads `supabase/config.toml`, falling back to the embedded defaults when it's
- * missing — except for a local target with an explicit `--workdir`, which raises
- * `StorageMissingProjectConfigError` instead (see that error's doc for why). A
- * remote target never hard-fails this way, since credential resolution doesn't
- * read `config` at all. `appliedRemote` is set when a `[remotes.<name>]` block
- * matches the linked ref.
+ * Loads the config through the snapshot (flags, env and the `[remotes.<name>]` block matching
+ * `projectRef` applied), falling back to the embedded defaults when no project file exists —
+ * except for a local target with an explicit `--workdir`, which raises
+ * `StorageMissingProjectConfigError` instead (see that error's doc for why). A remote target
+ * never hard-fails this way, since credential resolution doesn't read `config` at all.
+ * `appliedRemote` is set when a `[remotes.<name>]` block matches the linked ref.
  */
 export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
-  const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
-  const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
+  if (cliSettings.explicitWorkdir && projectRef === "") {
+    const paths = yield* findCliProjectPaths(cliSettings.workdir, { search: false });
+    if (paths === null) {
+      return yield* new StorageMissingProjectConfigError({
+        message: yield* missingProjectConfigMessageEffect(cliSettings),
+      });
+    }
+  }
+  const context = yield* loadConfigSnapshotContext(
+    cliSettings.workdir,
+    projectRef === "" ? Option.none() : Option.some(projectRef),
+  ).pipe(
     Effect.catchTag(
       "CliConfigParseError",
       (cause) =>
@@ -62,23 +69,16 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
           message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
         }),
     ),
+    Effect.mapError((cause) =>
+      cause instanceof StorageConfigError
+        ? cause
+        : new StorageConfigError({ message: describeConfigSnapshotFailure(cause) }),
+    ),
   );
-  if (loaded === null) {
-    if (cliSettings.explicitWorkdir && projectRef === "") {
-      return yield* new StorageMissingProjectConfigError({
-        message: yield* missingProjectConfigMessageEffect(cliSettings),
-      });
-    }
-    return {
-      config: decodeDefaultCliConfig({}),
-      document: undefined,
-      appliedRemote: undefined,
-    } satisfies LoadedStorageConfig;
-  }
   return {
-    config: loaded.config,
-    document: loaded.document,
-    appliedRemote: loaded.appliedRemote,
+    config: context.config,
+    document: context.document,
+    appliedRemote: Option.getOrUndefined(context.snapshot.appliedRemote),
   } satisfies LoadedStorageConfig;
 });
 

@@ -2871,38 +2871,23 @@ describe("stack backend", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
-    "short-circuits with the empty summary despite a malformed SUPABASE_API_PORT, since the stack backend never reads it",
-    () =>
-      Effect.gen(function* () {
-        const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
+  it.live("a malformed SUPABASE_API_PORT fails the config load under either backend", () =>
+    Effect.gen(function* () {
+      for (const stackBackend of [true, false]) {
+        const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
           toml: 'project_id = "test"\n',
           files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
-          stackBackend: true,
-          format: "json",
+          stackBackend,
         });
         const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SeedConfigLoadError");
+          expect(causeText).toContain("Invalid config for api.port: cannot parse");
+        }
         expect(requests).toHaveLength(0);
-        const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data?.["buckets_created"]).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("the same malformed SUPABASE_API_PORT still hard-fails under the legacy backend", () =>
-    Effect.gen(function* () {
-      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
-      });
-      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("StorageConfigError");
-        expect(causeText).toContain("Invalid config for api.port: cannot parse");
       }
-      expect(requests).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
