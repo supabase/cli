@@ -87,9 +87,9 @@ export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled = true`
- * in config.toml — the flag is documented but not marked required, since the
- * config path also passes the gate.
+ * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled` (default true)
+ * in config.toml — the flag is documented but not marked required, since the gate
+ * is open unless config sets `enabled = false`.
  */
 export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
   "supabase-db-schema-declarative-generate",
