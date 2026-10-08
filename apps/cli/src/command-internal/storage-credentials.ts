@@ -1,20 +1,20 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Result } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { pickCliEnvName } from "../config/cli-config-key.ts";
+import { CliEnvNames } from "../config/cli-config-keys.ts";
+import { readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
 import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
+import {
+  describeConfigSnapshotFailure,
+  loadConfigSnapshotContext,
+} from "./config-snapshot-context.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
 import { generateGoJwt } from "./go-jwt.ts";
 import { getHostname } from "./hostname.ts";
-import {
-  decryptAuthSecret,
-  envOverride,
-  envOverrideBool,
-  envOverridePort,
-  resolveJwtSecret,
-} from "./local-config-values.ts";
+import { decryptAuthSecret, resolveJwtSecret } from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {
@@ -66,21 +66,27 @@ export interface StorageCredentials {
 
 export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
-  readonly config: StorageConfigView;
-  /**
-   * Already-resolved project env map for the `SUPABASE_API_*`/`SUPABASE_AUTH_*`
-   * overrides, when the caller has one in scope. When omitted, this loads the
-   * project dotenv itself.
-   */
-  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const cliSettings = yield* CommandSettings;
 
   if (opts.projectRef !== "") {
     const baseUrl = `https://${opts.projectRef}.${cliSettings.projectHost}`;
-    const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-    if (envKey !== undefined && envKey.length > 0) {
-      return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies StorageCredentials;
+    const shell = yield* readShellEnvironment({
+      names: [CliEnvNames.authServiceRoleKey.name],
+    }).pipe(Effect.mapError(toStorageConfigError));
+    const envKey = yield* Result.match(
+      pickCliEnvName(CliEnvNames.authServiceRoleKey, { shell: shell.get }),
+      {
+        onFailure: (error) => Effect.fail(toStorageConfigError(error)),
+        onSuccess: Effect.succeed,
+      },
+    );
+    if (Option.isSome(envKey)) {
+      return {
+        baseUrl,
+        apiKey: envKey.value,
+        localKongCa: undefined,
+      } satisfies StorageCredentials;
     }
     // Resolved lazily so the local path never triggers auth.
     const api = yield* (yield* CommandPlatformApiFactory).make;
@@ -111,19 +117,15 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnvValues =
-    opts.projectEnvValues ??
-    (yield* loadProjectEnv(fs, path, cliSettings.workdir).pipe(
-      Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
-    ));
-  const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
+  const { config, projectEnvValues } = yield* loadLocalStorageConfig(cliSettings.workdir);
+  const api = yield* resolveLocalApiConfig(config.api);
   const baseUrl = resolveApiExternalUrl(
     api,
     yield* getHostname(projectEnvValues).pipe(
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ),
   );
-  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
+  const apiKey = yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
 
   // Validate the cert/key pairing only when the API and TLS are both enabled;
   // inject a CA whenever the resolved URL is https.
@@ -145,8 +147,8 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 });
 
 /**
- * Converts a thrown config-load validation error (from `envOverride*`,
- * `decryptAuthSecret`, `resolveJwtSecret`, `validateApi*`) into a tagged
+ * Converts a thrown config-load validation error (from `decryptAuthSecret`,
+ * `resolveJwtSecret`, `validateApi*`) into a tagged
  * `StorageConfigError`, preserving the original message.
  */
 const toStorageConfigError = (cause: unknown) =>
@@ -154,49 +156,27 @@ const toStorageConfigError = (cause: unknown) =>
     message: cause instanceof Error ? cause.message : String(cause),
   });
 
-/**
- * Folds `SUPABASE_API_*` overrides into `[api]` before deriving the gateway
- * URL, so a stack started with an overridden port stays reachable here
- * instead of falling back to the raw `config.toml` value.
- */
-const resolveLocalApiConfig = (
-  api: StorageConfigView["api"],
-  projectEnvValues: Readonly<Record<string, string>>,
-) =>
+const loadLocalStorageConfig = (workdir: string) =>
+  loadConfigSnapshotContext(workdir).pipe(
+    Effect.mapError(
+      (cause) => new StorageConfigError({ message: describeConfigSnapshotFailure(cause) }),
+    ),
+  );
+
+/** The effective `[api]` view, with the port and TLS pairing checked, for deriving the gateway URL. */
+const resolveLocalApiConfig = (api: StorageConfigView["api"]) =>
   Effect.try({
     try: () => {
-      const resolved = {
-        enabled: envOverrideBool(
-          "SUPABASE_API_ENABLED",
-          api.enabled,
-          "api.enabled",
-          projectEnvValues,
-        ),
-        external_url: envOverride("SUPABASE_API_EXTERNAL_URL", api.external_url, projectEnvValues),
-        port: envOverridePort("SUPABASE_API_PORT", api.port, "api.port", projectEnvValues),
-        tls: {
-          enabled: envOverrideBool(
-            "SUPABASE_API_TLS_ENABLED",
-            api.tls.enabled,
-            "api.tls.enabled",
-            projectEnvValues,
-          ),
-          cert_path: envOverride("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, projectEnvValues),
-          key_path: envOverride("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, projectEnvValues),
-        },
-      } satisfies StorageConfigView["api"];
-      validateApiPort(resolved.enabled, resolved.port);
-      return resolved;
+      validateApiPort(api.enabled, api.port);
+      return api;
     },
     catch: toStorageConfigError,
   });
 
 /**
  * Resolves the service-role key for the local Storage gateway:
- * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` →
- *   `defaultJwtSecret`, rejected if shorter than 16 chars.
- * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` →
- *   `auth.service_role_key` → signed from the resolved jwt secret.
+ * - jwt secret: `auth.jwt_secret` → `defaultJwtSecret`, rejected if shorter than 16 chars.
+ * - service-role key: `auth.service_role_key` → signed from the resolved jwt secret.
  *
  * An explicit `service_role_key = ""` is treated as unset and regenerated.
  */
@@ -205,21 +185,11 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
   const jwtSecret = yield* Effect.try({
-    try: () =>
-      resolveJwtSecret(
-        decryptAuthSecret(
-          envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
-          projectEnvValues,
-        ),
-      ),
+    try: () => resolveJwtSecret(decryptAuthSecret(auth.jwt_secret, projectEnvValues)),
     catch: toStorageConfigError,
   });
   const configuredKey = yield* Effect.try({
-    try: () =>
-      decryptAuthSecret(
-        envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, projectEnvValues),
-        projectEnvValues,
-      ),
+    try: () => decryptAuthSecret(auth.service_role_key, projectEnvValues),
     catch: toStorageConfigError,
   });
   return configuredKey !== undefined && configuredKey.length > 0
@@ -228,15 +198,13 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
 });
 
 /**
- * Runs the local config-load validations (API overrides, auth secret
- * decryption, TLS presence) without building credentials, for `seed
- * buckets`'s empty-config short-circuit.
+ * Runs the local config-load validations (API port, auth secrets, TLS presence) without building
+ * credentials, for `seed buckets`'s empty-config short-circuit.
  */
-export const validateLocalStorageConfig = Effect.fnUntraced(function* (
-  config: StorageConfigView,
-  projectEnvValues: Readonly<Record<string, string>>,
-) {
-  const api = yield* resolveLocalApiConfig(config.api, projectEnvValues);
+export const validateLocalStorageConfig = Effect.fnUntraced(function* () {
+  const cliSettings = yield* CommandSettings;
+  const { config, projectEnvValues } = yield* loadLocalStorageConfig(cliSettings.workdir);
+  const api = yield* resolveLocalApiConfig(config.api);
   yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
   if (api.enabled && api.tls.enabled) {
     yield* Effect.try({

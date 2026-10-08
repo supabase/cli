@@ -33,7 +33,7 @@ import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
-import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 // This fixture catalog's pin must be keyed to the Dockerfile's own `pg` tag, or `toSlimImage`
 // would find no match and fall back to the upstream (non-slim) image regardless of
@@ -167,12 +167,12 @@ function setup(
     Layer.provide(shadowSpawner.layer),
     Layer.provide(mockLocalDockerEngineUnavailableLayer),
     Layer.provide(unusedStackServices),
-    Layer.provide(cliConfigValuesAmbientTestLayer),
+    Layer.provide(cliConfigValuesTestLayer),
     Layer.provide(BunServices.layer),
   );
 
   const layer = Layer.mergeAll(
-    cliConfigValuesAmbientTestLayer,
+    cliConfigValuesTestLayer,
     BunServices.layer,
     out.layer,
     shadowSpawner.layer,

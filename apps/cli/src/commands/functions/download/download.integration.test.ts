@@ -35,7 +35,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { sanitizeProjectId } from "../../../command-internal/docker-ids.ts";
@@ -206,7 +206,7 @@ describe("functions download", () => {
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -254,7 +254,7 @@ describe("functions download", () => {
     ],
   ) {
     return Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: mockOutput({ format: "text" }),
         api: mockCommandPlatformApi({ handler }),
@@ -449,7 +449,7 @@ describe("functions download", () => {
           : Effect.void,
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({
@@ -491,7 +491,7 @@ describe("functions download", () => {
         runStderr: ["unbundle: warning about deno.json"],
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -549,7 +549,7 @@ describe("functions download", () => {
             : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -590,7 +590,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -632,7 +632,7 @@ describe("functions download", () => {
       // routes it to stderr, keeping stdout payload-only.
       const child = mockDockerUnbundle({ runStdout: ["unbundle: wrote index.ts"] });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -684,7 +684,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -742,7 +742,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -823,7 +823,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -874,7 +874,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -906,7 +906,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -950,7 +950,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -988,7 +988,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1027,7 +1027,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1069,7 +1069,7 @@ describe("functions download", () => {
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const nestedWorkdir = `${tempRoot.current}/nested`;
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1116,7 +1116,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1164,7 +1164,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1202,7 +1202,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1244,7 +1244,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1284,7 +1284,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1327,7 +1327,7 @@ describe("functions download", () => {
       // modeling Docker not running.
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1371,7 +1371,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["boom"] });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1413,7 +1413,7 @@ describe("functions download", () => {
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1462,7 +1462,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["permission denied"] });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1516,7 +1516,7 @@ describe("functions download", () => {
     };
     const child = mockChildProcessSpawner(spawnerOpts);
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1564,7 +1564,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockDockerRunSpawnFailure();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1621,7 +1621,7 @@ describe("functions download", () => {
     // not spawn a real `docker` process.
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1667,7 +1667,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1710,7 +1710,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1763,7 +1763,7 @@ describe("functions download", () => {
                 : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1802,7 +1802,7 @@ describe("functions download", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1842,7 +1842,7 @@ describe("functions download", () => {
       });
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1877,7 +1877,7 @@ describe("functions download", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1913,7 +1913,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1959,7 +1959,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2007,7 +2007,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2046,7 +2046,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2085,7 +2085,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2128,7 +2128,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2209,7 +2209,7 @@ describe("functions download", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2248,7 +2248,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2296,7 +2296,7 @@ describe("functions download", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,

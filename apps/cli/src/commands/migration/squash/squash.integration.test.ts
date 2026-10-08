@@ -1,4 +1,4 @@
-import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -346,7 +346,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
     // last-wins on a shared service.
     BunServices.layer,
-    cliConfigValuesAmbientTestLayer,
+    cliConfigValuesTestLayer,
     out.layer,
     telemetry.layer,
     cache.layer,

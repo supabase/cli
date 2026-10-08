@@ -28,7 +28,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
@@ -155,7 +155,7 @@ describe("functions deploy", () => {
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -220,7 +220,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -278,7 +278,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -343,7 +343,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -405,7 +405,7 @@ describe("functions deploy", () => {
         ),
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -478,7 +478,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -529,7 +529,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -606,7 +606,7 @@ describe("functions deploy", () => {
       const brokenPipe = new Error("EPIPE: broken pipe, write");
       const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out: {
             ...out,
@@ -653,7 +653,7 @@ describe("functions deploy", () => {
     const gate = Deferred.makeUnsafe<void>();
     const continued = Deferred.makeUnsafe<void>();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: {
           ...out,
@@ -770,7 +770,7 @@ describe("functions deploy", () => {
       });
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -827,7 +827,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const child = mockDockerBundleSpawner();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({ handler: deployedHelloWorld }),
@@ -889,7 +889,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -985,7 +985,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1073,7 +1073,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1173,7 +1173,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
-      cliConfigValuesAmbientTestLayer,
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1207,7 +1207,7 @@ describe("functions deploy", () => {
         handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1284,7 +1284,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1338,7 +1338,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1397,7 +1397,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1447,7 +1447,7 @@ describe("functions deploy", () => {
       const out = mockOutput({ format });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1520,7 +1520,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1552,7 +1552,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1589,7 +1589,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1621,7 +1621,7 @@ describe("functions deploy", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1680,7 +1680,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1717,7 +1717,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1750,7 +1750,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1786,7 +1786,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1825,7 +1825,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1872,7 +1872,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1928,7 +1928,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          cliConfigValuesAmbientTestLayer,
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1990,7 +1990,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2056,7 +2056,7 @@ describe("functions deploy", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        cliConfigValuesAmbientTestLayer,
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,

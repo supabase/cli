@@ -243,15 +243,7 @@
     "anonKeyIsOverride": false,
     "serviceRoleKeyIsOverride": false
   },
-  "projectEnvValues": {
-    "SUPABASE_API_PORT": "56321",
-    "SUPABASE_API_SCHEMAS": "public,shell_api",
-    "SUPABASE_AUTH_ENABLE_SIGNUP": "false",
-    "SUPABASE_AUTH_SITE_URL": "http://shell.example.com",
-    "SUPABASE_DB_PORT": "56322",
-    "SUPABASE_REALTIME_ENABLED": "false",
-    "SUPABASE_STUDIO_ENABLED": "false"
-  },
+  "projectEnvValues": {},
   "source": {
     "analytics": {
       "backend": "postgres",
@@ -611,7 +603,7 @@
       "seed": {
         "enabled": false,
         "sql_paths": [
-          "./seed.sql"
+          "supabase/seed.sql"
         ]
       },
       "settings": {},
@@ -640,9 +632,7 @@
     "functions": {},
     "local_smtp": {
       "enabled": true,
-      "pop3_port": 0,
-      "port": 54324,
-      "smtp_port": 0
+      "port": 54324
     },
     "project_id": "abcdefghijklmnopqrst",
     "realtime": {

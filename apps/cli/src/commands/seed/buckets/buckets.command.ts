@@ -1,6 +1,8 @@
 import { Effect, Layer, type Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -55,4 +57,6 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

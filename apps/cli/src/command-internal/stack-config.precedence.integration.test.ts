@@ -6,8 +6,7 @@ import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { loadLocalProjectContext } from "./local-project-context.ts";
-import { loadStackConfig, StackConfigError } from "./stack-config.ts";
+import { loadStackConfig } from "./stack-config.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
 const STACK_ID = "golden-stack";
@@ -168,17 +167,10 @@ describe("stack config precedence goldens", () => {
           ),
         );
 
-        const config = yield* Effect.gen(function* () {
-          const context =
-            fixture.contextRef === undefined
-              ? undefined
-              : yield* loadLocalProjectContext(
-                  workdir,
-                  (message) => new StackConfigError({ message }),
-                  fixture.contextRef,
-                );
-          return yield* loadStackConfig(workdir, context === undefined ? undefined : { context });
-        }).pipe(Effect.provide(layer));
+        const config = yield* loadStackConfig(
+          workdir,
+          fixture.contextRef === undefined ? undefined : { projectRef: fixture.contextRef },
+        ).pipe(Effect.provide(layer));
 
         const creations = yield* config.creations(STACK_ID);
         const keys = yield* config.keys;

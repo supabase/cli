@@ -72,7 +72,6 @@ export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
-    const configValues = yield* CliConfigValues;
     const stackApi = yield* StackApi;
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
@@ -165,7 +164,7 @@ export const declarativeSeamLayer = Layer.effect(
               toml.majorVersion,
               Option.getOrUndefined(toml.orioledbVersion),
             );
-            const projectId = yield* configValues
+            const projectId = yield* cliConfigValues
               .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
               .pipe(
                 Effect.flatMap(snapshotLocalProjectId),

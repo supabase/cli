@@ -88,7 +88,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
-import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -1007,7 +1007,7 @@ function setup(
     conn.layer,
     resolver.layer,
     mockCommandSettings({ workdir }),
-    cliConfigValuesAmbientTestLayer,
+    cliConfigValuesTestLayer,
     BunServices.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,

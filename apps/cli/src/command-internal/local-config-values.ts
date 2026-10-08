@@ -202,116 +202,6 @@ export const narrowConfigEnum = <const T extends string>(
   return match;
 };
 
-/** @deprecated Inert: returns `configured`. Read the value through `CliConfigValues`. */
-export function envOverride(_name: string, configured: string, _env: LegacyEnv): string;
-export function envOverride(
-  _name: string,
-  configured: string | undefined,
-  _env: LegacyEnv,
-): string | undefined;
-export function envOverride(
-  _name: string,
-  configured: string | undefined,
-  _env: LegacyEnv,
-): string | undefined {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverridePort(
-  _name: string,
-  configuredPort: number,
-  _dottedFieldPath: string,
-  _env: LegacyEnv,
-): number {
-  return configuredPort;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideBool(
-  _name: string,
-  configured: boolean,
-  _dottedFieldPath: string,
-  _env: LegacyEnv,
-): boolean {
-  return configured;
-}
-
-/** @deprecated Inert: validates `configured` only. */
-export function envOverrideAnalyticsBackend(
-  configured: string,
-  _env: LegacyEnv,
-  _skipEnvOverride = false,
-): "postgres" | "bigquery" {
-  return narrowConfigEnum("analytics.backend", configured, ["postgres", "bigquery"]);
-}
-
-/** @deprecated Inert: validates `configured` only. */
-export function envOverrideRealtimeIpVersion(configured: string, _env: LegacyEnv): "IPv4" | "IPv6" {
-  return narrowConfigEnum("realtime.ip_version", configured, ["IPv4", "IPv6"]);
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideRealtimeMaxHeaderLength(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideApiMaxRows(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: validates `configured` only. */
-export function envOverridePoolMode(
-  configured: string,
-  _env: LegacyEnv,
-): "transaction" | "session" {
-  return narrowConfigEnum("db.pooler.pool_mode", configured, ["transaction", "session"]);
-}
-
-/** @deprecated Inert: validates `configured` only. */
-export function envOverrideEdgeRuntimePolicy(
-  configured: string,
-  _env: LegacyEnv,
-): "per_worker" | "oneshot" {
-  return narrowConfigEnum("edge_runtime.policy", configured, ["per_worker", "oneshot"]);
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideDefaultPoolSize(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideMaxClientConn(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideUint(
-  _name: string,
-  _dottedFieldPath: string,
-  configured: number,
-  _env: LegacyEnv,
-): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideMajorVersion(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideDenoVersion(configured: number, _env: LegacyEnv): number {
-  return configured;
-}
-
-/** @deprecated Inert: returns `configured`. */
-export function envOverrideAuthPasswordRequirements(configured: string, _env: LegacyEnv): string {
-  return configured;
-}
-
 /** @deprecated Inert: the snapshot decrypts secrets, so `value` is already plain. */
 export function decryptAuthSecret(value: string | undefined, _env: LegacyEnv): string | undefined {
   return value;
@@ -878,12 +768,8 @@ export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boole
   return parsed;
 }
 
-/**
- * Comma-splits a string into an array (empty string → `[]`), the same rule config decode
- * applies to a raw or `env(VAR)`-resolved value destined for an unmodeled `[]string` field
- * (e.g. `auth.webauthn.rp_origins`).
- */
-export function strToArr(value: string): Array<string> {
+/** Comma-splits a string, with the empty string as `[]`. */
+function strToArr(value: string): Array<string> {
   return value.length === 0 ? [] : value.split(",");
 }
 
