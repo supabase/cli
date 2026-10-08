@@ -11,14 +11,25 @@ import {
   cliConfigFlagBinding,
   withCliConfigFlags,
 } from "./cli-config-flags.ts";
+import { portCodec, requiredCliConfigKey } from "./cli-config-key.ts";
 import { CliConfigKeys } from "./cli-config-keys.ts";
 
 const config = {
   noSeed: CliConfigKeys.db.seed.enabled.flag({
     name: "no-seed",
     description: "Skip seeding.",
-    map: (skip) => !skip,
+    map: (skip) => (skip ? false : undefined),
   }),
+  includeSeed: CliConfigKeys.db.seed.enabled.flag({
+    name: "include-seed",
+    description: "Seed.",
+  }),
+  proxyPort: requiredCliConfigKey({
+    path: "probe.port",
+    codec: portCodec,
+    default: 1,
+    flags: { names: ["proxy-port"] },
+  }).flag({ name: "proxy-port", description: "Port." }),
   sqlPaths: CliConfigKeys.db.seed.sqlPaths.flag({
     name: "sql-paths",
     description: "Seed files.",
@@ -65,6 +76,39 @@ describe("key.flag", () => {
   it.effect("maps an inverted flag to the key's value", () =>
     Effect.gen(function* () {
       expect(yield* run(["--no-seed"])).toEqual({ "db.seed.enabled": false });
+    }),
+  );
+
+  it.effect("treats a negatable flag at its negative default as no assignment", () =>
+    Effect.gen(function* () {
+      expect(yield* run(["--no-seed=false"])).toEqual({});
+    }),
+  );
+
+  it.effect("passes a positive flag value through unchanged", () =>
+    Effect.gen(function* () {
+      expect(yield* run(["--include-seed"])).toEqual({ "db.seed.enabled": true });
+    }),
+  );
+
+  it.effect("rejects two flags that assign the same key, naming both", () =>
+    Effect.gen(function* () {
+      const error = yield* run(["--sql-paths", "a.sql", "--no-seed"]).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.seed.enabled" });
+      expect(error instanceof Error && error.message).toBe(
+        "--no-seed and --sql-paths both set db.seed.enabled; pass only one",
+      );
+    }),
+  );
+
+  it.effect("rejects an out-of-range port as a parse error instead of dropping it", () =>
+    Effect.gen(function* () {
+      expect(yield* run(["--proxy-port", "8080"])).toEqual({ "probe.port": 8080 });
+      const error = yield* run(["--proxy-port", "70000"]).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "ShowHelp", errors: [{ _tag: "InvalidValue" }] });
+      expect(JSON.stringify(error)).toContain("70000");
     }),
   );
 
@@ -127,6 +171,35 @@ describe("key.flag", () => {
       Option.getOrElse(bindings, () => [])
         .map((binding) => binding.flag)
         .sort(),
-    ).toEqual(["no-seed", "password", "sql-paths", "use-pg-delta"]);
+    ).toEqual(["include-seed", "no-seed", "password", "proxy-port", "sql-paths", "use-pg-delta"]);
+  });
+});
+
+describe("flag typing", () => {
+  const requiresNothing = <Name extends string, Input, ContextInput, E>(
+    command: Command.Command<Name, Input, ContextInput, E, never>,
+  ) => command;
+  const readInputs = Command.make("probe", config).pipe(
+    Command.withHandler(() => CliConfigFlagInputs.use(() => Effect.void)),
+  );
+
+  it("accepts only the flag names a key declares", () => {
+    CliConfigKeys.db.seed.enabled.flag({
+      // @ts-expect-error -- "skip-seed" is not a declared flag for db.seed.enabled
+      name: "skip-seed",
+      description: "Not declared.",
+    });
+    // @ts-expect-error -- api.port declares no flags
+    CliConfigKeys.api.port.flag({ name: "port", description: "Not declared." });
+
+    expect(cliConfigFlagBinding(config.noSeed)?.flag).toBe("no-seed");
+  });
+
+  it("leaves CliConfigFlagInputs required until withCliConfigFlags provides it", () => {
+    // @ts-expect-error -- the handler still requires CliConfigFlagInputs
+    requiresNothing(readInputs);
+    requiresNothing(readInputs.pipe(withCliConfigFlags(config)));
+
+    expect(true).toBe(true);
   });
 });

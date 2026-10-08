@@ -1,17 +1,40 @@
-import { Context, Option } from "effect";
+import { Context, Effect, Option } from "effect";
 import { Command, Flag, type Param } from "effect/unstable/cli";
 
 import type { CliConfigCodec, CliConfigKey } from "./cli-config-key.ts";
+import { CliConfigValueError } from "./cli-config.errors.ts";
+
+/** The flag names (and short aliases) a key declares; `key.flag` accepts only these. */
+export interface CliConfigFlagDeclaration {
+  readonly names: ReadonlyArray<string>;
+  readonly aliases?: ReadonlyArray<string>;
+}
+
+/** The declaration of a key that no flag overrides. */
+export type CliConfigNoFlags = { readonly names: readonly [] };
+
+type FlagAlias<F extends CliConfigFlagDeclaration> = F extends {
+  readonly aliases: ReadonlyArray<infer Alias extends string>;
+}
+  ? Alias
+  : never;
 
 /** Another key a flag assigns when it is passed, e.g. `--sql-paths` forcing seeding on. */
 type CliConfigFlagAlso = readonly [key: { readonly path: string }, value: unknown];
 
-export interface CliConfigFlagOptions<X> {
-  readonly name: string;
-  readonly alias?: string;
+export interface CliConfigFlagOptions<
+  X,
+  F extends CliConfigFlagDeclaration = CliConfigFlagDeclaration,
+> {
+  readonly name: F["names"][number];
+  readonly alias?: FlagAlias<F>;
   readonly description: string;
-  /** Converts the parsed flag value to the key's value, e.g. `--no-seed` to `enabled = false`. */
-  readonly map?: (value: X) => X;
+  /**
+   * Converts the parsed flag value to the key's value, e.g. `--no-seed` to `enabled = false`.
+   * Returning `undefined` means the flag assigns nothing, as for a negatable flag left at its
+   * negative default.
+   */
+  readonly map?: (value: X) => X | undefined;
   readonly also?: ReadonlyArray<CliConfigFlagAlso>;
 }
 
@@ -37,27 +60,35 @@ export const cliConfigFlagBinding = (param: Param.Any): CliConfigFlagBinding | u
 const optionOf = <X>(value: X | undefined): Option.Option<X> =>
   value === undefined ? Option.none() : Option.some(value);
 
-const viaCodec = <X>(
-  flag: Flag.Flag<Option.Option<unknown>>,
+const parsedFlag = <X>(
+  flag: Flag.Flag<unknown>,
   codec: CliConfigCodec<X>,
+  path: string,
 ): Flag.Flag<Option.Option<X>> =>
-  Flag.map(
-    flag,
-    Option.flatMap((value) => optionOf(codec.fromConfig(value))),
+  flag.pipe(
+    Flag.filterMap(
+      (value) => optionOf(codec.fromConfig(value)),
+      (value) => codec.describe(path, String(value)),
+    ),
+    Flag.optional,
   );
 
-const baseFlag = <X>(codec: CliConfigCodec<X>, name: string): Flag.Flag<Option.Option<X>> => {
+const baseFlag = <X>(
+  codec: CliConfigCodec<X>,
+  name: string,
+  path: string,
+): Flag.Flag<Option.Option<X>> => {
   switch (codec.kind) {
     case "bool":
     case "binary":
-      return viaCodec(Flag.optional(Flag.boolean(name)), codec);
+      return parsedFlag(Flag.boolean(name), codec, path);
     case "uint":
     case "port":
-      return viaCodec(Flag.optional(Flag.integer(name)), codec);
+      return parsedFlag(Flag.integer(name), codec, path);
     case "literal":
-      return viaCodec(Flag.optional(Flag.choice(name, codec.literals ?? [])), codec);
+      return parsedFlag(Flag.choice(name, codec.literals ?? []), codec, path);
     case "string":
-      return viaCodec(Flag.optional(Flag.string(name)), codec);
+      return parsedFlag(Flag.string(name), codec, path);
     case "commaList":
       return Flag.string(name).pipe(
         Flag.atLeast(0),
@@ -69,11 +100,11 @@ const baseFlag = <X>(codec: CliConfigCodec<X>, name: string): Flag.Flag<Option.O
 };
 
 /** Builds the `Flag.optional` flag for `key` and records its binding. Used by `key.flag(...)`. */
-export const makeCliConfigKeyFlag = <A, X>(
-  key: CliConfigKey<A, X>,
-  options: CliConfigFlagOptions<X>,
+export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
+  key: CliConfigKey<A, X, F>,
+  options: CliConfigFlagOptions<X, F>,
 ): Flag.Flag<Option.Option<X>> => {
-  const described = baseFlag(key.codec, options.name).pipe(
+  const described = baseFlag(key.codec, options.name, key.path).pipe(
     Flag.withDescription(options.description),
   );
   const flag =
@@ -85,12 +116,14 @@ export const makeCliConfigKeyFlag = <A, X>(
       if (!Option.isOption(parsed) || Option.isNone(parsed)) return undefined;
       const decoded = key.codec.fromConfig(parsed.value);
       if (decoded === undefined) return undefined;
+      const value = options.map === undefined ? decoded : options.map(decoded);
+      if (value === undefined) return undefined;
       return [
-        { path: key.path, flag: options.name, value: options.map?.(decoded) ?? decoded },
-        ...(options.also ?? []).map(([other, value]) => ({
+        { path: key.path, flag: options.name, value },
+        ...(options.also ?? []).map(([other, otherValue]) => ({
           path: other.path,
           flag: options.name,
-          value,
+          value: otherValue,
         })),
       ];
     },
@@ -155,15 +188,27 @@ export const withCliConfigFlags = <const C extends Command.Command.Config>(confi
     self: Command.Command<Name, Command.Command.Config.Infer<C>, ContextInput, E, R>,
   ) =>
     self.pipe(
-      Command.provideSync(CliConfigFlagInputs, (input: Command.Command.Config.Infer<C>) => {
-        const inputs = new Map<string, CliConfigFlagAssignment>();
-        for (const entry of bound) {
-          for (const assignment of entry.binding.assignments(readAt(input, entry.accessor)) ?? []) {
-            inputs.set(assignment.path, assignment);
+      Command.provideEffect(CliConfigFlagInputs, (input: Command.Command.Config.Infer<C>) =>
+        Effect.gen(function* () {
+          const inputs = new Map<string, CliConfigFlagAssignment>();
+          for (const entry of bound) {
+            for (const assignment of entry.binding.assignments(readAt(input, entry.accessor)) ??
+              []) {
+              const prior = inputs.get(assignment.path);
+              if (prior !== undefined) {
+                return yield* new CliConfigValueError({
+                  path: assignment.path,
+                  tier: "flag",
+                  flag: assignment.flag,
+                  message: `--${prior.flag} and --${assignment.flag} both set ${assignment.path}; pass only one`,
+                });
+              }
+              inputs.set(assignment.path, assignment);
+            }
           }
-        }
-        return inputs;
-      }),
+          return inputs;
+        }),
+      ),
       Command.annotate(CliConfigFlagBindings, annotated),
     );
 };

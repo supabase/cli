@@ -2,32 +2,46 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { CliConfigSchema } from "@supabase/config";
+import { DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack/defaults";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Option, Path, Schema } from "effect";
 
+import { getDocumentValue } from "./cli-config-document.ts";
 import {
   CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_FAMILIES,
+  CLI_CONFIG_SCHEMA_EXCLUDED,
   CLI_NON_CONFIG_ENV_NAMES,
 } from "./cli-config-key-annotations.ts";
 import {
   CliConfigKeys,
   CliEnvNames,
+  cliConfigDocumentOnlyPaths,
   cliConfigFamilyKey,
   cliConfigRegistry,
+  cliConfigSchemaKeyDefs,
   deriveCliConfigEnvName,
 } from "./cli-config-keys.ts";
-import { CLI_CONFIG_TIER_ORDER } from "./cli-config-key.ts";
 
 const srcDir = fileURLToPath(new URL("..", import.meta.url));
+
+const registryFiles = new Set([
+  "config/cli-config-key-annotations.ts",
+  "config/cli-config-key.ts",
+  "config/cli-config-keys.ts",
+]);
 
 const productionSources = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
   .filter((file) => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.endsWith(".test.ts"))
   .filter((file) => !file.includes("__fixtures__") && !file.startsWith("shared/compute/stacks"))
+  .filter((file) => !registryFiles.has(file))
   .map((file) => ({ file, text: readFileSync(join(srcDir, file), "utf8") }));
 
-const quotedEnvNames = new Set(
+const referencedEnvNames = new Set(
   productionSources.flatMap(({ text }) =>
-    [...text.matchAll(/["'`](SUPABASE_[A-Z0-9_]+)["'`]/g)].map((match) => match[1] ?? ""),
+    [...text.matchAll(/\bSUPABASE_[A-Z0-9_]+\b/g)].map((match) => match[0]),
   ),
 );
 
@@ -43,10 +57,6 @@ const treeLookup = (path: string): unknown =>
   }, CliConfigKeys);
 
 describe("config key registry", () => {
-  it("resolves tiers in the fixed order", () => {
-    expect(CLI_CONFIG_TIER_ORDER).toEqual(["flag", "shell", "projectEnv", "config", "default"]);
-  });
-
   it("gives every env name to exactly one key", () => {
     const names = cliConfigRegistry.keys.flatMap((key) => key.env);
 
@@ -67,9 +77,9 @@ describe("config key registry", () => {
     expect(collisions).toEqual([]);
   });
 
-  it("accounts for every SUPABASE_* name the CLI source reads", () => {
-    expect(quotedEnvNames.size).toBeGreaterThan(100);
-    const unaccounted = [...quotedEnvNames]
+  it("accounts for every SUPABASE_* name the CLI source mentions outside the registry files", () => {
+    expect(referencedEnvNames.size).toBeGreaterThan(100);
+    const unaccounted = [...referencedEnvNames]
       .filter((name) => !name.endsWith("_"))
       .filter((name) => !registryEnvNames.has(name) && !(name in CLI_NON_CONFIG_ENV_NAMES));
 
@@ -146,6 +156,57 @@ describe("config key registry", () => {
     const misaligned = cliConfigRegistry.keys.filter((key) => treeLookup(key.path) !== key);
 
     expect(misaligned.map((key) => key.path)).toEqual([]);
+  });
+
+  it.effect("defaults every key to what the schema decodes from an empty document", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const decoded = Schema.decodeUnknownSync(CliConfigSchema)({});
+      const context = {
+        workdir: "/work/proj",
+        projectRef: Option.none<string>(),
+        path,
+        configAt: () => undefined,
+      };
+
+      const mismatched = cliConfigRegistry.keys.flatMap((key) => {
+        const raw = getDocumentValue(decoded, key.path);
+        if (
+          key.document === false ||
+          key.materializeDefault === true ||
+          cliConfigDocumentOnlyPaths.has(key.path)
+        ) {
+          return [];
+        }
+        const expected =
+          raw === undefined
+            ? Option.none()
+            : key.normalize === undefined
+              ? raw
+              : key.normalize(raw, context);
+        const actual = key.defaultValue(context);
+        const matches =
+          raw === undefined
+            ? Option.isOption(actual) && Option.isNone(actual)
+            : JSON.stringify(actual) === JSON.stringify(expected);
+        return matches ? [] : [{ path: key.path, expected, actual }];
+      });
+
+      expect(mismatched).toEqual([]);
+      expect(CliConfigKeys.db.rootKey.defaultValue(context)).toBe(DEFAULT_POSTGRES_ROOT_KEY);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it("keeps every schema leaf in the registry unless it is explicitly excluded", () => {
+    expect(Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED)).toEqual(["experimental.inspect.rules"]);
+    expect(cliConfigRegistry.keyAt("experimental.inspect.rules")).toBeUndefined();
+    expect(cliConfigRegistry.keyAt("experimental.webhooks.enabled")).toBeDefined();
+  });
+
+  it("refuses a schema leaf it has no codec for", () => {
+    const withDate = Schema.Struct({ nested: Schema.Struct({ when: Schema.Date }) });
+
+    expect(() => cliConfigSchemaKeyDefs(withDate.ast)).toThrow(/nested\.when/);
   });
 
   it("reads shell-only names for the project id and service role key", () => {

@@ -1,20 +1,30 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import type { CliConfig } from "@supabase/config";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
-import { loadStackConfig } from "../command-internal/stack-config.ts";
+import { loadLocalProjectContext } from "../command-internal/local-project-context.ts";
+import { loadStackConfig, StackConfigError } from "../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { CliConfigFlagInputs } from "./cli-config-flags.ts";
-import { CliConfigKeys } from "./cli-config-keys.ts";
+import { CLI_CONFIG_FAMILIES, type CliConfigFamilyId } from "./cli-config-key-annotations.ts";
+import { CliConfigKeys, cliConfigFamilyKey } from "./cli-config-keys.ts";
 import { cliConfigValuesLayer } from "./cli-config-values.layer.ts";
 import { CliConfigValues } from "./cli-config-values.service.ts";
 
 const LINKED = "abcdefghijklmnopqrst";
 const OTHER = "tsrqponmlkjihgfedcba";
+
+const familyKey = (id: CliConfigFamilyId, name: string, field: string) => {
+  const family = CLI_CONFIG_FAMILIES.find((candidate) => candidate.id === id);
+  const key = family === undefined ? undefined : cliConfigFamilyKey(family, name, field);
+  if (key === undefined) throw new Error(`no ${id} family key for ${field}`);
+  return key;
+};
 
 const flagInput = (path: string, flag: string, value: unknown) =>
   [path, { path, flag, value }] as const;
@@ -58,7 +68,6 @@ describe("CliConfigValues credential scoping", () => {
     readonly name: string;
     readonly linkedTo: string | undefined;
     readonly target: Option.Option<string>;
-    readonly adHoc?: boolean;
     readonly withheld: boolean;
   }> = [
     {
@@ -79,20 +88,6 @@ describe("CliConfigValues credential scoping", () => {
       target: Option.some(OTHER),
       withheld: false,
     },
-    {
-      name: "an ad hoc target in an unlinked workdir",
-      linkedTo: undefined,
-      target: Option.some(OTHER),
-      adHoc: true,
-      withheld: true,
-    },
-    {
-      name: "an ad hoc target equal to the linked project",
-      linkedTo: LINKED,
-      target: Option.some(LINKED),
-      adHoc: true,
-      withheld: true,
-    },
     { name: "no target", linkedTo: LINKED, target: Option.none(), withheld: false },
   ];
 
@@ -107,14 +102,9 @@ describe("CliConfigValues credential scoping", () => {
           if (scenario.linkedTo !== undefined) yield* link(root, scenario.linkedTo);
           const { layer } = makeLayer();
 
-          const snapshot = yield* Effect.gen(function* () {
-            const values = yield* CliConfigValues;
-            return yield* values.load({
-              workdir: root,
-              projectRef: scenario.target,
-              ...(scenario.adHoc === undefined ? {} : { adHocProjectRef: scenario.adHoc }),
-            });
-          }).pipe(Effect.provide(layer));
+          const snapshot = yield* CliConfigValues.use((values) =>
+            values.load({ workdir: root, projectRef: scenario.target }),
+          ).pipe(Effect.provide(layer));
           const password = yield* snapshot.get(CliConfigKeys.linkedDb.password);
 
           if (scenario.withheld) {
@@ -124,9 +114,8 @@ describe("CliConfigValues credential scoping", () => {
                 path: "linkedDb.password",
                 envName: "SUPABASE_DB_PASSWORD",
                 tier: "shell",
-                reason: scenario.adHoc === true ? "adHocProjectRef" : "foreignProjectRef",
                 targetRef: Option.getOrElse(scenario.target, () => ""),
-                linkedRef: scenario.adHoc === true ? Option.none() : Option.some(LINKED),
+                linkedRef: LINKED,
               },
             ]);
           } else {
@@ -378,19 +367,22 @@ describe("CliConfigValues snapshots", () => {
     ),
   );
 
-  it.live("fails a key read when the winning value does not decode", () =>
+  it.live("fails the load with the env name, tier and key when an override does not decode", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "bad"\n');
       const { layer } = makeLayer();
 
-      const exit = yield* CliConfigValues.use((values) =>
-        Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
-          snapshot.get(CliConfigKeys.api.port),
-        ),
-      ).pipe(Effect.provide(layer), Effect.exit);
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(String(exit)).toContain(
+      expect(error).toMatchObject({
+        _tag: "CliConfigValueError",
+        path: "api.port",
+        tier: "shell",
+        envName: "SUPABASE_API_PORT",
+      });
+      expect(error.message).toBe(
         'Invalid config for api.port: cannot parse "not-a-port" as a port',
       );
     }).pipe(
@@ -399,9 +391,266 @@ describe("CliConfigValues snapshots", () => {
       Effect.scoped,
     ),
   );
+
+  it.live("names the flag when a flag value does not decode", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "bad"\n');
+      const { layer } = makeLayer([flagInput("api.port", "port", 70000)]);
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toMatchObject({ path: "api.port", tier: "flag", flag: "port" });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("keeps package errors visible by their own tag", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db\nport = ");
+      const { layer } = makeLayer();
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error._tag).toBe("CliConfigParseError");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("fails the load when a config value does not decode", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 70000\n");
+      const { layer } = makeLayer();
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toMatchObject({ path: "db.port", tier: "config" });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
 });
 
-describe("CliConfigValues.materialize", () => {
+describe("CliConfigValues secrets", () => {
+  const CIPHERTEXT =
+    "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+  const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+  const captcha = (secret: string) =>
+    `project_id = "secrets"\n[auth.captcha]\nenabled = true\nprovider = "hcaptcha"\nsecret = "${secret}"\n`;
+
+  const readCaptcha = (root: string) =>
+    Effect.gen(function* () {
+      const { layer } = makeLayer();
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+      return {
+        got: yield* snapshot.get(CliConfigKeys.auth.captcha.secret),
+        decoded: snapshot.materialized.config.auth.captcha?.secret,
+      };
+    });
+
+  it.live("writes a decrypted config secret into the materialized config and the read", () =>
+    Effect.gen(function* () {
+      const root = yield* project(captcha(CIPHERTEXT));
+
+      const { got, decoded } = yield* readCaptcha(root);
+
+      expect(got).toMatchObject({ value: Option.some("value"), origin: { tier: "config" } });
+      expect(decoded).toBe("value");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ DOTENV_PRIVATE_KEY: PRIVATE_KEY }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("decrypts ciphertext reached through an env() reference", () =>
+    Effect.gen(function* () {
+      const root = yield* project(captcha("env(CAPTCHA_CIPHERTEXT)"), {
+        supabaseEnv: `CAPTCHA_CIPHERTEXT=${CIPHERTEXT}\n`,
+      });
+
+      const { got, decoded } = yield* readCaptcha(root);
+
+      expect(got.value).toEqual(Option.some("value"));
+      expect(decoded).toBe("value");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ DOTENV_PRIVATE_KEY: PRIVATE_KEY }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("fails the load instead of passing ciphertext through when decryption fails", () =>
+    Effect.gen(function* () {
+      const root = yield* project(captcha(CIPHERTEXT));
+      const { layer } = makeLayer();
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toMatchObject({ path: "auth.captcha.secret", tier: "config" });
+      expect(error.message).toBe("failed to parse config: missing private key");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("keeps a withheld env value out of env() interpolation", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "scoped"\n[auth]\nsite_url = "env(SUPABASE_DB_PASSWORD)"\n',
+      );
+      yield* link(root, LINKED);
+      const { layer } = makeLayer();
+      const siteUrl = (ref: string) =>
+        CliConfigValues.use((values) =>
+          values.load({ workdir: root, projectRef: Option.some(ref) }),
+        ).pipe(
+          Effect.provide(layer),
+          Effect.map((snapshot) => snapshot.materialized.config.auth.site_url),
+        );
+
+      expect(yield* siteUrl(LINKED)).toBe("from-shell");
+      expect(yield* siteUrl(OTHER)).toBe("env(SUPABASE_DB_PASSWORD)");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_DB_PASSWORD: "from-shell" }, effect),
+      Effect.scoped,
+    ),
+  );
+});
+
+describe("CliConfigValues reads", () => {
+  it.live("normalizes default-tier values with and without a config file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const empty = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-empty-" });
+      const configured = yield* project('project_id = "seeded"\n');
+      const { layer } = makeLayer();
+      const read = (workdir: string) =>
+        CliConfigValues.use((values) =>
+          Effect.flatMap(values.load({ workdir, projectRef: Option.none() }), (snapshot) =>
+            snapshot.get(CliConfigKeys.db.seed.sqlPaths),
+          ),
+        ).pipe(Effect.provide(layer));
+
+      expect((yield* read(empty)).value).toEqual(["supabase/seed.sql"]);
+      expect((yield* read(configured)).value).toEqual(["supabase/seed.sql"]);
+      expect((yield* read(configured)).origin).toEqual({ tier: "default" });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("keeps the unnormalized value beside a normalized config value", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "seeded"\n[db.seed]\nsql_paths = ["./a.sql"]\n');
+      const { layer } = makeLayer();
+
+      const read = yield* CliConfigValues.use((values) =>
+        Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
+          snapshot.get(CliConfigKeys.db.seed.sqlPaths),
+        ),
+      ).pipe(Effect.provide(layer));
+
+      expect(read).toMatchObject({
+        value: ["supabase/a.sql"],
+        unnormalized: ["./a.sql"],
+        origin: { tier: "config" },
+      });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("defaults project_id from the workdir name, never the target ref", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-" });
+      const root = path.join(parent, "My Project");
+      yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "[db]\nport = 54399\n");
+      const { layer } = makeLayer();
+
+      const read = yield* CliConfigValues.use((values) =>
+        Effect.flatMap(
+          values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+          (snapshot) => snapshot.get(CliConfigKeys.projectId),
+        ),
+      ).pipe(Effect.provide(layer));
+
+      expect(read.value).toBe("My_Project");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("reads the same value through get and the materialized config", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "agree"\n[api]\nport = 54399\n[auth.email.smtp]\nhost = "smtp.test"\nport = 587\nuser = "u"\npass = "p"\nadmin_email = "a@b.test"\n',
+      );
+      const { layer } = makeLayer();
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+      const { config } = snapshot.materialized;
+
+      expect((yield* snapshot.get(CliConfigKeys.api.port)).value).toBe(config.api.port);
+      expect((yield* snapshot.get(CliConfigKeys.db.port)).value).toBe(config.db.port);
+      expect((yield* snapshot.get(CliConfigKeys.auth.email.smtp.host)).value).toEqual(
+        Option.some(config.auth.email.smtp?.host),
+      );
+      expect((yield* snapshot.get(CliConfigKeys.auth.email.smtp.enabled)).value).toBe(
+        config.auth.email.smtp?.enabled,
+      );
+      expect((yield* snapshot.get(CliConfigKeys.projectId)).value).toBe(config.project_id);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("lists family entries from the registry and the merged document", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "families"\n[auth.email.template.invite]\nsubject = "Join"\n',
+      );
+      const { layer } = makeLayer();
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+
+      expect(snapshot.familyNames("authEmailTemplate")).toEqual(["invite"]);
+      expect(snapshot.familyNames("authExternal")).toContain("github");
+      expect(snapshot.familyNames("authHook")).toContain("send_sms");
+      expect(
+        (yield* snapshot.get(familyKey("authEmailTemplate", "invite", "subject"))).value,
+      ).toEqual(Option.some("Join"));
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("reads names the registry does not own and rejects names it does", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "lookup"\n', {
+        supabaseEnv: "SUPABASE_UNOWNED_FROM_FILE=file\n",
+      });
+      const { layer } = makeLayer();
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+
+      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_FROM_SHELL")).toBe("shell");
+      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_FROM_FILE")).toBe("file");
+      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_UNSET")).toBeUndefined();
+      const exit = yield* snapshot.lookupEnv("SUPABASE_API_PORT").pipe(Effect.exit);
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_UNOWNED_FROM_SHELL: "shell" }, effect),
+      Effect.scoped,
+    ),
+  );
+});
+
+describe("CliConfigValues.materialized", () => {
   const richConfig = `project_id = "rich"
 
 [api]
@@ -431,7 +680,7 @@ minimum_password_length = 8
 host = "smtp.example.com"
 port = 587
 user = "mailer"
-pass = "mail-pass"
+pass = "env(SMTP_PASS)"
 admin_email = "admin@example.com"
 
 [auth.captcha]
@@ -441,6 +690,24 @@ secret = "captcha-secret"
 
 [auth.mfa.totp]
 enroll_enabled = false
+
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/custom_access_token_hook"
+
+[auth.hook.send_sms]
+enabled = true
+uri = "https://sms.example.com/hook"
+secrets = "env(SEND_SMS_SECRET)"
+
+[auth.external.github]
+enabled = true
+client_id = "gh-client"
+secret = "env(GITHUB_SECRET)"
+
+[auth.email.notification.email_changed]
+enabled = true
+subject = "Email changed"
 
 [storage]
 file_size_limit = "50MiB"
@@ -455,7 +722,10 @@ ip_version = "IPv4"
 policy = "per_worker"
 `;
 
-  const overrides = [
+  const dotenv = [
+    "SMTP_PASS=from-dotenv",
+    "SEND_SMS_SECRET=v1,whsec_c2VuZC1zbXMtc2VjcmV0LWJhc2U2NA==",
+    "GITHUB_SECRET=gh-secret",
     "SUPABASE_API_PORT=54421",
     "SUPABASE_API_SCHEMAS=public,extra",
     "SUPABASE_API_MAX_ROWS=0x20",
@@ -468,72 +738,156 @@ policy = "per_worker"
     "SUPABASE_AUTH_SITE_URL=http://example.test",
     "SUPABASE_AUTH_JWT_EXPIRY=7200",
     "SUPABASE_AUTH_EMAIL_SMTP_HOST=smtp.override.test",
-    "SUPABASE_AUTH_EMAIL_SMTP_PASS=override-pass",
     "SUPABASE_AUTH_CAPTCHA_PROVIDER=turnstile",
+    "SUPABASE_AUTH_CAPTCHA_SECRET=env-captcha-secret",
     "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED=true",
+    "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI=pg-functions://postgres/public/other_hook",
+    "SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID=env-gh-client",
+    "SUPABASE_AUTH_EMAIL_NOTIFICATION_EMAIL_CHANGED_SUBJECT=Changed by env",
     "SUPABASE_STORAGE_FILE_SIZE_LIMIT=100MiB",
     "SUPABASE_STUDIO_PORT=54523",
     "SUPABASE_REALTIME_IP_VERSION=IPv6",
     "SUPABASE_EDGE_RUNTIME_POLICY=oneshot",
   ].join("\n");
 
-  it.live("agrees with the stack config overlay for the keys the overlay covers", () =>
+  const stackOverlay = (root: string, ref?: string) =>
     Effect.gen(function* () {
-      const root = yield* project(richConfig, { supabaseEnv: `${overrides}\n` });
-      const { layer } = makeLayer();
+      const context =
+        ref === undefined
+          ? undefined
+          : yield* loadLocalProjectContext(
+              root,
+              (message) => new StackConfigError({ message }),
+              ref,
+            );
+      return (yield* loadStackConfig(root, context === undefined ? undefined : { context })).source;
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
 
-      const overlay = yield* loadStackConfig(root).pipe(
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
-      );
-      const snapshot = yield* CliConfigValues.use((values) =>
-        values.load({ workdir: root, projectRef: Option.none() }),
-      ).pipe(Effect.provide(layer));
-      const { config, originAt } = yield* snapshot.materialize;
+  const materialize = (
+    root: string,
+    options: {
+      readonly ref?: string;
+      readonly flags?: ReadonlyArray<ReturnType<typeof flagInput>>;
+    } = {},
+  ) => {
+    const { layer } = makeLayer(options.flags);
+    return CliConfigValues.use((values) =>
+      values.load({
+        workdir: root,
+        projectRef: options.ref === undefined ? Option.none() : Option.some(options.ref),
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.map((snapshot) => snapshot.materialized),
+    );
+  };
 
-      expect(config.api).toEqual(overlay.source.api);
-      expect(config.db).toEqual(overlay.source.db);
-      expect(config.studio).toEqual(overlay.source.studio);
-      expect(config.realtime).toEqual(overlay.source.realtime);
-      expect(config.edge_runtime).toEqual(overlay.source.edge_runtime);
-      expect(config.storage).toEqual(overlay.source.storage);
-      const hookEnabled = (hooks: typeof config.auth.hook) =>
-        Object.fromEntries(Object.entries(hooks).map(([name, hook]) => [name, hook.enabled]));
-      expect({ ...config.auth, hook: hookEnabled(config.auth.hook) }).toEqual({
-        ...overlay.source.auth,
-        hook: hookEnabled(overlay.source.auth.hook),
+  const compareWithOverlay = (
+    config: CliConfig,
+    overlay: Effect.Success<ReturnType<typeof stackOverlay>>,
+  ) => {
+    expect(config.api).toEqual(overlay.api);
+    expect(config.db).toEqual({
+      ...overlay.db,
+      seed: { ...overlay.db.seed, sql_paths: ["supabase/seed.sql"] },
+    });
+    expect(config.studio).toEqual(overlay.studio);
+    expect(config.realtime).toEqual(overlay.realtime);
+    expect(config.edge_runtime).toEqual(overlay.edge_runtime);
+    expect(config.storage).toEqual(overlay.storage);
+    expect(config.auth).toEqual(overlay.auth);
+  };
+
+  it.live("agrees with the stack config overlay, including secrets, families and hooks", () =>
+    Effect.gen(function* () {
+      const root = yield* project(richConfig, { supabaseEnv: `${dotenv}\n` });
+
+      const overlay = yield* stackOverlay(root);
+      const { config, originAt } = yield* materialize(root);
+
+      compareWithOverlay(config, overlay);
+      expect(config.auth.hook.custom_access_token).toMatchObject({
+        enabled: true,
+        uri: "pg-functions://postgres/public/other_hook",
       });
-      expect({
-        port: config.api.port,
-        schemas: config.api.schemas,
-        maxRows: config.api.max_rows,
-        majorVersion: config.db.major_version,
-        poolerEnabled: config.db.pooler.enabled,
-        maxConnections: config.db.settings?.max_connections,
-        enableSignup: config.auth.enable_signup,
-        smtpHost: config.auth.email.smtp?.host,
-        captchaProvider: config.auth.captcha?.provider,
-        totpEnroll: config.auth.mfa.totp.enroll_enabled,
-        policy: config.edge_runtime.policy,
-      }).toEqual({
-        port: 54421,
-        schemas: ["public", "extra"],
-        maxRows: 32,
-        majorVersion: 17,
-        poolerEnabled: false,
-        maxConnections: 100,
-        enableSignup: false,
-        smtpHost: "smtp.override.test",
-        captchaProvider: "turnstile",
-        totpEnroll: true,
-        policy: "oneshot",
+      expect(config.auth.hook.mfa_verification_attempt).toMatchObject({
+        enabled: false,
+        uri: "",
+        secrets: "",
       });
+      expect(config.auth.external["github"]).toMatchObject({
+        client_id: "env-gh-client",
+        secret: "gh-secret",
+      });
+      expect(config.auth.email.smtp?.pass).toBe("from-dotenv");
+      expect(config.auth.captcha?.secret).toBe("env-captcha-secret");
       expect(originAt("api.port")).toMatchObject({
         tier: "projectEnv",
         envName: "SUPABASE_API_PORT",
       });
-      expect(originAt("api.max_rows")).toMatchObject({ tier: "projectEnv" });
       expect(originAt("auth.email.smtp.port")).toMatchObject({ tier: "config" });
       expect(originAt("db.password")).toEqual({ tier: "default" });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("agrees with the stack config overlay for a matched remote and shell overrides", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        `${richConfig}
+[remotes.staging]
+project_id = "${LINKED}"
+
+[remotes.staging.api]
+schemas = ["public", "remote_api"]
+
+[remotes.staging.auth]
+site_url = "http://remote.example.com"
+enable_signup = false
+
+[remotes.staging.db]
+major_version = 15
+`,
+        {
+          supabaseEnv:
+            "SMTP_PASS=from-dotenv\nSEND_SMS_SECRET=v1,whsec_c2VuZC1zbXMtc2VjcmV0LWJhc2U2NA==\nGITHUB_SECRET=gh\n",
+        },
+      );
+      yield* link(root, LINKED);
+
+      const overlay = yield* stackOverlay(root, LINKED);
+      const { config, originAt } = yield* materialize(root, { ref: LINKED });
+
+      compareWithOverlay(config, overlay);
+      expect(config.api.schemas).toEqual(["public", "shell_api"]);
+      expect(config.auth.site_url).toBe("http://remote.example.com");
+      expect(originAt("auth.site_url")).toMatchObject({ tier: "config", remote: "staging" });
+      expect(originAt("api.schemas")).toMatchObject({ tier: "shell" });
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_API_SCHEMAS: "public,shell_api" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("lets flags beat every other tier and applies the key's normalizer once", () =>
+    Effect.gen(function* () {
+      const root = yield* project(richConfig, {
+        supabaseEnv:
+          "SMTP_PASS=p\nSEND_SMS_SECRET=v1,whsec_c2VuZC1zbXMtc2VjcmV0LWJhc2U2NA==\nGITHUB_SECRET=g\nSUPABASE_DB_SEED_ENABLED=false\n",
+      });
+
+      const { config, originAt } = yield* materialize(root, {
+        flags: [
+          flagInput("db.seed.enabled", "include-seed", true),
+          flagInput("db.seed.sql_paths", "sql-paths", ["./flag.sql"]),
+          flagInput("experimental.pgdelta.enabled", "use-pg-delta", true),
+        ],
+      });
+
+      expect(config.db.seed.enabled).toBe(true);
+      expect(config.db.seed.sql_paths).toEqual(["supabase/flag.sql"]);
+      expect(config.experimental.pgdelta?.enabled).toBe(true);
+      expect(originAt("db.seed.enabled")).toEqual({ tier: "flag", flag: "include-seed" });
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -541,15 +895,11 @@ policy = "per_worker"
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-empty-" });
-      const { layer } = makeLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
-        values.load({ workdir: root, projectRef: Option.none() }),
-      ).pipe(Effect.provide(layer));
-      const { config, originAt } = yield* snapshot.materialize;
+      const { config, originAt } = yield* materialize(root);
 
-      expect(snapshot.rawDocument).toEqual(Option.none());
       expect(config.db.port).toBe(54322);
+      expect(config.db.seed.sql_paths).toEqual(["supabase/seed.sql"]);
       expect(originAt("db.port")).toEqual({ tier: "default" });
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );

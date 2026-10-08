@@ -1,7 +1,11 @@
-import { DEFAULT_LOCAL_DATABASE_PASSWORD } from "@supabase/stack/defaults";
-import { Option } from "effect";
+import {
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "@supabase/stack/defaults";
 
+import { sanitizeProjectId } from "../command-internal/docker-ids.ts";
 import { resolveSeedSqlPath } from "../command-internal/seed-path.ts";
+import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import {
   binaryCodec,
   commaListCodec,
@@ -28,6 +32,8 @@ export interface CliConfigKeyDef {
   /** Not a config document path: the document is never consulted. */
   readonly document?: false;
   readonly envScope?: "linkedTarget";
+  /** `materialize` writes the default into the decoded config when no tier supplies a value. */
+  readonly materializeDefault?: true;
 }
 
 /** Deprecated env names that still resolve to the key at the given path. */
@@ -51,6 +57,14 @@ export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<
   },
 };
 
+/**
+ * Schema leaves the registry cannot encode as a key, with the reason. Registry construction throws
+ * for any other leaf without a codec.
+ */
+export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
+  "experimental.inspect.rules": "a list of tables, not strings; read from the document",
+};
+
 /** Schema leaves that are not env-overridable, with the reason. */
 export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.orioledb_version": "deprecated; promoted to db.orioledb_version before resolution",
@@ -60,9 +74,20 @@ export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
 export const CLI_CONFIG_CONTEXT_DEFAULTS: Readonly<
   Record<string, (ctx: CliConfigKeyContext) => unknown>
 > = {
-  project_id: (ctx) => Option.getOrElse(ctx.projectRef, () => ctx.path.basename(ctx.workdir)),
+  project_id: (ctx) => sanitizeProjectId(ctx.path.basename(ctx.workdir)),
   "auth.email.smtp.enabled": (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
 };
+
+/** Optional leaves the stack config always carries as strings, so an unset value reads as `""`. */
+export const CLI_CONFIG_EMPTY_DEFAULTS = /^auth\.hook\.[^.]+\.(uri|secrets)$/;
+
+/** Canonical flag names (and short aliases) that override a key; `key.flag` accepts only these. */
+export const CLI_CONFIG_FLAGS = {
+  "linkedDb.password": { names: ["password"], aliases: ["p"] },
+  "db.seed.enabled": { names: ["include-seed", "no-seed"] },
+  "db.seed.sql_paths": { names: ["sql-paths"] },
+  "experimental.pgdelta.enabled": { names: ["use-pg-delta"] },
+} as const satisfies Readonly<Record<string, CliConfigFlagDeclaration>>;
 
 const prefixed = (ctx: CliConfigKeyContext, pattern: unknown): unknown =>
   typeof pattern === "string" ? resolveSeedSqlPath(ctx.path, pattern) : pattern;
@@ -107,7 +132,12 @@ export const CLI_CONFIG_DOCUMENT_KEYS: ReadonlyArray<CliConfigKeyDef> = [
     default: DEFAULT_LOCAL_DATABASE_PASSWORD,
     noEnv: true,
   },
-  { path: "db.root_key", codec: stringCodec, optional: true, secret: true },
+  {
+    path: "db.root_key",
+    codec: stringCodec,
+    default: DEFAULT_POSTGRES_ROOT_KEY,
+    secret: true,
+  },
   { path: "auth.external_url", codec: stringCodec, optional: true },
   { path: "auth.passkey.enabled", codec: goBoolCodec, default: false },
   { path: "auth.webauthn.rp_id", codec: stringCodec, default: "" },
@@ -135,8 +165,14 @@ interface CliConfigFamilyField {
   readonly secret?: true;
 }
 
+export type CliConfigFamilyId =
+  | "authExternal"
+  | "authEmailTemplate"
+  | "authEmailNotification"
+  | "authHook";
+
 export interface CliConfigFamilyDef {
-  readonly id: "authExternal" | "authEmailTemplate" | "authEmailNotification";
+  readonly id: CliConfigFamilyId;
   /** Dotted path of the table whose entries are named by the family. */
   readonly prefix: string;
   readonly fields: ReadonlyArray<CliConfigFamilyField>;
@@ -176,6 +212,15 @@ export const CLI_CONFIG_FAMILIES: ReadonlyArray<CliConfigFamilyDef> = [
       { name: "content", codec: stringCodec, optional: true },
     ],
   },
+  {
+    id: "authHook",
+    prefix: "auth.hook",
+    fields: [
+      { name: "enabled", codec: goBoolCodec, default: false },
+      { name: "uri", codec: stringCodec, default: "" },
+      { name: "secrets", codec: stringCodec, default: "", secret: true },
+    ],
+  },
 ];
 
 /**
@@ -190,6 +235,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_BASELINE: "pgdata snapshot marker file name",
   SUPABASE_CA_SKIP_VERIFY: "telemetry signal",
   SUPABASE_CLI_BINARY_OVERRIDE: "launcher",
+  SUPABASE_CLI_VERSION: "build-time define",
   SUPABASE_CLI_POSTHOG_HOST: "telemetry",
   SUPABASE_CLI_POSTHOG_KEY: "telemetry",
   SUPABASE_COMPLETION_DESCRIPTIONS: "shell completion",
@@ -199,7 +245,9 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_ENV: "dotenv file selector",
   SUPABASE_EXPERIMENTAL: "global flag",
   SUPABASE_FOO_BAR: "documentation example",
+  SUPABASE_FUNCTIONS_DIR: "functions deploy constant",
   SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: "functions serve",
+  SUPABASE_FUNCTION_SLUG: "functions runtime env",
   SUPABASE_HOME: "global state directory",
   SUPABASE_INSTALL_METHOD: "upgrade notice",
   SUPABASE_INTERNAL_DEBUG: "internal",
@@ -222,8 +270,10 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_PROJECT_HOST: "platform profile",
   SUPABASE_PUBLIC_URL: "functions runtime env",
   SUPABASE_PUBLISHABLE_KEY: "functions runtime env",
+  SUPABASE_PUBLISHABLE_KEYS: "functions runtime env",
   SUPABASE_SCANNER_BUFFER_SIZE: "seed scanner",
   SUPABASE_SECRET_KEY: "functions runtime env",
+  SUPABASE_SECRET_KEYS: "functions runtime env",
   SUPABASE_SERVICES_HOSTNAME: "functions runtime env",
   SUPABASE_SERVICE_KEY: "functions runtime env",
   SUPABASE_SERVICE_ROLE_KEY: "functions runtime env",

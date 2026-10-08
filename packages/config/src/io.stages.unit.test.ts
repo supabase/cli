@@ -5,7 +5,13 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeMergedCliConfig, loadCliConfig, parseMergeCliConfig } from "./io.ts";
+import {
+  decodeMergedCliConfig,
+  loadCliConfig,
+  mergeParsedCliConfig,
+  parseCliConfigDocumentFile,
+  parseMergeCliConfig,
+} from "./io.ts";
 
 const roots: Array<string> = [];
 
@@ -126,5 +132,69 @@ describe("config pipeline stages", () => {
       source: "environment",
       envVariables: ["PROJECT_NAME"],
     });
+  });
+});
+
+describe("remote validation", () => {
+  const duplicateToml = `
+[remotes.a]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.b]
+project_id = "abcdefghijklmnopqrst"
+`;
+
+  test("parseMerge leaves remote validation to the caller unless asked", async () => {
+    const cwd = await makeProject(duplicateToml);
+
+    const unvalidated = await run(
+      parseMergeCliConfig(cwd, { search: false, selectRemote: () => undefined }),
+    );
+    const failure = await run(
+      Effect.flip(
+        parseMergeCliConfig(cwd, {
+          search: false,
+          selectRemote: () => undefined,
+          validateRemotes: true,
+        }),
+      ),
+    );
+
+    expect(unvalidated?.appliedRemote).toBeUndefined();
+    expect(failure._tag).toBe("DuplicateRemoteProjectIdError");
+  });
+
+  test("a malformed remote project_id fails the explicit format check", async () => {
+    const cwd = await makeProject('[remotes.a]\nproject_id = "short"\n');
+
+    const failure = await run(
+      Effect.flip(
+        parseMergeCliConfig(cwd, {
+          search: false,
+          selectRemote: () => undefined,
+          validateRemotes: true,
+        }),
+      ),
+    );
+
+    expect(failure._tag).toBe("InvalidRemoteProjectIdError");
+  });
+
+  test("the parse and merge halves compose to parseMerge", async () => {
+    const cwd = await makeProject(toml);
+
+    const composed = await run(
+      Effect.gen(function* () {
+        const parsed = yield* parseCliConfigDocumentFile(cwd, { search: false });
+        if (parsed === null) return null;
+        return yield* mergeParsedCliConfig(parsed, { selectRemote: () => "staging" });
+      }),
+    );
+    const whole = await run(
+      parseMergeCliConfig(cwd, { search: false, selectRemote: () => "staging" }),
+    );
+
+    expect(composed).toEqual(whole);
+    expect(composed?.appliedRemote).toBe("staging");
   });
 });

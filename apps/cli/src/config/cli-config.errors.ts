@@ -7,21 +7,16 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import type { CliConfigTier } from "./cli-config-key.ts";
 
-/** A single config key's winning value failed to decode, so it never reaches a consumer. */
+/**
+ * A config key's winning value, or a flag binding, is invalid. `message` carries the wording the
+ * per-key env override errors used; `envName` or `flag` names the offending source.
+ */
 export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")<{
   readonly path: string;
   readonly tier: CliConfigTier;
   readonly message: string;
   readonly envName?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/** The config document, project env files, or remote selection could not be loaded. */
-export class CliConfigLoadError extends Data.TaggedError("CliConfigLoadError")<{
-  readonly message: string;
+  readonly flag?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

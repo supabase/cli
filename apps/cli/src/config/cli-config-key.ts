@@ -5,19 +5,15 @@ import type { Flag } from "effect/unstable/cli";
 
 import { parseGoBool } from "../command-internal/config-validate.ts";
 import { decryptSecret, isEncryptedSecret } from "../command-internal/vault-decrypt.ts";
-import { makeCliConfigKeyFlag, type CliConfigFlagOptions } from "./cli-config-flags.ts";
+import {
+  makeCliConfigKeyFlag,
+  type CliConfigFlagDeclaration,
+  type CliConfigFlagOptions,
+  type CliConfigNoFlags,
+} from "./cli-config-flags.ts";
 import { CliConfigValueError } from "./cli-config.errors.ts";
 
 export type CliConfigTier = "flag" | "shell" | "projectEnv" | "config" | "default";
-
-/** Resolution order, highest priority first. Nothing per key can reorder or drop a tier. */
-export const CLI_CONFIG_TIER_ORDER: ReadonlyArray<CliConfigTier> = [
-  "flag",
-  "shell",
-  "projectEnv",
-  "config",
-  "default",
-];
 
 export type CliConfigKeyOrigin =
   | { readonly tier: "flag"; readonly flag: string }
@@ -206,7 +202,7 @@ export const binaryCodec: CliConfigCodec<boolean> = {
   describe: (_path, _raw, envName) => `${envName ?? "value"} must be 0 or 1 when set`,
 };
 
-export interface CliConfigKeySpec<X> {
+export interface CliConfigKeySpec<X, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
   readonly path: string;
   /** `[0]` is the canonical name; the rest are deprecated aliases. Empty means not env-overridable. */
   readonly env?: ReadonlyArray<string>;
@@ -219,15 +215,17 @@ export interface CliConfigKeySpec<X> {
   readonly envScope?: "linkedTarget";
   /** `false` when the key has no document path, so the config tier never applies. */
   readonly document?: false;
-  /** The default depends on the loaded document or target, so `materialize` writes it in. */
-  readonly contextDefault?: true;
+  /** `materialize` writes the default into the decoded config when no tier supplies a value. */
+  readonly materializeDefault?: true;
+  /** The flag names and aliases that may override this key. */
+  readonly flags?: F;
 }
 
 /**
  * A config value descriptor: `A` is the value consumers read, `X` the decoded leaf (they differ
- * only for optional keys, where `A` is `Option<X>`).
+ * only for optional keys, where `A` is `Option<X>`), and `F` the flag names it declares.
  */
-export interface CliConfigKey<A, X = A> {
+export interface CliConfigKey<A, X = A, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
   readonly path: string;
   readonly env: ReadonlyArray<string>;
   readonly codec: CliConfigCodec<X>;
@@ -240,16 +238,18 @@ export interface CliConfigKey<A, X = A> {
   readonly envRequiresSection?: string;
   readonly envScope?: "linkedTarget";
   readonly document?: false;
-  readonly contextDefault?: true;
-  readonly flag: (options: CliConfigFlagOptions<X>) => Flag.Flag<Option.Option<X>>;
+  readonly materializeDefault?: true;
+  readonly flagNames: ReadonlyArray<string>;
+  readonly flagAliases: ReadonlyArray<string>;
+  readonly flag: (options: CliConfigFlagOptions<X, F>) => Flag.Flag<Option.Option<X>>;
 }
 
 /** The primitive behind the typed key factories; the registry uses it to build type-erased keys. */
-export const makeCliConfigKey = <A, X>(
-  spec: CliConfigKeySpec<X>,
-  shape: Pick<CliConfigKey<A, X>, "defaultValue" | "wrap" | "toDocument">,
-): CliConfigKey<A, X> => {
-  const key: CliConfigKey<A, X> = {
+export const makeCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliConfigNoFlags>(
+  spec: CliConfigKeySpec<X, F>,
+  shape: Pick<CliConfigKey<A, X, F>, "defaultValue" | "wrap" | "toDocument">,
+): CliConfigKey<A, X, F> => {
+  const key: CliConfigKey<A, X, F> = {
     path: spec.path,
     env: spec.env ?? [],
     codec: spec.codec,
@@ -261,22 +261,29 @@ export const makeCliConfigKey = <A, X>(
       : { envRequiresSection: spec.envRequiresSection }),
     ...(spec.envScope === undefined ? {} : { envScope: spec.envScope }),
     ...(spec.document === undefined ? {} : { document: spec.document }),
-    ...(spec.contextDefault === undefined ? {} : { contextDefault: spec.contextDefault }),
+    ...(spec.materializeDefault === undefined
+      ? {}
+      : { materializeDefault: spec.materializeDefault }),
+    flagNames: spec.flags?.names ?? [],
+    flagAliases: spec.flags?.aliases ?? [],
     flag: (options) => makeCliConfigKeyFlag(key, options),
   };
   return key;
 };
 
 /** A key with a value in every resolution: its default stands in when no tier supplies one. */
-export const requiredCliConfigKey = <X>(
-  spec: CliConfigKeySpec<X> &
+export const requiredCliConfigKey = <
+  X,
+  const F extends CliConfigFlagDeclaration = CliConfigNoFlags,
+>(
+  spec: CliConfigKeySpec<X, F> &
     (
       | { readonly default: X; readonly defaultFrom?: undefined }
       | { readonly default?: undefined; readonly defaultFrom: (ctx: CliConfigKeyContext) => X }
     ),
-): CliConfigKey<X> => {
+): CliConfigKey<X, X, F> => {
   const { default: fixed, defaultFrom } = spec;
-  return makeCliConfigKey<X, X>(spec, {
+  return makeCliConfigKey<X, X, F>(spec, {
     defaultValue: defaultFrom ?? (() => fixed),
     wrap: (value) => value,
     toDocument: (value) => value,
@@ -284,12 +291,15 @@ export const requiredCliConfigKey = <X>(
 };
 
 /** A key that may be absent; consumers read `Option<X>`. */
-export const optionalCliConfigKey = <X>(
-  spec: CliConfigKeySpec<X> & {
+export const optionalCliConfigKey = <
+  X,
+  const F extends CliConfigFlagDeclaration = CliConfigNoFlags,
+>(
+  spec: CliConfigKeySpec<X, F> & {
     readonly defaultFrom?: (ctx: CliConfigKeyContext) => Option.Option<X>;
   },
-): CliConfigKey<Option.Option<X>, X> =>
-  makeCliConfigKey<Option.Option<X>, X>(spec, {
+): CliConfigKey<Option.Option<X>, X, F> =>
+  makeCliConfigKey<Option.Option<X>, X, F>(spec, {
     defaultValue: spec.defaultFrom ?? (() => Option.none()),
     wrap: Option.some,
     toDocument: Option.getOrUndefined,
@@ -347,20 +357,25 @@ const display = (value: unknown, secret: boolean): string => {
  * The single precedence implementation: flag > shell > projectEnv > config > default. Pure; the
  * caller decides which sources exist and emits any deprecated-alias warning.
  */
-export const pickCliConfigKey = <A, X>(
-  key: CliConfigKey<A, X>,
+export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliConfigNoFlags>(
+  key: CliConfigKey<A, X, F>,
   sources: CliConfigSources,
 ): Result.Result<CliConfigValue<A>, CliConfigValueError> => {
   const lookup = (name: string) => lookupCliConfigEnv(sources, name);
   const secret = key.secret === true;
 
-  const failure = (tier: CliConfigTier, raw: unknown, envName?: string) =>
+  const failure = (
+    tier: CliConfigTier,
+    raw: unknown,
+    source?: { envName?: string; flag?: string },
+  ) =>
     Result.fail(
       new CliConfigValueError({
         path: key.path,
         tier,
-        message: key.codec.describe(key.path, display(raw, secret), envName),
-        ...(envName === undefined ? {} : { envName }),
+        message: key.codec.describe(key.path, display(raw, secret), source?.envName),
+        ...(source?.envName === undefined ? {} : { envName: source.envName }),
+        ...(source?.flag === undefined ? {} : { flag: source.flag }),
       }),
     );
 
@@ -405,7 +420,7 @@ export const pickCliConfigKey = <A, X>(
   const flag = sources.flags(key.path);
   if (flag !== undefined) {
     const decoded = key.codec.fromConfig(flag.value);
-    if (decoded === undefined) return failure("flag", flag.value);
+    if (decoded === undefined) return failure("flag", flag.value, { flag: flag.flag });
     return Result.succeed(settle(decoded, { tier: "flag", flag: flag.flag }));
   }
 
@@ -421,7 +436,7 @@ export const pickCliConfigKey = <A, X>(
         const plain = decrypt(tier, raw);
         if (Result.isFailure(plain)) return Result.fail(plain.failure);
         const decoded = key.codec.parse(typeof plain.success === "string" ? plain.success : raw);
-        if (decoded === undefined) return failure(tier, raw, name);
+        if (decoded === undefined) return failure(tier, raw, { envName: name });
 
         const file = "file" in found ? found.file : undefined;
         const canonical = key.env[0];

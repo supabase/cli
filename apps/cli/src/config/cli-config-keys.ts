@@ -5,15 +5,19 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
+  CLI_CONFIG_EMPTY_DEFAULTS,
   CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_ENV_EXCLUDED,
   CLI_CONFIG_FAMILIES,
+  CLI_CONFIG_FLAGS,
   CLI_CONFIG_LINKED_KEYS,
   CLI_CONFIG_NORMALIZERS,
+  CLI_CONFIG_SCHEMA_EXCLUDED,
   envRequiresSectionFor,
   type CliConfigFamilyDef,
   type CliConfigKeyDef,
 } from "./cli-config-key-annotations.ts";
+import type { CliConfigFlagDeclaration, CliConfigNoFlags } from "./cli-config-flags.ts";
 import {
   cliEnvName,
   commaListCodec,
@@ -24,11 +28,14 @@ import {
   portCodec,
   stringCodec,
   type CliConfigKey,
+  type CliConfigKeyContext,
   type CliEnvName,
 } from "./cli-config-key.ts";
 
 /** A key with its value types erased, as the registry stores every key. */
-export type AnyCliConfigKey = CliConfigKey<unknown, unknown>;
+export type AnyCliConfigKey = CliConfigKey<unknown, unknown, CliConfigFlagDeclaration>;
+
+const flagDeclarations: Readonly<Record<string, CliConfigFlagDeclaration>> = CLI_CONFIG_FLAGS;
 
 /** `SUPABASE_` + UPPER_SNAKE(path): the env name every key derives unless it is annotated. */
 export const deriveCliConfigEnvName = (path: string): string =>
@@ -102,7 +109,13 @@ const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
   const section = envRequiresSectionFor(def.path);
   const normalize = CLI_CONFIG_NORMALIZERS[def.path];
   const optional = def.optional === true && def.defaultFrom === undefined;
-  return makeCliConfigKey<unknown, unknown>(
+  const flags = flagDeclarations[def.path];
+  const fixedDefault = def.defaultFrom ?? (() => def.default);
+  const defaultValue =
+    normalize === undefined
+      ? fixedDefault
+      : (ctx: CliConfigKeyContext) => normalize(fixedDefault(ctx), ctx);
+  return makeCliConfigKey<unknown, unknown, CliConfigFlagDeclaration>(
     {
       path: def.path,
       env,
@@ -112,7 +125,10 @@ const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
       ...(section === undefined ? {} : { envRequiresSection: section }),
       ...(def.envScope === undefined ? {} : { envScope: def.envScope }),
       ...(def.document === undefined ? {} : { document: def.document }),
-      ...(def.defaultFrom === undefined ? {} : { contextDefault: true as const }),
+      ...(def.defaultFrom === undefined && def.materializeDefault === undefined
+        ? {}
+        : { materializeDefault: true as const }),
+      ...(flags === undefined ? {} : { flags }),
     },
     optional
       ? {
@@ -121,16 +137,17 @@ const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
           toDocument: (value) => (Option.isOption(value) ? Option.getOrUndefined(value) : value),
         }
       : {
-          defaultValue: def.defaultFrom ?? (() => def.default),
+          defaultValue,
           wrap: (value) => value,
           toDocument: (value) => value,
         },
   );
 };
 
-const schemaKeyDefs = (): ReadonlyArray<CliConfigKeyDef> => {
+/** Key definitions for every leaf of a config schema; a leaf with no codec must be excluded explicitly. */
+export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<CliConfigKeyDef> => {
   const leaves: Array<SchemaLeaf> = [];
-  for (const property of CliConfigSchema.ast.propertySignatures) {
+  for (const property of root.propertySignatures) {
     if (typeof property.name === "string" && property.name !== "remotes") {
       collectSchemaLeaves(property.type, [property.name], leaves);
     }
@@ -138,18 +155,26 @@ const schemaKeyDefs = (): ReadonlyArray<CliConfigKeyDef> => {
   return leaves.flatMap((leaf): ReadonlyArray<CliConfigKeyDef> => {
     const path = leaf.segments.join(".");
     const codec = CLI_CONFIG_CODEC_OVERRIDES[path] ?? codecForLeaf(leaf.segments, leaf.node);
-    if (codec === undefined) return [];
+    if (codec === undefined) {
+      if (path in CLI_CONFIG_SCHEMA_EXCLUDED) return [];
+      throw new Error(
+        `The config schema leaf "${path}" has no key codec; add it to CLI_CONFIG_SCHEMA_EXCLUDED or CLI_CONFIG_CODEC_OVERRIDES`,
+      );
+    }
     const defaultFrom = CLI_CONFIG_CONTEXT_DEFAULTS[path];
     const configured = leaf.node.annotations?.["default"];
+    const emptyDefault = leaf.optional && CLI_CONFIG_EMPTY_DEFAULTS.test(path);
     return [
       {
         path,
         codec,
-        ...(leaf.optional && defaultFrom === undefined
-          ? { optional: true as const }
-          : defaultFrom === undefined
-            ? { default: configured }
-            : { defaultFrom }),
+        ...(emptyDefault
+          ? { default: "", materializeDefault: true as const }
+          : leaf.optional && defaultFrom === undefined
+            ? { optional: true as const }
+            : defaultFrom === undefined
+              ? { default: configured }
+              : { defaultFrom }),
         ...(leaf.node.annotations?.["x-secret"] === true ? { secret: true as const } : {}),
         ...(CLI_CONFIG_ENV_EXCLUDED[path] === undefined ? {} : { noEnv: true as const }),
       },
@@ -158,7 +183,7 @@ const schemaKeyDefs = (): ReadonlyArray<CliConfigKeyDef> => {
 };
 
 const registryKeys: ReadonlyArray<AnyCliConfigKey> = [
-  ...schemaKeyDefs(),
+  ...cliConfigSchemaKeyDefs(CliConfigSchema.ast),
   ...CLI_CONFIG_DOCUMENT_KEYS,
   ...CLI_CONFIG_LINKED_KEYS,
 ].map(buildKey);
@@ -180,6 +205,20 @@ export const cliConfigRegistry = {
 
 const familyKeys = new Map<string, AnyCliConfigKey>();
 
+const familyEnvName = (family: CliConfigFamilyDef, name: string, field: string): string =>
+  `${deriveCliConfigEnvName(`${family.prefix}.${name}`)}_${field.toUpperCase()}`;
+
+/** The env names that can override the fields of one named entry in a family. */
+export const cliConfigFamilyEnvNames = (
+  family: CliConfigFamilyDef,
+  name: string,
+): ReadonlyArray<string> => family.fields.map((field) => familyEnvName(family, name, field.name));
+
+/** Paths the schema does not model, so only the raw document and the environment can supply them. */
+export const cliConfigDocumentOnlyPaths: ReadonlySet<string> = new Set(
+  CLI_CONFIG_DOCUMENT_KEYS.map((def) => def.path),
+);
+
 /** The key for one field of a named entry in an arbitrarily-keyed table, e.g. `auth.external.github.secret`. */
 export const cliConfigFamilyKey = (
   family: CliConfigFamilyDef,
@@ -189,12 +228,14 @@ export const cliConfigFamilyKey = (
   const spec = family.fields.find((candidate) => candidate.name === field);
   if (spec === undefined) return undefined;
   const path = `${family.prefix}.${name}.${field}`;
+  const registered = keysByPath.get(path);
+  if (registered !== undefined) return registered;
   const cached = familyKeys.get(path);
   if (cached !== undefined) return cached;
   const key = buildKey({
     path,
     codec: spec.codec,
-    env: [`${deriveCliConfigEnvName(`${family.prefix}.${name}`)}_${field.toUpperCase()}`],
+    env: [familyEnvName(family, name, field)],
     ...(spec.optional === undefined ? { default: spec.default } : { optional: true }),
     ...(spec.secret === undefined ? {} : { secret: spec.secret }),
   });
@@ -206,30 +247,46 @@ type CamelCase<S extends string> = S extends `${infer Head}_${infer Tail}`
   ? `${Head}${Capitalize<CamelCase<Tail>>}`
   : S;
 
-type LeafKey<V, Optional extends boolean> = Optional extends true
-  ? CliConfigKey<Option.Option<NonNullable<V>>, NonNullable<V>>
-  : CliConfigKey<V>;
+type ChildPath<Parent extends string, Segment extends string> = Parent extends ""
+  ? Segment
+  : `${Parent}.${Segment}`;
 
-type TreeNode<V, Optional extends boolean> =
+type FlagDeclarationAt<Path extends string> = Path extends keyof typeof CLI_CONFIG_FLAGS
+  ? (typeof CLI_CONFIG_FLAGS)[Path]
+  : CliConfigNoFlags;
+
+type EmptyDefaultPath = `auth.hook.${keyof CliConfig["auth"]["hook"]}.${"uri" | "secrets"}`;
+
+type LeafKey<V, Optional extends boolean, Path extends string> = Optional extends true
+  ? Path extends EmptyDefaultPath
+    ? CliConfigKey<NonNullable<V>, NonNullable<V>, FlagDeclarationAt<Path>>
+    : CliConfigKey<Option.Option<NonNullable<V>>, NonNullable<V>, FlagDeclarationAt<Path>>
+  : CliConfigKey<V, V, FlagDeclarationAt<Path>>;
+
+type TreeNode<V, Optional extends boolean, Path extends string> =
   NonNullable<V> extends ReadonlyArray<unknown>
-    ? LeafKey<V, Optional>
+    ? NonNullable<V> extends ReadonlyArray<string>
+      ? LeafKey<V, Optional, Path>
+      : never
     : NonNullable<V> extends object
       ? string extends keyof NonNullable<V>
         ? never
-        : CliConfigKeyTree<NonNullable<V>>
-      : LeafKey<V, Optional>;
+        : CliConfigKeyTree<NonNullable<V>, Path>
+      : LeafKey<V, Optional, Path>;
 
 /** The registry's nested accessor type, derived from the `CliConfig` document type. */
-type CliConfigKeyTree<T> = {
+type CliConfigKeyTree<T, Parent extends string = ""> = {
   readonly [
-    K in keyof T & string as [TreeNode<T[K], false>] extends [never] ? never : CamelCase<K>
-  ]-?: TreeNode<T[K], {} extends Pick<T, K> ? true : false>;
+    K in keyof T & string as [TreeNode<T[K], false, ChildPath<Parent, K>>] extends [never]
+      ? never
+      : CamelCase<K>
+  ]-?: TreeNode<T[K], {} extends Pick<T, K> ? true : false, ChildPath<Parent, K>>;
 };
 
 interface DocumentOnlyKeyTree {
   readonly db: {
     readonly password: CliConfigKey<string>;
-    readonly rootKey: CliConfigKey<Option.Option<string>, string>;
+    readonly rootKey: CliConfigKey<string>;
   };
   readonly auth: {
     readonly externalUrl: CliConfigKey<Option.Option<string>, string>;
@@ -240,7 +297,13 @@ interface DocumentOnlyKeyTree {
       readonly rpOrigins: CliConfigKey<ReadonlyArray<string>>;
     };
   };
-  readonly linkedDb: { readonly password: CliConfigKey<Option.Option<string>, string> };
+  readonly linkedDb: {
+    readonly password: CliConfigKey<
+      Option.Option<string>,
+      string,
+      FlagDeclarationAt<"linkedDb.password">
+    >;
+  };
 }
 
 type CliConfigKeysTree = CliConfigKeyTree<CliConfig> & DocumentOnlyKeyTree;
@@ -281,6 +344,32 @@ export const CliConfigKeys: CliConfigKeysTree = builtTree;
 /** The env name that overrides a `[remotes.<name>]` block's `project_id` for remote selection. */
 export const cliRemoteProjectIdEnvName = (remote: string): string =>
   `SUPABASE_REMOTES_${remote.toUpperCase()}_PROJECT_ID`;
+
+/**
+ * Whether `name` is an env override the registry owns, including the names derived for entries of
+ * a dynamic family such as `SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET`.
+ */
+export const isCliConfigEnvName = (name: string): boolean =>
+  keysByEnvName.has(name) ||
+  CLI_CONFIG_FAMILIES.some((family) => {
+    const prefix = `${deriveCliConfigEnvName(family.prefix)}_`;
+    return (
+      name.startsWith(prefix) &&
+      family.fields.some((field) => name.endsWith(`_${field.name.toUpperCase()}`))
+    );
+  });
+
+/** The entry names of a family that the registry itself declares, e.g. the built-in auth hooks. */
+export const staticCliConfigFamilyNames = (family: CliConfigFamilyDef): ReadonlyArray<string> => {
+  const prefix = `${family.prefix}.`;
+  return [
+    ...new Set(
+      registryKeys.flatMap((key) =>
+        key.path.startsWith(prefix) ? [key.path.slice(prefix.length).split(".")[0] ?? ""] : [],
+      ),
+    ),
+  ];
+};
 
 /** Env-name-only reads: shell-only, so the name lives in the registry but no tier list applies. */
 export const CliEnvNames = {

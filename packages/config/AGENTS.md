@@ -48,7 +48,8 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
   `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseMergeCliConfig` (discover, parse, and merge the `[remotes.*]` block a caller-supplied
-  `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
+  `selectRemote` picks; also available as its two halves `parseCliConfigDocumentFile` and
+  `mergeParsedCliConfig`) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
   env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside
   `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
   here can change or vanish in any release.

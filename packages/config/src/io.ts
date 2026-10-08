@@ -87,7 +87,7 @@ function pathKey(path: ReadonlyArray<string>): string {
 
 /**
  * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]` block, failing on
- * the first duplicate. {@link applyRemoteOverride} only invokes this when `goViperCompat` is
+ * the first duplicate. {@link applyRemoteOverride} only invokes this when `validateRemotes` is
  * set, so it runs even for callers that don't request a specific `projectRef`. A missing
  * `project_id` reads as `""`, so two remotes that both omit it collide on the empty key.
  */
@@ -174,7 +174,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
   interpolatedRemotes: Record<string, unknown> | undefined,
   projectRef: string | undefined,
-  goViperCompat: boolean,
+  validateRemotes: boolean,
   selectRemote?: (remotes: Record<string, unknown>) => string | undefined,
 ) {
   const remotes = rawDocument["remotes"];
@@ -185,7 +185,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
       remoteLeafPaths: [],
     };
   }
-  if (goViperCompat && selectRemote === undefined) {
+  if (validateRemotes) {
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
@@ -630,18 +630,21 @@ export interface ParseMergeCliConfigOptions {
   readonly search?: boolean;
   /** Skip the `config.json`-over-`config.toml` preference and only ever load `config.toml`. */
   readonly tomlOnly?: boolean;
-  /**
-   * Picks the `[remotes.<name>]` block to merge from the raw `remotes` table. The caller owns
-   * remote selection, so the `project_id` duplicate and format checks are not run here.
-   */
+  /** Picks the `[remotes.<name>]` block to merge from the raw `remotes` table. */
   readonly selectRemote: (remotes: Record<string, unknown>) => string | undefined;
+  /**
+   * Run the duplicate and format checks on every `[remotes.*]` `project_id`, as `loadCliConfig`
+   * does with `goViperCompat`. They read the literal values, so a caller that resolves
+   * `project_id` another way, such as an env override, leaves this off and validates itself.
+   */
+  readonly validateRemotes?: boolean;
 }
 
 const mergeRemoteForLoad = (
   normalized: unknown,
   interpolatedRemotes: Record<string, unknown> | undefined,
   projectRef: string | undefined,
-  goViperCompat: boolean,
+  validateRemotes: boolean,
   selectRemote?: (remotes: Record<string, unknown>) => string | undefined,
 ): Effect.Effect<
   {
@@ -652,7 +655,13 @@ const mergeRemoteForLoad = (
   DuplicateRemoteProjectIdError | InvalidRemoteProjectIdError
 > =>
   isObject(normalized)
-    ? applyRemoteOverride(normalized, interpolatedRemotes, projectRef, goViperCompat, selectRemote)
+    ? applyRemoteOverride(
+        normalized,
+        interpolatedRemotes,
+        projectRef,
+        validateRemotes,
+        selectRemote,
+      )
     : Effect.succeed({ document: normalized, appliedRemote: undefined, remoteLeafPaths: [] });
 
 /**
@@ -873,13 +882,28 @@ export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
 });
 
 /**
- * Not covered by semver — exported from `@supabase/config/internal` only. Stage one of the
- * pipeline: discovers and parses the config file, then merges the `[remotes.*]` block chosen by
- * `options.selectRemote`. Returns `null` when no config file exists.
+ * Not covered by semver — exported from `@supabase/config/internal` only. The output of the parse
+ * half of stage one: the config file read and deprecation-normalized, before any `[remotes.*]`
+ * merge.
  */
-export const parseMergeCliConfig = Effect.fn("CliConfig.parseMerge")(function* (
+export interface ParsedCliConfigDocument {
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly rawText: string;
+  readonly schemaRef: string | undefined;
+  readonly ignoredPaths: ReadonlyArray<string>;
+  readonly rawDocument: Record<string, unknown> | undefined;
+  readonly normalized: unknown;
+}
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. Discovers and parses the
+ * config file without merging a remote, so a caller can inspect the document before choosing one.
+ * Returns `null` when no config file exists.
+ */
+export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(function* (
   cwd: string,
-  options: ParseMergeCliConfigOptions,
+  options?: { readonly search?: boolean; readonly tomlOnly?: boolean },
 ) {
   const located = yield* locateCliConfigFile(cwd, options);
 
@@ -890,13 +914,6 @@ export const parseMergeCliConfig = Effect.fn("CliConfig.parseMerge")(function* (
   const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
     located.filePath,
   );
-  const resolved = yield* mergeRemoteForLoad(
-    normalized,
-    undefined,
-    undefined,
-    false,
-    options.selectRemote,
-  );
 
   return {
     path: located.filePath,
@@ -905,10 +922,55 @@ export const parseMergeCliConfig = Effect.fn("CliConfig.parseMerge")(function* (
     schemaRef: getSchemaRef(document),
     ignoredPaths: located.ignoredPaths,
     rawDocument: isObject(normalized) ? normalized : undefined,
+    normalized,
+  } satisfies ParsedCliConfigDocument;
+});
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. The merge half of stage
+ * one: merges the `[remotes.*]` block chosen by `options.selectRemote` over a parsed document.
+ */
+export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function* (
+  parsed: ParsedCliConfigDocument,
+  options: Pick<ParseMergeCliConfigOptions, "selectRemote" | "validateRemotes">,
+) {
+  const resolved = yield* mergeRemoteForLoad(
+    parsed.normalized,
+    undefined,
+    undefined,
+    options.validateRemotes ?? false,
+    options.selectRemote,
+  );
+
+  return {
+    path: parsed.path,
+    format: parsed.format,
+    rawText: parsed.rawText,
+    schemaRef: parsed.schemaRef,
+    ignoredPaths: parsed.ignoredPaths,
+    rawDocument: parsed.rawDocument,
     document: resolved.document,
     appliedRemote: resolved.appliedRemote,
     remoteLeafPaths: resolved.remoteLeafPaths,
   } satisfies MergedCliConfigDocument;
+});
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. Stage one of the
+ * pipeline: discovers and parses the config file, then merges the `[remotes.*]` block chosen by
+ * `options.selectRemote`. Returns `null` when no config file exists.
+ */
+export const parseMergeCliConfig = Effect.fn("CliConfig.parseMerge")(function* (
+  cwd: string,
+  options: ParseMergeCliConfigOptions,
+) {
+  const parsed = yield* parseCliConfigDocumentFile(cwd, options);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  return yield* mergeParsedCliConfig(parsed, options);
 });
 
 const resolveSaveFormat = Effect.fnUntraced(function* (
