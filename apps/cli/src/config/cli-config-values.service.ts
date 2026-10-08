@@ -23,6 +23,8 @@ interface CliConfigLoadTarget {
   readonly workdir: string;
   /** The project the command targets, when it has one; it selects the `[remotes.*]` block. */
   readonly projectRef: Option.Option<string>;
+  /** Resolves env and defaults only, as if the config file were absent. */
+  readonly ignoreConfigFile?: true;
 }
 
 /** An env variable that held a value but was withheld because it belongs to the linked project. */

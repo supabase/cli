@@ -7,6 +7,8 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { inspectReport } from "./report.handler.ts";
 import { inspectBaseLayer } from "../inspect.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -55,4 +57,6 @@ export const inspectReportCommand = Command.make("report", config).pipe(
     ),
   ),
   Command.provide(Layer.merge(inspectBaseLayer, commandRuntimeLayer(["inspect", "report"]))),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -11,6 +11,10 @@ export const getDocumentValue = (document: unknown, path: string): unknown => {
   return current;
 };
 
+/** Whether two document values are the same plain scalars, arrays or tables. */
+export const sameDocumentValue = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
 /** A deep copy of the plain-object and array structure of a parsed document. */
 export const cloneDocument = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(cloneDocument);

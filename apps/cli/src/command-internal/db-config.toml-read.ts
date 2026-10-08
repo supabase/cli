@@ -1,11 +1,9 @@
-import { Config, Effect, FileSystem, Layer, Match, Option, Path } from "effect";
-import { CliConfigFlagInputs, type CliConfigFlagDeclaration } from "../config/cli-config-flags.ts";
+import { Config, Effect, FileSystem, Match, Option, Path } from "effect";
+import type { CliConfigFlagDeclaration } from "../config/cli-config-flags.ts";
 import type { CliConfigKey } from "../config/cli-config-key.ts";
 import { CliConfigKeys, cliConfigRegistry } from "../config/cli-config-keys.ts";
-import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigValueError } from "../config/cli-config.errors.ts";
-import { Output } from "../shared/output/output.service.ts";
 import {
   type AnalyticsInput,
   type AuthInput,
@@ -395,43 +393,6 @@ export const assertDecryptableSecrets = (
 const nonEmpty = (value: string | undefined): string | undefined =>
   value === undefined || value.length === 0 ? undefined : value;
 
-const unusedOutput = () => Effect.die(new Error("the db config snapshot only writes warnings"));
-
-/** Only `raw` is reachable: the snapshot reports deprecated env names through it. */
-const warningOutput = Output.of({
-  format: "text",
-  interactive: false,
-  intro: unusedOutput,
-  outro: unusedOutput,
-  info: unusedOutput,
-  warn: unusedOutput,
-  error: unusedOutput,
-  event: unusedOutput,
-  task: unusedOutput,
-  promptText: unusedOutput,
-  promptPassword: unusedOutput,
-  promptConfirm: unusedOutput,
-  promptSelect: unusedOutput,
-  promptMultiSelect: unusedOutput,
-  progress: unusedOutput,
-  result: unusedOutput,
-  success: unusedOutput,
-  fail: unusedOutput,
-  raw: (text, stream = "stdout") =>
-    Effect.sync(() => {
-      (stream === "stdout" ? process.stdout : process.stderr).write(text);
-    }),
-  rawBytes: unusedOutput,
-});
-
-const CONFIG_FILE_NAME = /(^|[\\/])config\.(toml|json)$/;
-
-/** Hides `config.toml`/`config.json` so the snapshot resolves env and defaults only. */
-const withoutConfigFile = (fs: FileSystem.FileSystem): FileSystem.FileSystem => ({
-  ...fs,
-  exists: (target) => (CONFIG_FILE_NAME.test(target) ? Effect.succeed(false) : fs.exists(target)),
-});
-
 const VALUE_IN_BOOL_MESSAGE = new Set([
   "experimental.pgdelta.enabled",
   "experimental.webhooks.enabled",
@@ -483,35 +444,14 @@ const toDbConfigLoadError = (error: SnapshotLoadError): DbConfigLoadError => {
   }
 };
 
-const loadDbTomlSnapshot = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  ref: string | undefined,
-  ignoreConfigFile: boolean,
-) => {
-  const target = { workdir, projectRef: Option.fromNullishOr(ref) };
-  const standalone = CliConfigValues.use((values) => values.load(target)).pipe(
-    Effect.provide(
-      cliConfigValuesLayer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(FileSystem.FileSystem, ignoreConfigFile ? withoutConfigFile(fs) : fs),
-            Layer.succeed(Path.Path, path),
-            Layer.succeed(Output, warningOutput),
-            Layer.succeed(CliConfigFlagInputs, new Map()),
-          ),
-        ),
-      ),
-    ),
-  );
-  return Effect.serviceOption(CliConfigValues).pipe(
-    Effect.flatMap((ambient) =>
-      Option.isSome(ambient) && !ignoreConfigFile ? ambient.value.load(target) : standalone,
-    ),
-    Effect.mapError(toDbConfigLoadError),
-  );
-};
+const loadDbTomlSnapshot = (workdir: string, ref: string | undefined, ignoreConfigFile: boolean) =>
+  CliConfigValues.use((values) =>
+    values.load({
+      workdir,
+      projectRef: Option.fromNullishOr(ref),
+      ...(ignoreConfigFile ? { ignoreConfigFile: true as const } : {}),
+    }),
+  ).pipe(Effect.mapError(toDbConfigLoadError));
 
 /**
  * Projects the `CliConfigValues` snapshot of `<workdir>/supabase/config.{toml,json}` (flags aside)
@@ -536,7 +476,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const snapshot = yield* loadDbTomlSnapshot(fs, path, workdir, ref, ignoreConfigFile);
+  const snapshot = yield* loadDbTomlSnapshot(workdir, ref, ignoreConfigFile);
   const { config } = snapshot.materialized;
   const { sources } = snapshot;
   const lookup: EnvLookup = (name) =>
@@ -561,8 +501,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
+  const configuredProjectId = yield* getKey(CliConfigKeys.projectId);
   const projectIdText =
-    snapshot.materialized.originAt("project_id").tier === "default" ? undefined : config.project_id;
+    configuredProjectId.origin.tier === "default"
+      ? undefined
+      : (configuredProjectId.unnormalized ?? configuredProjectId.value);
   if (projectIdText === "") return yield* fail("Missing required field in config: project_id");
   const projectId = nonEmptyString(projectIdText);
 

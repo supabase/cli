@@ -17,6 +17,8 @@ export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")
   readonly message: string;
   readonly envName?: string;
   readonly flag?: string;
+  /** Per-entry decode failures, merged when several keys fail in one load. */
+  readonly issues?: ReadonlyArray<string>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

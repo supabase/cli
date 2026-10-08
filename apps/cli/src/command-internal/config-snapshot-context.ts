@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, Option, Path, Redacted, Result } from "effect";
+import { Effect, Option, Redacted, Result } from "effect";
 
 import { setDocumentValue } from "../config/cli-config-document.ts";
 import { lookupCliConfigEnv, pickCliConfigKey } from "../config/cli-config-key.ts";
@@ -14,7 +14,6 @@ import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config.errors.ts";
-import { sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
 
 /** The decoded config with every override applied, plus the document and env views its readers need. */
@@ -143,8 +142,7 @@ export const loadLocalSnapshotContext = Effect.fn("LocalSnapshotContext.load")(f
         new CliConfigLoadError({ message: `failed to resolve hostname: ${cause.message}` }),
     ),
   );
-  const path = yield* Path.Path;
-  const projectId = sanitizeProjectId(context.config.project_id ?? path.basename(workdir));
+  const projectId = (yield* context.snapshot.get(CliConfigKeys.projectId)).value;
   return { ...context, hostname, projectId } satisfies LocalSnapshotContext;
 });
 

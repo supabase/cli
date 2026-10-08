@@ -43,6 +43,7 @@ const config = {
   usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
     name: "use-pg-delta",
     description: "Use pg-delta.",
+    hidden: true,
   }),
   unrelated: Flag.string("unrelated").pipe(Flag.optional),
 } as const;
@@ -135,6 +136,15 @@ describe("key.flag", () => {
       expect(yield* run([])).toEqual({});
     }),
   );
+
+  it("hides a flag while keeping its binding", () => {
+    expect(unwrapParam(config.usePgDelta)?.single.hidden).toBe(true);
+    expect(unwrapParam(config.password)?.single.hidden).toBeFalsy();
+    expect(cliConfigFlagBinding(config.usePgDelta)).toMatchObject({
+      flag: "use-pg-delta",
+      path: "experimental.pgdelta.enabled",
+    });
+  });
 
   it.effect("ignores flags that are not bound to a key", () =>
     Effect.gen(function* () {

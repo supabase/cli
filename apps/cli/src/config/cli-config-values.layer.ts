@@ -29,6 +29,7 @@ import {
   documentLeafPaths,
   getDocumentValue,
   isDocumentRecord,
+  sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
 import { CliConfigFlagInputs, type CliConfigFlagDeclaration } from "./cli-config-flags.ts";
@@ -36,6 +37,7 @@ import {
   lookupCliConfigEnv,
   pickCliConfigKey,
   type CliConfigKey,
+  decodingFailedMessage,
   type CliConfigKeyOrigin,
   type CliConfigSources,
   type CliConfigValue,
@@ -62,6 +64,7 @@ import { CliConfigValueError } from "./cli-config.errors.ts";
 class LoadKey extends Data.Class<{
   readonly workdir: string;
   readonly projectRef: Option.Option<string>;
+  readonly ignoreConfigFile: boolean;
 }> {}
 
 const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfigDocument => ({
@@ -107,14 +110,23 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
   return names;
 };
 
-const writesToDraft = (key: AnyCliConfigKey, origin: CliConfigKeyOrigin): boolean => {
+/** A config-tier value the schema would reject as written: `"TRUE"`, `0` for a bool, `"a,b"` for a list. */
+const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
+  key.codec.kind !== "string" && !sameDocumentValue(written, raw);
+
+const writesToDraft = (
+  key: AnyCliConfigKey,
+  origin: CliConfigKeyOrigin,
+  written: unknown,
+  raw: unknown,
+): boolean => {
   switch (origin.tier) {
     case "flag":
     case "shell":
     case "projectEnv":
       return true;
     case "config":
-      return key.secret === true || key.normalize !== undefined;
+      return key.secret === true || key.normalize !== undefined || needsCoercion(key, written, raw);
     case "default":
       return key.materializeDefault === true || key.normalize !== undefined;
   }
@@ -136,9 +148,9 @@ export const cliConfigValuesLayer = Layer.effect(
       );
 
     const loadSnapshot = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
-      const parsed = yield* withPlatform(
-        parseCliConfigDocumentFile(target.workdir, { search: false }),
-      );
+      const parsed = target.ignoreConfigFile
+        ? null
+        : yield* withPlatform(parseCliConfigDocumentFile(target.workdir, { search: false }));
       const rawDocument = parsed?.rawDocument ?? {};
 
       const shell = yield* readShellEnvironment({
@@ -280,14 +292,29 @@ export const cliConfigValuesLayer = Layer.effect(
       const draftSource = cloneDocument(document ?? {});
       const draft = isDocumentRecord(draftSource) ? draftSource : {};
       const origins = new Map<string, CliConfigKeyOrigin>();
+      const entryFailures: Array<CliConfigValueError> = [];
       for (const key of enumerated.values()) {
         const picked = pickCliConfigKey(key, sources);
-        if (Result.isFailure(picked)) return yield* picked.failure;
+        if (Result.isFailure(picked)) {
+          if (picked.failure.issues === undefined) return yield* picked.failure;
+          entryFailures.push(picked.failure);
+          continue;
+        }
         const { value, origin } = picked.success;
         origins.set(key.path, origin);
-        if (!writesToDraft(key, origin)) continue;
         const written = key.toDocument(value);
+        if (!writesToDraft(key, origin, written, sources.config(key.path)?.value)) continue;
         if (written !== undefined) setDocumentValue(draft, key.path, written);
+      }
+      const [firstFailure] = entryFailures;
+      if (firstFailure !== undefined) {
+        const issues = entryFailures.flatMap((failure) => failure.issues ?? []);
+        return yield* new CliConfigValueError({
+          path: firstFailure.path,
+          tier: "config",
+          message: decodingFailedMessage(issues),
+          issues,
+        });
       }
 
       const envValues: Record<string, string> = {};
@@ -384,7 +411,14 @@ export const cliConfigValuesLayer = Layer.effect(
 
     return CliConfigValues.of({
       load: (target) =>
-        Cache.get(cache, new LoadKey({ workdir: target.workdir, projectRef: target.projectRef })),
+        Cache.get(
+          cache,
+          new LoadKey({
+            workdir: target.workdir,
+            projectRef: target.projectRef,
+            ignoreConfigFile: target.ignoreConfigFile === true,
+          }),
+        ),
       writeThrough: (write) => Effect.ensuring(write, Cache.invalidateAll(cache)),
     });
   }),

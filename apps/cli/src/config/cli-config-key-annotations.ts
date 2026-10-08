@@ -9,6 +9,7 @@ import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import {
   binaryCodec,
   commaListCodec,
+  globListCodec,
   goBoolCodec,
   literalCodec,
   stringCodec,
@@ -45,6 +46,8 @@ export const CLI_CONFIG_ENV_ALIASES: Readonly<Record<string, ReadonlyArray<strin
 export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<unknown>>> = {
   "experimental.stack": binaryCodec,
   "experimental.compute": binaryCodec,
+  "db.seed.sql_paths": globListCodec,
+  "db.migrations.schema_paths": globListCodec,
   "edge_runtime.policy": literalCodec(["per_worker", "oneshot"]),
   "auth.password_requirements": {
     ...literalCodec([
@@ -71,12 +74,10 @@ export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
 };
 
 /** Optional schema leaves that consumers read as a plain value with a context default. */
-export const CLI_CONFIG_CONTEXT_DEFAULTS: Readonly<
-  Record<string, (ctx: CliConfigKeyContext) => unknown>
-> = {
-  project_id: (ctx) => sanitizeProjectId(ctx.path.basename(ctx.workdir)),
+export const CLI_CONFIG_CONTEXT_DEFAULTS = {
+  project_id: (ctx) => ctx.path.basename(ctx.workdir),
   "auth.email.smtp.enabled": (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
-};
+} as const satisfies Readonly<Record<string, (ctx: CliConfigKeyContext) => unknown>>;
 
 /** Optional leaves the stack config always carries as strings, so an unset value reads as `""`. */
 export const CLI_CONFIG_EMPTY_DEFAULTS = /^auth\.hook\.[^.]+\.(uri|secrets)$/;
@@ -96,6 +97,7 @@ const prefixed = (ctx: CliConfigKeyContext, pattern: unknown): unknown =>
 export const CLI_CONFIG_NORMALIZERS: Readonly<
   Record<string, (value: unknown, ctx: CliConfigKeyContext) => unknown>
 > = {
+  project_id: (value) => (typeof value === "string" ? sanitizeProjectId(value) : value),
   "db.seed.sql_paths": (value, ctx) =>
     Array.isArray(value) ? value.map((item) => prefixed(ctx, item)) : value,
   "db.migrations.schema_paths": (value, ctx) =>
@@ -106,6 +108,7 @@ export const CLI_CONFIG_NORMALIZERS: Readonly<
 const SECTION_GATES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) => string]> = [
   [/^experimental\.webhooks\./, () => "experimental.webhooks"],
   [/^storage\.image_transformation\./, () => "storage.image_transformation"],
+  [/^db\.ssl_enforcement\./, () => "db.ssl_enforcement"],
   [/^auth\.captcha\./, () => "auth.captcha"],
   [/^auth\.email\.smtp\./, () => "auth.email.smtp"],
   [/^auth\.hook\.([^.]+)\./, (match) => `auth.hook.${match[1]}`],
@@ -114,6 +117,15 @@ const SECTION_GATES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) =>
   [/^auth\.webauthn\./, () => "auth.webauthn"],
   [/^auth\.external\.(?!apple\.)([^.]+)\./, (match) => `auth.external.${match[1]}`],
 ];
+
+/** Optional schema sections whose env overrides apply while the section is absent, with the reason. */
+export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
+  "auth.sessions":
+    "a plain struct in the document model: its keys exist whether or not it is written",
+  "db.settings":
+    "a plain struct in the document model: its keys exist whether or not it is written",
+  "experimental.pgdelta": "the env opt-in is what enables pg-delta, so it creates the section",
+};
 
 /** The optional section a key's env override requires, when its path sits under one. */
 export const envRequiresSectionFor = (path: string): string | undefined => {

@@ -26,7 +26,8 @@ const config = {
   ),
   usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
     name: "use-pg-delta",
-    description: "Use pg-delta to pull declarative schema (deprecated: use --declarative).",
+    description: "Use pg-delta to pull declarative schema.",
+    hidden: true,
   }),
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),

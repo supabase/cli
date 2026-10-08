@@ -7,6 +7,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationList } from "./list.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -58,5 +59,6 @@ export const migrationListCommand = Command.make("list", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "list"])),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

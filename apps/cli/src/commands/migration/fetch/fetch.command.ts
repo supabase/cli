@@ -5,6 +5,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationFetch } from "./fetch.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -48,4 +50,6 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "fetch"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -582,6 +582,47 @@ describe("CliConfigValues reads", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live("coerces weakly typed config values into the decoded config and an env() bool", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "weak"\n[db.seed]\nenabled = "TRUE"\nsql_paths = "a.sql,b.sql"\n[db.pooler]\nenabled = "env(POOLER_ON)"\n',
+      );
+      const { layer } = makeLayer();
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+
+      expect(snapshot.materialized.config.db.seed.enabled).toBe(true);
+      expect(snapshot.materialized.config.db.seed.sql_paths).toEqual([
+        "supabase/a.sql",
+        "supabase/b.sql",
+      ]);
+      expect((yield* snapshot.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
+      expect((yield* snapshot.get(CliConfigKeys.db.pooler.enabled)).value).toBe(true);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ POOLER_ON: "true" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("sanitizes project_id once, whichever tier supplies it", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "my app"\n');
+      const { layer } = makeLayer();
+      const read = CliConfigValues.use((values) =>
+        Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
+          snapshot.get(CliConfigKeys.projectId),
+        ),
+      ).pipe(Effect.provide(layer));
+
+      expect(yield* read).toMatchObject({ value: "my_app", origin: { tier: "config" } });
+      const fromEnv = yield* withShell({ SUPABASE_PROJECT_ID: "other app" }, read);
+      expect(fromEnv).toMatchObject({ value: "other_app", origin: { tier: "shell" } });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("reads the same value through get and the materialized config", () =>
     Effect.gen(function* () {
       const root = yield* project(

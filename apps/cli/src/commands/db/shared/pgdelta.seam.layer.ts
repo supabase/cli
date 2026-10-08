@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
@@ -14,8 +15,7 @@ import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/
 import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
-import { localDbContainerId, sanitizeProjectId } from "../../../command-internal/docker-ids.ts";
-import { snapshotLocalProjectId } from "../../../command-internal/pgdelta.ts";
+import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -150,6 +150,7 @@ export const declarativeSeamLayer = Layer.effect(
         return yield* Effect.scoped(
           Effect.gen(function* () {
             const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
+              Effect.provideService(CliConfigValues, cliConfigValues),
               Effect.mapError(
                 (error) =>
                   new DeclarativeShadowDbError({
@@ -167,7 +168,8 @@ export const declarativeSeamLayer = Layer.effect(
             const projectId = yield* cliConfigValues
               .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
               .pipe(
-                Effect.flatMap(snapshotLocalProjectId),
+                Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
+                Effect.map(({ value }) => value),
                 Effect.mapError(
                   (error) =>
                     new DeclarativeShadowDbError({
@@ -175,7 +177,7 @@ export const declarativeSeamLayer = Layer.effect(
                     }),
                 ),
               );
-            const containerId = localDbContainerId(sanitizeProjectId(projectId));
+            const containerId = localDbContainerId(projectId);
             const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
               stdin: "ignore",
               stdout: "pipe",

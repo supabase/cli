@@ -25,6 +25,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -429,6 +430,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     resolver.layer,
     projectRef.layer,

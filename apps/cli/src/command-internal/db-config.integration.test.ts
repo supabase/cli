@@ -42,6 +42,7 @@ import {
   WorkdirFlag,
 } from "./global-flags.ts";
 import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
@@ -120,9 +121,10 @@ function buildResolver(
       ),
     ),
   );
+  const depsWithValues = Layer.merge(deps, cliConfigValuesLayer.pipe(Layer.provide(deps)));
   return opts.stackApi === undefined
-    ? dbConfigLayer.pipe(Layer.provide(deps))
-    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(deps, opts.stackApi)));
+    ? dbConfigLayer.pipe(Layer.provide(depsWithValues))
+    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(depsWithValues, opts.stackApi)));
 }
 
 function withWorkdir(toml?: string) {

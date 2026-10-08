@@ -44,6 +44,7 @@ import { START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13
 import { START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import { STACK_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { startInternalDbPassword, startInternalDbUrl } from "./internal-db-connection.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -884,7 +885,7 @@ export const startSetupLocalDatabase = (
   // Rides alongside the alias because a pooled-connection acquire failure surfaces the driver's
   // connect error verbatim, suggestion included.
   StartSetupLocalDatabaseError | DbConnectError,
-  Output | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path
+  Output | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
@@ -1053,7 +1054,13 @@ export const runFreshDbSetup = <E>(
 ): Effect.Effect<
   void,
   StartSetupLocalDatabaseError | DbConnectError | ImagePrepullError | E,
-  Output | DbConnection | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path
+  | Output
+  | DbConnection
+  | DockerRun
+  | RuntimeInfo
+  | FileSystem.FileSystem
+  | Path.Path
+  | CliConfigValues
 > =>
   Effect.scoped(
     Effect.gen(function* () {

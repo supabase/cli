@@ -63,7 +63,7 @@ import {
   PgDeltaEngine,
   type PgDeltaDatabaseEndpoint,
 } from "../commands/db/shared/pgdelta-engine.service.ts";
-import { type PgDeltaContext, isPgDeltaDebugEnabled, pgDeltaProjectId } from "./pgdelta.ts";
+import { type PgDeltaContext, isPgDeltaDebugEnabled } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
@@ -310,7 +310,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      projectId: yield* pgDeltaProjectId(snapshot),
+      projectId: (yield* snapshot.get(CliConfigKeys.projectId)).value,
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,

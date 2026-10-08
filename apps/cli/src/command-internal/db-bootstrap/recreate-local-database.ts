@@ -67,6 +67,7 @@ import {
   type KongReloadError,
   type RestartServicesError,
 } from "./restart-services.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -264,6 +265,7 @@ const recreateLocalDatabase15 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -327,6 +329,7 @@ const recreateLocalDatabase14 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
@@ -418,6 +421,7 @@ export const recreateLocalDatabase = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   (input.setup.majorVersion <= 14
     ? recreateLocalDatabase14(spawner, input)

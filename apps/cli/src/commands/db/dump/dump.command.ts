@@ -12,6 +12,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { DbDumpRunError } from "./dump.errors.ts";
 import { dbDump } from "./dump.handler.ts";
 import { dbDumpRuntimeLayer } from "./dump.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 /**
  * `db dump` has no `--output-format` machine envelope; it streams pg_dump SQL to
@@ -135,5 +136,6 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
     ),
   ),
   Command.provide(dbDumpRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

@@ -10,6 +10,7 @@ import {
   binaryCodec,
   commaListCodec,
   goBoolCodec,
+  globListCodec,
   goUintCodec,
   literalCodec,
   optionalCliConfigKey,
@@ -435,6 +436,53 @@ describe("pickCliConfigKey failure text matches the legacy readers", () => {
     expect(
       failureOf(secretBool, { shell: { SUPABASE_X_SECRET: "hunter2" } }).message,
     ).not.toContain("hunter2");
+  });
+});
+
+describe("pickCliConfigKey weak config values", () => {
+  it("reads a case-variant bool token and a numeric bool from the document", () => {
+    expect(valueOf(seed, { config: { "db.seed.enabled": "TRUE" } })).toMatchObject({
+      value: true,
+      origin: { tier: "config" },
+    });
+    expect(valueOf(seed, { config: { "db.seed.enabled": 0 } }).value).toBe(false);
+  });
+
+  const sqlPaths = requiredCliConfigKey({
+    path: "db.seed.sql_paths",
+    env: ["SUPABASE_DB_SEED_SQL_PATHS"],
+    codec: globListCodec,
+    default: ["supabase/seed.sql"],
+  });
+  const globOf = (config: unknown) =>
+    valueOf(sqlPaths, { config: { "db.seed.sql_paths": config } }).value;
+
+  it("decodes a glob list from a bare string, a scalar, a mixed array and an empty table", () => {
+    expect(globOf("a.sql,b.sql")).toEqual(["a.sql", "b.sql"]);
+    expect(globOf(true)).toEqual(["1"]);
+    expect(globOf(["a.sql", 1, false, 1e21])).toEqual([
+      "a.sql",
+      "1",
+      "0",
+      "1000000000000000000000",
+    ]);
+    expect(globOf([Number.POSITIVE_INFINITY, Number.NaN])).toEqual(["+Inf", "NaN"]);
+    expect(globOf({})).toEqual([]);
+  });
+
+  it("names every unconvertible entry in one decoding-failed error", () => {
+    const failure = failureOf(sqlPaths, {
+      config: { "db.seed.sql_paths": [["nested"], "ok", { k: "v" }] },
+    });
+
+    expect(failure).toMatchObject({ tier: "config", path: "db.seed.sql_paths" });
+    expect(failure.issues).toEqual([
+      "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+      "'db.seed.sql_paths[2]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+    ]);
+    expect(failure.message).toBe(
+      `failed to parse config: decoding failed due to the following error(s):\n\n${failure.issues?.join("\n")}`,
+    );
   });
 });
 

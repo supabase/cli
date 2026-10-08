@@ -11,18 +11,22 @@ import {
   readDbToml,
   resolveDeclarativeDir,
   resolveSeedSqlPath,
+  type DbTomlValues,
 } from "./db-config.toml-read.ts";
+import type { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
 } from "../telemetry/command-telemetry-attributes.ts";
 
 // The default ConfigProvider snapshots process.env once, but these tests mutate it per case.
-const servicesLive = Layer.merge(
+const servicesLive = Layer.mergeAll(
   BunServices.layer,
   Layer.unwrap(
     Effect.sync(() => ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))),
   ),
+  cliConfigValuesTestLayer,
 );
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
@@ -72,7 +76,7 @@ const loadEnvWithConfig = (workdir: string, values: Readonly<Record<string, stri
 describe("read (lenient) vs check (throws) split", () => {
   const withServices = <A, E>(
     dir: string,
-    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, never>,
+    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, CliConfigValues>,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -388,20 +392,170 @@ describe("readDbToml", () => {
   );
 
   it.effect.each([
-    { key: "db.migrations.schema_paths", table: "db.migrations", value: "1979-05-27T07:32:00Z" },
-    { key: "db.migrations.schema_paths", table: "db.migrations", value: "42" },
-    { key: "db.seed.sql_paths", table: "db.seed", value: "1979-05-27T07:32:00Z" },
-    { key: "db.seed.sql_paths", table: "db.seed", value: "42" },
-  ])("rejects a non-list $key = $value and names the key", ({ key, table, value }) => {
-    const field = key.slice(table.length + 1);
+    {
+      name: "seed array with number and bool",
+      table: "db.seed",
+      field: "sql_paths",
+      value: '[42, true, "seed.sql"]',
+      expected: ["supabase/42", "supabase/1", "supabase/seed.sql"],
+    },
+    {
+      name: "schema array with number and bool",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: '[42, true, "schemas/*.sql"]',
+      expected: ["supabase/42", "supabase/1", "supabase/schemas/*.sql"],
+    },
+    {
+      name: "large number as fixed decimal",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "[1e21]",
+      expected: ["supabase/1000000000000000000000"],
+    },
+    {
+      name: "special floats",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "[inf, -inf, nan]",
+      expected: ["supabase/+Inf", "supabase/-Inf", "supabase/NaN"],
+    },
+    {
+      name: "scalar number schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "42",
+      expected: ["supabase/42"],
+    },
+    {
+      name: "scalar bool schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "true",
+      expected: ["supabase/1"],
+    },
+    {
+      name: "empty table schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "{}",
+      expected: [],
+    },
+    {
+      name: "scalar number sql_paths",
+      table: "db.seed",
+      field: "sql_paths",
+      value: "42",
+      expected: ["supabase/42"],
+    },
+  ])("weakly coerces a glob list: $name", ({ table, field, value, expected }) => {
     const dir = withConfig([`[${table}]`, `${field} = ${value}`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(table === "db.seed" ? v.seed.sqlPaths : v.schemaPaths).toEqual(expected);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", goType: "time.Time" },
+    { name: "local date-time", literal: "1979-05-27T07:32:00", goType: "toml.LocalDateTime" },
+    { name: "local date", literal: "1979-05-27", goType: "toml.LocalDate" },
+    { name: "local time", literal: "07:32:00", goType: "toml.LocalTime" },
+  ])(
+    "rejects a bare $name db.migrations.schema_paths instead of treating it as empty",
+    ({ literal, goType }) => {
+      const dir = withConfig(["[db.migrations]", `schema_paths = ${literal}`, ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${goType}'`,
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each([
+    {
+      name: "a datetime schema_paths array element",
+      toml: ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""],
+      issue:
+        "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'time.Time'",
+    },
+    {
+      name: "a bare datetime sql_paths",
+      toml: ["[db.seed]", "sql_paths = 1979-05-27T07:32:00Z", ""],
+      issue: "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'time.Time'",
+    },
+    {
+      name: "a table schema_paths",
+      toml: ["[db.migrations.schema_paths]", 'foo = "bar"', ""],
+      issue:
+        "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+    },
+    {
+      name: "a nested-list schema_paths element",
+      toml: ["[db.migrations]", "schema_paths = [[]]", ""],
+      issue:
+        "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+    },
+    {
+      name: "a table schema_paths element",
+      toml: ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""],
+      issue:
+        "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+    },
+    {
+      name: "a nested-list sql_paths element",
+      toml: ["[db.seed]", "sql_paths = [[]]", ""],
+      issue:
+        "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+    },
+  ])("rejects $name", ({ toml, issue }) => {
+    const dir = withConfig(toml.join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(issue);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports invalid entries of both glob lists in one error, schema_paths first", () => {
+    const dir = withConfig(
+      ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
+        "\n",
+      ),
+    );
     return read(dir).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(`Invalid config for ${key}`);
+            const message = JSON.stringify(exit.cause);
+            const schemaIssue =
+              "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+            const seedIssue =
+              "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+            expect(message).toContain(schemaIssue);
+            expect(message).toContain(seedIssue);
+            expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -410,21 +564,128 @@ describe("readDbToml", () => {
   });
 
   it.effect.each([
-    { table: "db.seed", field: "enabled", value: "0" },
-    { table: "db.migrations", field: "enabled", value: "0" },
-    { table: "experimental.pgdelta", field: "enabled", value: "1" },
-    { table: "api", field: "auto_expose_new_tables", value: '"TRUE"' },
-    { table: "auth", field: "enabled", value: '"0"' },
-  ])("rejects a non-boolean $table.$field = $value", ({ table, field, value }) => {
+    {
+      name: "numeric db.seed.enabled = 0",
+      table: "db.seed",
+      field: "enabled",
+      value: "0",
+      read: (v: DbTomlValues) => v.seed.enabled,
+      expected: false,
+    },
+    {
+      name: "numeric db.migrations.enabled = 0",
+      table: "db.migrations",
+      field: "enabled",
+      value: "0",
+      read: (v: DbTomlValues) => v.migrationsEnabled,
+      expected: false,
+    },
+    {
+      name: "numeric experimental.pgdelta.enabled = 1",
+      table: "experimental.pgdelta",
+      field: "enabled",
+      value: "1",
+      read: (v: DbTomlValues) => v.pgDelta.enabled,
+      expected: true,
+    },
+    {
+      name: 'string auth.enabled = "0"',
+      table: "auth",
+      field: "enabled",
+      value: '"0"',
+      read: (v: DbTomlValues) => v.baseline.authEnabled,
+      expected: false,
+    },
+    {
+      name: 'upper-case api.auto_expose_new_tables = "TRUE"',
+      table: "api",
+      field: "auto_expose_new_tables",
+      value: '"TRUE"',
+      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+      expected: true,
+    },
+  ])("decodes $name as a bool", ({ table, field, value, read: pick, expected }) => {
     const dir = withConfig([`[${table}]`, `${field} = ${value}`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(pick(v)).toBe(expected);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      name: "db.seed.enabled",
+      table: "db.seed",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.seed.enabled,
+    },
+    {
+      name: "db.migrations.enabled",
+      table: "db.migrations",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.migrationsEnabled,
+    },
+    {
+      name: "experimental.pgdelta.enabled",
+      table: "experimental.pgdelta",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.pgDelta.enabled,
+    },
+    {
+      name: "api.auto_expose_new_tables",
+      table: "api",
+      field: "auto_expose_new_tables",
+      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+    },
+  ])(
+    "expands an env() reference in $name through the shell and project .env",
+    ({ table, field, read: pick }) => {
+      const previous = process.env["WEAK_FLAG"];
+      process.env["WEAK_FLAG"] = "TRUE";
+      const dir = withConfig([`[${table}]`, `${field} = "env(WEAK_FLAG)"`, ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(pick(v)).toBe(true);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["WEAK_FLAG"];
+            else process.env["WEAK_FLAG"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("fails on an unresolved env() reference in a bool field", () => {
+    const dir = withConfig(["[db.seed]", 'enabled = "env(WEAK_FLAG_UNSET)"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+            expect(JSON.stringify(exit.cause)).toContain("invalid db.seed.enabled");
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric string db.port", () => {
+    const dir = withConfig(["[db]", 'port = "6002"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(6002);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

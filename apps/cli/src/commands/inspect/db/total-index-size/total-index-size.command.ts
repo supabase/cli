@@ -2,6 +2,8 @@ import { Command } from "effect/unstable/cli";
 import { inspectDbTotalIndexSize } from "./total-index-size.handler.ts";
 import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbTotalIndexSizeCommand = Command.make(
   "total-index-size",
@@ -11,4 +13,6 @@ export const inspectDbTotalIndexSizeCommand = Command.make(
   Command.withShortDescription("Show total index size (deprecated)"),
   Command.withHandler(inspectDbCommandHandler(inspectDbTotalIndexSize)),
   Command.provide(inspectDbRuntimeLayer("total-index-size")),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(INSPECT_DB_FLAGS),
 );

@@ -1,7 +1,5 @@
-import { Effect, Option } from "effect";
+import { Option } from "effect";
 
-import { CliConfigKeys } from "../config/cli-config-keys.ts";
-import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 
 /**
@@ -21,24 +19,6 @@ export interface PgDeltaContext {
   /** The project's parsed `supabase/.env` (`readDbToml`'s `projectEnv`). */
   readonly projectEnv: Readonly<Record<string, string>>;
 }
-
-/**
- * The local Docker project id from the config snapshot: `SUPABASE_PROJECT_ID`, then the matched
- * remote's or base `project_id`, then the sanitized workdir basename. The registry types the key as
- * an `Option`, but its workdir default makes it always a string.
- */
-export const snapshotLocalProjectId = (snapshot: CliConfigSnapshot) =>
-  snapshot
-    .get(CliConfigKeys.projectId)
-    .pipe(
-      Effect.map(({ value }) =>
-        typeof value === "string" ? value : Option.getOrElse(value, () => ""),
-      ),
-    );
-
-/** Resolves {@link PgDeltaContext.projectId} from the config snapshot. */
-export const pgDeltaProjectId = (snapshot: CliConfigSnapshot) =>
-  snapshotLocalProjectId(snapshot).pipe(Effect.map(sanitizeProjectId));
 
 /**
  * Resolves the project id for callers that only hold a parsed `DbTomlValues`; `SUPABASE_PROJECT_ID`

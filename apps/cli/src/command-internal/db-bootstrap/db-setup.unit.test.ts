@@ -20,6 +20,7 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
@@ -227,6 +228,7 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
+        cliConfigValuesTestLayer,
       ),
     ),
   );

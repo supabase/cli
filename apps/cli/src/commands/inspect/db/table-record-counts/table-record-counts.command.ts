@@ -2,6 +2,8 @@ import { Command } from "effect/unstable/cli";
 import { inspectDbTableRecordCounts } from "./table-record-counts.handler.ts";
 import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbTableRecordCountsCommand = Command.make(
   "table-record-counts",
@@ -13,4 +15,6 @@ export const inspectDbTableRecordCountsCommand = Command.make(
   Command.withShortDescription("Show table record counts (deprecated)"),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableRecordCounts)),
   Command.provide(inspectDbRuntimeLayer("table-record-counts")),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(INSPECT_DB_FLAGS),
 );

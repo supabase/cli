@@ -6,13 +6,14 @@ import { BunServices } from "@effect/platform-bun";
 import { CliConfigSchema } from "@supabase/config";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack/defaults";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Path, Schema } from "effect";
+import { Effect, Option, Path, Schema, type SchemaAST } from "effect";
 
 import { getDocumentValue } from "./cli-config-document.ts";
 import {
   CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_SCHEMA_EXCLUDED,
+  CLI_CONFIG_SECTION_ENV_EXEMPT,
   CLI_NON_CONFIG_ENV_NAMES,
 } from "./cli-config-key-annotations.ts";
 import {
@@ -55,6 +56,30 @@ const treeLookup = (path: string): unknown =>
     if (typeof node !== "object" || node === null) return undefined;
     return Reflect.get(node, camelCase(segment));
   }, CliConfigKeys);
+
+const unwrapAst = (ast: SchemaAST.AST): SchemaAST.AST =>
+  ast._tag === "Suspend" ? unwrapAst(ast.thunk()) : ast;
+
+const optionalSectionPaths = (
+  ast: SchemaAST.AST,
+  segments: ReadonlyArray<string> = [],
+  optional = false,
+): ReadonlyArray<string> => {
+  const node = unwrapAst(ast);
+  if (node._tag !== "Objects") return [];
+  return [
+    ...(optional && segments.length > 0 ? [segments.join(".")] : []),
+    ...node.propertySignatures.flatMap((property) =>
+      typeof property.name === "string"
+        ? optionalSectionPaths(
+            property.type,
+            [...segments, property.name],
+            property.type.context?.isOptional === true,
+          )
+        : [],
+    ),
+  ];
+};
 
 describe("config key registry", () => {
   it("gives every env name to exactly one key", () => {
@@ -150,6 +175,27 @@ describe("config key registry", () => {
       "storage.image_transformation",
     );
     expect(CliConfigKeys.db.seed.enabled.envRequiresSection).toBeUndefined();
+  });
+
+  it("gates the env of every optional schema section unless the section is exempt", () => {
+    const sections = optionalSectionPaths(CliConfigSchema.ast).filter((section) =>
+      cliConfigRegistry.keys.some((key) => key.path.startsWith(`${section}.`)),
+    );
+
+    const ungated = sections
+      .filter((section) => !(section in CLI_CONFIG_SECTION_ENV_EXEMPT))
+      .flatMap((section) =>
+        cliConfigRegistry.keys
+          .filter((key) => key.env.length > 0 && key.path.startsWith(`${section}.`))
+          .filter((key) => key.envRequiresSection !== section)
+          .map((key) => key.path),
+      );
+
+    expect(sections).toContain("db.ssl_enforcement");
+    expect(ungated).toEqual([]);
+    expect(Object.keys(CLI_CONFIG_SECTION_ENV_EXEMPT).filter((s) => !sections.includes(s))).toEqual(
+      [],
+    );
   });
 
   it("exposes every registry key through the typed tree", () => {

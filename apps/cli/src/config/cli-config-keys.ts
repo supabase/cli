@@ -37,6 +37,9 @@ export type AnyCliConfigKey = CliConfigKey<unknown, unknown, CliConfigFlagDeclar
 
 const flagDeclarations: Readonly<Record<string, CliConfigFlagDeclaration>> = CLI_CONFIG_FLAGS;
 
+const contextDefaults: Readonly<Record<string, (ctx: CliConfigKeyContext) => unknown>> =
+  CLI_CONFIG_CONTEXT_DEFAULTS;
+
 /** `SUPABASE_` + UPPER_SNAKE(path): the env name every key derives unless it is annotated. */
 export const deriveCliConfigEnvName = (path: string): string =>
   `SUPABASE_${path
@@ -161,7 +164,7 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
         `The config schema leaf "${path}" has no key codec; add it to CLI_CONFIG_SCHEMA_EXCLUDED or CLI_CONFIG_CODEC_OVERRIDES`,
       );
     }
-    const defaultFrom = CLI_CONFIG_CONTEXT_DEFAULTS[path];
+    const defaultFrom = contextDefaults[path];
     const configured = leaf.node.annotations?.["default"];
     const emptyDefault = leaf.optional && CLI_CONFIG_EMPTY_DEFAULTS.test(path);
     return [
@@ -257,8 +260,10 @@ type FlagDeclarationAt<Path extends string> = Path extends keyof typeof CLI_CONF
 
 type EmptyDefaultPath = `auth.hook.${keyof CliConfig["auth"]["hook"]}.${"uri" | "secrets"}`;
 
+type ContextDefaultPath = keyof typeof CLI_CONFIG_CONTEXT_DEFAULTS;
+
 type LeafKey<V, Optional extends boolean, Path extends string> = Optional extends true
-  ? Path extends EmptyDefaultPath
+  ? Path extends EmptyDefaultPath | ContextDefaultPath
     ? CliConfigKey<NonNullable<V>, NonNullable<V>, FlagDeclarationAt<Path>>
     : CliConfigKey<Option.Option<NonNullable<V>>, NonNullable<V>, FlagDeclarationAt<Path>>
   : CliConfigKey<V, V, FlagDeclarationAt<Path>>;

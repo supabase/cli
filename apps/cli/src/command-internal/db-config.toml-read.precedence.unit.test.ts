@@ -6,6 +6,7 @@ import { ConfigProvider, Effect, FileSystem, Option, Path, Result } from "effect
 
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { checkDbToml } from "./db-config.toml-read.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
@@ -214,6 +215,7 @@ describe("db toml reader precedence goldens", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const outcome = yield* checkDbToml(fs, path, workdir, fixture.ref).pipe(
+          Effect.provide(cliConfigValuesTestLayer),
           Effect.provideService(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromEnvRecord(shell, { preserveEmptyStrings: true }),

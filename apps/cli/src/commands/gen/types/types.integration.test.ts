@@ -39,6 +39,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { toConnectError } from "../../../command-internal/db-connection.sql-pg.layer.ts";
@@ -491,6 +492,7 @@ const setup = Effect.fnUntraced(function* (
   });
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     runtime,
     BunServices.layer,
     child.layer,

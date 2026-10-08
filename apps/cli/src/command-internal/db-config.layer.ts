@@ -1,13 +1,11 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Context, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { type CliConfigKeyOrigin } from "../config/cli-config-key.ts";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
-import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues, type CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
@@ -447,29 +445,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
-    // Commands without a bound flag never provide `CliConfigFlagInputs`; they have nothing to bind.
-    const providedValues = yield* Effect.serviceOption(CliConfigValues);
-    const flagInputs = yield* Effect.serviceOption(CliConfigFlagInputs);
-    const configValues = Option.isSome(providedValues)
-      ? providedValues.value
-      : Context.get(
-          yield* Layer.build(
-            cliConfigValuesLayer.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(
-                    CliConfigFlagInputs,
-                    Option.getOrElse(flagInputs, () => new Map()),
-                  ),
-                  Layer.succeed(FileSystem.FileSystem, fs),
-                  Layer.succeed(Path.Path, path),
-                  Layer.succeed(Output, output),
-                ),
-              ),
-            ),
-          ),
-          CliConfigValues,
-        );
+    const configValues = yield* CliConfigValues;
     // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
     // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
     // directly from its own ambient context). Calling them from here would otherwise leak those
@@ -738,6 +714,7 @@ export const dbConfigResolverLayer = Layer.effect(
     return DbConfigResolver.of({
       resolve: (flags) =>
         resolve(flags).pipe(
+          Effect.provideService(CliConfigValues, configValues),
           Effect.tap((r) => Effect.annotateCurrentSpan("db.is_local", r.isLocal)),
           Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
           Effect.withSpan("DbConfig.resolve", {
@@ -746,6 +723,7 @@ export const dbConfigResolverLayer = Layer.effect(
         ),
       resolvePoolerFallback: (flags) =>
         resolvePoolerFallback(flags).pipe(
+          Effect.provideService(CliConfigValues, configValues),
           Effect.tap((pooler) =>
             Effect.annotateCurrentSpan("db.pooler.found", Option.isSome(pooler)),
           ),

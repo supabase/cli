@@ -36,6 +36,8 @@ export interface CliConfigFlagOptions<
    */
   readonly map?: (value: X) => X | undefined;
   readonly also?: ReadonlyArray<CliConfigFlagAlso>;
+  /** Hides the flag from help. It must be set here: `Flag.withHidden` on the result drops the binding. */
+  readonly hidden?: true;
 }
 
 export interface CliConfigFlagAssignment {
@@ -107,8 +109,9 @@ export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
   const described = baseFlag(key.codec, options.name, key.path).pipe(
     Flag.withDescription(options.description),
   );
-  const flag =
+  const aliased =
     options.alias === undefined ? described : described.pipe(Flag.withAlias(options.alias));
+  const flag = options.hidden === true ? aliased.pipe(Flag.withHidden) : aliased;
   bindings.set(flag, {
     flag: options.name,
     path: key.path,

@@ -7,6 +7,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -81,6 +82,7 @@ function setup(
         Layer.succeed(DebugFlag, false),
         Layer.succeed(NetworkIdFlag, Option.none<string>()),
         BunServices.layer,
+        cliConfigValuesTestLayer,
       ),
     ),
   );

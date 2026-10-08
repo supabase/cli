@@ -49,6 +49,7 @@ import {
   buildPostgresStartContainerSpec,
   type PostgresStartServiceInput,
 } from "./postgres.service.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 const START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
 // Printed when an existing volume is reused; unrelated to `--from-backup`.
@@ -132,6 +133,7 @@ export const startDatabase = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const output = yield* Output;

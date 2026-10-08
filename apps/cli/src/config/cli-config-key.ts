@@ -2,6 +2,7 @@ import type { CliConfigValueOrigin } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
 import { Option, Result, type Path } from "effect";
 import type { Flag } from "effect/unstable/cli";
+import { TomlDate } from "smol-toml";
 
 import { parseGoBool } from "../command-internal/config-validate.ts";
 import { decryptSecret, isEncryptedSecret } from "../command-internal/vault-decrypt.ts";
@@ -80,7 +81,12 @@ export interface CliConfigCodec<X> {
   /** Decodes a typed document or flag value; `undefined` means invalid. */
   readonly fromConfig: (value: unknown) => X | undefined;
   readonly describe: (path: string, raw: string, envName?: string) => string;
+  /** Per-entry failures of an invalid document value, reported together across keys. */
+  readonly issues?: (path: string, value: unknown) => ReadonlyArray<string>;
 }
+
+export const decodingFailedMessage = (issues: ReadonlyArray<string>): string =>
+  `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`;
 
 const UINT_MAX = 18446744073709551615n;
 const MAX_PORT = 65535;
@@ -174,6 +180,77 @@ export const commaListCodec: CliConfigCodec<ReadonlyArray<string>> = {
     return undefined;
   },
   describe: (path, raw) => `Invalid config for ${path}: cannot parse "${raw}" as a list`,
+};
+
+/** A float rendered in fixed notation, with `+Inf`/`-Inf`/`NaN` and a signed zero spelled out. */
+const formatWeakFloat = (value: number): string => {
+  if (Number.isNaN(value)) return "NaN";
+  if (value === Number.POSITIVE_INFINITY) return "+Inf";
+  if (value === Number.NEGATIVE_INFINITY) return "-Inf";
+  if (Object.is(value, -0)) return "-0";
+  const text = value.toString();
+  const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(text);
+  if (match === null) return text;
+  const [, sign = "", intPart = "", fracPart = "", exponent = "0"] = match;
+  const digits = intPart + fracPart;
+  const pointAt = intPart.length + Number(exponent);
+  if (pointAt <= 0) return `${sign}0.${"0".repeat(-pointAt)}${digits}`;
+  if (pointAt >= digits.length) return `${sign}${digits}${"0".repeat(pointAt - digits.length)}`;
+  return `${sign}${digits.slice(0, pointAt)}.${digits.slice(pointAt)}`;
+};
+
+/** A bool becomes `"1"`/`"0"` and a number its decimal text; anything else is not a scalar. */
+const weakGlobEntry = (value: unknown): string | undefined => {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "1" : "0";
+  if (typeof value === "number") return formatWeakFloat(value);
+  if (typeof value === "bigint") return value.toString();
+  return undefined;
+};
+
+const unconvertibleType = (value: unknown): string | undefined => {
+  if (value instanceof TomlDate) {
+    if (value.isDate()) return "toml.LocalDate";
+    if (value.isTime()) return "toml.LocalTime";
+    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+  }
+  if (Array.isArray(value)) return "[]interface {}";
+  return typeof value === "object" && value !== null ? "map[string]interface {}" : undefined;
+};
+
+const isEmptyTable = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  !(value instanceof TomlDate) &&
+  Object.keys(value).length === 0;
+
+const globEntries = (value: unknown): ReadonlyArray<unknown> | undefined => {
+  if (typeof value === "string") return undefined;
+  if (Array.isArray(value)) return value;
+  return isEmptyTable(value) ? [] : [value];
+};
+
+/**
+ * A glob list that decodes weakly: a bare string is comma-split, a scalar or an array entry that
+ * is a number or bool becomes its text, and an empty table is the empty list. Nested lists, tables
+ * and datetimes are invalid.
+ */
+export const globListCodec: CliConfigCodec<ReadonlyArray<string>> = {
+  ...commaListCodec,
+  fromConfig: (value) => {
+    if (typeof value === "string") return parseStringList(value);
+    const entries = globEntries(value) ?? [];
+    const decoded = entries.map(weakGlobEntry);
+    return decoded.every((entry) => entry !== undefined) ? decoded : undefined;
+  },
+  issues: (path, value) =>
+    (globEntries(value) ?? []).flatMap((entry, index) => {
+      const type = unconvertibleType(entry);
+      return type === undefined
+        ? []
+        : [`'${path}[${index}]' expected type 'string', got unconvertible type '${type}'`];
+    }),
 };
 
 export const literalCodec = <const T extends string>(
@@ -456,7 +533,19 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
     const plain = decrypt("config", expandConfigValue(configured.value, lookup));
     if (Result.isFailure(plain)) return Result.fail(plain.failure);
     const decoded = key.codec.fromConfig(plain.success);
-    if (decoded === undefined) return failure("config", plain.success);
+    if (decoded === undefined) {
+      const issues = key.codec.issues?.(key.path, plain.success) ?? [];
+      return issues.length === 0
+        ? failure("config", plain.success)
+        : Result.fail(
+            new CliConfigValueError({
+              path: key.path,
+              tier: "config",
+              message: decodingFailedMessage(issues),
+              issues,
+            }),
+          );
+    }
     return Result.succeed(
       settle(decoded, {
         tier: "config",

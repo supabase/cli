@@ -5,6 +5,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationUp } from "./up.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   includeAll: Flag.boolean("include-all").pipe(
@@ -53,4 +55,6 @@ export const migrationUpCommand = Command.make("up", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "up"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

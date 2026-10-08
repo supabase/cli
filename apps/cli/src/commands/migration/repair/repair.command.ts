@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationRepair } from "./repair.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   versions: Argument.string("version").pipe(
@@ -73,5 +74,6 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

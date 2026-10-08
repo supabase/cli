@@ -7,6 +7,8 @@ import {
   testDbConfig,
 } from "../../../command-internal/test-db.command-handler.ts";
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 /**
  * `test db` — the visible entry point. Its hidden alias `db test` reuses the same
@@ -17,4 +19,6 @@ export const testDbCommand = Command.make("db", testDbConfig).pipe(
   Command.withShortDescription(TEST_DB_SHORT),
   Command.withHandler(runTestDbCommand),
   Command.provide(testDbRuntimeLayer(["test", "db"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(testDbConfig),
 );

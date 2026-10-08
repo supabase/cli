@@ -8,10 +8,10 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
 import { resolveLocalProjectId, localDbContainerId, sanitizeProjectId } from "../docker-ids.ts";
-import { snapshotLocalProjectId } from "../pgdelta.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
@@ -324,7 +324,8 @@ export function isLocalDbRunning(
     Effect.gen(function* () {
       const values = yield* CliConfigValues;
       const snapshotProjectId = yield* values.load({ workdir, projectRef: Option.none() }).pipe(
-        Effect.flatMap(snapshotLocalProjectId),
+        Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
+        Effect.map(({ value }) => value),
         Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
       );
       const projectId = resolveLocalProjectId(configuredProjectId, snapshotProjectId, workdir);
