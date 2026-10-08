@@ -1,12 +1,14 @@
 import { EventEmitter } from "node:events";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
 import type * as Pg from "pg";
 
 import { ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";
 import { SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
+import { DbExecError } from "./db-connection.errors.ts";
 import {
   acquireProbedPool,
   batchFailureError,
@@ -428,33 +430,41 @@ describe("buildPoolConfig", () => {
 });
 
 describe("poolStepDownVerify", () => {
-  it("runs SET SESSION ROLE postgres and reports success to the pool", async () => {
-    const queries: Array<string> = [];
-    const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(queries).toEqual(["SET SESSION ROLE postgres"]);
-    expect(done).toBeUndefined();
-  });
+  it.effect("runs SET SESSION ROLE postgres and reports success to the pool", () =>
+    Effect.gen(function* () {
+      const queries: Array<string> = [];
+      const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
+      const done = yield* Effect.callback<Error | undefined>((resume) => {
+        poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      });
+      expect(queries).toEqual(["SET SESSION ROLE postgres"]);
+      expect(done).toBeUndefined();
+    }),
+  );
 
-  it("propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)", async () => {
-    const failure = new Error("permission denied to set role");
-    const client = { query: () => Promise.reject(failure) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(done).toBe(failure);
-  });
+  it.effect(
+    "propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)",
+    () =>
+      Effect.gen(function* () {
+        const failure = new Error("permission denied to set role");
+        const client = { query: () => Promise.reject(failure) };
+        const done = yield* Effect.callback<Error | undefined>((resume) => {
+          poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+        });
+        expect(done).toBe(failure);
+      }),
+  );
 
-  it("wraps a non-Error rejection into an Error for the pool callback", async () => {
-    const client = { query: () => Promise.reject("boom") };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      poolStepDownVerify(client, resolve);
-    });
-    expect(done).toBeInstanceOf(Error);
-    expect(String(done)).toContain("boom");
-  });
+  it.effect("wraps a non-Error rejection into an Error for the pool callback", () =>
+    Effect.gen(function* () {
+      const client = { query: () => Promise.reject("boom") };
+      const done = yield* Effect.callback<Error | undefined>((resume) => {
+        poolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      });
+      expect(done).toBeInstanceOf(Error);
+      expect(String(done)).toContain("boom");
+    }),
+  );
 });
 
 describe("installPoolErrorSwallow", () => {
@@ -484,37 +494,45 @@ describe("acquireProbedPool", () => {
     return { pool, calls };
   }
 
-  it("ends the pool when the connect probe rejects", async () => {
-    const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
-    const exit = await Effect.runPromiseExit(
-      acquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.query).toBe(1);
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe rejects", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
+      const exit = yield* acquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped, Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.query).toBe(1);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("ends the pool when the connect probe times out (black-holed host)", async () => {
-    const fake = makeFakePool(() => new Promise<unknown>(() => {}));
-    const exit = await Effect.runPromiseExit(
-      acquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe times out (black-holed host)", () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.context<never>();
+      const signal = yield* Effect.abortSignal;
+      const fake = makeFakePool(() => Effect.runPromiseWith(context)(Effect.never, { signal }));
+      const fiber = yield* acquireProbedPool(() => fake.pool, 0.05).pipe(
+        Effect.scoped,
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("50 millis");
+      const exit = yield* Fiber.join(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("keeps the pool open until the scope closes on a successful probe", async () => {
-    const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
-    const observed = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("keeps the pool open until the scope closes on a successful probe", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
+      const observed = yield* Effect.gen(function* () {
         const pool = yield* acquireProbedPool(() => fake.pool, 2);
         return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
-      }).pipe(Effect.scoped),
-    );
-    expect(observed.isSamePool).toBe(true);
-    expect(observed.endWhileOpen).toBe(0);
-    expect(fake.calls.end).toBe(1);
-  });
+      }).pipe(Effect.scoped);
+      expect(observed.isSamePool).toBe(true);
+      expect(observed.endWhileOpen).toBe(0);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 });
 
 describe("isUnixSocketHost", () => {
@@ -827,7 +845,10 @@ describe("shouldDiscardBatchClient", () => {
   it("returns a client to the pool once its batch was written, error or not", () => {
     expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(false);
     expect(
-      shouldDiscardBatchClient({ outcome: "submitted" }, Exit.fail(new Error("server said no"))),
+      shouldDiscardBatchClient(
+        { outcome: "submitted" },
+        Exit.fail(new DbExecError({ message: "server said no" })),
+      ),
     ).toBe(false);
   });
 

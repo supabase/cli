@@ -318,12 +318,11 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
         ).pipe(
           Effect.provide(
             Layer.mergeAll(
-              BunServices.layer,
               FetchHttpClient.layer,
               buildOutput.layer,
               stackCatalogSetupLayer,
               dbConnectionLayer,
-            ),
+            ).pipe(Layer.provideMerge(BunServices.layer)),
           ),
         );
       },
