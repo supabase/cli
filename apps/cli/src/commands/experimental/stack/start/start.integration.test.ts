@@ -1986,36 +1986,8 @@ describe("experimental stack start", () => {
           ),
         );
 
-        // The real open decides which run spawns the owner; the other attaches to it.
-        const attachedExited = yield* Deferred.make<void>();
-        const launches: Array<boolean> = [];
-        const racingApi = Layer.succeed(
-          StackApi,
-          StackApi.of({
-            ...realApi,
-            open: (options) =>
-              realApi.open(options).pipe(
-                Effect.map((handle) => {
-                  launches.push(handle.launchedOwner);
-                  const fixture = handle.launchedOwner ? launcher : attacher;
-                  return {
-                    ...fixture.stack,
-                    id: handle.id,
-                    launchedOwner: handle.launchedOwner,
-                    stop: handle.stop,
-                    services: {
-                      ...fixture.stack.services,
-                      list: handle.launchedOwner
-                        ? Deferred.await(attachedExited).pipe(
-                            Effect.andThen(fixture.stack.services.list),
-                          )
-                        : fixture.stack.services.list,
-                    },
-                  };
-                }),
-              ),
-          }),
-        );
+        const launcherOpened = yield* Deferred.make<void>();
+        const attacherExited = yield* Deferred.make<void>();
         const target = Layer.succeed(StackTargetResolver, {
           resolve: () =>
             Effect.succeed({
@@ -2025,28 +1997,82 @@ describe("experimental stack start", () => {
               hostRunning: false,
             }),
         });
-        const run = (output: ReturnType<typeof mockOutput>) =>
-          stackStart(flags()).pipe(
-            Effect.scoped,
-            Effect.result,
-            Effect.tap((result) =>
-              Result.isFailure(result) ? Deferred.succeed(attachedExited, undefined) : Effect.void,
-            ),
-            Effect.provide(Layer.mergeAll(layers(root, launcher, output), target, racingApi)),
+        const run = (
+          fixture: typeof launcher,
+          output: ReturnType<typeof mockOutput>,
+          hooks: {
+            readonly opened: Effect.Effect<void>;
+            readonly listGate: Effect.Effect<void>;
+          },
+        ) => {
+          let launchedOwner: boolean | undefined;
+          const api = Layer.succeed(
+            StackApi,
+            StackApi.of({
+              ...realApi,
+              open: (options) =>
+                realApi.open(options).pipe(
+                  Effect.tap((handle) => {
+                    launchedOwner = handle.launchedOwner;
+                    return hooks.opened;
+                  }),
+                  Effect.map((handle) => ({
+                    ...fixture.stack,
+                    id: handle.id,
+                    launchedOwner: handle.launchedOwner,
+                    stop: handle.stop,
+                    services: {
+                      ...fixture.stack.services,
+                      list: hooks.listGate.pipe(Effect.andThen(fixture.stack.services.list)),
+                    },
+                  })),
+                ),
+            }),
           );
-        const outputs = [mockOutput(), mockOutput()];
+          return {
+            launched: () => launchedOwner,
+            effect: stackStart(flags()).pipe(
+              Effect.scoped,
+              Effect.provide(Layer.mergeAll(layers(root, fixture, output), target, api)),
+            ),
+          };
+        };
+        const launcherOutput = mockOutput();
+        const attacherOutput = mockOutput();
+        const launcherRun = run(launcher, launcherOutput, {
+          opened: Deferred.succeed(launcherOpened, undefined),
+          listGate: Deferred.await(attacherExited),
+        });
+        const attacherRun = run(attacher, attacherOutput, {
+          opened: Effect.void,
+          listGate: Effect.void,
+        });
 
-        const results = yield* Effect.all(outputs.map(run), { concurrency: "unbounded" });
+        const [launcherResult, attacherResult] = yield* Effect.all(
+          [
+            launcherRun.effect.pipe(Effect.result),
+            Deferred.await(launcherOpened).pipe(
+              Effect.andThen(
+                attacherRun.effect.pipe(
+                  Effect.ensuring(Deferred.succeed(attacherExited, undefined)),
+                  Effect.result,
+                ),
+              ),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
 
-        expect(launches).toHaveLength(2);
-        expect(launches.filter((launched) => launched)).toHaveLength(1);
-        const failures = results.filter(Result.isFailure);
-        expect(failures).toHaveLength(1);
-        expect(failures[0]?.failure).toBeInstanceOf(StackCommandStartError);
-        expect(results.filter(Result.isSuccess).map(({ success }) => success)).toEqual([
-          registered.id,
-        ]);
-        for (const output of outputs) expect(output.stderrText).not.toContain("Failed to stop");
+        expect(launcherRun.launched()).toBe(true);
+        expect(attacherRun.launched()).toBe(false);
+        expect(Result.isFailure(attacherResult)).toBe(true);
+        if (Result.isFailure(attacherResult)) {
+          expect(attacherResult.failure).toBeInstanceOf(StackCommandStartError);
+          expect(String(attacherResult.failure)).toContain("auth");
+        }
+        expect(launcherResult).toEqual(Result.succeed(registered.id));
+        for (const output of [launcherOutput, attacherOutput])
+          expect(output.stderrText).not.toContain("Failed to stop");
         const [found] = yield* realApi.discover({ stateRoot });
         expect(found?.definition.id).toBe(registered.id);
         expect(found?.host).toBeDefined();

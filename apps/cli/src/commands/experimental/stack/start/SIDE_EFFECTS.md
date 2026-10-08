@@ -189,7 +189,9 @@ CLI reports the single launch failure with no separate stop diagnostic. Any othe
 unconfigures that initial composition, then destroys only the service instances created by this
 invocation. When this invocation launched the owner it reached, failure cleanup stops that owner and
 waits for its exit. An owner this invocation attached to, including one a concurrent start launched
-first, is kept. Existing instances and their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
+first, is kept. Ownership is decided when the stack is opened: if that owner exits and this invocation
+starts a replacement later in the same startup, a failed start leaves the replacement running, and
+`supabase stack stop --stack-id <id>` stops it. Existing instances and their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
 instance that could not be removed or owner that could not be stopped. After successful cleanup,
 fixing the cause and retrying starts from an empty composition.
 Successful startup leaves the owner available after the CLI exits. Abrupt process termination that
