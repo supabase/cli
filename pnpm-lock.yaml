@@ -165,20 +165,20 @@ settings:
 catalogs:
   default:
     '@effect/platform-bun':
-      specifier: 4.0.1
-      version: 4.0.1
+      specifier: 4.0.2
+      version: 4.0.2
     '@effect/platform-node':
-      specifier: 4.0.1
-      version: 4.0.1
+      specifier: 4.0.2
+      version: 4.0.2
     '@effect/sql-pg':
-      specifier: 4.0.1
-      version: 4.0.1
+      specifier: 4.0.2
+      version: 4.0.2
     '@effect/tsgo':
       specifier: 0.37.0
       version: 0.37.0
     '@effect/vitest':
-      specifier: 4.0.1
-      version: 4.0.1
+      specifier: 4.0.2
+      version: 4.0.2
     '@supabase/supabase-js':
       specifier: ^2.110.7
       version: 2.112.4
@@ -195,8 +195,8 @@ catalogs:
       specifier: ^5.0.0
       version: 5.0.0
     effect:
-      specifier: 4.0.1
-      version: 4.0.1
+      specifier: 4.0.2
+      version: 4.0.2
     knip:
       specifier: ^6.32.2
       version: 6.34.0
@@ -234,7 +234,7 @@ overrides:
 packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
-  '@effect/vitest@4.0.1': 9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146
+  '@effect/vitest@4.0.2': 9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
 
 importers:
@@ -310,13 +310,13 @@ importers:
         version: 1.7.0
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)
+        version: 4.0.2(effect@4.0.2)
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)
+        version: 4.0.2(effect@4.0.2)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.1(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.0.2(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.2)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.5.4)
@@ -367,7 +367,7 @@ importers:
         version: 17.4.2
       effect:
         specifier: 'catalog:'
-        version: 4.0.1
+        version: 4.0.2
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -492,13 +492,13 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)
+        version: 4.0.2(effect@4.0.2)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)(redis@6.2.1)
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1)
       effect:
         specifier: 'catalog:'
-        version: 4.0.1
+        version: 4.0.2
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
@@ -564,10 +564,10 @@ importers:
     devDependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)
+        version: 4.0.2(effect@4.0.2)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)(redis@6.2.1)
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1)
       '@semantic-release/commit-analyzer':
         specifier: ^13.0.1
         version: 13.0.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
@@ -585,7 +585,7 @@ importers:
         version: 5.0.0(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       effect:
         specifier: 'catalog:'
-        version: 4.0.1
+        version: 4.0.2
       semantic-release:
         specifier: 'catalog:'
         version: 25.0.9(supports-color@7.2.0)(typescript@7.0.2)
@@ -603,20 +603,20 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)(redis@6.2.1)
+        version: 4.0.2(effect@4.0.2)(redis@6.2.1)
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.0.1(effect@4.0.1)
+        version: 4.0.2(effect@4.0.2)
       effect:
         specifier: 'catalog:'
-        version: 4.0.1
+        version: 4.0.2
       jose:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.1(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.0.2(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.2)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -879,28 +879,28 @@ packages:
     peerDependencies:
       '@noble/ciphers': ^1.0.0
 
-  '@effect/platform-bun@4.0.1':
-    resolution: {integrity: sha512-m+QR4bp39ZWujCuEsUhZADIYIOFZcUHHlmrixENZqZRbEYgaPLMUWiPrRJ69CM4BuuHW8oCOxfMGUU7oSw/o5g==}
+  '@effect/platform-bun@4.0.2':
+    resolution: {integrity: sha512-wbQ9jQKtTjqHOYvMrgINWKuP05Q0cXe/Rze2c2gOAakztE34tVzT4aRvvooUR2l+JGWf/hL26nmHXJ4/Urkqiw==}
     peerDependencies:
-      effect: ^4.0.1
+      effect: ^4.0.2
 
-  '@effect/platform-node-shared@4.0.1':
-    resolution: {integrity: sha512-VanaejudEhKJ4mpmqnEzdncVUhN6sGSO9ZDND54mRxAlZxj+4dYAWjDTYAy9o4tJo9aALeP2U8cVcOFzEdSeLg==}
+  '@effect/platform-node-shared@4.0.2':
+    resolution: {integrity: sha512-xn8aDw9p/QUPt1Yi0C3HUMcycT+MjHfAe19FDUDrUuzcwq0xxskkamVSqbdykF/Dsuus4aZTsCBZA/vkhHIfbQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.1
+      effect: ^4.0.2
 
-  '@effect/platform-node@4.0.1':
-    resolution: {integrity: sha512-FT0Fu5LO0/XP9zBpj0HqrtJNLluK4StNKqf6TSulUsjp8FPBsDVXGJiDuyoN5J2yVMT7tgvhxSwaDcObWVRIaQ==}
+  '@effect/platform-node@4.0.2':
+    resolution: {integrity: sha512-RWesXBQStnFHdD465gR5thFKgXO7FSyCKRZ56nWXB7PedNVzr8vV0nb/3MULLdri493sMz/b/pmGBTb6K8cBjQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.1
+      effect: ^4.0.2
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/sql-pg@4.0.1':
-    resolution: {integrity: sha512-X5aqOxHNWqVXL+vyTQZLYDip65lm5rrZHuNkWyyr672iup1tjYAs5Dn9tHR5h1t0blpJ57j8Ng5G5AUQ8teIqA==}
+  '@effect/sql-pg@4.0.2':
+    resolution: {integrity: sha512-i2N5F0L5s1S8Nx2I8V7k+awBinP26b5xiiHL1zn5b6RALNnloiU7FK1yS4dAkmqG9B0EcOVxvJrIpoMWwrB4hw==}
     peerDependencies:
-      effect: ^4.0.1
+      effect: ^4.0.2
 
   '@effect/tsgo-darwin-arm64@0.37.0':
     resolution: {integrity: sha512-D9o2NKswmRklu+sG28HkxZAvtvOa0Mt+bLVjJKydF2kVw+gePxiHuTbbI3e4Kqumv4ucLT3TtqU1a2RirC80lA==}
@@ -941,10 +941,10 @@ packages:
     resolution: {integrity: sha512-jCJIUcNgI0vaoylao/mhOv+7hDfaJRwZJSJrg5kA/FCQ4aGDhAYqyQx+hoZh8AW3pzD9Qp1RWtUsVFqOzIOENw==}
     hasBin: true
 
-  '@effect/vitest@4.0.1':
-    resolution: {integrity: sha512-DbY9kf/018zBxRIX7rJwBnPVPzSarnUpcshm0vfYPFiDkSa7AFrXTh2BlDNUbrdrmqcIOBhVZ7GkEtxf8WiQrg==}
+  '@effect/vitest@4.0.2':
+    resolution: {integrity: sha512-Zb72nu7iUy3rNdBp9J1Xu5oUQGwJ8cOYsUwmYgujj88aqyvASRDjOS01SjlcPViqf77csduetKdCJTVndMNfzw==}
     peerDependencies:
-      effect: ^4.0.1
+      effect: ^4.0.2
       vite: '*'
       vitest: '>=5.0.0 <6.0.0'
 
@@ -3017,6 +3017,9 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
     engines: {node: '>=16.20.0'}
@@ -3937,8 +3940,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.1:
-    resolution: {integrity: sha512-b1VlQG9g8fwxE5QnIZuPoOP/0MsqHJSRKxUijjoM80E5q95FXrX5yWtY5XI8G+GJsBQAVSDbLS458z9a++uVvw==}
+  effect@4.0.2:
+    resolution: {integrity: sha512-YeYnLqSFrL4+tCOXRrfNP03w8FILoF/wDl+ukraJAGzXrjcS383W7LAAvGBbLatEyktmLxRq+9xJinx7QzXW5A==}
 
   emoji-regex@10.6.0:
     resolution: {integrity: sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==}
@@ -7042,36 +7045,36 @@ snapshots:
     dependencies:
       '@noble/ciphers': 1.3.0
 
-  '@effect/platform-bun@4.0.1(effect@4.0.1)':
+  '@effect/platform-bun@4.0.2(effect@4.0.2)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.1(effect@4.0.1)
-      effect: 4.0.1
+      '@effect/platform-node-shared': 4.0.2(effect@4.0.2)
+      effect: 4.0.2
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.1(effect@4.0.1)':
+  '@effect/platform-node-shared@4.0.2(effect@4.0.2)':
     dependencies:
-      '@types/ws': 8.18.1
-      effect: 4.0.1
+      '@types/ws': 8.18.2
+      effect: 4.0.2
       ws: 8.22.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.2.1)':
+  '@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.1(effect@4.0.1)
-      effect: 4.0.1
+      '@effect/platform-node-shared': 4.0.2(effect@4.0.2)
+      effect: 4.0.2
       redis: 6.2.1
       undici: 8.11.2
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.1(effect@4.0.1)':
+  '@effect/sql-pg@4.0.2(effect@4.0.2)':
     dependencies:
-      effect: 4.0.1
+      effect: 4.0.2
 
   '@effect/tsgo-darwin-arm64@0.37.0':
     optional: true
@@ -7104,9 +7107,9 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.37.0
       '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/vitest@4.0.1(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
+  '@effect/vitest@4.0.2(patch_hash=9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146)(effect@4.0.2)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
     dependencies:
-      effect: 4.0.1
+      effect: 4.0.2
       vite: 8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
       vitest: 5.0.0(@types/node@26.4.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
@@ -8718,6 +8721,10 @@ snapshots:
     dependencies:
       '@types/node': 26.4.1
 
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 26.4.1
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -9583,7 +9590,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.1: {}
+  effect@4.0.2: {}
 
   emoji-regex@10.6.0: {}
 
