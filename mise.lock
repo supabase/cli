@@ -174,7 +174,7 @@ provenance = "github-attestations"
 [[tools.jactionlint]]
 version = "1.8.2"
 backend = "github:jdx/jactionlint"
-specifiers = ["latest"]
+specifiers = ["1"]
 
 [tools.jactionlint."platforms.linux-arm64"]
 checksum = "sha256:7d618749dbddd762a14bd491ea97bc4f6599626f830a11edc6c6522ead8bcd05"

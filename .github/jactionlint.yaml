@@ -4,8 +4,7 @@ self-hosted-runner:
     - arm-runner
     - blacksmith-2vcpu-ubuntu-2404
     - blacksmith-4vcpu-ubuntu-2404
-    - blacksmith-32vcpu-ubuntu-2404
-    - blacksmith-8vcpu-ubuntu-2404
     - blacksmith-6vcpu-macos-latest
     - blacksmith-8vcpu-ubuntu-2404
     - blacksmith-8vcpu-windows-2025
+    - blacksmith-32vcpu-ubuntu-2404
