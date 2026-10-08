@@ -131,6 +131,7 @@ export function aggregate(
     suites.set(meta.suite, suite);
 
     let sawFailure = false;
+    let ranTests = 0;
     // Tests sharing a title in one file stay distinct by their order of appearance.
     const occurrences = new Map<string, number>();
     for (const testCase of cases) {
@@ -140,6 +141,7 @@ export function aggregate(
       if (testCase.skipped) {
         continue;
       }
+      ranTests += 1;
       const name = occurrence === 1 ? testCase.name : `${testCase.name} (#${occurrence})`;
       const key = `${meta.suite}\0${file}\0${testCase.name}\0${occurrence}`;
       suite.tests.add(key);
@@ -184,12 +186,8 @@ export function aggregate(
         name: meta.name,
         problem: `exited ${meta.exitCode} without a failing test (setup, unhandled error, or crash)`,
       });
-    }
-  }
-
-  for (const [name, { tests }] of suites) {
-    if (tests.size === 0 && !allowEmpty.includes(name)) {
-      runProblems.push({ name: `${name} (every run)`, problem: "no tests ran; check the filter" });
+    } else if (ranTests === 0 && !allowEmpty.includes(meta.suite)) {
+      runProblems.push({ name: meta.name, problem: "ran no tests; check the filter" });
     }
   }
 
@@ -228,6 +226,11 @@ export function isClean(report: Report): boolean {
   );
 }
 
+/** Code spans render text literally, so only table pipes and backticks need handling. */
+function codeCell(value: string): string {
+  return `\`${value.replaceAll("`", "'").replaceAll("|", "\\|")}\``;
+}
+
 function cell(value: string): string {
   const flat = value.replace(/\s+/g, " ").trim();
   const short = flat.length > MAX_MESSAGE ? `${flat.slice(0, MAX_MESSAGE)}…` : flat;
@@ -248,7 +251,7 @@ function testTable(title: string, verdicts: TestVerdict[]): string[] {
       .slice(0, MAX_ROWS)
       .map(
         (v) =>
-          `| ${v.suite} | ${cell(v.name)} | \`${cell(v.file)}\` | ${v.failedRuns.length}/${v.runs}${v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : ""} | ${[...v.failedRuns].sort((a, b) => a - b).join(", ")} | ${cell(v.message ?? "")} |`,
+          `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedRuns.length}/${v.runs}${v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : ""} | ${[...v.failedRuns].sort((a, b) => a - b).join(", ")} | ${cell(v.message ?? "")} |`,
       ),
   ];
   if (verdicts.length > MAX_ROWS) {

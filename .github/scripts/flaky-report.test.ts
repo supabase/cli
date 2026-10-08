@@ -141,7 +141,7 @@ describe("aggregate", () => {
     expect(isClean(report)).toBe(false);
   });
 
-  test("flags a suite that ran no tests unless allowed and renders titles without mentions", () => {
+  test("flags runs that ran no tests unless allowed and renders titles without mentions", () => {
     const report = aggregate(
       [
         run(
@@ -153,10 +153,11 @@ describe("aggregate", () => {
           1,
           1,
         ),
+        run("unit", 2, { "packages__api--unit.xml": empty }),
         run("integration", 1, { "apps__cli--integration.xml": empty }),
         run("focused", 1, { "apps__cli--unit.xml": empty }),
       ],
-      ["flaky-unit-run1", "flaky-integration-run1", "flaky-focused-run1"],
+      ["flaky-unit-run1", "flaky-unit-run2", "flaky-integration-run1", "flaky-focused-run1"],
       ["focused"],
     );
 
@@ -166,7 +167,9 @@ describe("aggregate", () => {
     });
 
     expect(report.runProblems).toEqual([
-      { name: "integration (every run)", problem: "no tests ran; check the filter" },
+      { name: "flaky-integration-run1", problem: "ran no tests; check the filter" },
+      { name: "flaky-unit-run2", problem: "ran no tests; check the filter" },
+      ,
     ]);
     expect(markdown).toContain("| unit | @<!---->supabase/api > breaks |");
   });
