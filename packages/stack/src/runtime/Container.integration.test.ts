@@ -1743,8 +1743,8 @@ const makePullFailureSpawner = (
         return yield* delegate.spawn(
           ChildProcess.make(
             process.execPath,
-            ["-e", `console.error(${JSON.stringify(stderr)}); process.exit(73)`],
-            { stdin: "ignore" },
+            ["-e", "console.error(process.env.PULL_STDERR); process.exit(73)"],
+            { stdin: "ignore", env: { ...process.env, PULL_STDERR: stderr } },
           ),
         );
       });
