@@ -86,11 +86,16 @@ Every applicable command must preserve these invariants:
 
 Read config and `SUPABASE_*` values through `CliConfigValues` (`snapshot.get(CliConfigKeys.<path>)`),
 which resolves flag > shell env > project `.env*` > config > default. Bind a flag that sets a config
-key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Never read
-`process.env` or a registry env name directly; `code-structure.unit.test.ts` and the `oxlint`
-`process.env` ban fail the build, and `cli-config-contract.unit.test.ts` and
-`cli-config-flag-ownership.unit.test.ts` check every registry key and flag against the command
-tree. To add a key, a flag or an exception, see
+key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Use
+`snapshot.loaded`, `materialized` or `fileDeclared` for the whole document and `envValues(names)`
+for `env(NAME)` references; `projectEnvValues` is only for variables outside the registry.
+
+Never read `process.env`, `Bun.env`, `globalThis.process` or a registry env name directly, and
+never call `loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment` outside
+`config/cli-config-*.ts` and `shared/config/cli-config-*.ts`. `code-structure.unit.test.ts` and
+`oxlint` fail the build, and `cli-config-contract.unit.test.ts` and
+`cli-config-flag-ownership.unit.test.ts` check every registry key and `CLI_CONFIG_FLAGS` flag
+against the command tree. To add a key, a flag or an exception, see
 [ADR 0031](../../docs/adr/0031-config-value-precedence.md).
 
 ## Experimental feature registration

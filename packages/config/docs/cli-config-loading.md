@@ -413,6 +413,33 @@ The CLI's own loader (`shared/config/cli-config-env.ts`) reads `SUPABASE_ENV` (d
 of a key wins, and a key the shell sets is never taken from a file. This differs from the public
 `loadCliProjectEnvironment` described above.
 
+### The snapshot
+
+`CliConfigValues.load({ workdir, projectRef })` returns a snapshot memoised per workdir, project
+ref and flag set; `writeThrough` drops the memo around a write. The snapshot exposes:
+
+- `get(key)`: the value and its origin tier.
+- `loaded`: the document with every flag, env and secret winner written in, before defaults.
+- `fileDeclared`: what the config file alone declares, with `env()` resolved and no flag or
+  `SUPABASE_*` overlay. `config pull` compares against it.
+- `materialized`: `loaded` plus defaults and normalizers, with `originAt(path)`.
+- `origins`, `appliedRemote`, `hasConfigFile`, `declares(path)`, `familyNames(family)`,
+  `withheldEnv`, `dotenvPrivateKeys`.
+- `invalid`: values left out under the `tolerateInvalid` load option; empty otherwise.
+- `envValues(names)`: the non-empty value of each name, shell before project `.env*`, for
+  resolving `env(NAME)` references.
+- `projectEnvValues`: the raw project `.env*` record, for variables outside the registry such as
+  Docker, registry mirrors and `SUPABASE_NETWORK_ID`.
+
+Load-time warnings print once per runtime. Outside the foundation files the CLI never calls
+`loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment`; a guard test enforces it.
+
+### Local SMTP
+
+`auth.email.smtp.enabled` defaults to off in the schema. The CLI treats a present
+`[auth.email.smtp]` table that omits `enabled` as on, so a partial table, for example one holding
+only `pass = "env(SMTP_PASS)"`, still loads.
+
 ### Pipeline stages from `./internal`
 
 `@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:

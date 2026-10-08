@@ -19,10 +19,24 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   is a constant.
 - Commands read values through the `CliConfigValues` service. `load({ workdir, projectRef })`
   returns a snapshot, memoised per workdir, project ref and flag set within a runtime. The snapshot
-  decodes the whole config eagerly, so an invalid value fails every command that loads config.
-  `get(key)` returns the value and the tier it came from; `materialized` is the fully decoded
-  config for consumers that need the whole object. Code that writes config or `.temp` goes through
-  `writeThrough`, which drops the memo.
+  decodes the whole config eagerly, so an invalid value fails every command that loads config
+  unless the caller passes `tolerateInvalid`. Load-time warnings (a deprecated alias, an env value
+  overriding a remote, the `[inbucket]` deprecation) print once per runtime, however many
+  snapshots it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
+  the memo.
+- The snapshot surface is:
+  - `get(key)`: the value and the origin tier that supplied it.
+  - `loaded`: what the project declares, with every flag, env and secret winner written in and no
+    defaults. `fileDeclared`: what the config file alone declares, with `env()` resolved and no
+    flag or `SUPABASE_*` overlay.
+  - `materialized`: `loaded` plus defaults and normalizers, with `originAt(path)`. `origins`: the
+    origin of every registry key.
+  - `appliedRemote`, `hasConfigFile`, `declares(path)`, `familyNames(family)`, `invalid`,
+    `withheldEnv`, `dotenvPrivateKeys`.
+  - `envValues(names)`: the non-empty value of each named variable, shell before project `.env*`,
+    for resolving `env(NAME)` references.
+  - `projectEnvValues`: the raw project `.env*` record, for names outside the registry only (see
+    the exceptions).
 - The key registry is generated from `CliConfigSchema`. Each leaf gets a path, the env name
   `SUPABASE_` plus the upper-snake path, and a codec derived from its type. Hand-written
   annotations cover what the schema cannot express: deprecated env aliases, codec overrides, secret
@@ -43,6 +57,10 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   `db.seed.enabled` seeds nothing by default. `db push` and `db reset --linked` ask before seeding
   into the matched project (`--yes` or `SUPABASE_YES` skips the prompt); a non-interactive run
   without `--yes` exits 1. `db push` still seeds only with `--include-seed`.
+- Local SMTP is on when `[auth.email.smtp]` sets `enabled`, or when the table is present and
+  leaves it out. The schema default alone is off, so a partial table such as one holding only
+  `pass = "env(SMTP_PASS)"` still loads. `resolveSmtpEnabled` implements the rule for every
+  reader, and `config push` and `config pull` see the same value.
 - Exceptions kept on purpose:
   - `CommandSettings` reads `SUPABASE_PROJECT_ID` from the shell only, because it selects the
     target project before any config is loaded.
@@ -50,6 +68,22 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     project is known.
   - `db.password` has no env tier: the local database password lives in config, and the linked
     password is a separate key with its own env name, flag and scoping.
+  - Credential scoping covers the linked database password only. `SUPABASE_AUTH_SERVICE_ROLE_KEY`
+    is not scoped to the linked project.
+  - Flag ownership covers the names in `CLI_CONFIG_FLAGS` only. A command may declare any other
+    flag, with or without a config key behind it.
+  - `snapshot.projectEnvValues` serves names outside the registry: Docker and registry resolution,
+    the services hostname, Bitbucket detection, `SUPABASE_YES`, `SUPABASE_NETWORK_ID`, and the
+    project env `functions serve` forwards to the edge runtime. A registry name read from it is a
+    guard failure.
+  - `secrets set` loads with `tolerateInvalid`, so an invalid value elsewhere in the config does
+    not block setting secrets; it reads `edge_runtime` through `resolveCliSubtree`.
+  - `--include-seed` beats `db.seed.enabled = false` in the base config; the flag is the
+    highest tier for the decision it names.
+  - `layeredParseEnv` in `db-config.parse.ts` looks up libpq `PG*` names, which are not registry
+    keys, so it stays outside the registry.
+  - The telemetry event catalog lists `SUPABASE_PROJECT_ID` as an environment signal; it records
+    which variables are set and never resolves a value.
 - The pipeline stages live in `@supabase/config/internal` and are not covered by semver. The CLI
   composes them: parse, merge a selected remote, overlay values, decode.
 
@@ -83,13 +117,28 @@ order stays the same for every key.
 
 ### Guardrails
 
-- `code-structure.unit.test.ts` fails when a registry env name appears in a read position outside
-  the foundation files (`config/cli-config-*.ts`, `shared/config/cli-config-*.ts`), when the old
-  overlay identifiers return, when a foundation file imports from `commands/` or
-  `command-internal/`, when `CliConfigFlagInputs` is constructed outside `cli-config-flags.ts`, or
-  when a registry-backed flag is declared with a raw `Flag.*` instead of `key.flag`.
-- `oxlint` bans `process.env` and `Bun.env` across `apps/cli/src`, except the config provider, the
-  env loader, the entrypoint and stack code.
+- `code-structure.unit.test.ts` fails when:
+  - a registry env name appears as a string literal outside the foundation files
+    (`config/cli-config-*.ts`, `shared/config/cli-config-*.ts`), whatever the read pattern; only
+    the telemetry event catalog is exempt;
+  - the old overlay identifiers return;
+  - a foundation file imports from `commands/` or `command-internal/`;
+  - `CliConfigFlagInputs` is constructed outside `cli-config-flags.ts`;
+  - a registry-backed flag is declared with a raw `Flag.*` instead of `key.flag`;
+  - `process.env`, `Bun.env` or an aliased form is read outside the foundation, the entrypoint
+    and `shared/compute/stacks/**` templates;
+  - a file outside the foundation imports `loadCliConfig`, `resolveCliConfigSubtree` or
+    `loadCliProjectEnvironment` from `@supabase/config`, tests included for the last.
+- `oxlint` bans `process.env`, `Bun.env`, `globalThis.process`, `env` imported from `node:process`,
+  `process` or `bun`, and namespace imports of `node:process` across `apps/cli/src`, except the
+  config provider, the env loader, the entrypoint, `shared/compute/stacks/**` and tests. Importing
+  `ambientEnvironment` is limited to nine audited files that read terminal, libpq, Docker and proxy
+  variables, never a registry name: `cli/complete.ts`, `command-internal/colors.ts`,
+  `command-internal/db-config.parse.ts`, `command-internal/hostname.ts`,
+  `command-internal/pgpass.ts`, `commands/login/login-claude-hint.ts`,
+  `commands/start/lib/env-or-default.ts`, `commands/start/services/vector.service.ts` and
+  `shared/functions/deploy.ts`. A default-import alias of `node:process` is caught by the
+  code-structure guard instead.
 - `CliConfigFlagInputs` is not an allowed runtime service, so a command that reads config values
   without `withCliConfigFlags` fails `tsc`.
 - Registry unit tests check env-name uniqueness, alias resolution, section gating, and that every
@@ -100,7 +149,7 @@ order stays the same for every key.
   through. It also pins deprecated aliases, secret keys and the declared flags to real keys.
 - `cli-config-flag-ownership.unit.test.ts` walks the command tree, hidden commands included, and
   fails when a flag the registry owns is missing from a command, bound to another key, or bound by
-  a command that does not declare it.
+  a command that does not declare it. It checks the names in `CLI_CONFIG_FLAGS` only.
 
 ### Adding a key or a flag
 
@@ -110,6 +159,8 @@ order stays the same for every key.
 - To bind a flag, add it to `CLI_CONFIG_FLAGS`, declare it with `key.flag` in the command, and
   pipe the command config through `withCliConfigFlags`.
 - Read the value with `snapshot.get(CliConfigKeys.<path>)`. Never read the env name directly.
+- A new exception to any rule above is a decision: record it in this ADR and in the guard's
+  exemption list together.
 
 ## Alternatives Considered
 
