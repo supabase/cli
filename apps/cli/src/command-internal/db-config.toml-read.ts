@@ -26,6 +26,7 @@ import {
 import { DbConfigLoadError } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { ramInBytes } from "./size-units.ts";
+import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
@@ -568,7 +569,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       smtp === undefined
         ? undefined
         : {
-            enabled: smtp.enabled ?? true,
+            enabled: resolveSmtpEnabled(snapshot),
             host: smtp.host ?? "",
             port: smtp.port ?? 0,
             user: smtp.user ?? "",

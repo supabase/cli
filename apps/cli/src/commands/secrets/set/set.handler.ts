@@ -1,11 +1,11 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { collectEnvReferences } from "../../../config/cli-config-document.ts";
+import { envReferenceNames } from "../../../config/cli-config-document.ts";
+import { resolveCliSubtree } from "../../../config/cli-config-subtree.ts";
 import {
   CliConfigValues,
   type CliConfigSnapshot,
@@ -116,7 +116,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
 
   yield* Effect.gen(function* () {
     // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are
-    // sent: `resolveCliConfigSubtree` wraps every resolved secret leaf in `Redacted<string>`,
+    // sent: `resolveCliSubtree` wraps every resolved secret leaf in `Redacted<string>`,
     // while unresolved `env(VAR)` references stay plain strings, so `Redacted.isRedacted`
     // distinguishes them.
     const merged = new Map<string, string>();
@@ -205,13 +205,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
             tolerateUnreadableLinkedRef: true,
           })
           .pipe(Effect.orElseSucceed(() => undefined)));
-      const names = new Set<string>();
-      collectEnvReferences(edgeRuntime, names);
       const values =
-        envSnapshot === undefined ? {} : yield* envSnapshot.envValues(names).pipe(Effect.orDie);
-      const resolved = yield* resolveCliConfigSubtree(edgeRuntime, { values }, "edge_runtime", {
-        goViperCompat: true,
-      });
+        envSnapshot === undefined
+          ? {}
+          : yield* envSnapshot.envValues(envReferenceNames(edgeRuntime)).pipe(Effect.orDie);
+      const resolved = yield* resolveCliSubtree(edgeRuntime, values, "edge_runtime");
       const secrets = isRecord(resolved) ? resolved["secrets"] : undefined;
       for (const [name, value] of Object.entries(isRecord(secrets) ? secrets : {})) {
         // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an

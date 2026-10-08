@@ -90,7 +90,7 @@ import {
   ServeLocalDbNotRunningError,
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
-import { resolveSnapshotSubtree } from "../../command-internal/config-snapshot-context.ts";
+import { resolveSnapshotSubtree } from "../../config/cli-config-subtree.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;

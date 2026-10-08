@@ -101,8 +101,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     (message) => new DbConfigLoadError({ message }),
   );
   // This same `context` is passed into `buildLocalDbContainerInputs` below as
-  // `preloadedContext`, since a second `loadCliConfig` call would double-print
-  // deprecated-config-section warnings; that function returns the same context back verbatim.
+  // `preloadedContext`; that function returns the same context back verbatim.
   // `hostnameForValidation` here still feeds the discarded `resolveLocalConfigValues` call below.
   const { config, snapshot, hostname: hostnameForValidation } = context;
   const document = snapshot.loaded.document ?? {};

@@ -34,11 +34,7 @@ import {
 } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import {
-  declaredConfigWithEnvOrigins,
-  mapConfigLoadError,
-  resolveConfigProjectRoot,
-} from "../config.load.ts";
+import { mapConfigLoadError, resolveConfigProjectRoot } from "../config.load.ts";
 import {
   configApiScope,
   configEnvOriginLookup,
@@ -178,7 +174,7 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
       message: yield* missingProjectConfigMessageEffect(cliSettings),
     });
   }
-  const loaded = declaredConfigWithEnvOrigins(snapshot);
+  const loaded = snapshot.loaded;
   yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
   const projectYes = snapshot.projectEnvValues["SUPABASE_YES"];
   const referenced = yield* snapshot.envValues(
@@ -255,7 +251,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // resolver still flushes telemetry and, once a ref is known, writes the linked-project cache.
     //
     // Runs before the config load below: a `[remotes.<name>]` overlay is merged inside
-    // `loadCliConfig` before its one schema decode, so a base document that's invalid without its
+    // the snapshot load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
     const { ref, branch } = yield* resolveConfigTarget(
@@ -475,15 +471,40 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       storage: pushResourceEnabled("storage", config, local),
     };
 
-    // Announced before any prompt so a `--yes` run still shows what the environment supplied.
+    // Announced before any prompt so a `--yes` run still shows what the environment supplied;
+    // only paths an encoder will actually send are counted, so an up-to-date resource adds none.
+    const plannedEncodings: ReadonlyArray<PushEncoded<unknown>> = PUSH_RESOURCES.filter(
+      (resource) =>
+        resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
+    ).map((resource) => {
+      const changes = plan.changesByResource[resource];
+      switch (resource) {
+        case "api":
+          return encodeApiBody({ changes, local, remote });
+        case "db.settings":
+          return encodeDbSettingsBody({ changes, local, remote });
+        case "db.network_restrictions":
+          return encodeNetworkRestrictionsBody({ changes, local, remote });
+        case "db.ssl_enforcement":
+          return encodeSslEnforcementBody({ changes, local, remote });
+        case "auth":
+          return encodeAuthBody({
+            changes,
+            local,
+            remote,
+            secrets,
+            emailContent: authEmailContent,
+            remoteAuthAttributes,
+            now,
+          });
+        case "storage":
+          return encodeStorageBody({ changes, local, remote, config });
+      }
+    });
     const envSourced = envSourcedPaths(
-      [
-        ...PUSH_RESOURCES.filter(
-          (resource) =>
-            resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
-        ).flatMap((resource) => plan.changesByResource[resource].map((change) => change.path)),
-        ...secrets.filter((secret) => secret.status === "send").map((secret) => secret.path),
-      ],
+      plannedEncodings
+        .filter((encoded) => encoded.body !== undefined)
+        .flatMap((encoded) => pushServiceChanges(encoded, pushSentSecretPaths(encoded))),
       originFor,
     );
     if (envSourced.length > 0) {

@@ -499,7 +499,7 @@ describe("commandSettingsLayer", () => {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe("/flag/workdir");
       // An explicit --workdir is used verbatim, letting `shouldSearchAncestors` skip the
-      // second ancestor climb inside `loadCliConfig`.
+      // second ancestor climb inside the config load.
       expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(

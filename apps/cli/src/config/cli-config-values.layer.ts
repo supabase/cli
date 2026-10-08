@@ -106,6 +106,10 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
 const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
   key.codec.kind !== "string" && !sameDocumentValue(written, raw);
 
+/** An `env(NAME)` value is left for the decode to resolve, so its origin stays "from NAME". */
+const isEnvReference = (raw: unknown): boolean =>
+  typeof raw === "string" && ENV_CAPTURE_REGEX.test(raw);
+
 const declaredWrite = (
   key: AnyCliConfigKey,
   picked: CliConfigValue<unknown>,
@@ -118,7 +122,9 @@ const declaredWrite = (
     case "projectEnv":
       return written;
     case "config":
-      return key.secret === true || needsCoercion(key, written, raw) ? written : undefined;
+      return key.secret === true || (!isEnvReference(raw) && needsCoercion(key, written, raw))
+        ? written
+        : undefined;
     case "default":
       return undefined;
   }
@@ -139,7 +145,7 @@ const materializedWrite = (
 
 const aliasWarning = (used: string, canonical: string): string => {
   const note = CLI_CONFIG_ENV_ALIAS_NOTES[used];
-  return `${used} is deprecated. Please use ${canonical} instead.${note === undefined ? "" : ` ${note}`}`;
+  return `${used} is deprecated; rename it to ${canonical}.${note === undefined ? "" : ` ${note}`}`;
 };
 
 export const cliConfigValuesLayer = Layer.effect(
@@ -157,13 +163,28 @@ export const cliConfigValuesLayer = Layer.effect(
         Effect.provideService(Path.Path, path),
       );
 
+    const warned = new Set<string>();
+    const warnOnce = (message: string) => {
+      if (warned.has(message)) return Effect.void;
+      warned.add(message);
+      return output.warn(message);
+    };
+
+    const parsedDocuments = yield* Cache.makeWith(
+      (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
+      {
+        capacity: 8,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+      },
+    );
+
     const loadSnapshot = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
       const [conflict] = flagInputs.conflicts;
       if (conflict !== undefined) return yield* cliConfigFlagConflictError(conflict);
 
       const parsed = target.ignoreConfigFile
         ? null
-        : yield* withPlatform(parseCliConfigDocumentFile(target.workdir, { search: false }));
+        : yield* Cache.get(parsedDocuments, target.workdir);
       const rawDocument = parsed?.rawDocument ?? {};
 
       const shell = yield* readShellEnvironment({
@@ -337,7 +358,7 @@ export const cliConfigValuesLayer = Layer.effect(
           }
           if (appliedRemote !== undefined && remoteLeaves.has(key.path)) {
             overrideWarnings.push(
-              `${origin.envName} overrides ${key.path}, which [remotes.${appliedRemote}] declares.`,
+              `${describeCliConfigOrigin(origin, sources.context)} overrides ${key.path} in [remotes.${appliedRemote}].`,
             );
           }
         }
@@ -371,6 +392,9 @@ export const cliConfigValuesLayer = Layer.effect(
           goViperCompat: true,
           document: declaredDraft,
         }),
+      );
+      const fileDeclared = withPlatform(
+        decodeMergedCliConfig(mergedForDecode, { envValues, goViperCompat: true, silent: true }),
       );
       const materializedLoaded = yield* withPlatform(
         decodeMergedCliConfig(mergedForDecode, {
@@ -406,8 +430,7 @@ export const cliConfigValuesLayer = Layer.effect(
           return picked.success;
         });
 
-      for (const message of new Set(aliasWarnings)) yield* output.warn(message);
-      for (const message of overrideWarnings) yield* output.warn(message);
+      for (const message of [...aliasWarnings, ...overrideWarnings]) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
         for (const [originPath, origin] of origins) {
           if (origin.tier === "default") continue;
@@ -422,6 +445,7 @@ export const cliConfigValuesLayer = Layer.effect(
         hasConfigFile: merged !== null,
         get,
         loaded,
+        fileDeclared,
         materialized,
         origins,
         invalid,
@@ -463,7 +487,11 @@ export const cliConfigValuesLayer = Layer.effect(
             tolerateInvalid: target.tolerateInvalid === true,
           }),
         ),
-      writeThrough: (write) => Effect.ensuring(write, Cache.invalidateAll(cache)),
+      writeThrough: (write) =>
+        Effect.ensuring(
+          write,
+          Effect.all([Cache.invalidateAll(cache), Cache.invalidateAll(parsedDocuments)]),
+        ),
     });
   }),
 );

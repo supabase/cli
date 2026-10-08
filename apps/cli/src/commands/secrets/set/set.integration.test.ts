@@ -565,7 +565,7 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
-      // `loadCliConfig` resolves `env(VAR)` references against `.env`/`.env.local` before
+      // The snapshot load resolves `env(VAR)` references against `.env`/`.env.local` before
       // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
       // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
       // read once a config.toml/.json is found, so one must exist here too.

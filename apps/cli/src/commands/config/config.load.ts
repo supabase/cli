@@ -1,16 +1,7 @@
-import {
-  CliConfigParseError,
-  findCliProjectRoot,
-  type LoadedCliConfig,
-} from "@supabase/config/effect";
-import {
-  decodeMergedCliConfig,
-  mergeParsedCliConfig,
-  type ParsedCliConfigDocument,
-} from "@supabase/config/internal";
+import { CliConfigParseError, findCliProjectRoot } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 
-import { envReferenceNames, isDocumentRecord } from "../../config/cli-config-document.ts";
+import { isDocumentRecord } from "../../config/cli-config-document.ts";
 import { cliRemoteProjectIdEnvName } from "../../config/cli-config-keys.ts";
 import { selectCliConfigRemote } from "../../config/cli-config-remote.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
@@ -104,31 +95,7 @@ export const loadTargetConfigSnapshot = Effect.fnUntraced(function* <E>(
     : yield* loadConfigSnapshot(cliSettings, projectRoot, Option.some(ref), makeError);
 });
 
-/**
- * `snapshot.loaded` with the `env()` reference behind each value kept as an `environment` origin;
- * the loaded view resolves a numeric or boolean reference to a literal, which would hide the
- * variable from a diff row.
- */
-export function declaredConfigWithEnvOrigins(snapshot: CliConfigSnapshot): LoadedCliConfig {
-  const referenced = [...snapshot.origins.values()].flatMap((origin) =>
-    origin.tier === "config" && origin.origin.source === "environment" ? [origin.origin] : [],
-  );
-  if (referenced.length === 0) return snapshot.loaded;
-  const paths = new Set(referenced.map((origin) => origin.path.join(".")));
-  return {
-    ...snapshot.loaded,
-    valueOrigins: [
-      ...(snapshot.loaded.valueOrigins ?? []).filter((origin) => !paths.has(origin.path.join("."))),
-      ...referenced,
-    ],
-  };
-}
-
-/**
- * What the config file itself declares: the snapshot's `[remotes.*]` block merged over the base
- * and `env()` references resolved through the snapshot, with no flag or `SUPABASE_*` overlay.
- * `config pull` compares against this view because it rewrites the file.
- */
+/** What the config file itself declares; `config pull` compares against it because it rewrites the file. */
 export const loadDeclaredFileConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
   projectRoot: string,
@@ -136,28 +103,6 @@ export const loadDeclaredFileConfig = Effect.fnUntraced(function* <E>(
   makeError: (message: string) => E,
 ) {
   const snapshot = yield* loadConfigSnapshot(cliSettings, projectRoot, projectRef, makeError);
-  const { loaded: overlaid } = snapshot;
-  const parsed: ParsedCliConfigDocument = {
-    path: overlaid.path,
-    format: overlaid.format,
-    rawText: overlaid.rawText ?? "",
-    schemaRef: overlaid.schemaRef,
-    ignoredPaths: overlaid.ignoredPaths,
-    rawDocument: overlaid.rawDocument,
-    normalized: overlaid.rawDocument,
-  };
-  const mapped = mapConfigLoadError(cliSettings, makeError);
-  const merged = yield* mergeParsedCliConfig(parsed, {
-    selectRemote: (remotes) => {
-      const applied = Option.getOrUndefined(snapshot.appliedRemote);
-      return applied !== undefined && applied in remotes ? applied : undefined;
-    },
-  }).pipe(mapped);
-  const envValues = yield* snapshot.envValues(envReferenceNames(merged.rawDocument));
-  const loaded = yield* decodeMergedCliConfig(merged, {
-    envValues,
-    goViperCompat: true,
-    silent: true,
-  }).pipe(mapped);
+  const loaded = yield* snapshot.fileDeclared.pipe(mapConfigLoadError(cliSettings, makeError));
   return { snapshot, loaded };
 });

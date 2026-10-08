@@ -21,6 +21,7 @@ import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect"
 
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
 import type { ConfigTarget } from "./project-target.ts";
@@ -379,7 +380,7 @@ function configPullFamiliesForChangePaths(
  * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only its own
  * `CliConfigParseError` failure into a `Result`. A genuinely malformed `.env`/`.env.local`,
  * or a filesystem failure reading one, is not a decode-attribution failure, so those
- * propagate uncaught, matching how the real `loadCliConfig` call already handles them.
+ * propagate uncaught, matching how the config snapshot load handles them.
  */
 function decodeConfigPullValidation(
   document: Record<string, unknown>,
@@ -442,7 +443,7 @@ const CONFIG_PULL_VALIDATION_ROUND_CAP = 4;
 
 /**
  * `config pull`'s schema-validation gate: decodes the projected final document the way the
- * next `loadCliConfig` call will (including a `[remotes.*]` destination's `remoteName`-merged
+ * next config load will (including a `[remotes.*]` destination's `remoteName`-merged
  * projection, since a block can pass the raw check yet still fail once selected), and never
  * writes a file the CLI itself couldn't load. A failure already present in
  * {@link configPullPreExistingFailingChangePathKeys} is ignored; a new one drops its
@@ -751,6 +752,7 @@ export const applyConfigPullRun = Effect.fn("ConfigPull.apply")(function* (input
   readonly source: ConfigPullSource;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const configValues = yield* CliConfigValues;
   const { plan, context, configFilePath } = input.runPlan;
   yield* Effect.annotateCurrentSpan("config.write_count", plan.writes.length);
 
@@ -788,12 +790,14 @@ export const applyConfigPullRun = Effect.fn("ConfigPull.apply")(function* (input
       message: `cannot write ${context.configPath}: ${configPullRefusalPhrase(reason)}${location} — ${detail}. ${configPullRefusalRemediation(reason)}`,
     });
   }
-  yield* writeCliConfigDocumentText(configFilePath, editOutcome.text).pipe(
-    Effect.catchTag(
-      "CliConfigWriteError",
-      (cause) => new ConfigPullWriteError({ message: cause.message }),
-    ),
-  );
+  yield* configValues
+    .writeThrough(writeCliConfigDocumentText(configFilePath, editOutcome.text))
+    .pipe(
+      Effect.catchTag(
+        "CliConfigWriteError",
+        (cause) => new ConfigPullWriteError({ message: cause.message }),
+      ),
+    );
 });
 
 interface ChangeStatus {

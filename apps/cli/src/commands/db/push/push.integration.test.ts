@@ -1167,7 +1167,7 @@ describe("db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      // No config.toml written → loadCliConfig returns null → default config
+      // No config.toml written → the snapshot reports no config file → default config
       // (migrations enabled), and the vault document is absent.
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");

@@ -600,6 +600,18 @@ schemas = ["public"]
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("prints no environment line when the env value already matches the project", () => {
+    const { layer, out } = setup({ toml: schemasToml, yes: true, v2: remoteSchemas });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).not.toContain("set by environment variables");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.live("lists env-sourced paths in the machine payload", () => {
     const { layer, out } = setup({
       toml: schemasToml,

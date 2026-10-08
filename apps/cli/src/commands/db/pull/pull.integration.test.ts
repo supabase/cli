@@ -128,8 +128,7 @@ interface SetupOpts {
   readonly networkId?: string;
   readonly platform?: NodeJS.Platform;
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
-  // `Option.none()` to exercise the config.toml/workdir-basename fallback
-  // (`resolveLocalProjectId`).
+  // `Option.none()` to exercise the config.toml/workdir-basename fallback.
   readonly projectId?: Option.Option<string>;
   // Simulates an unlinked workdir: `loadProjectRef` fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.

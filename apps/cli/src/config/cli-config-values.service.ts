@@ -65,6 +65,11 @@ export interface CliConfigSnapshot {
   ) => Effect.Effect<CliConfigValue<A>, CliConfigValueError>;
   /** What the project declares: the document with every flag, env and secret winner written in, before defaults. */
   readonly loaded: LoadedCliConfig;
+  /** What the config file alone declares: the matched `[remotes.*]` block over the base, `env()` resolved, no flag or `SUPABASE_*` overlay. */
+  readonly fileDeclared: Effect.Effect<
+    LoadedCliConfig,
+    Effect.Error<ReturnType<typeof decodeMergedCliConfig>>
+  >;
   /** `loaded` plus defaults and normalizers; the config commands act on. */
   readonly materialized: CliConfigMaterialized;
   /** The origin of every key the registry resolved, by dotted path. */

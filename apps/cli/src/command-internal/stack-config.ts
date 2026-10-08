@@ -10,6 +10,7 @@ import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
+import { resolveSnapshotSubtree } from "../config/cli-config-subtree.ts";
 import type {
   CliConfigMaterialized,
   CliConfigValues,
@@ -20,9 +21,9 @@ import {
   describeConfigSnapshotFailure,
   loadConfigSnapshotContext,
   resolveSnapshotPasskeyWebauthn,
-  resolveSnapshotSubtree,
 } from "./config-snapshot-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
+import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
@@ -264,6 +265,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         validatedConfig.auth,
         validatedConfig.local_smtp,
         {
+          smtpEnabled: resolveSmtpEnabled(snapshot),
           authExternalUrl,
           apiExternalUrl: validatedConfig.api.external_url,
           externalProviders,

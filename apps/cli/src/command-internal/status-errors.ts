@@ -17,7 +17,7 @@ export class StatusWorkdirError extends Data.TaggedError("StatusWorkdirError")<{
   }
 }
 
-/** `loadCliConfig` rejected `supabase/config.toml` (malformed TOML/JSON). */
+/** The config load rejected `supabase/config.toml` (malformed TOML/JSON). */
 export class StatusConfigLoadError extends Data.TaggedError("StatusConfigLoadError")<{
   readonly message: string;
 }> {

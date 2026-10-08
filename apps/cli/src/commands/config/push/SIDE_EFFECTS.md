@@ -184,8 +184,8 @@ Then `Comparison scope: <present> (not returned:
 with `config diff`/`config pull`). When a `SUPABASE_*` variable supplied any value about to be
 pushed, one line follows — printed even with `--yes`, before any prompt: `Pushing N values set
 by environment variables: <path> (<VAR>[, <file>]), …` (`<file>` is the project `.env*` file,
-relative to the workdir, and is omitted for a shell variable; `N` counts candidate paths, so a
-resource later found up to date still counts). Each such row in the update blocks below also
+relative to the workdir, and is omitted for a shell variable; `N` counts only paths the push will
+send, so a resource found up to date adds none). Each such row in the update blocks below also
 ends `(from <VAR>)` or `(from <VAR> in <file>)`. Then, per resource, one of:
 
 - `Remote <X> config is up to date.` — no pushable difference existed.

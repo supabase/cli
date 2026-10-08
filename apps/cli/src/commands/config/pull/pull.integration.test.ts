@@ -1122,10 +1122,6 @@ describe("config pull integration", () => {
       const before = [
         'project_id = "test"',
         "[auth.email.smtp]",
-        'host = "smtp.test"',
-        "port = 587",
-        'user = "u"',
-        'admin_email = "a@b.test"',
         'pass = "env(SMTP_PASS)"',
         "[api]",
         "max_rows = 500",

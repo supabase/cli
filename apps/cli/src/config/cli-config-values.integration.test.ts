@@ -266,7 +266,7 @@ major_version = 15
         {
           type: "warn",
           message:
-            "SUPABASE_DB_MAJOR_VERSION overrides db.major_version, which [remotes.staging] declares.",
+            "SUPABASE_DB_MAJOR_VERSION (shell) overrides db.major_version in [remotes.staging].",
         },
       ]);
     }).pipe(
@@ -384,7 +384,7 @@ describe("CliConfigValues snapshots", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
-  it.live("warns once per load when a deprecated alias supplies the value", () =>
+  it.live("warns once per runtime when a deprecated alias supplies the value, across loads", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "alias"\n');
       const output = mockOutput();
@@ -393,6 +393,7 @@ describe("CliConfigValues snapshots", () => {
       yield* Effect.gen(function* () {
         const values = yield* CliConfigValues;
         const snapshot = yield* values.load({ workdir: root, projectRef: Option.none() });
+        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
         const first = yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled);
         yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled);
 
@@ -403,7 +404,7 @@ describe("CliConfigValues snapshots", () => {
         {
           type: "warn",
           message:
-            "SUPABASE_EXPERIMENTAL_PG_DELTA is deprecated. Please use SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED instead. It now overrides config.toml, so false turns pg-delta off.",
+            "SUPABASE_EXPERIMENTAL_PG_DELTA is deprecated; rename it to SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED. It now overrides config.toml, so false turns pg-delta off.",
         },
       ]);
     }).pipe(
@@ -1190,5 +1191,58 @@ project_id = "${LINKED}"
       expect(tolerated.invalid.map((entry) => entry.path)).toEqual(["db.port"]);
       expect(tolerated.materialized.config.db.port).toBe(54322);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("loads a partial [auth.email.smtp] table with smtp off", () =>
+    Effect.gen(function* () {
+      const partial = yield* project('[auth.email.smtp]\npass = "env(SMTP_PASS)"\n');
+      const layer = configValuesLayer();
+
+      const snapshot = yield* load(partial, Option.none()).pipe(Effect.provide(layer));
+
+      expect(snapshot.materialized.config.auth.email.smtp?.enabled).toBe(false);
+      expect(snapshot.declares("auth.email.smtp")).toBe(true);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SMTP_PASS: "secret" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("keeps the env variable as the origin of an env() reference on a numeric key", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n[api]\nmax_rows = "env(ROWS)"\n');
+      const layer = configValuesLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+
+      expect(snapshot.loaded.config.api.max_rows).toBe(40);
+      expect(snapshot.loaded.valueOrigins).toContainEqual({
+        path: ["api", "max_rows"],
+        source: "environment",
+        envVariables: ["ROWS"],
+      });
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ ROWS: "40" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("declares in the file only what the file sets, ignoring a SUPABASE_* override", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n[api]\nmax_rows = 10\n');
+      const layer = configValuesLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const declared = yield* snapshot.fileDeclared;
+
+      expect(snapshot.loaded.config.api.max_rows).toBe(25);
+      expect(declared.config.api.max_rows).toBe(10);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
+      Effect.scoped,
+    ),
   );
 });

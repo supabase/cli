@@ -84,9 +84,8 @@ export const buildLocalDbContainerInputs = (
   projectRef?: string,
   // `db start`'s handler already loads a {@link LocalProjectContext} before calling this
   // function (to validate config ahead of its own "already running" short-circuit). When
-  // provided, this function skips its own reload — `@supabase/config`'s `loadCliConfig` prints
-  // deprecated-config WARN lines to stderr, so reloading would print each warning twice. Must
-  // correspond to the same `workdir`/`projectRef` this call would otherwise use.
+  // provided, this function skips its own load. Must correspond to the same `workdir`/`projectRef`
+  // this call would otherwise use.
   preloadedContext?: LocalProjectContext,
 ): Effect.Effect<
   LocalDbContainerInputs,

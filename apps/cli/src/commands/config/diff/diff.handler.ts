@@ -26,7 +26,6 @@ import {
 } from "../../../command-internal/project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
-  declaredConfigWithEnvOrigins,
   loadConfigSnapshot,
   loadTargetConfigSnapshot,
   relativeConfigPath,
@@ -138,7 +137,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       ref,
       makeLoadError,
     );
-    const loaded = declaredConfigWithEnvOrigins(snapshot);
+    const loaded = snapshot.loaded;
     const originFor = configEnvOriginLookup(snapshot.origins, (file) =>
       relativeConfigPath(projectRoot, file),
     );

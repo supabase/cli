@@ -86,9 +86,9 @@ import {
 import {
   describeConfigSnapshotFailure,
   loadLocalSnapshotContext,
-  resolveSnapshotSubtree,
   type LocalSnapshotContext,
 } from "../../command-internal/config-snapshot-context.ts";
+import { resolveSnapshotSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";

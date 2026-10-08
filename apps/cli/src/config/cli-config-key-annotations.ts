@@ -75,12 +75,11 @@ export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
 const emptyString = () => "";
 
 /**
- * Optional schema leaves that consumers read as a plain value with a default: the project id and
- * SMTP presence derive from the document, and each auth hook's `uri` and `secrets` read as `""`.
+ * Optional schema leaves that consumers read as a plain value with a default: the project id
+ * derives from the workdir, and each auth hook's `uri` and `secrets` read as `""`.
  */
 export const CLI_CONFIG_CONTEXT_DEFAULTS = {
   project_id: (ctx) => ctx.path.basename(ctx.workdir),
-  "auth.email.smtp.enabled": (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
   "auth.hook.mfa_verification_attempt.uri": emptyString,
   "auth.hook.mfa_verification_attempt.secrets": emptyString,
   "auth.hook.password_verification_attempt.uri": emptyString,
