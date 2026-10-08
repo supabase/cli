@@ -280,8 +280,9 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION http WITH SCHEMA extensions; CREATE EXTENSION pg_net",
+          "CREATE EXTENSION http WITH SCHEMA extensions",
         );
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION pg_net");
         expect(
           yield* query(
             endpoint,
@@ -295,7 +296,7 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/') AS id`,
+            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/')::text AS id`,
           ),
         );
         expect(
@@ -353,7 +354,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+            "CREATE TABLE server_env (file text, dir text)",
+          );
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
           );
           const [serverEnv] = yield* Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
