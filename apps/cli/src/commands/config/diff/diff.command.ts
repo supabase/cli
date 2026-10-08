@@ -2,6 +2,8 @@ import { Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
@@ -64,4 +66,6 @@ export const configDiffCommand = Command.make("diff", config).pipe(
   ]),
   Command.withHandler(configDiffHandler),
   Command.provide(managementApiRuntimeLayer(["config", "diff"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

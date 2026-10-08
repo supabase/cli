@@ -1,5 +1,5 @@
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
-import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
+import { diffProjectConfig, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
 import { DateTime, Effect, FileSystem, Option } from "effect";
 
@@ -32,10 +32,19 @@ import {
   relativeConfigPath,
   requireExplicitWorkdirProject,
 } from "../../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { configApiScope, configScopeLine } from "../config.format.ts";
+import {
+  declaredConfigWithEnvOrigins,
+  mapConfigLoadError,
+  resolveConfigProjectRoot,
+} from "../config.load.ts";
+import {
+  configApiScope,
+  configEnvOriginLookup,
+  configScopeLine,
+  type ConfigEnvOriginLookup,
+} from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import { loadAuthEmailContent } from "./push.auth-email-content.ts";
@@ -82,12 +91,14 @@ import {
   configPushBranchPromptLabel,
   configPushPayloadFields,
   configPushTargetLines,
+  pushEnvSourcedLine,
   pushNotes,
   pushNotPushableLine,
   pushPayload,
   pushSummaryMessage,
   pushUpdatingLine,
   pushUpToDateLine,
+  type PushEnvSourced,
   type PushForced,
   type PushUnencodable,
 } from "./push.format.ts";
@@ -127,6 +138,21 @@ function pushSentSecretPaths(encoded: PushEncoded<unknown>): ReadonlyArray<Reado
   return encoded.secretsEncoded ?? [];
 }
 
+/** The distinct paths an env variable supplied, each with that variable. */
+function envSourcedPaths(
+  paths: ReadonlyArray<ReadonlyArray<string>>,
+  originFor: ConfigEnvOriginLookup,
+): ReadonlyArray<PushEnvSourced> {
+  const seen = new Set<string>();
+  return paths.flatMap((path): ReadonlyArray<PushEnvSourced> => {
+    const origin = originFor(path);
+    const key = path.join(".");
+    if (origin === undefined || seen.has(key)) return [];
+    seen.add(key);
+    return [{ path, origin }];
+  });
+}
+
 /** `push.format.ts` must never see a secret's plaintext. */
 function toSecretReport(decision: PushSecretDecision) {
   const { plaintext: _plaintext, ...report } = decision;
@@ -134,50 +160,43 @@ function toSecretReport(decision: PushSecretDecision) {
 }
 
 /** Loads the snapshot once per push, so the load-time deprecation warnings print once. */
-const loadPushConfig = Effect.fn("config.push.loadConfig")(
-  function* (
-    cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
-    projectRoot: string,
-    ref: string,
-  ) {
-    const configValues = yield* CliConfigValues;
-    const snapshot = yield* configValues.load({
+const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+  projectRoot: string,
+  ref: string,
+) {
+  const configValues = yield* CliConfigValues;
+  const snapshot = yield* configValues
+    .load({
       workdir: projectRoot,
       projectRef: Option.some(ref),
       tolerateUnreadableLinkedRef: true,
+    })
+    .pipe(mapConfigLoadError(cliSettings, (message) => new ConfigPushLoadConfigError({ message })));
+  if (!snapshot.hasConfigFile) {
+    return yield* new ConfigPushLoadConfigError({
+      message: yield* missingProjectConfigMessageEffect(cliSettings),
     });
-    if (!snapshot.hasConfigFile) {
-      return yield* new ConfigPushLoadConfigError({
-        message: yield* missingProjectConfigMessageEffect(cliSettings),
-      });
-    }
-    const { loaded } = snapshot;
-    yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
-    const projectYes = snapshot.projectEnvValues["SUPABASE_YES"];
-    const referenced = yield* snapshot.envValues(
-      envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
-    );
-    return {
-      loaded,
-      lookup: (name: string) => referenced[name],
-      dotenvPrivateKeys: snapshot.dotenvPrivateKeys,
-      projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
-        string,
-        string
-      >,
-    };
-  },
-  (effect, cliSettings) =>
-    Effect.mapError(effect, (cause) =>
-      cause._tag === "CliConfigParseError"
-        ? new ConfigPushLoadConfigError({
-            message: `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
-          })
-        : cause._tag === "ConfigPushLoadConfigError"
-          ? cause
-          : new ConfigPushLoadConfigError({ message: cause.message }),
+  }
+  const loaded = declaredConfigWithEnvOrigins(snapshot);
+  yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
+  const projectYes = snapshot.projectEnvValues["SUPABASE_YES"];
+  const referenced = yield* snapshot.envValues(
+    envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
+  );
+  return {
+    loaded,
+    lookup: (name: string) => referenced[name],
+    dotenvPrivateKeys: snapshot.dotenvPrivateKeys,
+    projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
+      string,
+      string
+    >,
+    originFor: configEnvOriginLookup(snapshot.origins, (file) =>
+      relativeConfigPath(projectRoot, file),
     ),
-);
+  };
+});
 
 const mapPushBranchResolveError = mapHttpError({
   networkError: ConfigPushBranchResolveNetworkError,
@@ -222,10 +241,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // The project root climbs only when `--workdir` was defaulted; an explicit
     // `--workdir ../other` pushes that directory's own config.toml without climbing to another
     // root's linked project.
-    const projectRoot =
-      (yield* findCliProjectRoot(cliSettings.workdir, {
-        search: shouldSearchAncestors(cliSettings),
-      })) ?? cliSettings.workdir;
+    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
 
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
@@ -258,7 +274,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     //
     // Needs the fully decoded document and value origins, which the tolerant
     // `db-config.toml-read.ts` subtree reader does not produce.
-    const { loaded, lookup, dotenvPrivateKeys, projectEnv } = yield* loadPushConfig(
+    const { loaded, lookup, dotenvPrivateKeys, projectEnv, originFor } = yield* loadPushConfig(
       cliSettings,
       projectRoot,
       ref,
@@ -459,6 +475,21 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       storage: pushResourceEnabled("storage", config, local),
     };
 
+    // Announced before any prompt so a `--yes` run still shows what the environment supplied.
+    const envSourced = envSourcedPaths(
+      [
+        ...PUSH_RESOURCES.filter(
+          (resource) =>
+            resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
+        ).flatMap((resource) => plan.changesByResource[resource].map((change) => change.path)),
+        ...secrets.filter((secret) => secret.status === "send").map((secret) => secret.path),
+      ],
+      originFor,
+    );
+    if (envSourced.length > 0) {
+      yield* output.raw(pushEnvSourcedLine(envSourced), "stderr");
+    }
+
     const services: Array<ConfigPushServiceResult> = [];
     const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
     const unencodable: Array<PushUnencodable> = [];
@@ -496,6 +527,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             secretsEncoded: encoded.secretsEncoded ?? [],
             extras: encoded.extras,
             forced: encoded.forced,
+            originFor,
           }),
           "stderr",
         );
@@ -758,6 +790,12 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         declinedAddons,
         remoteOnly: plan.remoteOnly,
         scope,
+        envSourced: envSourcedPaths(
+          services
+            .filter((service) => service.status === "updated")
+            .flatMap((service) => service.changes),
+          originFor,
+        ),
       };
       yield* output.success(pushSummaryMessage(payloadInput), {
         ...pushPayload(payloadInput),

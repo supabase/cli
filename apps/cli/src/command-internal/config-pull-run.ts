@@ -17,7 +17,7 @@ import {
 } from "@supabase/config/internal";
 import type { ConfigChange } from "@supabase/config";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, FileSystem, Result, Schema, SchemaIssue } from "effect";
+import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect";
 
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -30,7 +30,11 @@ import {
   configIsRecord,
   configPathKey,
 } from "../commands/config/config.paths.ts";
-import { loadLocalConfig, relativeConfigPath } from "../commands/config/config.load.ts";
+import {
+  loadDeclaredFileConfig,
+  relativeConfigPath,
+  resolveConfigProjectRoot,
+} from "../commands/config/config.load.ts";
 import {
   CONFIG_CLASS_LABELS,
   configApiScope,
@@ -533,25 +537,7 @@ const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
   });
 });
 
-/** Builds the file-load helpers for one `cliSettings.workdir`, narrowed to `workdir` and
- * `explicitWorkdir` since that's all `loadLocalConfig` needs; only this family's own tagged
- * error class is local. */
-function makeConfigLoader(cliSettings: {
-  readonly workdir: string;
-  readonly explicitWorkdir: boolean;
-}) {
-  const toRelativeConfigPath = (path: string): string =>
-    relativeConfigPath(cliSettings.workdir, path);
-
-  const loadConfig = (projectRef: string | undefined) =>
-    loadLocalConfig(
-      cliSettings,
-      projectRef,
-      (message) => new ConfigPullLoadConfigError({ message }),
-    );
-
-  return { toRelativeConfigPath, loadConfig };
-}
+const makeLoadError = (message: string) => new ConfigPullLoadConfigError({ message });
 
 /**
  * The paired base config load and its exact on-disk text, produced only by
@@ -573,16 +559,21 @@ export interface ConfigPullSource {
  */
 export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function* () {
   const cliSettings = yield* CommandSettings;
-  const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
+  const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
 
-  const loaded = yield* loadConfig(undefined);
+  const { loaded } = yield* loadDeclaredFileConfig(
+    cliSettings,
+    projectRoot,
+    Option.none(),
+    makeLoadError,
+  );
 
   if (loaded.rawText === undefined) {
     // The loader guarantees `rawText` for any file it parsed off disk; treat this like a
     // concurrent edit rather than re-reading, which would reopen the race this baseline
     // exists to close.
     return yield* new ConfigPullFileChangedError({
-      message: `${toRelativeConfigPath(loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
+      message: `${relativeConfigPath(cliSettings.workdir, loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
     });
   }
 
@@ -604,7 +595,6 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const { ref, branch } = request.target;
-  const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
 
   const branchLabelCandidate =
     branch !== undefined && !BRANCH_UUID_PATTERN.test(branch) ? branch : undefined;
@@ -636,14 +626,20 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   // A brand-new block has nothing to overlay yet.
   let loaded = request.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
-    loaded = yield* loadConfig(ref);
+    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
+    ({ loaded } = yield* loadDeclaredFileConfig(
+      cliSettings,
+      projectRoot,
+      Option.some(ref),
+      makeLoadError,
+    ));
   }
 
   const context: ConfigPullContext = {
     projectRef: ref,
     branch,
     configSchema: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
-    configPath: toRelativeConfigPath(loaded.path),
+    configPath: relativeConfigPath(cliSettings.workdir, loaded.path),
     format: loaded.format,
     appliedRemote: loaded.appliedRemote,
     destination,
