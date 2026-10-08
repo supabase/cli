@@ -1,5 +1,5 @@
 import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
-import { Config, Effect, Match, type FileSystem, Option, type Path, Schema } from "effect";
+import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   PROJECT_REF_PATTERN,
@@ -1040,8 +1040,6 @@ export const assertDecryptableSecrets = (
 // An absent `auth.site_url` defaults to this value; only an explicit empty string fails.
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
 
-const decodeSigningKeysJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-
 const ENV_OVERRIDE_NAMES = [
   "SUPABASE_PROJECT_ID",
   "SUPABASE_DB_PORT",
@@ -1563,10 +1561,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
             (cause) => new DbConfigLoadError({ message: signingKeysReadErrorMessage(cause) }),
           ),
         );
-      yield* decodeSigningKeysJson(keysJson).pipe(
-        Effect.mapError(
-          (cause) => new DbConfigLoadError({ message: signingKeysDecodeErrorMessage(cause) }),
-        ),
+      yield* Effect.try({
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+        try: (): unknown => JSON.parse(keysJson),
+        catch: (cause) => new DbConfigLoadError({ message: signingKeysDecodeErrorMessage(cause) }),
+      }).pipe(
         Effect.filterOrFail(
           Array.isArray,
           () =>

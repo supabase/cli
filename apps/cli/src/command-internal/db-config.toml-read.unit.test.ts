@@ -2584,7 +2584,7 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
   it.effect("rejects a signing keys file that is not valid JSON", () =>
     failsWith(
       ["[auth]", 'signing_keys_path = "./keys.json"'],
-      "failed to decode signing keys: Expected a valid JSON string",
+      "failed to decode signing keys: JSON Parse error: Expected '}'",
       // A relative signing_keys_path resolves under supabase/.
       (dir) => writeFile(dir, ["supabase", "keys.json"], "{ not json"),
     ),

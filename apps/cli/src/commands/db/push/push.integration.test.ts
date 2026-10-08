@@ -1035,7 +1035,10 @@ describe("db push", () => {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).not.toContain("Applying migration 20240101000000");
-    }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body),
+      (body) => withConfigEnv({ SUPABASE_DB_MIGRATIONS_ENABLED: "true" }, body),
+    );
   });
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {
