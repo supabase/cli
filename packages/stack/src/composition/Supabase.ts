@@ -391,21 +391,74 @@ interface EndpointPortChange {
 }
 
 interface EndpointReplan {
+  /** The changed endpoints of saved members, which the owner claims at startup. */
   readonly changes: ReadonlyArray<EndpointPortChange>;
   /**
    * Whether the shared "api" listener's registry row must be released although no saved member
    * carries the change: a fixed port is requested that the saved members' listener never held.
    */
   readonly releasesSharedApi: boolean;
-  /** Each changed member's requested endpoint intents. */
+  /**
+   * Registry keys of the dedicated endpoints a rewritten non-member instance holds, released so
+   * its eventual start binds the requested port; the shared "api" row stays with the members.
+   */
+  readonly releasedKeys: ReadonlyArray<string>;
+  /** Each rewritten instance's requested endpoint intents, members and reusable non-members. */
   readonly endpointsByInstance: ReadonlyMap<string, unknown>;
 }
+
+/** The endpoint changes that turn a saved instance's intents into the requested ones, if only those differ. */
+const endpointRewrite = (
+  entry: PlannedInstance,
+  saved: Pick<SavedStack, "instances">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  sharedPort: number | undefined,
+):
+  | { readonly changes: ReadonlyArray<EndpointPortChange>; readonly endpoints: unknown }
+  | undefined => {
+  const savedInstance = saved.instances.find(({ id }) => id === entry.id);
+  const request = requested.find(({ service }) => service === entry.service);
+  if (savedInstance === undefined || request === undefined) return undefined;
+  if (entry.change !== "incompatible") return undefined;
+  const nonEndpointPaths = entry.paths.filter(
+    (path) => path !== "endpoints" && !path.startsWith("endpoints."),
+  );
+  if (nonEndpointPaths.length > 0) return undefined;
+
+  const endpoints = withSharedApiPort(request, sharedPort);
+  const requestedIntents = { service: request.service, endpoints };
+  const savedNames = endpointNames(savedInstance.creation);
+  const requestedNames = endpointNames(requestedIntents);
+  if (
+    savedNames.length !== requestedNames.length ||
+    !savedNames.every((name) => requestedNames.includes(name))
+  )
+    return undefined;
+
+  const changes: Array<EndpointPortChange> = [];
+  for (const name of savedNames) {
+    const previous = endpointPort(savedInstance.creation, name);
+    if (previous === endpointPort(requestedIntents, name)) continue;
+    changes.push({
+      id: entry.id,
+      service: entry.service,
+      endpoint: name,
+      key: endpointKey(entry.id, request.service, name),
+      previous,
+    });
+  }
+  return { changes, endpoints };
+};
 
 /**
  * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
  * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
  * reassignment (an artifact or database version change, or an added or removed endpoint), so the
  * caller leaves that case to the existing incompatible-change rejection.
+ *
+ * A requested kind with no saved member and no compatible stopped instance also has its sole
+ * endpoint-only incompatible instance rewritten, so the start reuses it instead of creating a
+ * second instance beside the stopped one.
  */
 export const planEndpointReplan = (
   saved: Pick<SavedStack, "instances" | "composition">,
@@ -415,9 +468,6 @@ export const planEndpointReplan = (
   // saved port must not anchor the shared port this request would otherwise move to automatic.
   const planOptions: PlanOptions = { requestKind: "complete" };
   const planned = planSupabaseComposition(saved, requested, planOptions);
-  const incompatibleCount = planned.filter(
-    (entry) => entry.member && entry.change === "incompatible",
-  ).length;
   const sharedPort = sharedApiPortFor(saved, requested, planOptions);
   const savedMemberIds = new Set(saved.composition.members.map(({ id }) => id));
   const savedSharedPorts = fixedApiPorts(
@@ -429,48 +479,32 @@ export const planEndpointReplan = (
     sharedPort !== undefined &&
     requested.some(sharesApiEndpoint) &&
     !(savedSharedPorts.size === 1 && savedSharedPorts.has(sharedPort));
-  if (incompatibleCount === 0)
-    return releasesSharedApi
-      ? { changes: [], releasesSharedApi, endpointsByInstance: new Map() }
-      : undefined;
   const changes: Array<EndpointPortChange> = [];
+  const releasedKeys = new Set<string>();
   const endpointsByInstance = new Map<string, unknown>();
 
   for (const entry of planned) {
     if (!entry.member || entry.change !== "incompatible") continue;
-    const savedInstance = saved.instances.find(({ id }) => id === entry.id);
-    const request = requested.find(({ service }) => service === entry.service);
-    if (savedInstance === undefined || request === undefined) return undefined;
-    const nonEndpointPaths = entry.paths.filter(
-      (path) => path !== "endpoints" && !path.startsWith("endpoints."),
-    );
-    if (nonEndpointPaths.length > 0) return undefined;
-
-    const requestedEndpoints = withSharedApiPort(request, sharedPort);
-    const requestedIntents = { service: request.service, endpoints: requestedEndpoints };
-    const savedNames = endpointNames(savedInstance.creation);
-    const requestedNames = endpointNames(requestedIntents);
-    if (
-      savedNames.length !== requestedNames.length ||
-      !savedNames.every((name) => requestedNames.includes(name))
-    )
-      return undefined;
-
-    for (const name of savedNames) {
-      const previous = endpointPort(savedInstance.creation, name);
-      const next = endpointPort(requestedIntents, name);
-      if (previous === next) continue;
-      const key = endpointKey(entry.id, request.service, name);
-      changes.push({
-        id: entry.id,
-        service: entry.service,
-        endpoint: name,
-        key,
-        previous,
-      });
-    }
-    endpointsByInstance.set(entry.id, requestedEndpoints);
+    const rewrite = endpointRewrite(entry, saved, requested, sharedPort);
+    if (rewrite === undefined) return undefined;
+    changes.push(...rewrite.changes);
+    endpointsByInstance.set(entry.id, rewrite.endpoints);
   }
+
+  // The start reuses a stopped instance of a kind with no saved member when it is compatible, and
+  // creates a new one when it is not, leaving the stopped one and its data orphaned.
+  const memberKinds = new Set(planned.filter(({ member }) => member).map(({ service }) => service));
+  for (const kind of new Set(requested.map(({ service }) => service))) {
+    if (memberKinds.has(kind)) continue;
+    const [entry, ...others] = planned.filter((other) => !other.member && other.service === kind);
+    if (entry === undefined || others.length > 0) continue;
+    const rewrite = endpointRewrite(entry, saved, requested, sharedPort);
+    if (rewrite === undefined) continue;
+    for (const { key } of rewrite.changes) if (key !== "api") releasedKeys.add(key);
+    endpointsByInstance.set(entry.id, rewrite.endpoints);
+  }
+
+  if (endpointsByInstance.size === 0 && !releasesSharedApi) return undefined;
 
   const seenKeys = new Set<string>();
   const uniqueChanges = changes.filter((change) => {
@@ -478,7 +512,12 @@ export const planEndpointReplan = (
     seenKeys.add(change.key);
     return true;
   });
-  return { changes: uniqueChanges, releasesSharedApi, endpointsByInstance };
+  return {
+    changes: uniqueChanges,
+    releasesSharedApi,
+    releasedKeys: [...releasedKeys],
+    endpointsByInstance,
+  };
 };
 
 const compositionError = (message: string, cause?: unknown) =>

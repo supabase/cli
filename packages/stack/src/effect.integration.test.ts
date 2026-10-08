@@ -1587,6 +1587,11 @@ it.live(
             requestedCreations: [database, requestedConflicting],
           }).pipe(Effect.flip);
           expect(failure.message).toMatch(new RegExp(`\\b${conflictingPort}\\b.*\\bin use\\b`));
+          expect(failure.conflict).toEqual({
+            port: conflictingPort,
+            endpoint: "api",
+            holder: "foreign",
+          });
           expect(holder.listening).toBe(true);
 
           expect(
@@ -1770,6 +1775,92 @@ it.live(
           });
           const restStatus = yield* (yield* reopened.services.get(restId)).status;
           expect(restPort(restStatus)).toBe(changes[0]?.to);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "reuses an excluded service's stopped instance once its pinned shared port is re-planned",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-readd-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-readd");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const auth = {
+            service: "auth",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest, auth], {
+            eager: true,
+          });
+          const idOf = (service: string) =>
+            members.find((member) => member.service === service)?.id;
+          const databaseId = idOf("database");
+          const restId = idOf("rest");
+          const authId = idOf("auth");
+          if (databaseId === undefined || restId === undefined || authId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          // Auth is excluded while the shared port stays fixed, leaving its stopped instance saved.
+          const excluded = yield* restartWithReplan(stack, stateRoot, cacheRoot, [database, rest]);
+          yield* excluded.composition.supabase([database, rest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+
+          // The config drops the fixed port while auth is still excluded.
+          const requestedRest = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const requestedAuth = { ...auth, endpoints: { http: { port: "auto" } } } as const;
+          const moved = yield* restartWithReplan(excluded, stateRoot, cacheRoot, [
+            database,
+            requestedRest,
+          ]);
+          yield* moved.composition.supabase([database, requestedRest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+
+          // Auth is requested again: its stopped instance now agrees with the shared port.
+          const readded = yield* restartWithReplan(moved, stateRoot, cacheRoot, [
+            database,
+            requestedRest,
+            requestedAuth,
+          ]);
+          expect(
+            yield* readded.composition.plan([database, requestedRest, requestedAuth], {
+              requestKind: "complete",
+            }),
+          ).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+            { id: authId, service: "auth", member: false, change: "unchanged" },
+          ]);
+          yield* readded.composition.supabase([database, requestedRest, requestedAuth], {
+            reuseIds: [databaseId, restId, authId],
+            eager: true,
+          });
+
+          const instances = yield* readded.services.list;
+          expect(instances.filter(({ service }) => service === "auth").map(({ id }) => id)).toEqual(
+            [authId],
+          );
+          const restPortNow = restPort(yield* (yield* readded.services.get(restId)).status);
+          expect(restPortNow).toEqual(expect.any(Number));
+          expect(restPortNow).not.toBe(FIXED_API_PORT);
+          expect(restPort(yield* (yield* readded.services.get(authId)).status)).toBe(restPortNow);
         }),
         destroyTestStack(stack),
       );

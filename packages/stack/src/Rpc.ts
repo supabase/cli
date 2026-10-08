@@ -19,7 +19,7 @@ const ConflictHolder = Schema.Union([
   Schema.Struct({ stackId: Schema.String, stateRoot: Schema.String }),
   Schema.Literal("foreign"),
 ]);
-const Conflict = Schema.Struct({
+export const Conflict = Schema.Struct({
   port: Schema.Int,
   endpoint: Schema.String,
   holder: ConflictHolder,
@@ -59,7 +59,7 @@ const isPortConflict = (value: unknown): value is PortConflict =>
   (value.holder === "foreign" || isHolder(value.holder));
 
 /** The first `conflict` found by walking a failure's `cause` chain, if any carries one. */
-const findConflict = (cause: unknown, depth = 0): PortConflict | undefined => {
+export const findConflict = (cause: unknown, depth = 0): PortConflict | undefined => {
   if (depth > 10 || typeof cause !== "object" || cause === null) return undefined;
   if ("conflict" in cause && isPortConflict(cause.conflict)) return cause.conflict;
   if ("cause" in cause) return findConflict(cause.cause, depth + 1);

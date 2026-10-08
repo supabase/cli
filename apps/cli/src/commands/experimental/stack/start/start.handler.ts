@@ -106,6 +106,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const portConflictSuggestion = (
   conflict: StackError["conflict"],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }>,
+  portSaved = false,
 ): string | undefined => {
   if (conflict === undefined) return undefined;
   const settings = new Map<string, StackEndpointSetting>();
@@ -118,21 +119,24 @@ const portConflictSuggestion = (
     }
   }
   const [setting, ...rest] = settings.values();
-  return setting === undefined || rest.length > 0
-    ? undefined
-    : `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+  if (setting === undefined || rest.length > 0) return undefined;
+  const choice = `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+  return portSaved
+    ? `${choice} The stack already saved this port (any previous automatic port is released), so the next start uses it once it is free.`
+    : choice;
 };
 
 const stackError = (
   cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
+  portSaved = false,
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, requested);
+  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
   return new StackCommandStartError({
     reason: "unknown",
     message: cause.message,
@@ -162,9 +166,16 @@ const stackAcquireError = (
     readonly selectedRuntime: StackRuntime;
     readonly runtime: { readonly platform: string; readonly arch: string };
     readonly creating: boolean;
+    /** The creations the owner's startup re-plans, already saved when its claim fails. */
+    readonly replanned?: ReadonlyArray<ServiceCreationInput>;
   },
 ) => {
-  const base = stackError(cause);
+  const base = stackError(
+    cause,
+    [],
+    runtimeContext.replanned,
+    runtimeContext.replanned !== undefined,
+  );
   const { selectedRuntime } = runtimeContext;
   if (cause.reason !== "runtime-unavailable" || selectedRuntime === "native") return base;
   return new StackCommandStartError({
@@ -380,6 +391,7 @@ const incompatibleChange = (
   requested: ReadonlyArray<ServiceCreationInput>,
   projectEnvValues: Readonly<Record<string, string>>,
   stackIdentity: { readonly id: string; readonly name?: string },
+  ownerLive: boolean,
 ):
   | {
       readonly error: StackCommandStartError;
@@ -397,9 +409,13 @@ const incompatibleChange = (
   );
   const nonEditable = dedupe(changes.filter((change) => !change.editable).map(({ key }) => key));
   const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
+  // A live idle owner never re-plans, but a fresh owner applies endpoint port changes, so a
+  // stop and start resolves them without deleting data.
+  const portsOnly = ownerLive && changes.every(({ path }) => path.startsWith("endpoints."));
   // A non-editable change blocks start whatever else changed, so destroy is the only way out.
-  const suggestion =
-    nonEditable.length > 0 || revert === undefined
+  const suggestion = portsOnly
+    ? `Run \`supabase stack stop --stack-id ${stackIdentity.id}\`, then \`supabase stack start --stack-id ${stackIdentity.id}\` to apply the new ports.`
+    : nonEditable.length > 0 || revert === undefined
       ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
       : `${revert} to keep the stack and its data, or run ${destroyClause}`;
   return {
@@ -427,6 +443,15 @@ const endpointLabel = (change: EndpointPortChange) =>
   change.endpoint === "http" && apiRoute(change.service) !== undefined
     ? "api"
     : `${change.service}.${change.endpoint}`;
+
+/** The JSON `endpoints` keys a change moves: every HTTP key on the shared API listener, else its own. */
+const endpointKeys = (change: EndpointPortChange, reported: ReadonlyArray<string>) =>
+  endpointLabel(change) !== "api"
+    ? [`${change.service}.${change.endpoint}`]
+    : reported.filter((key) => {
+        const [service, endpoint] = key.split(".");
+        return endpoint === "http" && service !== undefined && apiRoute(service) !== undefined;
+      });
 
 const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
   status.lifecycle === "running" && status.health === "healthy";
@@ -595,7 +620,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ),
     ).pipe(
       Effect.mapError((cause) =>
-        stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
+        stackAcquireError(cause, {
+          selectedRuntime,
+          runtime,
+          creating: target.id === undefined,
+          ...(requestedForReplan === undefined ? {} : { replanned: requestedForReplan }),
+        }),
       ),
     );
     const statusPointer = statusEnvPointer(
@@ -631,6 +661,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               : {
                   endpoint_changes: endpointChanges.map((change) => ({
                     endpoint: endpointLabel(change),
+                    keys: endpointKeys(change, Object.keys(report.endpoints)),
                     from: change.from,
                     to: change.to,
                   })),
@@ -663,6 +694,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           : status.lifecycle !== "starting" && status.wakeEnabled,
       );
     if (fullyStarted) {
+      yield* Effect.annotateCurrentSpan({ "stack.path": "already-running" });
       yield* Ref.set(startupComplete, true);
       yield* reportReady(
         yield* startReport(stack, currentInstances),
@@ -678,6 +710,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           lifecycle === "running" || lifecycle === "starting" || wakeEnabled,
       );
     if (resumable) {
+      yield* Effect.annotateCurrentSpan({
+        "stack.path": "resume",
+        "stack.service_count": currentInstances.length,
+      });
       yield* output.info(
         "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
       );
@@ -818,6 +854,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       requested,
       config.projectEnvValues,
       stackIdentity,
+      target.hostRunning,
     );
     if (rejected !== undefined) {
       const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
@@ -860,6 +897,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       const candidate = candidates[0];
       if (candidate !== undefined) reuseIds.push(candidate.id);
     }
+    yield* Effect.annotateCurrentSpan({
+      "stack.path": "start",
+      "stack.service_count": requested.length,
+      "stack.initial_composition": initialComposition,
+      "stack.service_kinds_changed": serviceKindsChanged,
+    });
     const starting = yield* output.task("Starting local Supabase stack...");
     const members = yield* stack.composition
       .supabase(requested, {
@@ -933,6 +976,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack has no saved credentials",
       });
     if (initialComposition || serviceKindsChanged) {
+      yield* Effect.annotateCurrentSpan({ "stack.migrations_applied": true });
       const migrations = initialComposition
         ? {
             workdir: target.projectRoot,
@@ -962,6 +1006,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           (message) => new SeedConfigLoadError({ message }),
         );
         if (hasConfiguredBuckets(context.config)) {
+          yield* Effect.annotateCurrentSpan({ "stack.storage_seeded": true });
           yield* storage.start.pipe(
             Effect.tapError((error) => starting.fail(error.message)),
             Effect.mapError(stackError),

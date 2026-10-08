@@ -231,8 +231,9 @@ JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by se
 name (protocol, address, port, and URL, matching `stack status`, with no synthetic entries),
 `lazy_services` listing members that start on their first request (empty with `--eager`), `env`
 (the same connection map `stack status --env` exports, present on every success path), an
-`endpoint_changes` array naming each re-planned endpoint with its old and new port when the start
-applied any, and an empty message. See
+`endpoint_changes` array when the start applied any, each entry naming the re-planned endpoint
+(`endpoint`, e.g. `api`), the `endpoints` keys it moved (`keys`, every HTTP key on the shared API
+listener for `api`), and its old and new port (`from`, `to`), and an empty message. See
 [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an example. Failures retain
 typed command errors and package diagnostics. Telemetry state is flushed after success or failure.
 

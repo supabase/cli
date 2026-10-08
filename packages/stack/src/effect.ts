@@ -46,7 +46,13 @@ import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
-import { StackError, type Definition, type EndpointPortChange, type Observation } from "./Rpc.ts";
+import {
+  findConflict,
+  StackError,
+  type Definition,
+  type EndpointPortChange,
+  type Observation,
+} from "./Rpc.ts";
 import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
 import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
@@ -132,22 +138,24 @@ const ownerAbsent = hasReason("not-running", "sweeping");
 /** The stack is no longer registered: it was destroyed or swept. */
 const stackGone = hasReason("unregistered");
 
-const failure = (operation: string, cause: unknown): StackError =>
-  Schema.is(StackError)(cause)
-    ? cause
-    : new StackError({
-        operation,
-        message: Schema.is(RpcClientError)(cause)
-          ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
-          : failureMessage(cause),
-        ...(ownerAbsent(cause) || stackGone(cause)
-          ? { reason: "owner-unavailable" as const }
-          : hasReason("release-mismatch")(cause)
-            ? { reason: "release-mismatch" as const }
-            : hasReason("runtime-unavailable")(cause)
-              ? { reason: "runtime-unavailable" as const }
-              : {}),
-      });
+const failure = (operation: string, cause: unknown): StackError => {
+  if (Schema.is(StackError)(cause)) return cause;
+  const conflict = findConflict(cause);
+  return new StackError({
+    operation,
+    message: Schema.is(RpcClientError)(cause)
+      ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
+      : failureMessage(cause),
+    ...(ownerAbsent(cause) || stackGone(cause)
+      ? { reason: "owner-unavailable" as const }
+      : hasReason("release-mismatch")(cause)
+        ? { reason: "release-mismatch" as const }
+        : hasReason("runtime-unavailable")(cause)
+          ? { reason: "runtime-unavailable" as const }
+          : {}),
+    ...(conflict === undefined ? {} : { conflict }),
+  });
+};
 
 type Kind = ServiceCreation["service"];
 type ServiceCreationRestartInput<K extends Kind> =

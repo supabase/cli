@@ -21,6 +21,7 @@ import {
 } from "@supabase/stack/defaults";
 import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
+  apiRoute,
   StackError,
   type EndpointPortChange,
   type PlanOptions,
@@ -128,13 +129,13 @@ const instance = (
     endpoints:
       config.service === "database"
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
-        : config.service === "rest" || config.service === "studio"
+        : apiRoute(config.service) !== undefined || config.service === "studio"
           ? [
               {
                 name: "http",
                 protocol: "http" as const,
                 host: "127.0.0.1",
-                port: config.service === "rest" ? 23457 : 23458,
+                port: config.service === "studio" ? 23458 : 23457,
               },
             ]
           : [],
@@ -1581,7 +1582,7 @@ describe("experimental stack start", () => {
         "analytics",
         "pooler",
       ];
-      const expected = [{ endpoint: "api", from: 23457, to: 54999 }];
+      const expected = [{ endpoint: "api", keys: ["rest.http"], from: 23457, to: 54999 }];
       const prepare = (prefix: string) =>
         Effect.gen(function* () {
           const root = yield* fs.makeTempDirectoryScoped({ prefix });
@@ -1612,6 +1613,147 @@ describe("experimental stack start", () => {
       const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
       expect(event.data).toMatchObject({ endpoint_changes: expected });
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "lists every endpoints key the shared API listener serves for a re-planned API port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changes-keys-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "change-keys"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "change-keys"\n[api]\nport = 54999\n',
+        );
+        yield* fixture.stack.composition.stop;
+
+        const output = mockOutput({ format: "json" });
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture, output)));
+
+        const apiKeys = [
+          "rest.http",
+          "auth.http",
+          "storage.http",
+          "functions.http",
+          "realtime.http",
+        ];
+        expect(output.messages).toContainEqual(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              endpoints: expect.objectContaining(
+                Object.fromEntries(apiKeys.map((key) => [key, expect.anything()])),
+              ),
+              endpoint_changes: [
+                {
+                  endpoint: "api",
+                  keys: expect.arrayContaining(apiKeys),
+                  from: 23457,
+                  to: 54999,
+                },
+              ],
+            }),
+          }),
+        );
+        const [change] = output.messages.flatMap(({ data }) =>
+          Array.isArray(data?.endpoint_changes) ? data.endpoint_changes : [],
+        );
+        expect(change.keys).not.toContain("studio.http");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("advises stop then start, not destroy, when a live idle owner meets a changed port", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-owner-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-owner"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "idle-owner"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+
+      // A live owner keeps its startup state, so `open` never re-plans the requested creations.
+      const liveOwner = Layer.merge(
+        Layer.succeed(StackApi, {
+          create: () => Effect.die("unused"),
+          open: () => Effect.succeed(fixture.stack),
+          discover: () => Effect.succeed([]),
+          find: () => Effect.die("identity not used"),
+          findDeleted: () => Effect.die("identity not used"),
+        }),
+        Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({
+              projectRoot: root,
+              id: fixture.stack.id,
+              runtime: "native" as const,
+              hostRunning: true,
+            }),
+        }),
+      );
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture), liveOwner)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("[api] port: saved"),
+        suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "names the config key and the saved port when the owner's startup claim hits a port conflict",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-claim-conflict-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "claim"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "claim"\n[api]\nport = 54999\n',
+        );
+        yield* fixture.stack.composition.stop;
+
+        const failingOwner = Layer.succeed(StackApi, {
+          create: () => Effect.die("unused"),
+          open: () =>
+            Effect.fail(
+              new StackError({
+                operation: "startup",
+                message:
+                  "Stack owner failed to start: Cannot bind api at 0.0.0.0:54999: address already in use (owner log: owner.log)",
+                conflict: { port: 54999, endpoint: "api", holder: "foreign" },
+              }),
+            ),
+          discover: () => Effect.succeed([]),
+          find: () => Effect.die("identity not used"),
+          findDeleted: () => Effect.die("identity not used"),
+        });
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(Layer.merge(layers(root, fixture), failingOwner)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          message: expect.stringContaining("Cannot bind api at 0.0.0.0:54999"),
+          suggestion: expect.stringMatching(
+            /`api\.port` in supabase\/config\.toml.*already saved this port.*previous automatic port is released/,
+          ),
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(

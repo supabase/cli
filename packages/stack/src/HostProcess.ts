@@ -30,7 +30,8 @@ import packageJson from "../package.json" with { type: "json" };
 import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
-import { StackRpc } from "./Rpc.ts";
+import type { PortConflict } from "./Ports.ts";
+import { Conflict, StackRpc } from "./Rpc.ts";
 import { ServiceCreationInput } from "./services/Catalog.ts";
 import {
   SavedStack,
@@ -87,6 +88,8 @@ export class HostProcessError extends Data.TaggedError("HostProcessError")<{
   readonly message: string;
   readonly cause?: unknown;
   readonly reason?: HostFailureReason;
+  /** The contested public port, when the owner failed to start on a port conflict. */
+  readonly conflict?: PortConflict;
 }> {}
 type HostFailureReason =
   | "unregistered"
@@ -375,6 +378,7 @@ const readyLine = Schema.Union([
     type: Schema.Literal("error"),
     message: Schema.String,
     reason: Schema.optionalKey(Schema.Literals(["lease-held", "exists", "runtime-unavailable"])),
+    conflict: Schema.optionalKey(Conflict),
   }),
 ]);
 
@@ -549,11 +553,12 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                 }
                 return yield* line.reason === "lease-held" || line.reason === "exists"
                   ? error("startup", "Stack already exists; use open")
-                  : error(
-                      "startup",
-                      `Stack owner failed to start: ${line.message} (owner log: ${log})`,
-                      line.reason,
-                    );
+                  : new HostProcessError({
+                      operation: "startup",
+                      message: `Stack owner failed to start: ${line.message} (owner log: ${log})`,
+                      ...(line.reason === undefined ? {} : { reason: line.reason }),
+                      ...(line.conflict === undefined ? {} : { conflict: line.conflict }),
+                    });
               }
               if (line.endpoint.stackId !== options.stackId)
                 return yield* failure(
