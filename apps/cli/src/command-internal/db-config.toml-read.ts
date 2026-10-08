@@ -12,7 +12,7 @@ import {
   type ExperimentalInput,
   type HookInput,
   type MfaFactorInput,
-  parseGoBool,
+  parseBoolLiteral,
   type PasskeyInput,
   resolveEmailTemplateContentPath,
   resolveSigningKeysPath,
@@ -733,7 +733,7 @@ function joinSupabaseSeedPath(pattern: string): string {
  * relative and joins under `supabase/` — unlike Node's win32 `isAbsolute`,
  * which treats it as rooted at the current drive.
  */
-const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
+const isAbsolutePattern = (pathSvc: Path.Path, pattern: string): boolean => {
   if (process.platform !== "win32") {
     return pathSvc.isAbsolute(pattern);
   }
@@ -756,7 +756,9 @@ const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
  * override — all three feed the glob the same resolved paths.
  */
 export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
-  pattern.length === 0 || goIsAbs(pathSvc, pattern) ? pattern : joinSupabaseSeedPath(pattern);
+  pattern.length === 0 || isAbsolutePattern(pathSvc, pattern)
+    ? pattern
+    : joinSupabaseSeedPath(pattern);
 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
@@ -831,14 +833,14 @@ function nonEmptyString(value: unknown): Option.Option<string> {
 
 /**
  * Resolve a `[section] enabled` style bool: a native TOML bool, or a string
- * (including an `env(VAR)` reference) accepted by {@link parseGoBool}.
+ * (including an `env(VAR)` reference) accepted by {@link parseBoolLiteral}.
  * Returns `"invalid"` for a malformed string; applies `fallback` when the key
  * is absent.
  */
 function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): boolean | "invalid" {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
-    const parsed = parseGoBool(expandEnv(value, lookup));
+    const parsed = parseBoolLiteral(expandEnv(value, lookup));
     return parsed ?? "invalid";
   }
   // A numeric value decodes as a bool (`value != 0`), so `enabled = 0` is an explicit
@@ -863,7 +865,7 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
   envValue?: string,
 ) {
   if (envValue !== undefined) {
-    const parsed = parseGoBool(expandEnv(envValue, lookup));
+    const parsed = parseBoolLiteral(expandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -883,7 +885,7 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
 /**
  * Tri-state sibling of `resolveBoolOrFail` for fields that stay `None` (never
  * `false`) when absent. The `SUPABASE_*` env override wins when present;
- * otherwise a present TOML bool/string is decoded with {@link parseGoBool},
+ * otherwise a present TOML bool/string is decoded with {@link parseBoolLiteral},
  * and a malformed value aborts the load.
  */
 const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
@@ -893,7 +895,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   lookup: EnvLookup,
 ) {
   if (envValue !== undefined) {
-    const parsed = parseGoBool(expandEnv(envValue, lookup));
+    const parsed = parseBoolLiteral(expandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -905,7 +907,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   // A numeric value decodes the same way: `value != 0`.
   if (typeof value === "number") return Option.some(value !== 0);
   if (typeof value === "string") {
-    const parsed = parseGoBool(expandEnv(value, lookup));
+    const parsed = parseBoolLiteral(expandEnv(value, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -1344,7 +1346,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   let webhooksEnabled: boolean;
   if (webhooksEnabledEnv !== undefined) {
     const expandedWebhooksEnabledEnv = expandEnv(webhooksEnabledEnv, lookup);
-    const parsed = parseGoBool(expandedWebhooksEnabledEnv);
+    const parsed = parseBoolLiteral(expandedWebhooksEnabledEnv);
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1359,7 +1361,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // A numeric `enabled = 1` is true (`value != 0`), same as `experimental.pgdelta.enabled` below.
     webhooksEnabled = webhooksEnabledRaw !== 0;
   } else if (typeof webhooksEnabledRaw === "string") {
-    const parsed = parseGoBool(expandEnv(webhooksEnabledRaw, lookup));
+    const parsed = parseBoolLiteral(expandEnv(webhooksEnabledRaw, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1386,7 +1388,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   if (enabledEnv !== undefined) {
     // An `env(VAR)` indirection in the override is expanded before the bool parse.
     const expandedEnabledEnv = expandEnv(enabledEnv, lookup);
-    const parsed = parseGoBool(expandedEnabledEnv);
+    const parsed = parseBoolLiteral(expandedEnabledEnv);
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1401,7 +1403,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // A numeric `enabled = 1` is true (`value != 0`), same rule as the generic `resolveBool`.
     enabled = enabledRaw !== 0;
   } else if (typeof enabledRaw === "string") {
-    const parsed = parseGoBool(expandEnv(enabledRaw, lookup));
+    const parsed = parseBoolLiteral(expandEnv(enabledRaw, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1498,7 +1500,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof value === "boolean") return value;
       if (typeof value === "number") return value !== 0;
       if (typeof value !== "string") return false;
-      const parsed = parseGoBool(expandEnv(value, lookup));
+      const parsed = parseBoolLiteral(expandEnv(value, lookup));
       if (parsed === undefined) return yield* fail(`failed to parse config: invalid ${field}.`);
       return parsed;
     });
@@ -1922,7 +1924,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // trimming; empty → `[]`). An array is decoded element-by-element: each element is
   // expanded but not re-split, so `["env(SEEDS)"]` stays one pattern. The env override
   // wins over the TOML value; absent/invalid falls back to the caller's default.
-  const splitGoSeedPaths = (value: string): ReadonlyArray<string> => {
+  const splitSeedPaths = (value: string): ReadonlyArray<string> => {
     const expanded = expandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
@@ -1932,7 +1934,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
    * way, and a negative zero keeps its sign — so the resolved pattern's hash key matches
    * an existing recorded entry.
    */
-  const formatGoWeakFloat = (value: number): string => {
+  const formatWeakFloat = (value: number): string => {
     if (Number.isNaN(value)) return "NaN";
     if (value === Number.POSITIVE_INFINITY) return "+Inf";
     if (value === Number.NEGATIVE_INFINITY) return "-Inf";
@@ -1953,7 +1955,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const weakCoerceGlobEntry = (value: unknown): string | undefined => {
     if (typeof value === "string") return value;
     if (typeof value === "boolean") return value ? "1" : "0";
-    if (typeof value === "number") return formatGoWeakFloat(value);
+    if (typeof value === "number") return formatWeakFloat(value);
     return undefined;
   };
   // A non-scalar glob element (nested array/table, or a bare TOML datetime) fails with
@@ -1961,14 +1963,14 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // variant reports its own type name for the message. `smol-toml` parses every TOML
   // datetime to a `TomlDate` (a `Date` subclass), exposing the `isDate`/`isTime`/
   // `isLocal` discriminators needed to pick the right variant name.
-  const goTomlDateType = (value: SmolToml.TomlDate): string => {
+  const tomlDateTypeName = (value: SmolToml.TomlDate): string => {
     if (value.isDate()) return "toml.LocalDate";
     if (value.isTime()) return "toml.LocalTime";
     return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
   };
-  const goUnconvertibleType = (value: unknown): string | undefined =>
+  const unconvertibleTypeName = (value: unknown): string | undefined =>
     value instanceof SmolToml.TomlDate
-      ? goTomlDateType(value)
+      ? tomlDateTypeName(value)
       : Array.isArray(value)
         ? "[]interface {}"
         : typeof value === "object" && value !== null
@@ -1982,10 +1984,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     values: ReadonlyArray<unknown>,
   ): ReadonlyArray<string> =>
     values.flatMap((value, index) => {
-      const goType = goUnconvertibleType(value);
-      return goType === undefined
+      const typeName = unconvertibleTypeName(value);
+      return typeName === undefined
         ? []
-        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${goType}'`];
+        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${typeName}'`];
     });
   // Fails once with every issue collected across both `Glob` fields, instead of
   // failing on the first field checked.
@@ -2032,7 +2034,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     absentDefault: ReadonlyArray<string>,
   ): { readonly patterns: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
     if (override !== undefined) {
-      return { patterns: splitGoSeedPaths(override), issues: [] };
+      return { patterns: splitSeedPaths(override), issues: [] };
     }
     if (Array.isArray(raw)) {
       return {
@@ -2044,7 +2046,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       };
     }
     if (typeof raw === "string") {
-      return { patterns: splitGoSeedPaths(raw), issues: [] };
+      return { patterns: splitSeedPaths(raw), issues: [] };
     }
     if (raw === undefined) {
       return { patterns: absentDefault, issues: [] };

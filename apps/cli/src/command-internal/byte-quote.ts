@@ -48,11 +48,11 @@ function decodeUtf8Rune(
 }
 
 // Printable runes ≥ 0x80: letters, marks, numbers, punctuation, symbols (ASCII is handled
-// explicitly in goQuote). Unicode-table drift between engines only affects which escape a garbage
+// explicitly in quoteBytes). Unicode-table drift between engines only affects which escape a garbage
 // rune gets in one error message.
-const GO_PRINTABLE_RE = /[\p{L}\p{M}\p{N}\p{P}\p{S}]/u;
+const PRINTABLE_RE = /[\p{L}\p{M}\p{N}\p{P}\p{S}]/u;
 
-const GO_ESCAPES: Readonly<Record<number, string>> = {
+const ESCAPE_SHORTHANDS: Readonly<Record<number, string>> = {
   0x07: "\\a",
   0x08: "\\b",
   0x0c: "\\f",
@@ -66,7 +66,7 @@ const GO_ESCAPES: Readonly<Record<number, string>> = {
  * `%q` over raw UTF-8 bytes. Valid printable runes print literally;
  * control/non-printable ones use the `\a…\v` shorthands then `\xNN`/`\uNNNN`/`\UNNNNNNNN`.
  */
-export function goQuote(bytes: Uint8Array): string {
+export function quoteBytes(bytes: Uint8Array): string {
   let out = '"';
   for (let i = 0; i < bytes.length;) {
     const { cp, size } = decodeUtf8Rune(bytes, i);
@@ -76,13 +76,13 @@ export function goQuote(bytes: Uint8Array): string {
       continue;
     }
     i += size;
-    const escape = GO_ESCAPES[cp];
+    const escape = ESCAPE_SHORTHANDS[cp];
     const ch = String.fromCodePoint(cp);
     if (ch === '"' || ch === "\\") out += `\\${ch}`;
     else if (escape !== undefined) out += escape;
     else if (cp >= 0x20 && cp < 0x7f) out += ch;
     else if (cp < 0x80) out += `\\x${cp.toString(16).padStart(2, "0")}`;
-    else if (GO_PRINTABLE_RE.test(ch)) out += ch;
+    else if (PRINTABLE_RE.test(ch)) out += ch;
     else if (cp < 0x10000) out += `\\u${cp.toString(16).padStart(4, "0")}`;
     else out += `\\U${cp.toString(16).padStart(8, "0")}`;
   }

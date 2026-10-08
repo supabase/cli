@@ -38,7 +38,7 @@ const LOGICAL_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1ListAllBackupsOutput.Type;
   status?: number;
   network?: "fail";
@@ -65,7 +65,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -125,7 +125,7 @@ describe("backups list integration", () => {
   });
 
   it.live("emits indented JSON to stdout for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: PITR_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
@@ -142,7 +142,7 @@ describe("backups list integration", () => {
   });
 
   it.live("emits YAML to stdout for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: PITR_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "yaml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
@@ -151,7 +151,7 @@ describe("backups list integration", () => {
   });
 
   it.live("emits TOML to stdout for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('Region = "ap-southeast-1"');
@@ -160,7 +160,7 @@ describe("backups list integration", () => {
   });
 
   it.live("emits [[Backups]] array-of-tables for --output toml with logical backups", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: LOGICAL_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "toml", response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(`PitrEnabled = true
@@ -179,7 +179,7 @@ WalgEnabled = true
   });
 
   it.live("emits KEY=VALUE lines for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env", response: PITR_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "env", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('REGION="ap-southeast-1"');
@@ -188,7 +188,7 @@ WalgEnabled = true
   });
 
   it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: PITR_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "pretty", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
@@ -198,7 +198,7 @@ WalgEnabled = true
   it.live("--output flag value wins over --output-format when both provided", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: PITR_RESPONSE,
     });
     return Effect.gen(function* () {

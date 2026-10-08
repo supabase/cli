@@ -32,7 +32,7 @@ const tempRoot = useTempWorkdir("supabase-sso-show-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -57,7 +57,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -154,7 +154,7 @@ describe("sso show integration", () => {
   });
 
   it.live("--output=env returns env-not-supported error with the formatted message", () => {
-    const { layer } = setup({ goOutput: "env" });
+    const { layer } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
@@ -173,7 +173,7 @@ describe("sso show integration", () => {
   });
 
   it.live("--output=json encodes response with HTML escaping", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
         projectRef: Option.none(),
@@ -188,7 +188,7 @@ describe("sso show integration", () => {
   });
 
   it.live("--output=yaml encodes the provider with yaml.v3's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
         projectRef: Option.none(),
@@ -213,7 +213,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
   });
 
   it.live("--output=toml encodes the provider with BurntSushi's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
         projectRef: Option.none(),
@@ -249,7 +249,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   });
 
   it.live("--output=pretty matches text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
         projectRef: Option.none(),

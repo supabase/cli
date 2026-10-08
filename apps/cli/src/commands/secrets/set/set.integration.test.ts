@@ -54,7 +54,7 @@ function permissionDeniedReadLayer(name: string) {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
+  outputFlag?: "pretty" | "json" | "yaml" | "toml" | "env";
   status?: number;
   network?: "fail";
   env?: Record<string, string | undefined>;
@@ -76,7 +76,7 @@ function setup(opts: SetupOpts = {}) {
       out,
       api,
       cliSettings,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
@@ -954,7 +954,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   it.live(
     "text mode prints `Finished supabase secrets set.\\n` regardless of --output value",
     () => {
-      const { layer, out } = setup({ goOutput: "json" });
+      const { layer, out } = setup({ outputFlag: "json" });
       return Effect.gen(function* () {
         yield* secretsSet({
           projectRef: Option.none(),

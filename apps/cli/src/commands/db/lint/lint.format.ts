@@ -7,7 +7,7 @@
  * `level` / `message` have no `omitempty` and are always present.
  */
 
-import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
@@ -183,5 +183,5 @@ export function filterLintResult(
  * straight to the order-preserving encoder.
  */
 export function encodeLintResults(results: ReadonlyArray<LintResult>): string {
-  return encodeGoJsonIndented(results);
+  return encodeHtmlSafeJsonIndented(results);
 }

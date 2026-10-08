@@ -33,7 +33,7 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1GetSslEnforcementConfigOutput.Type;
   status?: number;
   network?: "fail";
@@ -62,7 +62,7 @@ function setup(opts: SetupOpts = {}) {
     api,
     cliSettings,
     tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -96,7 +96,7 @@ describe("ssl-enforcement get integration", () => {
   );
 
   it.live("emits env output for --output env (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe('APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n');
@@ -104,7 +104,7 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("emits indented JSON for --output json (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
@@ -120,7 +120,7 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("emits YAML for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("appliedsuccessfully: true");
@@ -129,7 +129,7 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("emits TOML for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("AppliedSuccessfully = true");
@@ -138,7 +138,7 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("treats --output pretty as identical to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe("SSL is being enforced.\n");
@@ -169,7 +169,7 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("--output wins over --output-format when both provided", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("appliedsuccessfully: true");

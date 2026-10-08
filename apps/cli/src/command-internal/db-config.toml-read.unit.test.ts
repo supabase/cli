@@ -466,13 +466,13 @@ describe("readDbToml", () => {
   });
 
   it.effect.each([
-    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", goType: "time.Time" },
-    { name: "local date-time", literal: "1979-05-27T07:32:00", goType: "toml.LocalDateTime" },
-    { name: "local date", literal: "1979-05-27", goType: "toml.LocalDate" },
-    { name: "local time", literal: "07:32:00", goType: "toml.LocalTime" },
+    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", typeName: "time.Time" },
+    { name: "local date-time", literal: "1979-05-27T07:32:00", typeName: "toml.LocalDateTime" },
+    { name: "local date", literal: "1979-05-27", typeName: "toml.LocalDate" },
+    { name: "local time", literal: "07:32:00", typeName: "toml.LocalTime" },
   ])(
     "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty",
-    ({ literal, goType }) => {
+    ({ literal, typeName }) => {
       // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date` subclass)
       // that stores its value internally, not as an enumerable own property, so
       // `Object.keys(tomlDate).length === 0` — same as a genuine empty inline table
@@ -487,7 +487,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${goType}'`,
+                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${typeName}'`,
               );
             }
             rmSync(dir, { recursive: true, force: true });

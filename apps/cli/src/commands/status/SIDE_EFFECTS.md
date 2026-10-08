@@ -215,7 +215,7 @@ the 13 expected service containers isn't in the running set.
 ### `-o env`
 
 `KEY="VALUE"` lines (unquoted for integer-looking values), one per resolved field, sorted by
-key — see `go-output.encoders.ts`'s `encodeEnv`.
+key — see `output.encoders.ts`'s `encodeEnv`.
 
 Additive `LINKED_PROJECT_REF`,
 `LINKED_PROJECT_NAME`, `LINKED_ORG_SLUG`, `LINKED_ORG_ID`, `LINKED_BRANCH`,
@@ -373,7 +373,7 @@ print nothing but the red stderr message on failure (no payload at all). The add
 - `--ignore-health-check` (hidden) skips the db container health assertion entirely and always
   exits `0`.
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a
-  HS256 signer (`go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
+  HS256 signer (`local-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
   latter uses a different issuer, expiry, and claim order that would not match the established
   local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
   (`StatusInvalidConfigError`) at config-load time before any command can render output.

@@ -1,6 +1,6 @@
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { lastExplicitLongFlagValue } from "../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../shared/cli/flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
 import {

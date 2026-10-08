@@ -33,11 +33,11 @@ import { bold } from "../../command-internal/colors.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
@@ -2475,10 +2475,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
   if (changedModes.length > 1) {
     return yield* new ConflictingFunctionDeployFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage(
-        FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
-        changedModes,
-      ),
+      message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP, changedModes),
     });
   }
 

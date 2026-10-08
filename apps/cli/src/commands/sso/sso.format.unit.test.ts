@@ -226,7 +226,7 @@ describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
     expect(out).toBe("  \n  <a>\n    <b/>\n  </a>");
   });
 
-  it("matches go-xmlfmt v1.1.3 byte-for-byte on a realistic SAML fragment", () => {
+  it("matches xmlfmt v1.1.3 byte-for-byte on a realistic SAML fragment", () => {
     const saml =
       '<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com">' +
       '<IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">' +

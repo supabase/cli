@@ -17,7 +17,7 @@ const tempRoot = useTempWorkdir("supabase-sso-info-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -35,7 +35,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -83,7 +83,7 @@ describe("sso info integration", () => {
   });
 
   it.live("--output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("ACS_URL=");
@@ -93,7 +93,7 @@ describe("sso info integration", () => {
   });
 
   it.live("--output=json sorts keys alphabetically and includes all three", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('"acs_url"');
@@ -106,7 +106,7 @@ describe("sso info integration", () => {
   });
 
   it.live("--output=yaml emits the three keys", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url:");
@@ -116,7 +116,7 @@ describe("sso info integration", () => {
   });
 
   it.live("--output=toml emits the three keys", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url");

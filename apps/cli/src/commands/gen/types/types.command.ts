@@ -7,7 +7,7 @@ import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import {
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+} from "../../../shared/cli/flag-groups.ts";
 import { genTypes } from "./types.handler.ts";
 import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";

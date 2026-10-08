@@ -41,7 +41,7 @@ const tempRoot = useTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -132,7 +132,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -166,7 +166,7 @@ describe("sso list integration", () => {
         },
       ],
     };
-    const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
+    const { layer, out } = setup({ outputFlag: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       const emitted = yield* Schema.decodeEffect(
@@ -217,7 +217,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output=json wraps response in `{providers: …}`", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -227,7 +227,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output=yaml emits providers key", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("providers:");
@@ -235,7 +235,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output=toml emits provider data", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.length).toBeGreaterThan(0);
@@ -250,7 +250,7 @@ describe("sso list integration", () => {
         attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
       },
     };
-    const { layer, out } = setup({ goOutput: "toml", body: { items: [item] } });
+    const { layer, out } = setup({ outputFlag: "toml", body: { items: [item] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -264,7 +264,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output=env emits a flat PROVIDERS= entry", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("PROVIDERS=");
@@ -272,7 +272,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output=pretty falls through to text rendering", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
@@ -297,7 +297,7 @@ describe("sso list integration", () => {
   });
 
   it.live("--output wins over --output-format when both set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(false);

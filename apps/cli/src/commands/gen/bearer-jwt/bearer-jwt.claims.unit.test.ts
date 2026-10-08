@@ -177,27 +177,27 @@ describe("mergeBearerJwtPayload", () => {
     expect(mergeBearerJwtPayload(claims, "null")).toEqual({ role: "anon" });
   });
 
-  it("rejects an array payload with the unmarshal-type-mismatch message", () => {
+  it("rejects an array payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "[]")).toThrow(
-      "json: cannot unmarshal array into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got array",
     );
   });
 
-  it("rejects a scalar number payload with the unmarshal-type-mismatch message", () => {
+  it("rejects a scalar number payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "123")).toThrow(
-      "json: cannot unmarshal number into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got number",
     );
   });
 
-  it("rejects a scalar string payload with the unmarshal-type-mismatch message", () => {
+  it("rejects a scalar string payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '"str"')).toThrow(
-      "json: cannot unmarshal string into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got string",
     );
   });
 
-  it("rejects a scalar boolean payload with the unmarshal-type-mismatch message", () => {
+  it("rejects a scalar boolean payload with an invalid-claims message", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "true")).toThrow(
-      "json: cannot unmarshal bool into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got boolean",
     );
   });
 
@@ -209,19 +209,19 @@ describe("mergeBearerJwtPayload", () => {
 
   it("rejects an overflowing number nested in an object payload instead of silently signing Infinity-as-null (CLI-1961 Codex review finding)", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"extra":1e309}')).toThrow(
-      "json: cannot unmarshal number 1e309 into Go value of type float64",
+      "invalid claims: number 1e309 is out of range",
     );
   });
 
   it("rejects an overflowing number nested arbitrarily deep (inside an array, inside an object)", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"a":{"b":[1,2,1e309]}}')).toThrow(
-      "json: cannot unmarshal number 1e309 into Go value of type float64",
+      "invalid claims: number 1e309 is out of range",
     );
   });
 
   it("reports the FIRST overflowing literal in document order when multiple numbers overflow", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"a":1e400,"b":1e309}')).toThrow(
-      "json: cannot unmarshal number 1e400 into Go value of type float64",
+      "invalid claims: number 1e400 is out of range",
     );
   });
 
@@ -232,13 +232,13 @@ describe("mergeBearerJwtPayload", () => {
 
   it("prioritizes the top-level type-mismatch message over an overflowing scalar payload", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "1e309")).toThrow(
-      "json: cannot unmarshal number into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got number",
     );
   });
 
   it("prioritizes the top-level array-mismatch message over an overflowing number nested inside the array", () => {
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "[1e309]")).toThrow(
-      "json: cannot unmarshal array into Go value of type jwt.MapClaims",
+      "invalid claims: expected a JSON object, got array",
     );
   });
 

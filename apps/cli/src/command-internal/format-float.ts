@@ -5,7 +5,7 @@
  *
  * Shared by `db query`'s value formatter and `postgres-config`'s pretty table.
  */
-export function goFormatFloat(n: number): string {
+export function formatGeneralFloat(n: number): string {
   if (Number.isNaN(n)) return "NaN";
   if (!Number.isFinite(n)) return n > 0 ? "+Inf" : "-Inf";
   // Negative zero keeps its sign; `n === 0` is true for both `+0` and `-0`.

@@ -13,7 +13,7 @@ import {
 import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
 import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
 import {
-  GoUrlParseError,
+  UrlParseError,
   StorageUrlPatternError,
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
@@ -134,7 +134,7 @@ export const parseStorageUrlEffect = (objectUrl: string) =>
       if (cause instanceof StorageUrlPatternError) {
         return new StorageInvalidUrlError();
       }
-      const message = cause instanceof GoUrlParseError ? cause.message : String(cause);
+      const message = cause instanceof UrlParseError ? cause.message : String(cause);
       return new StorageUrlParseError({ message: `failed to parse storage url: ${message}` });
     },
   });

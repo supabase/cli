@@ -79,7 +79,7 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   - Values outside the `json|table|csv` enum (`pretty|yaml|toml|env`) are rejected
     before the handler runs with the fixed diagnostic text — `invalid argument "yaml" for
 "-o, --output" flag: must be one of [ json | table | csv ]` — and exit 1,
-    See `go-output-flag.ts`.
+    See `output-formats.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
 - **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and

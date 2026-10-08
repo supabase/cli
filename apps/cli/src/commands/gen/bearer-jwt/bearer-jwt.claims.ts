@@ -1,6 +1,6 @@
 import { Option } from "effect";
-import { encodeGoStructJsonBody } from "../../../command-internal/go-output.encoders.ts";
-import { goJsonKindName } from "../../../command-internal/go-json.ts";
+import { encodeSortedJsonBody } from "../../../command-internal/output.encoders.ts";
+import { jsonKindName } from "../../../command-internal/html-safe-json.ts";
 import { addSecondsAndFloor, type BearerJwtInstant } from "./bearer-jwt.flags.ts";
 
 /**
@@ -72,11 +72,11 @@ export function buildBearerJwtClaims(input: BearerJwtClaimsInput): Record<string
   return claims;
 }
 
-const GO_JSON_WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
+const JSON_WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
 
-function skipGoJsonWhitespace(value: string, index: number): number {
+function skipJsonWhitespace(value: string, index: number): number {
   let i = index;
-  while (i < value.length && GO_JSON_WHITESPACE.has(value[i]!)) i++;
+  while (i < value.length && JSON_WHITESPACE.has(value[i]!)) i++;
   return i;
 }
 
@@ -132,7 +132,7 @@ function findJsonContainerEnd(value: string, start: number): number | undefined 
 const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 
 /** Literal keywords, keyed by their first byte; matched char-by-char below. */
-const GO_JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "false" };
+const JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "false" };
 
 /**
  * Finds the first JSON number literal in an already-valid JSON document that
@@ -173,8 +173,8 @@ function findFirstNonFiniteJsonNumberLiteral(value: string): string | undefined 
  * fallback otherwise — reachable when a leading byte (e.g. a vertical tab)
  * is whitespace to JS's `\s` regex but not to this scanner.
  */
-function reportGoJsonTrailingGarbage(trimmed: string, validPrefixLength: number): string {
-  const restStart = skipGoJsonWhitespace(trimmed, validPrefixLength);
+function reportJsonTrailingGarbage(trimmed: string, validPrefixLength: number): string {
+  const restStart = skipJsonWhitespace(trimmed, validPrefixLength);
   if (restStart >= trimmed.length) {
     return "invalid character looking for beginning of value";
   }
@@ -191,7 +191,7 @@ function reportGoJsonTrailingGarbage(trimmed: string, validPrefixLength: number)
  * unrecognized shape (e.g. a lone `-`) falls back to a generic, unverified
  * message.
  */
-function goJsonSyntaxErrorMessage(raw: string): string {
+function jsonSyntaxErrorMessage(raw: string): string {
   const trimmed = raw.replace(/^\s+/, "");
   if (trimmed.length === 0) {
     return "unexpected end of JSON input";
@@ -199,7 +199,7 @@ function goJsonSyntaxErrorMessage(raw: string): string {
 
   const first = trimmed[0]!;
 
-  const literal = GO_JSON_LITERALS[first];
+  const literal = JSON_LITERALS[first];
   if (literal !== undefined) {
     for (let i = 0; i < literal.length; i++) {
       if (i >= trimmed.length) {
@@ -209,21 +209,21 @@ function goJsonSyntaxErrorMessage(raw: string): string {
         return `invalid character '${trimmed[i]}' in literal ${literal} (expecting '${literal[i]}')`;
       }
     }
-    return reportGoJsonTrailingGarbage(trimmed, literal.length);
+    return reportJsonTrailingGarbage(trimmed, literal.length);
   }
 
   if (first === '"') {
     const end = findJsonStringEnd(trimmed, 0);
     return end === undefined
       ? "unexpected end of JSON input"
-      : reportGoJsonTrailingGarbage(trimmed, end);
+      : reportJsonTrailingGarbage(trimmed, end);
   }
 
   if (first === "{" || first === "[") {
     const end = findJsonContainerEnd(trimmed, 0);
     return end === undefined
       ? "unexpected end of JSON input"
-      : reportGoJsonTrailingGarbage(trimmed, end);
+      : reportJsonTrailingGarbage(trimmed, end);
   }
 
   if (first === "-" || (first >= "0" && first <= "9")) {
@@ -233,7 +233,7 @@ function goJsonSyntaxErrorMessage(raw: string): string {
       // mid-number when the input runs out.
       return "unexpected end of JSON input";
     }
-    return reportGoJsonTrailingGarbage(trimmed, match[0].length);
+    return reportJsonTrailingGarbage(trimmed, match[0].length);
   }
 
   return `invalid character '${first}' looking for beginning of value`;
@@ -257,21 +257,17 @@ export function mergeBearerJwtPayload(
   try {
     parsed = JSON.parse(payload);
   } catch {
-    throw new Error(goJsonSyntaxErrorMessage(payload));
+    throw new Error(jsonSyntaxErrorMessage(payload));
   }
   if (parsed === null) {
     return claims;
   }
   if (Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error(
-      `json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type jwt.MapClaims`,
-    );
+    throw new Error(`invalid claims: expected a JSON object, got ${jsonKindName(parsed)}`);
   }
   const overflowingLiteral = findFirstNonFiniteJsonNumberLiteral(payload);
   if (overflowingLiteral !== undefined) {
-    throw new Error(
-      `json: cannot unmarshal number ${overflowingLiteral} into Go value of type float64`,
-    );
+    throw new Error(`invalid claims: number ${overflowingLiteral} is out of range`);
   }
   return { ...claims, ...(parsed as Record<string, unknown>) };
 }
@@ -280,9 +276,9 @@ export function mergeBearerJwtPayload(
  * Serializes claims as a map:
  * alphabetically key-sorted at every level, HTML + control-character
  * escaping, no indentation or trailing newline. Reuses
- * `encodeGoStructJsonBody`, since a map's marshalled shape is identical
+ * `encodeSortedJsonBody`, since a map's marshalled shape is identical
  * regardless of what produced it.
  */
 export function encodeBearerJwtClaims(claims: Record<string, unknown>): string {
-  return encodeGoStructJsonBody(claims);
+  return encodeSortedJsonBody(claims);
 }

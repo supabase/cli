@@ -1,7 +1,7 @@
 import { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson, encodeToml, encodeYaml } from "./output.encoders.ts";
 
 // Shaped like the backups response because the `nullForEmptyArrays` byte-parity assertions were
 // extracted from that port; see the `{ items, name }` fixtures below for plain-object coverage.
@@ -23,9 +23,9 @@ const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   },
 };
 
-describe("encodeGoJson", () => {
+describe("encodeSortedJson", () => {
   it("emits alphabetical struct-field order and trailing newline for a populated response", () => {
-    const out = encodeGoJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
+    const out = encodeSortedJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
     expect(out).toBe(
       `{
   "backups": [
@@ -49,7 +49,7 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    const out = encodeGoJson(
+    const out = encodeSortedJson(
       {
         region: "ap-southeast-1",
         walg_enabled: false,
@@ -72,7 +72,7 @@ describe("encodeGoJson", () => {
   });
 
   it("leaves arrays intact when nullForEmptyArrays is not provided", () => {
-    const out = encodeGoJson({ items: [], name: "x" });
+    const out = encodeSortedJson({ items: [], name: "x" });
     expect(out).toBe(
       `{
   "items": [],
@@ -83,7 +83,7 @@ describe("encodeGoJson", () => {
   });
 
   it("does not substitute null for non-empty arrays even when listed in nullForEmptyArrays", () => {
-    const out = encodeGoJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
+    const out = encodeSortedJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
     expect(out).toBe(
       `{
   "items": [
@@ -97,7 +97,7 @@ describe("encodeGoJson", () => {
   });
 
   it("keeps true lexicographic order for numeric-looking keys", () => {
-    const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
+    const out = encodeSortedJson({ 10: "a", 2: "b", role: "anon" });
     expect(out).toBe(
       `{
   "10": "a",
@@ -111,7 +111,7 @@ describe("encodeGoJson", () => {
   it("sorts keys by byte/code-point order, not JS's UTF-16 code-unit order", () => {
     const highBmp = String.fromCodePoint(0xe000);
     const astral = String.fromCodePoint(0x10000);
-    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    const out = encodeSortedJson({ [astral]: 2, [highBmp]: 1 });
     expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
   });
 });

@@ -89,7 +89,7 @@ function durationString(ns: number): string {
 }
 
 /** The maximum duration (max int64 nanoseconds, ~292 years); 2^63 is the nearest exactly-representable float64 above it. */
-const MAX_GO_DURATION_NS = 2 ** 63;
+const MAX_DURATION_NS = 2 ** 63;
 
 /**
  * The maximum duration in whole seconds, for the `*_max_frequency` rows: a single whole-unit
@@ -207,7 +207,7 @@ function parseDuration(s: string): number {
     // Enforces two bounds: the int64 range, and float64 exactness — the running total must not
     // round, or the value stays verbatim rather than silently losing precision.
     const next = total + contribution;
-    if (!Number.isFinite(next) || next > MAX_GO_DURATION_NS || next - total !== contribution) {
+    if (!Number.isFinite(next) || next > MAX_DURATION_NS || next - total !== contribution) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
     total = next;
@@ -215,7 +215,7 @@ function parseDuration(s: string): number {
 
   // int64's asymmetry: +2^63 is one nanosecond past the maximum, while -2^63 is the valid
   // minimum, so only the positive case is rejected here.
-  if (!neg && total === MAX_GO_DURATION_NS) {
+  if (!neg && total === MAX_DURATION_NS) {
     throw new Error(`time: invalid duration "${orig}" (value out of range)`);
   }
 
@@ -492,13 +492,13 @@ function secondsDurationRow(
  * ceiling still maps back exactly (whole-hour products stay float-exact at any magnitude in the
  * range). Signed, since these fields allow negative values, which render as `-Nh0m0s`.
  */
-const MAX_SESSION_DURATION_HOURS = (MAX_GO_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
+const MAX_SESSION_DURATION_HOURS = (MAX_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
 // 2^63 - 1024 is exactly representable at that float spacing, keeping the inclusive bound below
 // the maximum duration (2^63 itself is one nanosecond past it).
 
 // Asymmetric like int64 itself: -2^63 ns is a valid duration (the minimum), so the floor
 // includes it while the ceiling stops one nanosecond short of +2^63.
-const MIN_SESSION_DURATION_HOURS = -(MAX_GO_DURATION_NS / NS_PER_HOUR);
+const MIN_SESSION_DURATION_HOURS = -(MAX_DURATION_NS / NS_PER_HOUR);
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,

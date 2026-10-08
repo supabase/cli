@@ -52,7 +52,7 @@ import {
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
@@ -194,7 +194,7 @@ function isFlagOccurrence(token: string, name: string): boolean {
  * different question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether the
  * shipped parser accepts the value at all — the two sets must not be merged.
  */
-const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
  * A single-dash token is read as a cluster of shorthand flags until a
@@ -290,7 +290,7 @@ export function hasRootHelpOrVersionFlag(
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
-        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+        version = BOOL_TRUE_VALUES.has(token.slice("--version=".length));
       }
     }
   }

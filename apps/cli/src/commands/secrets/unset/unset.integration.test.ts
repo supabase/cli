@@ -20,7 +20,7 @@ type SecretsList = typeof V1ListAllSecretsOutput.Type;
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
+  outputFlag?: "pretty" | "json" | "yaml" | "toml" | "env";
   yes?: boolean;
   stdinIsTty?: boolean;
   /** Piped stdin lines consumed by the non-TTY confirm read. */
@@ -64,7 +64,7 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
   );
@@ -305,7 +305,7 @@ describe("secrets unset integration", () => {
   it.live(
     "text mode prints `Finished supabase secrets unset.\\n` regardless of --output value",
     () => {
-      const { layer, out } = setup({ yes: true, goOutput: "json" });
+      const { layer, out } = setup({ yes: true, outputFlag: "json" });
       return Effect.gen(function* () {
         yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");

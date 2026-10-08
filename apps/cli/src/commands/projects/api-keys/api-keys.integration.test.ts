@@ -30,7 +30,7 @@ const tempRoot = useTempWorkdir("supabase-projects-apikeys-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: ApiKeys;
   readonly status?: number;
   readonly network?: "fail";
@@ -51,7 +51,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -110,7 +110,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("includes the revealed secret in the env map for --output env --reveal", () => {
-    const { layer, out } = setup({ goOutput: "env", response: REVEALED_KEYS });
+    const { layer, out } = setup({ outputFlag: "env", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="sb_secret_revealed"');
@@ -127,7 +127,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("emits the revealed secret in the JSON array for --output json --reveal", () => {
-    const { layer, out } = setup({ goOutput: "json", response: REVEALED_KEYS });
+    const { layer, out } = setup({ outputFlag: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('"api_key": "sb_secret_revealed"');
@@ -165,7 +165,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("encodes the SUPABASE_<NAME>_KEY map for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY="anon-secret"');
@@ -174,7 +174,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("encodes the SUPABASE_<NAME>_KEY map for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY = "anon-secret"');
@@ -182,7 +182,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("emits a JSON array of api keys for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('"name": "anon"');
@@ -191,7 +191,7 @@ describe("projects api-keys integration", () => {
   });
 
   it.live("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain("name: anon");

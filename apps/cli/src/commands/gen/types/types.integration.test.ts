@@ -355,7 +355,7 @@ const setup = Effect.fnUntraced(function* (
     readonly explicitWorkdir?: boolean;
     readonly projectId?: Option.Option<string>;
     readonly format?: "text" | "json" | "stream-json";
-    readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+    readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     readonly projectTypes?: string;
     readonly childExitCode?: number;
     readonly childStderr?: ReadonlyArray<string>;
@@ -495,7 +495,7 @@ const setup = Effect.fnUntraced(function* (
     BunServices.layer,
     child.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
-    Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
+    Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
     Layer.succeed(DnsResolverFlag, "native" as const),
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(api.layer)),
@@ -1260,7 +1260,7 @@ describe("gen types", () => {
         Effect.gen(function* () {
           const { layer } = yield* setup({
             args: ["gen", "types", "-o", "json", "go"],
-            goOutput: Option.some("json"),
+            outputFlag: Option.some("json"),
           });
           const exit = yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
 

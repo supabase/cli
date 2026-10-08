@@ -69,7 +69,7 @@ export function loadProfile(
       return yield* failRead(`Config File "config" Not Found in "[]"`);
     }
 
-    const ext = goFilepathExt(token);
+    const ext = fileExtension(token);
     if (!PROFILE_FILE_EXTS.has(ext)) {
       return yield* failRead(`Unsupported Config Type ${JSON.stringify(ext)}`);
     }
@@ -131,26 +131,26 @@ export function loadProfile(
       const weak = weakString(raw);
       if (weak === undefined) {
         decodeErrors.push(
-          `'${field.goName}' expected type 'string', got unconvertible type '${goTypeName(raw)}', value: '${goValueString(raw)}'`,
+          `'${field.structFieldName}' expected type 'string', got unconvertible type '${valueTypeName(raw)}', value: '${renderInvalidValue(raw)}'`,
         );
         continue;
       }
       values.set(field.key, weak);
       if (weak === "") {
         if (field.required) {
-          validationErrors.push(validatorLine(field.goName, "required"));
+          validationErrors.push(validatorLine(field.structFieldName, "required"));
         }
         continue;
       }
       if (field.format !== undefined && !FORMAT_TAG_CHECKS[field.format](weak)) {
-        validationErrors.push(validatorLine(field.goName, field.format));
+        validationErrors.push(validatorLine(field.structFieldName, field.format));
       }
     }
     if (decodeErrors.length > 0) {
       return yield* failDecode(decodeErrors.join("\n"));
     }
     if (validationErrors.length > 0) {
-      return yield* fail(padGoErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
+      return yield* fail(padErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
     }
 
     // All required fields passed validation above; pooler_host stays "" when absent.
@@ -171,7 +171,7 @@ const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
 /** Aggregate decode-error template: multiple failing fields render as one block. */
 const failDecode = (detail: string) =>
   fail(
-    padGoErrorBlock(
+    padErrorBlock(
       `failed to parse profile: decoding failed due to the following error(s):\n\n${detail}`,
     ),
   );
@@ -196,7 +196,7 @@ const PROFILE_FILE_EXTS: ReadonlySet<string> = new Set([
  * Returns everything after the last `.` in the final path segment, including for dot-files
  * (`.yml` → `yml`), where Node's `path.extname` returns `""`.
  */
-function goFilepathExt(token: string): string {
+function fileExtension(token: string): string {
   for (let i = token.length - 1; i >= 0 && token[i] !== "/"; i--) {
     if (token[i] === ".") {
       return token.slice(i + 1);
@@ -222,7 +222,7 @@ type FormatTag = "http_url" | "hostname_rfc1123" | "uuid4";
 
 interface ProfileStringField {
   readonly key: string;
-  readonly goName: string;
+  readonly structFieldName: string;
   readonly required: boolean;
   readonly format?: FormatTag;
 }
@@ -232,18 +232,28 @@ interface ProfileStringField {
  * `regions` (a slice) is exempt from weak string decoding and never validated.
  */
 const PROFILE_STRING_FIELDS: ReadonlyArray<ProfileStringField> = [
-  { key: "name", goName: "Name", required: true },
-  { key: "api_url", goName: "APIURL", required: true, format: "http_url" },
-  { key: "dashboard_url", goName: "DashboardURL", required: true, format: "http_url" },
-  { key: "docs_url", goName: "DocsURL", required: false, format: "http_url" },
-  { key: "project_host", goName: "ProjectHost", required: true, format: "hostname_rfc1123" },
-  { key: "pooler_host", goName: "PoolerHost", required: false, format: "hostname_rfc1123" },
-  { key: "client_id", goName: "AuthClientID", required: false, format: "uuid4" },
-  { key: "studio_image", goName: "StudioImage", required: false },
+  { key: "name", structFieldName: "Name", required: true },
+  { key: "api_url", structFieldName: "APIURL", required: true, format: "http_url" },
+  { key: "dashboard_url", structFieldName: "DashboardURL", required: true, format: "http_url" },
+  { key: "docs_url", structFieldName: "DocsURL", required: false, format: "http_url" },
+  {
+    key: "project_host",
+    structFieldName: "ProjectHost",
+    required: true,
+    format: "hostname_rfc1123",
+  },
+  {
+    key: "pooler_host",
+    structFieldName: "PoolerHost",
+    required: false,
+    format: "hostname_rfc1123",
+  },
+  { key: "client_id", structFieldName: "AuthClientID", required: false, format: "uuid4" },
+  { key: "studio_image", structFieldName: "StudioImage", required: false },
 ];
 
-function validatorLine(goName: string, tag: string): string {
-  return `Key: 'Profile.${goName}' Error:Field validation for '${goName}' failed on the '${tag}' tag`;
+function validatorLine(structFieldName: string, tag: string): string {
+  return `Key: 'Profile.${structFieldName}' Error:Field validation for '${structFieldName}' failed on the '${tag}' tag`;
 }
 
 /** RFC 1123 hostname pattern. */
@@ -279,18 +289,18 @@ function weakString(value: unknown): string | undefined {
   return undefined;
 }
 
-function goTypeName(value: unknown): string {
+function valueTypeName(value: unknown): string {
   if (Array.isArray(value)) return "[]interface {}";
   if (typeof value === "object" && value !== null) return "map[string]interface {}";
   return typeof value;
 }
 
 /** Best-effort rendering of an invalid field's value for the error message. */
-function goValueString(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(goValueString).join(" ")}]`;
+function renderInvalidValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(renderInvalidValue).join(" ")}]`;
   if (typeof value === "object" && value !== null) {
     const entries = Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => `${key}:${goValueString(entry)}`)
+      .map(([key, entry]) => `${key}:${renderInvalidValue(entry)}`)
       .join(" ");
     return `map[${entries}]`;
   }
@@ -301,7 +311,7 @@ function goValueString(value: unknown): string {
  * Pads every line (including blank ones) with trailing spaces to the longest line's width, to
  * match the CLI's established multi-line error rendering exactly.
  */
-export function padGoErrorBlock(message: string): string {
+export function padErrorBlock(message: string): string {
   const lines = message.split("\n");
   const width = Math.max(...lines.map((line) => line.length));
   return lines.map((line) => line.padEnd(width)).join("\n");

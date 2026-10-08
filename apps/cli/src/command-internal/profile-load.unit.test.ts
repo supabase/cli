@@ -6,7 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { afterAll, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
-import { loadProfile, padGoErrorBlock, type ProfileLoadError } from "./profile-load.ts";
+import { loadProfile, padErrorBlock, type ProfileLoadError } from "./profile-load.ts";
 
 const tempRoot = mkdtempSync(join(tmpdir(), "supabase-profile-load-"));
 afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
@@ -293,12 +293,12 @@ describe("loadProfile", () => {
   );
 });
 
-describe("padGoErrorBlock", () => {
+describe("padErrorBlock", () => {
   it("pads every line — including blank ones — to the longest line's width", () => {
-    expect(padGoErrorBlock("abc\n\nlonger line")).toBe("abc        \n           \nlonger line");
+    expect(padErrorBlock("abc\n\nlonger line")).toBe("abc        \n           \nlonger line");
   });
 
   it("leaves single-line messages untouched", () => {
-    expect(padGoErrorBlock("only line")).toBe("only line");
+    expect(padErrorBlock("only line")).toBe("only line");
   });
 });

@@ -1,8 +1,8 @@
 import { stringify as stringifyToml } from "smol-toml";
 import { stringify as stringifyYaml } from "yaml";
 
-import { encodeGoJsonCompact, encodeGoJsonIndented } from "./go-json.ts";
-import { goStringCompare } from "./go-struct-output.encoders.ts";
+import { encodeHtmlSafeJsonCompact, encodeHtmlSafeJsonIndented } from "./html-safe-json.ts";
+import { compareByCodepoint } from "./struct-output.encoders.ts";
 
 /**
  * Encodes `-o json` output: alphabetical key order, HTML-safe string escaping, and
@@ -11,7 +11,7 @@ import { goStringCompare } from "./go-struct-output.encoders.ts";
  * `nullForEmptyArrays` re-substitutes `null` for an empty array at the listed keys, for a schema
  * that decodes both `null` and `[]` to `[]` upstream (e.g. `backups list`'s `"backups": null`).
  */
-export function encodeGoJson<T>(
+export function encodeSortedJson<T>(
   value: T,
   options?: { readonly nullForEmptyArrays?: ReadonlyArray<string> },
 ): string {
@@ -33,21 +33,21 @@ export function encodeGoJson<T>(
     }
     source = patched;
   }
-  return encodeGoJsonIndented(sortKeysDeep(source));
+  return encodeHtmlSafeJsonIndented(sortKeysDeep(source));
 }
 
 function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value === null || typeof value !== "object") return value;
   // A plain object reorders integer-like string keys ("2", "10") into ascending numeric order on
-  // enumeration; building a `Map` instead carries a lexicographic sort through to `go-json.ts`'s
+  // enumeration; building a `Map` instead carries a lexicographic sort through to `html-safe-json.ts`'s
   // `walk` intact, since `Map` iteration order is true insertion order.
   const sorted = new Map<string, unknown>();
   // JS's default string sort orders by UTF-16 code unit, which diverges from byte/codepoint
   // order once an astral character (a UTF-16 surrogate pair) meets a high-BMP one.
-  // `goStringCompare` sorts by byte/codepoint order instead — this matters here since `gen
+  // `compareByCodepoint` sorts by byte/codepoint order instead — this matters here since `gen
   // bearer-jwt`'s custom claims flow through this same sort before signing.
-  for (const key of Object.keys(value as Record<string, unknown>).sort(goStringCompare)) {
+  for (const key of Object.keys(value as Record<string, unknown>).sort(compareByCodepoint)) {
     const child = (value as Record<string, unknown>)[key];
     // Drop `undefined` properties here, matching `JSON.stringify`'s behavior (the walker
     // below would otherwise render them as `null`).
@@ -63,15 +63,15 @@ function sortKeysDeep(value: unknown): unknown {
  *
  * Used on the raw-HTTP code path (`sso add`/`sso update`) whose request bodies the cli-e2e replay
  * server compares by string equality against recorded bodies, so key order and escaping must
- * match exactly. {@link encodeGoJson} is the parallel for human-facing `--output json`.
+ * match exactly. {@link encodeSortedJson} is the parallel for human-facing `--output json`.
  */
-export function encodeGoStructJsonBody(value: unknown): string {
-  return encodeGoJsonCompact(sortKeysDeep(value));
+export function encodeSortedJsonBody(value: unknown): string {
+  return encodeHtmlSafeJsonCompact(sortKeysDeep(value));
 }
 
 /**
  * YAML for map payloads (`branches get` envs, `sso info`, `status`, `postgres-config`). Struct
- * payloads must use `encodeGoYaml` in `go-struct-output.encoders.ts` instead, since YAML keys
+ * payloads must use `encodeStructYaml` in `struct-output.encoders.ts` instead, since YAML keys
  * derive from struct field names, not JSON tags.
  */
 export function encodeYaml(value: unknown): string {
@@ -79,8 +79,8 @@ export function encodeYaml(value: unknown): string {
 }
 
 /**
- * TOML for map payloads. Struct payloads must use `encodeGoToml` in
- * `go-struct-output.encoders.ts` instead, since the struct output uses PascalCase field names with
+ * TOML for map payloads. Struct payloads must use `encodeStructToml` in
+ * `struct-output.encoders.ts` instead, since the struct output uses PascalCase field names with
  * 2-space table indentation.
  */
 export function encodeToml(value: unknown): string {

@@ -8,11 +8,11 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
@@ -199,10 +199,7 @@ function validateDownloadFlags(
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
-            changed,
-          ),
+          message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }

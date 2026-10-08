@@ -19,7 +19,7 @@ function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
 /**
  * The `--name-id-format` value set, shared by `sso add` and `sso update`.
  * Order matters: it drives the CLI help text and is joined verbatim into
- * the `invalid argument … must be one of [ … ]` error (`pflagEnumValue`),
+ * the `invalid argument … must be one of [ … ]` error (`argvEnumValue`),
  * whose format is byte-exact.
  */
 export const SSO_NAME_ID_FORMATS = [

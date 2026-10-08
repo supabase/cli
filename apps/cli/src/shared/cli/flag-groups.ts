@@ -27,7 +27,7 @@ export function hasExplicitLongFlag(
   return false;
 }
 
-const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
+const BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
   "0",
   "f",
   "F",
@@ -50,7 +50,7 @@ export function explicitBooleanLongFlag(
     if (token === `--${flagName}`) {
       result = true;
     } else if (token.startsWith(`--${flagName}=`)) {
-      result = !PFLAG_BOOLEAN_FALSE_VALUES.has(token.slice(flagName.length + 3));
+      result = !BOOLEAN_FALSE_VALUES.has(token.slice(flagName.length + 3));
     }
   }
   return result;
@@ -123,7 +123,7 @@ export const GLOBAL_VALUE_FLAG_TOKENS: ReadonlySet<string> = new Set([
   "--completions",
 ]);
 
-export interface PflagArgvScanSpec {
+export interface ArgvFlagScanSpec {
   /**
    * Every value-taking (non-boolean) long flag reachable when this command
    * parses: the command's own plus `PERSISTENT_VALUE_FLAG_NAMES`. Boolean
@@ -137,7 +137,7 @@ export interface PflagArgvScanSpec {
   readonly valueFlagShorthands?: ReadonlyMap<string, string>;
 }
 
-export interface PflagArgvScan {
+export interface ArgvFlagScan {
   /** Whether the command path was found in argv and the scan is scoped to it. */
   readonly anchored: boolean;
   /**
@@ -215,11 +215,11 @@ function clusterValueShorthand(
  * the path can't be completed. The spec is per-command, and unknown flags are treated as
  * non-consuming and fail-open, since the Effect parser rejects them before any handler runs.
  */
-export function pflagArgvScan(
+export function scanArgvFlags(
   rawArgs: ReadonlyArray<string>,
   commandPath: ReadonlyArray<string>,
-  spec: PflagArgvScanSpec,
-): PflagArgvScan {
+  spec: ArgvFlagScanSpec,
+): ArgvFlagScan {
   const valueFlagNames = spec.valueFlagNames;
   const valueFlagShorthands = spec.valueFlagShorthands ?? new Map<string, string>();
   // Anchor: match command path segments in argv order, stepping over flag tokens and the values
@@ -398,7 +398,7 @@ export function pflagArgvScan(
  * registration order (unsorted, no dashes); `changed` is the subset actually set, sorted
  * alphabetically.
  */
-export function cobraMutuallyExclusiveErrorMessage(
+export function mutuallyExclusiveFlagsMessage(
   group: ReadonlyArray<string>,
   changed: ReadonlyArray<string>,
 ): string {

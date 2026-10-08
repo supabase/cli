@@ -375,7 +375,7 @@ describe("gen bearer-jwt integration", () => {
       if (Exit.isFailure(exit)) {
         const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtKeyParseError");
-        expect(json).toContain("cannot unmarshal array into Go value of type config.JWK");
+        expect(json).toContain("expected a JSON object, got array");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -386,9 +386,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal number into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got number");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -399,9 +397,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal string into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got string");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -412,9 +408,7 @@ describe("gen bearer-jwt integration", () => {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal bool into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got boolean");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -500,7 +494,7 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+            "failed to parse JWK: invalid JWK field key_ops: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
@@ -520,7 +514,7 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
-            "failed to parse JWK: json: cannot unmarshal string into Go struct field JWK.ext of type bool",
+            "failed to parse JWK: invalid JWK field ext: expected a boolean, got string",
           );
         }
       }).pipe(Effect.provide(layer));
@@ -536,7 +530,7 @@ describe("gen bearer-jwt integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+          "failed to parse JWK: invalid JWK field kid: expected a string, got number",
         );
       }
     }).pipe(Effect.provide(layer));
@@ -553,7 +547,7 @@ describe("gen bearer-jwt integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to parse JWK: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
@@ -635,7 +629,7 @@ describe("gen bearer-jwt integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to parse JWK: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
@@ -674,7 +668,7 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
-            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+            "failed to decode signing keys: failed to parse response body: invalid JWK field key_ops: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
@@ -695,7 +689,7 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
-            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to decode signing keys: failed to parse response body: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));

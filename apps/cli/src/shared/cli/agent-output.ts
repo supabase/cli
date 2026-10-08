@@ -1,17 +1,17 @@
 import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 
 // Every command's `--output` value (see `command-internal/global-flags.ts`): resource commands
 // accept `env|pretty|json|toml|yaml`, `db query` adds `table|csv`. An explicit `-o` value
 // suppresses the coding-agent JSON auto-default below.
-type GoOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+type OutputFlagFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
   readonly explicitOutputFormat: Option.Option<OutputFormat>;
   readonly agentDefaultOutputFormat?: OutputFormat;
-  readonly goOutputFormat?: Option.Option<GoOutputFormat>;
+  readonly outputFlagFormat?: Option.Option<OutputFlagFormat>;
   readonly agentOverride?: AgentOverride;
   readonly detectedAgentName?: Option.Option<string>;
   readonly isBuiltInTextRequest?: boolean;
@@ -65,7 +65,7 @@ function outputFormatFromArg(value: string | undefined): Option.Option<OutputFor
   }
 }
 
-function goOutputFormatFromArg(value: string | undefined): Option.Option<GoOutputFormat> {
+function outputFlagFormatFromArg(value: string | undefined): Option.Option<OutputFlagFormat> {
   switch (value) {
     case "env":
     case "pretty":
@@ -125,7 +125,7 @@ function isFlagOccurrence(arg: string, name: string): boolean {
  * Inline values the CLI's boolean primitive accepts (lowercase only); any of these serves the
  * flag's action, including `=false`.
  *
- * Distinct from `run.ts`'s `PFLAG_BOOL_TRUE`, which answers boolean truthiness for the
+ * Distinct from `run.ts`'s `BOOL_TRUE_VALUES`, which answers boolean truthiness for the
  * upgrade-notice scans — do not merge them.
  */
 export const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
@@ -200,14 +200,14 @@ export function isBuiltInTextRequest(args: ReadonlyArray<string>): boolean {
 }
 
 export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFormat {
-  const goOutputFormat = options.goOutputFormat ?? Option.none<GoOutputFormat>();
+  const outputFlagFormat = options.outputFlagFormat ?? Option.none<OutputFlagFormat>();
   const detectedAgentName = options.detectedAgentName ?? Option.none<string>();
   const agentOverride = options.agentOverride ?? "auto";
   const isCodingAgent =
     agentOverride === "yes" || (agentOverride === "auto" && Option.isSome(detectedAgentName));
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
-    isCodingAgent && Option.isNone(goOutputFormat) && !options.isBuiltInTextRequest
+    isCodingAgent && Option.isNone(outputFlagFormat) && !options.isBuiltInTextRequest
       ? (options.agentDefaultOutputFormat ?? "json")
       : "text",
   );
@@ -219,13 +219,13 @@ export function resolveAgentOutputFormatFromArgs(
   agentDefaultOutputFormat: OutputFormat = "json",
 ): OutputFormat {
   const explicitOutputFormat = outputFormatFromArg(readLongFlag(args, "--output-format"));
-  const goOutputFormat = goOutputFormatFromArg(readOutputFlag(args));
+  const outputFlagFormat = outputFlagFormatFromArg(readOutputFlag(args));
   const agentOverride = agentOverrideFromArg(readLongFlag(args, "--agent"));
 
   return resolveAgentOutputFormat({
     explicitOutputFormat,
     agentDefaultOutputFormat,
-    goOutputFormat,
+    outputFlagFormat,
     agentOverride,
     detectedAgentName,
     isBuiltInTextRequest: isBuiltInTextRequest(args),

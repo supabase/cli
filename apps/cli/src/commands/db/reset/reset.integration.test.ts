@@ -75,7 +75,7 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -502,7 +502,7 @@ const RESET_STACK_CREDENTIALS: StackCredentials = {
   publishableKey: "publishable-key",
   secretKey: "secret-key",
   anonKey: "anon-key",
-  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  serviceRoleKey: generateLocalJwt(RESET_JWT, "service_role"),
   jwks: '{"keys":[]}',
   gotrueJwtKeys: "[]",
   remoteJwks: "[]",
@@ -1363,7 +1363,7 @@ describe("db reset", () => {
         expect(
           requests.some(
             (request) =>
-              request.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              request.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1469,7 +1469,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1567,7 +1567,7 @@ describe("db reset", () => {
           );
           expect(
             client.requests.some(
-              (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
             ),
           ).toBe(true);
         });
@@ -1593,7 +1593,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
@@ -3313,7 +3313,7 @@ describe("db reset", () => {
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).toContain("invalid argument");
-          expect(causeText).toContain("strconv.ParseUint");
+          expect(causeText).toContain("expected an unsigned integer");
         }
       });
     });

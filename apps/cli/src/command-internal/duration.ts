@@ -14,7 +14,7 @@ const NS_PER_HOUR = 60 * NS_PER_MINUTE;
 const NS_PER_MS = 1_000_000;
 const NS_PER_US = 1_000;
 
-// `BigInt` constants for `parseGoDuration`'s accumulator: near the int64 nanosecond ceiling
+// `BigInt` constants for `parseDuration`'s accumulator: near the int64 nanosecond ceiling
 // (~9.223e18, past `Number.MAX_SAFE_INTEGER`), a `number` accumulator would silently round a
 // legitimate boundary value into a false overflow or vice versa.
 const NS_PER_SECOND_BIG = 1_000_000_000n;
@@ -42,7 +42,7 @@ const UINT64_ACCUMULATOR_BOUND_NS = 1n << 63n;
  * ceiling, but every real config duration is nowhere near it, and the overflow check itself
  * doesn't depend on `number` precision.
  */
-export function parseGoDuration(value: string): number {
+export function parseDuration(value: string): number {
   const orig = value;
   let s = value;
   let neg = false;
@@ -142,7 +142,7 @@ export function parseGoDuration(value: string): number {
  * needed units show, with minutes/seconds always trailing an hours component (`"1h0m0s"`), and a
  * sub-second remainder as a fraction of its largest applicable unit (`"1.5s"`, `"300ms"`).
  */
-export function formatGoDuration(nanoseconds: number): string {
+export function formatDuration(nanoseconds: number): string {
   if (nanoseconds === 0) return "0s";
 
   let ns = nanoseconds;
@@ -201,10 +201,10 @@ function formatFraction(totalNs: number, unitNs: number): string {
 
 /**
  * Seconds form of a `Db.HealthTimeout` duration string (`"2m"` default). Throws on a malformed
- * value, matching {@link parseGoDuration}; the caller wraps that into a typed config-load-failure
+ * value, matching {@link parseDuration}; the caller wraps that into a typed config-load-failure
  * error so rollback/cleanup still fires. A degenerate value like `"0s"` isn't special-cased: it
  * means exactly one immediate health probe with no wait, not a 30s fallback.
  */
 export function resolveHealthTimeoutSeconds(healthTimeout: string): number {
-  return Math.trunc(parseGoDuration(healthTimeout) / 1_000_000_000);
+  return Math.trunc(parseDuration(healthTimeout) / 1_000_000_000);
 }

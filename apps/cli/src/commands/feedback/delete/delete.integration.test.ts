@@ -104,7 +104,7 @@ function setupFeedbackDelete(
     client?: MockClientOpts;
     yes?: boolean;
     /** Simulates the `-o`/`--output` global flag. */
-    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+    outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */
     projectIdEnv?: string;
     /** Simulates the gotrue user id persisted to telemetry.json at login. */
@@ -131,7 +131,7 @@ function setupFeedbackDelete(
       projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.goOutput)),
+    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.outputFlag)),
     Layer.succeed(CliArgs, { args: [] }),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
@@ -428,7 +428,7 @@ describe("feedback delete", () => {
   });
 
   it.live("emits only the machine payload on stdout with -o json", () => {
-    const { layer, out } = setupFeedbackDelete({ goOutput: "json", yes: true });
+    const { layer, out } = setupFeedbackDelete({ outputFlag: "json", yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
@@ -447,7 +447,7 @@ describe("feedback delete", () => {
     // would render the clack confirm onto stdout ahead of the raw JSON payload.
     // Machine mode must fail loudly instead — the same contract as
     // --output-format json.
-    const { layer, out, client } = setupFeedbackDelete({ goOutput: "json" });
+    const { layer, out, client } = setupFeedbackDelete({ outputFlag: "json" });
     return Effect.gen(function* () {
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 

@@ -20,7 +20,7 @@ const readVendoredTemplate = Effect.fnUntraced(function* (name: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const contents = yield* fs.readFileString(
-    path.join(import.meta.dirname, "testdata/go-templates", name),
+    path.join(import.meta.dirname, "testdata/templates", name),
   );
   return normalizeNewlines(contents);
 });
@@ -30,14 +30,14 @@ const readVendoredTemplate = Effect.fnUntraced(function* (name: string) {
 // source — is rendered to the literal string it quotes: `{{ .Code }}` in the
 // ejected file. This is the only text/template construct emulated here; the
 // "models every template action" test below fails loudly if that ever changes.
-function resolveGoTemplateEscapes(template: string): string {
+function resolveTemplateEscapes(template: string): string {
   return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
 }
 
 // Emulates what the scaffold writes to disk for a fresh `supabase init` project.
-const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
+const renderExpectedInitOutput = readVendoredTemplate("config.toml").pipe(
   Effect.map((template) =>
-    resolveGoTemplateEscapes(template)
+    resolveTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
       .replace("{{ .Db.OrioleDBVersion }}", "17.11.0.002")
       // supabase init always opts new projects into pg-delta; the template
@@ -49,7 +49,7 @@ const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
 // The vendored scaffold still describes `auto_expose_new_tables` as unset-means-
 // revoked and deprecated; the native template documents unset-means-exposed
 // instead, since platform projects never stopped auto-exposing new entities.
-const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
+const SCAFFOLD_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
 # default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
 # deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
 # auto_expose_new_tables = true`;
@@ -58,14 +58,14 @@ const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the clou
 # instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true`;
 
-const renderExpectedNativeEject = renderExpectedGoEject.pipe(
+const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
       .replace(
         '# content_path = "./templates/password_changed_notification.html"',
         '# content_path = "./supabase/templates/password_changed_notification.html"',
       )
-      .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT),
+      .replace(SCAFFOLD_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT),
   ),
 );
 
@@ -81,9 +81,9 @@ describe("project init templates", () => {
   it.effect("models every template action in the scaffold, so it cannot silently drift", () =>
     Effect.gen(function* () {
       // Anything beyond the GoTrue OTP placeholder means the template gained
-      // a construct this suite doesn't emulate; update `resolveGoTemplateEscapes`
+      // a construct this suite doesn't emulate; update `resolveTemplateEscapes`
       // to match before shipping.
-      const unresolvedActions = (yield* renderExpectedGoEject).match(/\{\{[^}]*\}\}/g) ?? [];
+      const unresolvedActions = (yield* renderExpectedInitOutput).match(/\{\{[^}]*\}\}/g) ?? [];
       expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
     }).pipe(Effect.provide(BunServices.layer)),
   );

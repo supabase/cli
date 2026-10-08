@@ -24,7 +24,7 @@ import { YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { seedBuckets } from "./buckets.handler.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
@@ -1476,7 +1476,7 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
-      const apiKey = generateGoJwt(secret, "service_role");
+      const apiKey = generateLocalJwt(secret, "service_role");
       expect(requests.every((r) => r.headers["apikey"] === apiKey)).toBe(true);
     }).pipe(seedScenario),
   );
@@ -2848,7 +2848,7 @@ describe("stack backend", () => {
       expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:59999"))).toBe(true);
       expect(
         requests.every(
-          (r) => r.headers["apikey"] === generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+          (r) => r.headers["apikey"] === generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
         ),
       ).toBe(true);
       expect(

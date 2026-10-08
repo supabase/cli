@@ -1,35 +1,35 @@
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goInt,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeInt,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../../command-internal/struct-output.encoders.ts";
 
 /** Struct spec for the function response. */
-const GO_FUNCTION_RESPONSE = goStruct([
-  ["created_at", goInt],
-  ["entrypoint_path", goPtr(goString)],
-  ["ezbr_sha256", goPtr(goString)],
-  ["id", goString],
-  ["import_map", goPtr(goBool)],
-  ["import_map_path", goPtr(goString)],
-  ["name", goString],
-  ["slug", goString],
-  ["status", goString],
-  ["updated_at", goInt],
-  ["verify_jwt", goPtr(goBool)],
-  ["version", goInt],
+const FUNCTION_RESPONSE_SHAPE = shapeStruct([
+  ["created_at", shapeInt],
+  ["entrypoint_path", shapePtr(shapeString)],
+  ["ezbr_sha256", shapePtr(shapeString)],
+  ["id", shapeString],
+  ["import_map", shapePtr(shapeBool)],
+  ["import_map_path", shapePtr(shapeString)],
+  ["name", shapeString],
+  ["slug", shapeString],
+  ["status", shapeString],
+  ["updated_at", shapeInt],
+  ["verify_jwt", shapePtr(shapeBool)],
+  ["version", shapeInt],
 ]);
 
-const GO_FUNCTIONS_LIST = goSlice(GO_FUNCTION_RESPONSE);
+const FUNCTIONS_LIST_SHAPE = shapeSlice(FUNCTION_RESPONSE_SHAPE);
 
-const GO_FUNCTIONS_TOML_WRAPPER = goTomlListWrapper("functions", GO_FUNCTION_RESPONSE);
+const FUNCTIONS_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("functions", FUNCTION_RESPONSE_SHAPE);
 
 interface FunctionRecord {
   readonly id: string;
@@ -87,13 +87,13 @@ function readOptionalNullableString(
   return value === null || typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readGoString(record: Record<string, unknown>, key: string): string | InvalidField {
+function readStringField(record: Record<string, unknown>, key: string): string | InvalidField {
   const value = record[key];
   if (value === undefined || value === null) return "";
   return typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readGoInteger(record: Record<string, unknown>, key: string): number | InvalidField {
+function readIntegerField(record: Record<string, unknown>, key: string): number | InvalidField {
   const value = record[key];
   if (value === undefined || value === null) return 0;
   return typeof value === "number" && Number.isSafeInteger(value) ? value : INVALID_FIELD;
@@ -107,13 +107,13 @@ function readRequiredFunctionFields(
       "verify_jwt" | "import_map" | "entrypoint_path" | "import_map_path" | "ezbr_sha256"
     >
   | undefined {
-  const id = readGoString(record, "id");
-  const slug = readGoString(record, "slug");
-  const name = readGoString(record, "name");
-  const status = readGoString(record, "status");
-  const version = readGoInteger(record, "version");
-  const createdAt = readGoInteger(record, "created_at");
-  const updatedAt = readGoInteger(record, "updated_at");
+  const id = readStringField(record, "id");
+  const slug = readStringField(record, "slug");
+  const name = readStringField(record, "name");
+  const status = readStringField(record, "status");
+  const version = readIntegerField(record, "version");
+  const createdAt = readIntegerField(record, "created_at");
+  const updatedAt = readIntegerField(record, "updated_at");
   if (
     id === INVALID_FIELD ||
     slug === INVALID_FIELD ||
@@ -148,7 +148,7 @@ function baseFunctionFields(function_: Functions[number]) {
   };
 }
 
-function optionalGoJsonFields(function_: Functions[number]) {
+function optionalJsonFields(function_: Functions[number]) {
   return {
     ...(function_.entrypoint_path != null ? { entrypoint_path: function_.entrypoint_path } : {}),
     ...(function_.ezbr_sha256 != null ? { ezbr_sha256: function_.ezbr_sha256 } : {}),
@@ -230,7 +230,7 @@ export function hasJsonContentType(response: {
   return (response.headers["content-type"] ?? "").includes("json");
 }
 
-function toGoJsonFunction(function_: Functions[number]) {
+function toJsonFunction(function_: Functions[number]) {
   const base = baseFunctionFields(function_);
   return {
     created_at: base.created_at,
@@ -240,23 +240,25 @@ function toGoJsonFunction(function_: Functions[number]) {
     status: base.status,
     updated_at: base.updated_at,
     version: base.version,
-    ...optionalGoJsonFields(function_),
+    ...optionalJsonFields(function_),
   };
 }
 
-export function encodeFunctionsGoJson(parsed: ParsedFunctions): string {
-  return parsed.isNil ? encodeGoJson(null) : encodeGoJson(parsed.functions.map(toGoJsonFunction));
+export function encodeFunctionsListJson(parsed: ParsedFunctions): string {
+  return parsed.isNil
+    ? encodeSortedJson(null)
+    : encodeSortedJson(parsed.functions.map(toJsonFunction));
 }
 
-export function encodeFunctionsGoYaml(functions: Functions): string {
-  return encodeGoYaml(functions, GO_FUNCTIONS_LIST);
+export function encodeFunctionsListYaml(functions: Functions): string {
+  return encodeStructYaml(functions, FUNCTIONS_LIST_SHAPE);
 }
 
-export function encodeFunctionsGoToml(parsed: ParsedFunctions): string {
+export function encodeFunctionsListToml(parsed: ParsedFunctions): string {
   // A JSON `null` body is a nil list (BurntSushi emits nothing), while `[]` is a
   // non-nil empty list (`functions = []`).
-  return encodeGoToml(
+  return encodeStructToml(
     { functions: parsed.isNil ? undefined : parsed.functions },
-    GO_FUNCTIONS_TOML_WRAPPER,
+    FUNCTIONS_TOML_WRAPPER_SHAPE,
   );
 }

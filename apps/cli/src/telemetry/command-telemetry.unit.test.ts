@@ -34,7 +34,7 @@ import { stackBackendLayer } from "../command-internal/stack-backend.ts";
 import {
   QUERY_OUTPUT_FORMATS,
   InvalidOutputFormatError,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { mockTelemetryStateTracked } from "../../tests/helpers/command-mocks.ts";
 import {
   mockContextualAnalytics,

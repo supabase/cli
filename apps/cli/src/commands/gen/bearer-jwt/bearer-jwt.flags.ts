@@ -1,5 +1,5 @@
 import { DateTime } from "effect";
-import { parseGoDuration } from "../../../command-internal/go-duration.ts";
+import { parseDuration } from "../../../command-internal/duration.ts";
 import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
 // The fractional-seconds separator accepts either `.` or `,`.
@@ -154,7 +154,7 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
 }
 
 /**
- * `--valid-for`, parsed via {@link parseGoDuration} (duration syntax);
+ * `--valid-for`, parsed via {@link parseDuration} (duration syntax);
  * unlike `--exp`, this input is not trimmed.
  *
  * Returns seconds unfloored: `buildBearerJwtClaims` floors only the final
@@ -163,7 +163,7 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
  */
 export function parseBearerJwtValidFor(value: string): number {
   try {
-    return parseGoDuration(value) / 1_000_000_000;
+    return parseDuration(value) / 1_000_000_000;
   } catch (cause) {
     throw new Error(
       `invalid argument "${value}" for "--valid-for" flag: ${bearerJwtErrorMessage(cause)}`,

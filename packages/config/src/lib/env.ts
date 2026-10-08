@@ -42,8 +42,8 @@ type ExpectedType = "number" | "boolean" | "string" | "array" | "unknown";
 
 // Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`); duplicated rather than
 // imported so `packages/config` has no dependency on `apps/cli`.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
+const BOOL_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
 
 // Unwrap Suspend (lazy AST refs from recursive schemas). Other transformation
 // wrappers expose the target type via `.ast` directly, so no additional
@@ -152,8 +152,8 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
     return value;
   }
   if (expected === "boolean") {
-    if (GO_BOOL_TRUE.has(value)) return true;
-    if (GO_BOOL_FALSE.has(value)) return false;
+    if (BOOL_TRUE_LITERALS.has(value)) return true;
+    if (BOOL_FALSE_LITERALS.has(value)) return false;
     return value;
   }
   if (expected === "array") {

@@ -26,7 +26,7 @@ const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   network?: "fail";
 }
@@ -44,7 +44,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -160,7 +160,7 @@ describe("network-bans remove integration", () => {
   });
 
   it.live("ignores --output values and still prints the success line", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),
@@ -171,7 +171,7 @@ describe("network-bans remove integration", () => {
   });
 
   it.live("ignores --output yaml and still prints the success line", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),
@@ -206,7 +206,7 @@ describe("network-bans remove integration", () => {
   });
 
   it.live("--output wins over --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),

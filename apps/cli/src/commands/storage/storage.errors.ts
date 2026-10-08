@@ -6,7 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua } from "../../command-internal/colors.ts";
-import { goQuote } from "../../command-internal/go-quote.ts";
+import { quoteBytes } from "../../command-internal/byte-quote.ts";
 
 /**
  * Domain errors for `supabase storage ls/cp/mv/rm`. Each `message` is an
@@ -64,8 +64,9 @@ export class StorageUnsupportedOperationError extends Data.TaggedError(
  * quoted and escaped so it never breaks onto a new line.
  */
 export function storageInvalidJobsMessage(token: string, cause: string): string {
-  const quoted = goQuote(new TextEncoder().encode(token));
-  return `invalid argument ${quoted} for "-j, --jobs" flag: strconv.ParseUint: parsing ${quoted}: ${cause}`;
+  const quoted = quoteBytes(new TextEncoder().encode(token));
+  const reason = cause === "invalid syntax" ? "expected an unsigned integer" : cause;
+  return `invalid argument ${quoted} for "-j, --jobs" flag: ${reason}`;
 }
 
 export class StorageCopyBetweenBucketsError extends Data.TaggedError(

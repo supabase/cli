@@ -7,7 +7,7 @@ import {
 
 /**
  * Storage URL parsing for the `ss://`
- * scheme. `goUrlParse` parses the fields storage
+ * scheme. `parseUrl` parses the fields storage
  * commands need (scheme, host, path); `parseStorageUrl` additionally requires
  * scheme `ss` (case-insensitive), a non-empty path, and no host.
  *
@@ -20,10 +20,11 @@ export const STORAGE_SCHEME = "ss";
 const STORAGE_INVALID_URL_MESSAGE = "URL must match pattern ss:///bucket/[prefix]";
 
 /**
- * Thrown when `goUrlParse` fails: `parse "<url>": <inner>`. Callers wrap
+ * Thrown when `parseUrl` fails: `parse "<url>": <inner>`. Callers wrap
  * `.message` in their own `failed to parse … url: <message>` text.
  */
-export class GoUrlParseError extends Error {
+export class UrlParseError extends Error {
+  // The fingerprint and `name` are the stable telemetry/output identity of this error.
   static readonly [ErrorActionabilityFingerprintId] = "GoUrlParseError";
   constructor(rawURL: string, inner: string) {
     super(`parse "${rawURL}": ${inner}`);
@@ -37,7 +38,7 @@ export class GoUrlParseError extends Error {
 
 /**
  * Thrown when a URL parses but does not match the `ss:///bucket/[prefix]`
- * pattern. Distinct from `GoUrlParseError` so handlers can map it to a
+ * pattern. Distinct from `UrlParseError` so handlers can map it to a
  * separate tagged error.
  */
 export class StorageUrlPatternError extends Error {
@@ -52,7 +53,7 @@ export class StorageUrlPatternError extends Error {
   }
 }
 
-export interface GoUrl {
+export interface ParsedUrl {
   /** Lowercased scheme; `""` when none. */
   readonly scheme: string;
   /** Authority host (after `//`); `""` when absent. */
@@ -171,7 +172,7 @@ function isValidOptionalPort(port: string): boolean {
  * http/https treat the first colon as the port separator; other schemes use
  * the last.
  */
-function validateGoUrlHost(scheme: string, host: string): void {
+function validateUrlHost(scheme: string, host: string): void {
   if (host.length === 0) return;
   const openBracketIdx = host.indexOf("[");
   if (openBracketIdx > 0) {
@@ -200,15 +201,15 @@ function validateGoUrlHost(scheme: string, host: string): void {
 
 /**
  * Parses a URL for `scheme`/`host`/`path`.
- * Throws `GoUrlParseError` on parse failure. Query and fragment are stripped,
+ * Throws `UrlParseError` on parse failure. Query and fragment are stripped,
  * though storage URLs never use them.
  */
-export function goUrlParse(rawURL: string): GoUrl {
+export function parseUrl(rawURL: string): ParsedUrl {
   const hashIdx = rawURL.indexOf("#");
   const u = hashIdx === -1 ? rawURL : rawURL.slice(0, hashIdx);
 
   if (containsCtlByte(u)) {
-    throw new GoUrlParseError(u, "net/url: invalid control character in URL");
+    throw new UrlParseError(u, "net/url: invalid control character in URL");
   }
   if (u === "*") {
     return { scheme: "", host: "", path: "*" };
@@ -221,7 +222,7 @@ export function goUrlParse(rawURL: string): GoUrl {
     scheme = parsed.scheme.toLowerCase();
     rest = parsed.rest;
   } catch (cause) {
-    throw new GoUrlParseError(u, cause instanceof Error ? cause.message : String(cause));
+    throw new UrlParseError(u, cause instanceof Error ? cause.message : String(cause));
   }
 
   // Strip the query string.
@@ -237,7 +238,7 @@ export function goUrlParse(rawURL: string): GoUrl {
     const slash = rest.indexOf("/");
     const segment = slash === -1 ? rest : rest.slice(0, slash);
     if (segment.includes(":")) {
-      throw new GoUrlParseError(u, "first path segment in URL cannot contain colon");
+      throw new UrlParseError(u, "first path segment in URL cannot contain colon");
     }
   }
 
@@ -251,9 +252,9 @@ export function goUrlParse(rawURL: string): GoUrl {
     rest = slash === -1 ? "" : afterSlashes.slice(slash);
     host = hostFromAuthority(authority);
     try {
-      validateGoUrlHost(scheme, host);
+      validateUrlHost(scheme, host);
     } catch (cause) {
-      throw new GoUrlParseError(u, cause instanceof Error ? cause.message : String(cause));
+      throw new UrlParseError(u, cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -261,7 +262,7 @@ export function goUrlParse(rawURL: string): GoUrl {
   try {
     path = unescapePath(rest);
   } catch (cause) {
-    throw new GoUrlParseError(u, cause instanceof Error ? cause.message : String(cause));
+    throw new UrlParseError(u, cause instanceof Error ? cause.message : String(cause));
   }
   return { scheme, host, path };
 }
@@ -269,11 +270,11 @@ export function goUrlParse(rawURL: string): GoUrl {
 /**
  * Parses a storage URL, requiring scheme `ss` (case-insensitive), a
  * non-empty path, and no host, and returns the path. Throws
- * `GoUrlParseError` on a parse failure, or `StorageUrlPatternError` when it
+ * `UrlParseError` on a parse failure, or `StorageUrlPatternError` when it
  * doesn't match `ss:///bucket/[prefix]`.
  */
 export function parseStorageUrl(objectURL: string): string {
-  const parsed = goUrlParse(objectURL);
+  const parsed = parseUrl(objectURL);
   if (parsed.scheme !== STORAGE_SCHEME || parsed.path.length === 0 || parsed.host.length > 0) {
     throw new StorageUrlPatternError();
   }
@@ -299,10 +300,10 @@ export function splitBucketPrefix(objectPath: string): readonly [string, string]
 
 /**
  * Lowercased scheme for a raw URL; `""` when the URL has no scheme (a local
- * path). Throws `GoUrlParseError` on a malformed URL (e.g. `:`).
+ * path). Throws `UrlParseError` on a malformed URL (e.g. `:`).
  */
 export function detectScheme(rawURL: string): string {
-  return goUrlParse(rawURL).scheme;
+  return parseUrl(rawURL).scheme;
 }
 
 /** An object prefix is a directory when it is empty or ends with `/`. */
@@ -315,7 +316,7 @@ export function storageIsDir(objectPrefix: string): boolean {
  * trailing slash: `folder/name.png` → `["folder/", "name.png"]`; `dir` →
  * `["", "dir"]`; `tmp/` → `["tmp/", ""]`; `""` → `["", ""]`.
  */
-export function goPathSplit(p: string): readonly [string, string] {
+export function splitDirAndFile(p: string): readonly [string, string] {
   const i = p.lastIndexOf("/");
   return [p.slice(0, i + 1), p.slice(i + 1)];
 }

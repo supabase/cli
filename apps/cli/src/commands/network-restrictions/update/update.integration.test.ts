@@ -66,7 +66,7 @@ const PATCH_APPLIED: typeof V1PatchNetworkRestrictionsOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   postResponse?: typeof V1UpdateNetworkRestrictionsOutput.Type;
   postStatus?: number;
   patchResponse?: typeof V1PatchNetworkRestrictionsOutput.Type;
@@ -94,7 +94,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -470,7 +470,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits JSON when --output=json after POST", () => {
-    const { layer, out } = setup({ goOutput: "json", postResponse: POST_APPLIED });
+    const { layer, out } = setup({ outputFlag: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -479,7 +479,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits YAML when --output=yaml after POST", () => {
-    const { layer, out } = setup({ goOutput: "yaml", postResponse: POST_APPLIED });
+    const { layer, out } = setup({ outputFlag: "yaml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status: applied");
@@ -487,7 +487,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits TOML when --output=toml after POST", () => {
-    const { layer, out } = setup({ goOutput: "toml", postResponse: POST_APPLIED });
+    const { layer, out } = setup({ outputFlag: "toml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status = ");
@@ -495,7 +495,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits env output when --output=env after POST", () => {
-    const { layer, out } = setup({ goOutput: "env", postResponse: POST_EMPTY_APPLIED });
+    const { layer, out } = setup({ outputFlag: "env", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain('STATUS="applied"');
@@ -503,7 +503,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("treats --output pretty identically to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", postResponse: POST_EMPTY_APPLIED });
+    const { layer, out } = setup({ outputFlag: "pretty", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toBe(
@@ -517,7 +517,7 @@ describe("network-restrictions update integration", () => {
   it.live("--output wins over --output-format after POST when both are set", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       postResponse: POST_APPLIED,
     });
     return Effect.gen(function* () {
@@ -544,7 +544,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits JSON when --output=json after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "json", patchResponse: PATCH_APPLIED });
+    const { layer, out } = setup({ outputFlag: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -553,7 +553,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits YAML when --output=yaml after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "yaml", patchResponse: PATCH_APPLIED });
+    const { layer, out } = setup({ outputFlag: "yaml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status: applied");
@@ -561,7 +561,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("emits TOML when --output=toml after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "toml", patchResponse: PATCH_APPLIED });
+    const { layer, out } = setup({ outputFlag: "toml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status = ");
@@ -570,7 +570,7 @@ describe("network-restrictions update integration", () => {
 
   it.live("emits env output when --output=env after PATCH", () => {
     const { layer, out } = setup({
-      goOutput: "env",
+      outputFlag: "env",
       patchResponse: {
         entitlement: "allowed",
         config: {},
@@ -586,7 +586,7 @@ describe("network-restrictions update integration", () => {
   it.live("--output wins over --output-format after PATCH when both are set", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       patchResponse: PATCH_APPLIED,
     });
     return Effect.gen(function* () {

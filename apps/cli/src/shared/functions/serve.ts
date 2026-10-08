@@ -785,7 +785,7 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   // Known gap: `projectId` only sees ambient-shell `SUPABASE_PROJECT_ID`, not
   // project dotenv, so a project setting it only in `.env` gets a different
   // Docker network than `deploy`/`download`/`start` — a silently broken `serve`.
-  const goContext =
+  const functionsCliConfig =
     localConfigLoader === undefined
       ? undefined
       : yield* loadFunctionsCliConfig({
@@ -799,14 +799,14 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
     apiPort,
     auth,
     edgeRuntime:
-      goContext === undefined
+      functionsCliConfig === undefined
         ? edgeRuntime
-        : { ...edgeRuntime, deno_version: goContext.denoVersion },
+        : { ...edgeRuntime, deno_version: functionsCliConfig.denoVersion },
     configDeclaredFunctions,
     configFunctions,
     rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
     configPath: loadedConfig?.path,
-    projectEnvValues: goContext?.projectEnvValues,
+    projectEnvValues: functionsCliConfig?.projectEnvValues,
   } satisfies ServeResolvedConfig;
 });
 
@@ -1226,7 +1226,7 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
  * (<OP>)` line. RENAME and CHMOD are unreachable here: `fs.watch` folds
  * renames into create/delete pairs and doesn't report metadata-only changes.
  */
-const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
+const fileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
 
 const waitForRestartSignal = Effect.fn("functions.serve.waitForRestart")(function* (
   watchSpecs: ReadonlyArray<WatchSpec>,
@@ -1254,10 +1254,7 @@ const waitForRestartSignal = Effect.fn("functions.serve.waitForRestart")(functio
   ).pipe(
     Stream.tap((events) =>
       Effect.forEach(events, (event) =>
-        output.raw(
-          `File change detected: ${event.path} (${goFileEventOp[event.type]})\n`,
-          "stderr",
-        ),
+        output.raw(`File change detected: ${event.path} (${fileEventOp[event.type]})\n`, "stderr"),
       ).pipe(Effect.asVoid),
     ),
     Stream.debounce(Duration.millis(500)),

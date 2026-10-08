@@ -149,7 +149,7 @@ const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
 
 /**
  * Pretty-prints an XML document by inserting newlines and indentation between
- * tags, matching `go-xmlfmt/xmlfmt@v1.1.3`'s output byte-for-byte (excluding
+ * tags, matching `xmlfmt@v1.1.3`'s output byte-for-byte (excluding
  * its unused nested-tags-in-comments branch). Text between adjacent
  * open/close tags (e.g. `<b>text</b>`) stays inline; other tags start a new,
  * indented line.

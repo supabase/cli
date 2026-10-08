@@ -27,7 +27,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { invalidOutputFormatMessage } from "../../../command-internal/go-output-flag.ts";
+import { invalidOutputFormatMessage } from "../../../command-internal/output-formats.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import type { FeedbackAddArgs } from "./add.command.ts";
@@ -119,7 +119,7 @@ function setupFeedback(
     agentName?: string;
     agentFlag?: "auto" | "yes" | "no";
     /** Simulates the `-o`/`--output` global flag. */
-    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+    outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     submitFailWith?: string;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */
     projectIdEnv?: string;
@@ -151,7 +151,7 @@ function setupFeedback(
     }),
     mockAiTool(opts.agentName),
     Layer.succeed(AgentFlag, opts.agentFlag ?? "auto"),
-    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.goOutput)),
+    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.outputFlag)),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
@@ -602,9 +602,9 @@ describe("feedback add", () => {
   });
 
   it.live("emits only the machine payload on stdout with -o json", () => {
-    const { layer, out, submitter } = setupFeedback({ goOutput: "json" });
+    const { layer, out, submitter } = setupFeedback({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* feedbackAdd(addArgs(["go machine format feedback"]));
+      yield* feedbackAdd(addArgs(["machine output flag feedback"]));
 
       expect(submitter.submissions).toHaveLength(1);
       expect(out.rawChunks).toHaveLength(1);
@@ -622,7 +622,7 @@ describe("feedback add", () => {
     // would happily render the clack prompt — onto stdout, ahead of the raw
     // JSON payload. Machine mode must fail as empty instead.
     const { layer, out, submitter } = setupFeedback({
-      goOutput: "json",
+      outputFlag: "json",
       output: { interactive: true, promptTextResponses: ["never read"] },
     });
     return Effect.gen(function* () {
@@ -639,7 +639,7 @@ describe("feedback add", () => {
 
   it.live("rejects an -o value outside feedback's pretty|json enum", () => {
     const { layer, submitter } = setupFeedbackHandler({
-      goOutput: "yaml",
+      outputFlag: "yaml",
       args: ["feedback", "add", "doomed", "--output", "yaml"],
     });
     return Effect.gen(function* () {

@@ -9,7 +9,7 @@ import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { DEFAULT_SIGNING_KEY } from "./go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "./local-jwt.ts";
 import {
   POSTGRES_DEFAULT_ROOT_KEY,
   InvalidAnalyticsBackendEnvOverrideError,

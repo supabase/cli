@@ -87,7 +87,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
           expect(causeText).not.toContain("StorageMutuallyExclusiveFlags");
           // `normalizeCause` is the same rendering path `runCli` uses for parse failures.
           expect(normalizeCause(exit.cause).message).toBe(
-            'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+            'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
           );
         }
       }).pipe(Effect.provide(layer));
@@ -99,45 +99,37 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.live.each([
     {
       token: "-0",
-      message:
-        'invalid argument "-0" for "-j, --jobs" flag: strconv.ParseUint: parsing "-0": invalid syntax',
+      message: 'invalid argument "-0" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "-01",
-      message:
-        'invalid argument "-01" for "-j, --jobs" flag: strconv.ParseUint: parsing "-01": invalid syntax',
+      message: 'invalid argument "-01" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "abc",
-      message:
-        'invalid argument "abc" for "-j, --jobs" flag: strconv.ParseUint: parsing "abc": invalid syntax',
+      message: 'invalid argument "abc" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "3.5",
-      message:
-        'invalid argument "3.5" for "-j, --jobs" flag: strconv.ParseUint: parsing "3.5": invalid syntax',
+      message: 'invalid argument "3.5" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "18446744073709551616",
-      message:
-        'invalid argument "18446744073709551616" for "-j, --jobs" flag: strconv.ParseUint: parsing "18446744073709551616": value out of range',
+      message: 'invalid argument "18446744073709551616" for "-j, --jobs" flag: value out of range',
     },
     // The value and error both get shell-escaped, so quotes/backslashes/newlines stay one
     // escaped line, never raw, in stderr.
     {
       token: 'a"b',
-      message:
-        'invalid argument "a\\"b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\"b": invalid syntax',
+      message: 'invalid argument "a\\"b" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "a\\b",
-      message:
-        'invalid argument "a\\\\b" for "-j, --jobs" flag: strconv.ParseUint: parsing "a\\\\b": invalid syntax',
+      message: 'invalid argument "a\\\\b" for "-j, --jobs" flag: expected an unsigned integer',
     },
     {
       token: "1\n2",
-      message:
-        'invalid argument "1\\n2" for "-j, --jobs" flag: strconv.ParseUint: parsing "1\\n2": invalid syntax',
+      message: 'invalid argument "1\\n2" for "-j, --jobs" flag: expected an unsigned integer',
     },
   ])(
     "rejects --jobs=$token at parse time with the exact raw-token message",
@@ -188,7 +180,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).not.toContain("MissingArgument");
         expect(normalizeCause(exit.cause).message).toBe(
-          'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+          'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
         );
       }
     }).pipe(Effect.provide(layer));

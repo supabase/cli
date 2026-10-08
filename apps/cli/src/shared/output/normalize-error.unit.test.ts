@@ -126,23 +126,23 @@ describe("normalizeCliError", () => {
   test("InvalidValue passes a complete `invalid argument` diagnostic through verbatim", () => {
     // This flag's diagnostic is emitted as a complete message in `expected`;
     // wrapping it in the generic "Invalid value..." template would double-frame it.
-    const pflagMessage =
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const error = new CliError.InvalidValue({
       option: "db-unban-ip",
       value: '"1.2.3.4',
-      expected: pflagMessage,
+      expected: invalidValueMessage,
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
   test("ShowHelp envelope unwraps a single InvalidValue carrying an `invalid argument` diagnostic verbatim", () => {
-    const pflagMessage =
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field';
     const error = {
       _tag: "ShowHelp",
@@ -151,7 +151,7 @@ describe("normalizeCliError", () => {
         new CliError.InvalidValue({
           option: "db-allow-cidr",
           value: '"1.2.3.0/24',
-          expected: pflagMessage,
+          expected: invalidValueMessage,
           kind: "flag",
         }),
       ],
@@ -159,7 +159,7 @@ describe("normalizeCliError", () => {
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
@@ -184,15 +184,13 @@ describe("normalizeCliError", () => {
     const error = new CliError.InvalidValue({
       option: "jobs",
       value: "-1",
-      expected:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      expected: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      message: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
     });
   });
 

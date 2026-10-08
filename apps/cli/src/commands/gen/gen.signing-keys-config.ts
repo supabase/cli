@@ -1,8 +1,8 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
 import { loadCliConfig } from "../../command-internal/cli-config-load.ts";
 import { Config, Effect, FileSystem, Option, Path } from "effect";
-import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
-import { goJsonKindName } from "../../command-internal/go-json.ts";
+import { assertDecodableJwkAlgorithm } from "../../command-internal/local-jwt.ts";
+import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
 
 /**
@@ -36,17 +36,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Extends `goJsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
+/** Extends `jsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
 function jwkFieldKindName(value: unknown): string {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     return "object";
   }
-  return goJsonKindName(value);
+  return jsonKindName(value);
 }
 
-/** Builds the struct-field type-mismatch text: `"json: cannot unmarshal <kind> into Go struct field JWK.<field> of type <goType>"`. */
-function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
-  return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
+/** Builds the field type-mismatch text: `invalid JWK field <field>: expected <typeName>, got <kind>`. */
+function jwkStructFieldTypeMismatch(field: string, value: unknown, typeName: string): string {
+  return `invalid JWK field ${field}: expected ${typeName}, got ${jwkFieldKindName(value)}`;
 }
 
 /** `null` is treated as absent, not a type mismatch. */
@@ -83,7 +83,7 @@ export function readOptionalString(
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a string"));
   }
   return value;
 }
@@ -102,14 +102,14 @@ export function readOptionalStringArray(
     return undefined;
   }
   if (!Array.isArray(value)) {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "[]string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "an array of strings"));
   }
   return value.map((entry) => {
     if (entry === null) {
       return "";
     }
     if (typeof entry !== "string") {
-      throw new Error(jwkStructFieldTypeMismatch(field, entry, "string"));
+      throw new Error(jwkStructFieldTypeMismatch(field, entry, "a string"));
     }
     return entry;
   });
@@ -125,7 +125,7 @@ export function readOptionalBoolean(
     return undefined;
   }
   if (typeof value !== "boolean") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "bool"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a boolean"));
   }
   return value;
 }

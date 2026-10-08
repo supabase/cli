@@ -33,7 +33,7 @@ const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -152,7 +152,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
@@ -587,7 +587,7 @@ describe("sso add integration", () => {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
-            'invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax',
+            'invalid argument "" for "--skip-url-validation" flag: expected a boolean',
           );
         }
         expect(api.requests.length).toBe(0);
@@ -867,7 +867,7 @@ describe("sso add integration", () => {
   });
 
   it.live("--output=env returns no output", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toBe("");
@@ -875,7 +875,7 @@ describe("sso add integration", () => {
   });
 
   it.live("--output=json encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
@@ -932,7 +932,7 @@ describe("sso add integration", () => {
   });
 
   it.live("--output=yaml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
@@ -940,7 +940,7 @@ describe("sso add integration", () => {
   });
 
   it.live("--output=toml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);

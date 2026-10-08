@@ -50,7 +50,7 @@ import {
   decryptSecret,
   isEncryptedSecret,
 } from "../../command-internal/vault-decrypt.ts";
-import { parseGoDuration } from "../../command-internal/go-duration.ts";
+import { parseDuration } from "../../command-internal/duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
   cliProjectFilterValue,
@@ -500,7 +500,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       projectEnvValues,
     );
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
-      parseGoDuration(resolvedEmail.max_frequency),
+      parseDuration(resolvedEmail.max_frequency),
     );
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
@@ -517,7 +517,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }),
     });
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      parseGoDuration(smsForValidation.max_frequency),
+      parseDuration(smsForValidation.max_frequency),
     );
     // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
     // detects whether that branch fired, to print the matching warning.
@@ -538,16 +538,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     }
     if (gotrueSessionsForValidation?.timebox !== undefined) {
       yield* wrapConfigOverride("auth.sessions.timebox", () =>
-        parseGoDuration(gotrueSessionsForValidation.timebox!),
+        parseDuration(gotrueSessionsForValidation.timebox!),
       );
     }
     if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
       yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+        parseDuration(gotrueSessionsForValidation.inactivity_timeout!),
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+      parseDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
     );
     // These GoTrue overrides must validate unconditionally too, regardless of
     // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad

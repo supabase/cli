@@ -1119,7 +1119,6 @@ describe("resolveIncludeDescriptions", () => {
     expect(
       resolveIncludeDescriptions("__completeNoDesc", {
         SUPABASE_COMPLETION_DESCRIPTIONS: "true",
-        COBRA_COMPLETION_DESCRIPTIONS: "true",
       }),
     ).toBe(false);
   });
@@ -1130,9 +1129,9 @@ describe("resolveIncludeDescriptions", () => {
     ).toBe(false);
   });
 
-  it("falls back to the generic COBRA_COMPLETION_DESCRIPTIONS when the program-specific var is unset", () => {
+  it("ignores COBRA_COMPLETION_DESCRIPTIONS", () => {
     expect(resolveIncludeDescriptions("__complete", { COBRA_COMPLETION_DESCRIPTIONS: "0" })).toBe(
-      false,
+      true,
     );
   });
 
@@ -1140,15 +1139,6 @@ describe("resolveIncludeDescriptions", () => {
     expect(
       resolveIncludeDescriptions("__complete", {
         SUPABASE_COMPLETION_DESCRIPTIONS: "nonsense",
-      }),
-    ).toBe(true);
-  });
-
-  it("prioritizes the program-specific var over the generic one when both are set and conflict", () => {
-    expect(
-      resolveIncludeDescriptions("__complete", {
-        SUPABASE_COMPLETION_DESCRIPTIONS: "true",
-        COBRA_COMPLETION_DESCRIPTIONS: "false",
       }),
     ).toBe(true);
   });

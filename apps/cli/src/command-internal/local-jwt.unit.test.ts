@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertDecodableJwkAlgorithm,
-  generateAsymmetricGoJwt,
-  generateGoJwt,
+  generateAsymmetricLocalJwt,
+  generateLocalJwt,
   signJwtWithJwk,
   type Jwk,
-} from "./go-jwt.ts";
+} from "./local-jwt.ts";
 
 const SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 
@@ -33,16 +33,16 @@ function decodeSegment(segment: string): string {
   return Buffer.from(segment, "base64url").toString("utf8");
 }
 
-describe("generateGoJwt", () => {
+describe("generateLocalJwt", () => {
   it("emits the JWT header (no extra fields, alg before typ)", () => {
-    const token = generateGoJwt(SECRET, "anon");
+    const token = generateLocalJwt(SECRET, "anon");
     const [header] = token.split(".");
     expect(header).toBeDefined();
     expect(decodeSegment(header ?? "")).toBe('{"alg":"HS256","typ":"JWT"}');
   });
 
   it("emits the anon payload with the exact key order and fixed claims", () => {
-    const token = generateGoJwt(SECRET, "anon");
+    const token = generateLocalJwt(SECRET, "anon");
     const [, payload] = token.split(".");
     expect(payload).toBeDefined();
     const raw = decodeSegment(payload ?? "");
@@ -56,14 +56,14 @@ describe("generateGoJwt", () => {
   });
 
   it("emits the service_role payload with the exact key order and fixed claims", () => {
-    const token = generateGoJwt(SECRET, "service_role");
+    const token = generateLocalJwt(SECRET, "service_role");
     const [, payload] = token.split(".");
     const raw = decodeSegment(payload ?? "");
     expect(raw).toBe('{"iss":"supabase-demo","role":"service_role","exp":1983812996}');
   });
 
   it("signs with plain HMAC-SHA256 over the base64url header.payload, base64url-encoded", () => {
-    const token = generateGoJwt(SECRET, "anon");
+    const token = generateLocalJwt(SECRET, "anon");
     const [header, payload, signature] = token.split(".");
     const expectedSignature = createHmac("sha256", SECRET)
       .update(`${header}.${payload}`)
@@ -72,22 +72,22 @@ describe("generateGoJwt", () => {
   });
 
   it("is deterministic across calls (no timestamp derived from Date.now())", () => {
-    const first = generateGoJwt(SECRET, "anon");
-    const second = generateGoJwt(SECRET, "anon");
+    const first = generateLocalJwt(SECRET, "anon");
+    const second = generateLocalJwt(SECRET, "anon");
     expect(first).toBe(second);
   });
 
   it("produces different tokens for different secrets", () => {
-    const a = generateGoJwt(SECRET, "anon");
-    const b = generateGoJwt("a-different-secret-value-1234567", "anon");
+    const a = generateLocalJwt(SECRET, "anon");
+    const b = generateLocalJwt("a-different-secret-value-1234567", "anon");
     expect(a).not.toBe(b);
   });
 });
 
-describe("generateAsymmetricGoJwt", () => {
+describe("generateAsymmetricLocalJwt", () => {
   it("signs and verifies an RS256 token from an RSA JWK", async () => {
     const jwk = generateRsaJwk("rsa-kid");
-    const token = generateAsymmetricGoJwt(jwk, "anon");
+    const token = generateAsymmetricLocalJwt(jwk, "anon");
     const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
     const { payload, protectedHeader } = await jwtVerify(token, publicKey);
     expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
@@ -97,7 +97,7 @@ describe("generateAsymmetricGoJwt", () => {
   it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi)", async () => {
     const jwk = generateRsaJwk("rsa-kid");
     const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
-    const token = generateAsymmetricGoJwt(jwkWithoutCrtParams, "anon");
+    const token = generateAsymmetricLocalJwt(jwkWithoutCrtParams, "anon");
     const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
     const { payload, protectedHeader } = await jwtVerify(token, publicKey);
     expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
@@ -106,7 +106,7 @@ describe("generateAsymmetricGoJwt", () => {
 
   it("signs and verifies an ES256 token from an EC JWK", async () => {
     const jwk = generateEcJwk("ec-kid");
-    const token = generateAsymmetricGoJwt(jwk, "service_role");
+    const token = generateAsymmetricLocalJwt(jwk, "service_role");
     const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
     const { payload, protectedHeader } = await jwtVerify(token, publicKey);
     expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
@@ -115,7 +115,7 @@ describe("generateAsymmetricGoJwt", () => {
 
   it("omits the kid header entirely when the JWK has no kid", () => {
     const jwk = generateRsaJwk();
-    const token = generateAsymmetricGoJwt(jwk, "anon");
+    const token = generateAsymmetricLocalJwt(jwk, "anon");
     const [header] = token.split(".");
     const decoded = JSON.parse(Buffer.from(header ?? "", "base64url").toString());
     expect(decoded).toEqual({ alg: "RS256", typ: "JWT" });
@@ -124,7 +124,7 @@ describe("generateAsymmetricGoJwt", () => {
   it("sets a ~10-year expiry computed from the current time, not a fixed timestamp", () => {
     const jwk = generateRsaJwk();
     const before = Math.floor(Date.now() / 1000);
-    const token = generateAsymmetricGoJwt(jwk, "anon");
+    const token = generateAsymmetricLocalJwt(jwk, "anon");
     const [, payload] = token.split(".");
     const decoded = JSON.parse(Buffer.from(payload ?? "", "base64url").toString());
     const tenYearsSeconds = 60 * 60 * 24 * 365 * 10;
@@ -134,24 +134,26 @@ describe("generateAsymmetricGoJwt", () => {
 
   it("rejects an unsupported algorithm", () => {
     const jwk = { ...generateRsaJwk(), alg: "RS512" };
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported algorithm: RS512");
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).toThrow("unsupported algorithm: RS512");
   });
 
   it("rejects a JWK with no algorithm", () => {
     const { alg: _alg, ...jwkWithoutAlg } = generateRsaJwk();
-    expect(() => generateAsymmetricGoJwt(jwkWithoutAlg, "anon")).toThrow("unsupported algorithm: ");
+    expect(() => generateAsymmetricLocalJwt(jwkWithoutAlg, "anon")).toThrow(
+      "unsupported algorithm: ",
+    );
   });
 
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
     const jwk = { ...generateEcJwk(), alg: "RS256" };
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).toThrow(
       "failed to sign JWT: key is of invalid type: RSA sign expects *rsa.PrivateKey",
     );
   });
 
   it("rejects an RSA key forged with alg: ES256 instead of signing garbage", () => {
     const jwk = { ...generateRsaJwk(), alg: "ES256" };
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).toThrow(
       "failed to sign JWT: key is of invalid type: ECDSA sign expects *ecdsa.PrivateKey",
     );
   });
@@ -159,14 +161,14 @@ describe("generateAsymmetricGoJwt", () => {
   it("rejects an ES256 EC key whose curve is not P-256, wrapped in the private-key conversion error", () => {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
     const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).toThrow(
       "failed to convert JWK to private key: unsupported curve: P-384",
     );
   });
 
   it("rejects a JWK with no kty at all, wrapped in the private-key conversion error", () => {
     const jwk = { kty: "oct" } as Jwk;
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).toThrow(
       "failed to convert JWK to private key: unsupported key type: oct",
     );
   });
@@ -174,7 +176,7 @@ describe("generateAsymmetricGoJwt", () => {
   it("rejects an ES256 EC key with no curve at all", () => {
     const jwk = generateEcJwk();
     const { crv: _crv, ...jwkWithoutCurve } = jwk;
-    expect(() => generateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(jwkWithoutCurve, "anon")).toThrow(
       "failed to convert JWK to private key: unsupported curve: ",
     );
   });
@@ -182,7 +184,7 @@ describe("generateAsymmetricGoJwt", () => {
   it("rejects a padded EC coordinate instead of signing an invalid token", () => {
     const jwk = generateEcJwk("ec-kid");
     const padded = { ...jwk, x: `${jwk.x}=` };
-    expect(() => generateAsymmetricGoJwt(padded, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(padded, "anon")).toThrow(
       /^failed to convert JWK to private key: failed to decode x coordinate: illegal base64 data at input byte \d+$/,
     );
   });
@@ -190,14 +192,14 @@ describe("generateAsymmetricGoJwt", () => {
   it("rejects a padded RSA modulus the same way", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const padded = { ...jwk, n: `${jwk.n}=` };
-    expect(() => generateAsymmetricGoJwt(padded, "anon")).toThrow(
+    expect(() => generateAsymmetricLocalJwt(padded, "anon")).toThrow(
       /^failed to convert JWK to private key: failed to decode modulus: illegal base64 data at input byte \d+$/,
     );
   });
 
   it("still signs successfully for unpadded (correctly-encoded) coordinates", () => {
     const jwk = generateEcJwk("ec-kid");
-    expect(() => generateAsymmetricGoJwt(jwk, "anon")).not.toThrow();
+    expect(() => generateAsymmetricLocalJwt(jwk, "anon")).not.toThrow();
   });
 });
 

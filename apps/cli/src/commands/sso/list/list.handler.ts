@@ -5,9 +5,12 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDERS_WRAPPER } from "../sso.go-payload.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDERS_WRAPPER_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -59,7 +62,7 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
 
 export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -77,22 +80,22 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
       );
       yield* fetching?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
       const payload = { providers: response.items };
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(payload));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(payload));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(payload, GO_SSO_PROVIDERS_WRAPPER));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(payload, SSO_PROVIDERS_WRAPPER_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // TOML encode failure wrapping (e.g. a nil element in an
         // attribute-mapping `default` array).
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(payload, GO_SSO_PROVIDERS_WRAPPER),
+          try: () => encodeStructToml(payload, SSO_PROVIDERS_WRAPPER_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -101,7 +104,7 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
         yield* output.raw(toml);
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(payload) + "\n");
         return;
       }

@@ -28,7 +28,7 @@ const tempRoot = useTempWorkdir("supabase-sso-remove-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   rawBody?: string;
@@ -115,7 +115,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -184,7 +184,7 @@ describe("sso remove integration", () => {
   });
 
   it.live("--output=env emits nothing", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.stdoutText).toBe("");
@@ -192,7 +192,7 @@ describe("sso remove integration", () => {
   });
 
   it.live("--output=json encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
@@ -210,7 +210,7 @@ describe("sso remove integration", () => {
         attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
       },
     };
-    const { layer, out } = setup({ goOutput: "toml", body });
+    const { layer, out } = setup({ outputFlag: "toml", body });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),

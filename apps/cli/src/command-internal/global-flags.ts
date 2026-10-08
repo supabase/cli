@@ -39,7 +39,7 @@ export const OutputFlag = GlobalFlag.setting("output")({
  * The TS-only `--output-format` global, accepted on any subcommand.
  *
  * A value-taking global flag must also be registered in `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/cobra-flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
+ * (`shared/cli/flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
  */
 export const OutputFormatFlag = GlobalFlag.setting("output-format")({
   flag: Flag.choice("output-format", ["text", "json", "stream-json"]).pipe(
@@ -120,7 +120,7 @@ export const AgentFlag = GlobalFlag.setting("agent")({
  * Every global/persistent flag declared above.
  *
  * A value-taking flag added here must also be added to `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/cobra-flag-groups.ts`), which the handler-side argv scans and pre-parse token
+ * (`shared/cli/flag-groups.ts`), which the handler-side argv scans and pre-parse token
  * scanners both derive their token set from. A flag missed there fails silently: an unregistered
  * value flag won't consume its following token, so that token gets misread as positional.
  */
@@ -165,7 +165,7 @@ export const globalFlagValues = Effect.gen(function* () {
   return values;
 });
 
-const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
+const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
 /**
  * Raw argv truncated at the first bare `--` operand terminator. This CLI's own lexer stops parsing
@@ -214,7 +214,7 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
  */
 const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
   nonValueConsumedTokens(argsBeforeOperandTerminator(args)).some(
-    (arg) => arg.startsWith("--yes=") && PFLAG_FALSE_VALUES.has(arg.slice("--yes=".length)),
+    (arg) => arg.startsWith("--yes=") && FALSE_VALUES.has(arg.slice("--yes=".length)),
   );
 
 /**
@@ -261,7 +261,7 @@ const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefi
     if (arg === "--experimental") {
       result = true;
     } else if (arg.startsWith("--experimental=")) {
-      result = !PFLAG_FALSE_VALUES.has(arg.slice("--experimental=".length));
+      result = !FALSE_VALUES.has(arg.slice("--experimental=".length));
     }
   }
   return result;
@@ -310,7 +310,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
     if (arg === "--debug") {
       lastExplicitlyFalse = false;
     } else if (arg.startsWith("--debug=")) {
-      lastExplicitlyFalse = PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length));
+      lastExplicitlyFalse = FALSE_VALUES.has(arg.slice("--debug=".length));
     }
   }
   return lastExplicitlyFalse;

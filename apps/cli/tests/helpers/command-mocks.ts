@@ -1391,7 +1391,7 @@ export function mockDockerDaemonCliSpawner(
 // re-builds, including the easy-to-mis-wire `projectRefLayer.pipe(Layer.provide(...))` subgraph —
 // `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
 // subgraph here removes a recurring footgun.
-type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 export interface BuildTestRuntimeOpts {
   readonly out: { readonly layer: Layer.Layer<Output> };
@@ -1415,7 +1415,7 @@ export interface BuildTestRuntimeOpts {
   readonly telemetry?: Layer.Layer<TelemetryState>;
   readonly linkedProjectCache?: Layer.Layer<LinkedProjectCache>;
   readonly analytics?: { readonly layer: Layer.Layer<Analytics> };
-  readonly goOutput?: Option.Option<GoOutputValue>;
+  readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
 }
@@ -1428,7 +1428,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const telemetry = opts.telemetry ?? mockTelemetryStateLayer;
   const linkedProjectCache = opts.linkedProjectCache ?? mockLinkedProjectCacheLayer;
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
-  const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
+  const outputFlag = opts.outputFlag ?? Option.none<OutputFlagValue>();
   const httpClient = opts.api.httpClientLayer;
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
@@ -1467,7 +1467,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
-    Layer.succeed(OutputFlag, goOutput),
+    Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,
     telemetry,

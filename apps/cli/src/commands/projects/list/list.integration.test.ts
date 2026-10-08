@@ -82,7 +82,7 @@ function writeLinkedProjectCacheFile(workdir: string, ref: string) {
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: Projects;
   readonly status?: number;
   readonly network?: "fail";
@@ -107,7 +107,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, workdir: tempRoot.current };
 }
@@ -275,7 +275,7 @@ describe("projects list integration", () => {
   });
 
   it.live("emits byte-exact indented JSON including `linked` for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_PROJECT], linked: true });
+    const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
@@ -285,7 +285,7 @@ describe("projects list integration", () => {
   });
 
   it.live("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_PROJECT] });
+    const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
       expect(out.stdoutText).toContain("name: alpha");
@@ -294,7 +294,7 @@ describe("projects list integration", () => {
   });
 
   it.live("wraps the result as { projects = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_PROJECT] });
+    const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
       expect(out.stdoutText).toContain("[[projects]]");
@@ -305,7 +305,7 @@ describe("projects list integration", () => {
   });
 
   it.live("fails with ProjectsEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: [SAMPLE_PROJECT] });
+    const { layer } = setup({ outputFlag: "env", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);

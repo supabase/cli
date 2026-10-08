@@ -5,9 +5,9 @@ import {
   invalidOutputFormatMessage,
   outputFormatEnumMessage,
   unsupportedOutputFlagMessage,
-} from "./go-output-flag.ts";
+} from "./output-formats.ts";
 
-describe("go-output-flag", () => {
+describe("output-formats", () => {
   it("joins the allowed set with the ` | ` bracket format", () => {
     expect(outputFormatEnumMessage(RESOURCE_OUTPUT_FORMATS)).toBe(
       "must be one of [ env | pretty | json | toml | yaml ]",

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GoUrlParseError,
+  UrlParseError,
   StorageUrlPatternError,
   detectScheme,
-  goUrlParse,
+  parseUrl,
   parseStorageUrl,
   splitBucketPrefix,
   storageIsDir,
@@ -31,7 +31,7 @@ describe("parseStorageUrl", () => {
   });
 
   it("surfaces the url-parse error on a missing protocol scheme (:)", () => {
-    expect(() => parseStorageUrl(":")).toThrow(GoUrlParseError);
+    expect(() => parseStorageUrl(":")).toThrow(UrlParseError);
     expect(() => parseStorageUrl(":")).toThrow("missing protocol scheme");
   });
 
@@ -40,7 +40,7 @@ describe("parseStorageUrl", () => {
   });
 
   it("rejects a malformed percent-escape in the path", () => {
-    expect(() => parseStorageUrl("ss:///bucket/a%2")).toThrow(GoUrlParseError);
+    expect(() => parseStorageUrl("ss:///bucket/a%2")).toThrow(UrlParseError);
     expect(() => parseStorageUrl("ss:///bucket/a%2")).toThrow('invalid URL escape "%2"');
   });
 
@@ -85,44 +85,44 @@ describe("detectScheme", () => {
 });
 
 // Host validation here also backs `studio.api_url` validation.
-describe("goUrlParse (host validation)", () => {
+describe("parseUrl (host validation)", () => {
   it("rejects an unterminated IPv6 literal", () => {
-    expect(() => goUrlParse("http://[::1")).toThrow(GoUrlParseError);
-    expect(() => goUrlParse("http://[::1")).toThrow(`parse "http://[::1": missing ']' in host`);
+    expect(() => parseUrl("http://[::1")).toThrow(UrlParseError);
+    expect(() => parseUrl("http://[::1")).toThrow(`parse "http://[::1": missing ']' in host`);
   });
 
   it("accepts a bracketed IPv6 literal with no port", () => {
-    expect(goUrlParse("http://[::1]").host).toBe("[::1]");
+    expect(parseUrl("http://[::1]").host).toBe("[::1]");
   });
 
   it("accepts a bracketed IPv6 literal with a valid port", () => {
-    expect(goUrlParse("http://[::1]:8080").host).toBe("[::1]:8080");
+    expect(parseUrl("http://[::1]:8080").host).toBe("[::1]:8080");
   });
 
   it("rejects a bracketed IPv6 literal with a non-numeric port", () => {
-    expect(() => goUrlParse("http://[::1]:abc")).toThrow(
+    expect(() => parseUrl("http://[::1]:abc")).toThrow(
       `parse "http://[::1]:abc": invalid port ":abc" after host`,
     );
   });
 
   it("rejects a bracket that isn't the first character of the host", () => {
-    expect(() => goUrlParse("http://host[::1]")).toThrow(
+    expect(() => parseUrl("http://host[::1]")).toThrow(
       `parse "http://host[::1]": invalid IP-literal`,
     );
   });
 
   it("accepts a plain hostname with a numeric port", () => {
-    expect(goUrlParse("http://example.com:99999").host).toBe("example.com:99999");
+    expect(parseUrl("http://example.com:99999").host).toBe("example.com:99999");
   });
 
   it("rejects more than one colon in an http(s) host (strict-colon default)", () => {
-    expect(() => goUrlParse("http://host:1:2")).toThrow(
+    expect(() => parseUrl("http://host:1:2")).toThrow(
       `parse "http://host:1:2": invalid port ":1:2" after host`,
     );
   });
 
   it("does not validate a host for a scheme with no authority (ss:///bucket)", () => {
-    expect(() => goUrlParse("ss:///bucket/x")).not.toThrow();
+    expect(() => parseUrl("ss:///bucket/x")).not.toThrow();
   });
 });
 

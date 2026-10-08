@@ -18,7 +18,7 @@ import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import {
@@ -62,7 +62,7 @@ import {
  * Mutually-exclusive flag groups, in the established check order (the group
  * keys are sorted alphabetically). Each group's flags are in registration
  * order, matching the `[group]` in the error text; the set of violating
- * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
+ * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
   ["db-url", "linked", "local"],
@@ -138,7 +138,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* new DbDumpMutuallyExclusiveFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }

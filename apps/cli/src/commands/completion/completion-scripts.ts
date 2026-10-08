@@ -57,7 +57,7 @@ __${programName}_get_completion_results() {
 
     if [[ -z \${cur} && \${lastChar} != = ]]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} ''"
     fi
@@ -95,7 +95,7 @@ __${programName}_process_completion_results() {
 
     if (((directive & shellCompDirectiveError) != 0)); then
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     else
         if (((directive & shellCompDirectiveNoSpace) != 0)); then
@@ -265,7 +265,6 @@ __${programName}_handle_completion_types() {
         # Type: menu-complete/menu-complete-backward and insert-completions
         # If the user requested inserting one completion at a time, or all
         # completions at once on the command-line we must remove the descriptions.
-        # https://github.com/spf13/cobra/issues/1508
 
         # If there are no completions, we don't need to do anything
         (( \${#completions[@]} == 0 )) && return 0
@@ -506,7 +505,7 @@ _${programName}()
     requestComp="\${words[1]} ${compCmd} \${words[2,-1]}"
     if [ "\${lastChar}" = "" ]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go completion code.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} \\"\\""
     fi
@@ -702,7 +701,6 @@ function __${programName}_perform_completion
 
     # Some programs may output extra empty lines after the directive.
     # Let's ignore them or else it will break completion.
-    # Ref: https://github.com/spf13/cobra/issues/1279
     for line in $results[-1..1]
         if test (string trim -- $line) = ""
             # Found an empty line, remove it
@@ -986,7 +984,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if ( $WordToComplete -eq "" -And ( -Not $IsEqualFlag )) {
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         # PowerShell 7.2+ changed the way how the arguments are passed to executables,
         # so for pre-7.2 or when Legacy argument passing is enabled we need to use
@@ -1023,7 +1021,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if (($Directive -band $ShellCompDirectiveError) -ne 0 ) {
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     }
 

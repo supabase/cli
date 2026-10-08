@@ -6,7 +6,7 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
@@ -284,5 +284,5 @@ function toEncodableLint(lint: AdvisorLint): Record<string, unknown> {
  * skips emission.
  */
 export function encodeAdvisorLints(lints: ReadonlyArray<AdvisorLint>): string {
-  return encodeGoJsonIndented(lints.map(toEncodableLint));
+  return encodeHtmlSafeJsonIndented(lints.map(toEncodableLint));
 }

@@ -10,7 +10,7 @@ import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff, squashScanLines } from 
 // literals, since manual transcription would silently corrupt whitespace/quoting.
 const testdataDir = fileURLToPath(new URL("./testdata/", import.meta.url));
 
-const readGoFixture = Effect.fnUntraced(function* (name: string) {
+const readFixture = Effect.fnUntraced(function* (name: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   return yield* fs.readFileString(path.join(testdataDir, name));
@@ -19,9 +19,9 @@ const readGoFixture = Effect.fnUntraced(function* (name: string) {
 describe("squashLineByLineDiff", () => {
   it.live("diffs real pg_dump output into the exact diff.sql bytes", () =>
     Effect.gen(function* () {
-      const before = yield* readGoFixture("before.sql");
-      const after = yield* readGoFixture("after.sql");
-      const expected = yield* readGoFixture("diff.sql");
+      const before = yield* readFixture("before.sql");
+      const after = yield* readFixture("after.sql");
+      const expected = yield* readFixture("diff.sql");
       expect(squashLineByLineDiff(before, after)).toBe(expected);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -50,7 +50,7 @@ describe("squashLineByLineDiff", () => {
     expect(squashLineByLineDiff(before, after)).toBe("select 1;\n");
   });
 
-  it("strips one trailing \\r per line like bufio.ScanLines (CRLF before, LF after)", () => {
+  it("strips one trailing \\r per line like a line scanner (CRLF before, LF after)", () => {
     const before = "select 1;\r\nselect 2;\r\n";
     const after = "select 1;\nselect 2;\n";
     expect(squashLineByLineDiff(before, after)).toBe("");

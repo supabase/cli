@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
@@ -884,7 +884,9 @@ describe("stack backend", () => {
         (r) => r.method === "DELETE" && r.url.includes(DELETE_OBJECT("private")),
       );
       expect(del?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(del?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
+      expect(del?.headers["apikey"]).toBe(
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
     });
   });
 

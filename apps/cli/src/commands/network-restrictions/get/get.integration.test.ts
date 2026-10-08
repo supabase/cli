@@ -38,7 +38,7 @@ const STORED_WITH_OMITTED_CIDRS: typeof V1GetNetworkRestrictionsOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1GetNetworkRestrictionsOutput.Type;
   status?: number;
   network?: "fail";
@@ -57,7 +57,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -162,7 +162,7 @@ describe("network-restrictions get integration", () => {
   });
 
   it.live("emits JSON when --output=json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: APPLIED_WITH_CIDRS });
+    const { layer, out } = setup({ outputFlag: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -173,7 +173,7 @@ describe("network-restrictions get integration", () => {
   });
 
   it.live("emits YAML when --output=yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: APPLIED_WITH_CIDRS });
+    const { layer, out } = setup({ outputFlag: "yaml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: applied");
@@ -181,7 +181,7 @@ describe("network-restrictions get integration", () => {
   });
 
   it.live("emits TOML when --output=toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: APPLIED_WITH_CIDRS });
+    const { layer, out } = setup({ outputFlag: "toml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status = ");
@@ -189,7 +189,7 @@ describe("network-restrictions get integration", () => {
   });
 
   it.live("emits env output when --output=env", () => {
-    const { layer, out } = setup({ goOutput: "env", response: APPLIED_NO_CIDRS });
+    const { layer, out } = setup({ outputFlag: "env", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('STATUS="applied"');
@@ -197,7 +197,7 @@ describe("network-restrictions get integration", () => {
   });
 
   it.live("treats --output pretty identically to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: APPLIED_NO_CIDRS });
+    const { layer, out } = setup({ outputFlag: "pretty", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
@@ -211,7 +211,7 @@ describe("network-restrictions get integration", () => {
   it.live("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: APPLIED_WITH_CIDRS,
     });
     return Effect.gen(function* () {

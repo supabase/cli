@@ -1212,7 +1212,7 @@ describe("applySchemaFiles", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
-          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("scanner: token too long");
           expect(msg).toContain("After statement 1: SELECT 1;");
           expect(msg).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
         }
@@ -1254,7 +1254,7 @@ describe("applySchemaFiles", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
-          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("scanner: token too long");
           expect(msg).toContain("After statement 0: ;");
         }
       }).pipe(
@@ -1330,7 +1330,7 @@ describe("applySchemaFiles", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
-          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("scanner: token too long");
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
           );
@@ -1371,7 +1371,7 @@ describe("applySchemaFiles", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const msg = JSON.stringify(exit.cause);
-        expect(msg).toContain("bufio.Scanner: token too long");
+        expect(msg).toContain("scanner: token too long");
         expect(msg).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)");
       }
     }).pipe(
@@ -1409,7 +1409,7 @@ describe("applySchemaFiles", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const msg = JSON.stringify(exit.cause);
-        expect(msg).toContain("bufio.Scanner: token too long");
+        expect(msg).toContain("scanner: token too long");
         expect(msg).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)");
       }
     }).pipe(
@@ -1485,7 +1485,7 @@ describe("applySchemaFiles", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
-          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("scanner: token too long");
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
           );
@@ -1565,7 +1565,7 @@ describe("applySchemaFiles", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
-          expect(msg).toContain("bufio.Scanner: token too long");
+          expect(msg).toContain("scanner: token too long");
         }
       }).pipe(
         Effect.ensuring(

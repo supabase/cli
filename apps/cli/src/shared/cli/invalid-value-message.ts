@@ -10,7 +10,7 @@ const EXPECTED_PREFIX = "Expected ";
 // Some flags already fail with their own byte-exact diagnostic (e.g. malformed CSV in a
 // string-slice flag), which the CLI's stderr contract must reproduce verbatim. Wrapping it in
 // `CliError.InvalidValue`'s own template would double-frame it, so render it as-is instead.
-const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
+const INVALID_ARGUMENT_PREFIX = "invalid argument ";
 
 export interface InvalidValueMessageFields {
   readonly option: string;
@@ -26,7 +26,7 @@ export interface InvalidValueMessageFields {
  * error's own message.
  */
 export function formatInvalidValueMessage(error: InvalidValueMessageFields): string | undefined {
-  if (error.expected.startsWith(PFLAG_INVALID_ARGUMENT_PREFIX)) return error.expected;
+  if (error.expected.startsWith(INVALID_ARGUMENT_PREFIX)) return error.expected;
   if (!error.expected.startsWith(EXPECTED_PREFIX)) return undefined;
   return error.kind === "argument"
     ? `Invalid value for argument <${error.option}>: "${error.value}". ${error.expected}`

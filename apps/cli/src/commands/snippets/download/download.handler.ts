@@ -7,7 +7,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { goQuote } from "../../../command-internal/go-quote.ts";
+import { quoteBytes } from "../../../command-internal/byte-quote.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -72,7 +72,7 @@ export function parseSnippetUuid(
     // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     case 45: {
       if (!isUrnUuidPrefix(s)) {
-        return { error: `invalid urn prefix: ${goQuote(s.subarray(0, 9))}` };
+        return { error: `invalid urn prefix: ${quoteBytes(s.subarray(0, 9))}` };
       }
       s = s.subarray(9);
       break;

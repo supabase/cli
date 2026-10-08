@@ -1,14 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   GLOBAL_VALUE_FLAG_TOKENS,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "./cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "./flag-groups.ts";
 
 const COMMAND_PATH = ["functions", "deploy"] as const;
 
@@ -106,7 +106,7 @@ describe("explicitBooleanLongFlag", () => {
   });
 });
 
-describe("pflagArgvScan", () => {
+describe("scanArgvFlags", () => {
   const SSO_UPDATE_PATH = ["sso", "update"] as const;
   const SPEC = {
     valueFlagNames: new Set([
@@ -120,7 +120,7 @@ describe("pflagArgvScan", () => {
   };
 
   test("records value-taking persistent flags parsed BEFORE the command path", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["--profile", "a.yml", "sso", "update", "id", "--profile=b.yml"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -131,7 +131,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("records inline and repeated pre-path values in argv order", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["--profile=a.yml", "--profile", "b.yml", "sso", "update", "id"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -141,7 +141,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("records a bare flag's next token as its value", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file", "foo.xml"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -150,7 +150,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("records an inline (`=`) value, split on the first `=`", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--domains=a.com", "--metadata-file=a=b"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -160,7 +160,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("an explicit empty `--flag=` still counts as changed", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file="],
       SSO_UPDATE_PATH,
       SPEC,
@@ -169,7 +169,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("a consumed flag-shaped token becomes the value, not a sibling flag", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file", "--metadata-url"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -180,7 +180,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("a consumed flag-shaped token becomes the value, reversed order", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["sso", "update", "id", "--metadata-url", "--metadata-file"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -191,7 +191,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("an inline (`=`) value never consumes the next token", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file=--metadata-url", "--domains", "a.com"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -203,7 +203,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("real, non-adjacent occurrences of both flags are both recorded", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file", "foo.xml", "--metadata-url", "url"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -213,7 +213,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("repeated occurrences accumulate in argv order", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--domains", "a.com", "--domains=b.com"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -222,7 +222,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("a bare boolean (non-value) flag records true without consuming", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["sso", "update", "id", "--skip-url-validation", "--metadata-url", "url"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -233,7 +233,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("an inline-empty boolean (`--flag=`) records the empty string, distinct from bare", () => {
-    const scan = pflagArgvScan(
+    const scan = scanArgvFlags(
       ["sso", "update", "id", "--skip-url-validation=false", "--skip-url-validation="],
       SSO_UPDATE_PATH,
       SPEC,
@@ -242,11 +242,11 @@ describe("pflagArgvScan", () => {
   });
 
   test("returns an empty map when no flags are present", () => {
-    expect(pflagArgvScan(["sso", "update", "id"], SSO_UPDATE_PATH, SPEC).occurrences.size).toBe(0);
+    expect(scanArgvFlags(["sso", "update", "id"], SSO_UPDATE_PATH, SPEC).occurrences.size).toBe(0);
   });
 
   test("flags after a -- terminator are not recorded", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--", "--domains"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -255,7 +255,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("a -- consumed as a bare value flag's value does not terminate the scan", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["sso", "update", "id", "--metadata-file", "--", "--domains", "a.com"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -266,19 +266,19 @@ describe("pflagArgvScan", () => {
 
   describe("missing value detection", () => {
     test("a bare value flag at the end of argv reports the parse error", () => {
-      const scan = pflagArgvScan(["sso", "update", "id", "--metadata-file"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "update", "id", "--metadata-file"], SSO_UPDATE_PATH, SPEC);
       expect(scan.missingValueError).toBe("flag needs an argument: --metadata-file");
       expect(scan.occurrences.has("metadata-file")).toBe(false);
     });
 
     test("a bare value shorthand at the end of argv quotes the character", () => {
-      const scan = pflagArgvScan(["sso", "update", "id", "-o"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "update", "id", "-o"], SSO_UPDATE_PATH, SPEC);
       expect(scan.missingValueError).toBe("flag needs an argument: 'o' in -o");
       expect(scan.occurrences.has("output")).toBe(false);
     });
 
     test("an inline empty value (`--flag=`) is not a missing value", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "id", "--metadata-file="],
         SSO_UPDATE_PATH,
         SPEC,
@@ -288,7 +288,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a trailing boolean flag is not a missing value", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "id", "--skip-url-validation"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -297,7 +297,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a value flag consuming a flag-shaped token is not a missing value", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "id", "--domains", "--metadata-url"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -308,7 +308,7 @@ describe("pflagArgvScan", () => {
   });
 
   test("ignores flags that appear before the command path", () => {
-    const { occurrences } = pflagArgvScan(
+    const { occurrences } = scanArgvFlags(
       ["--domains", "a.com", "sso", "update", "id"],
       SSO_UPDATE_PATH,
       SPEC,
@@ -317,20 +317,20 @@ describe("pflagArgvScan", () => {
   });
 
   test("falls back to a bare, unanchored scan when the command path is not found", () => {
-    const scan = pflagArgvScan(["--domains", "a.com"], SSO_UPDATE_PATH, SPEC);
+    const scan = scanArgvFlags(["--domains", "a.com"], SSO_UPDATE_PATH, SPEC);
     expect(scan.anchored).toBe(false);
     expect(scan.occurrences.get("domains")).toEqual(["a.com"]);
     expect(scan.positionals).toEqual([]);
   });
 
   test("an unscoped scan does not treat -- as a terminator", () => {
-    const { occurrences } = pflagArgvScan(["--", "--domains", "a.com"], SSO_UPDATE_PATH, SPEC);
+    const { occurrences } = scanArgvFlags(["--", "--domains", "a.com"], SSO_UPDATE_PATH, SPEC);
     expect(occurrences.get("domains")).toEqual(["a.com"]);
   });
 
   describe("positional counting", () => {
     test("a plain invocation has exactly the operands as positionals", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "id", "--domains", "a.com"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -340,7 +340,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a consumed flag token shifts its parser-value into the positionals", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "--domains", "--metadata-url", "https://idp.example.com/m", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -351,7 +351,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a persistent global value flag consumes its value token", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "--workdir", ".", "id", "--profile", "staging"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -360,7 +360,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("the built-in --log-level global consumes its value token", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "--log-level", "error", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -370,7 +370,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a pre-path --log-level keeps the scan anchored instead of falling back unscoped", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["--log-level", "error", "sso", "update", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -381,7 +381,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a bare slice flag consumes a global flag token, orphaning its value", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "--domains", "--profile", "staging", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -392,7 +392,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("tokens after a live -- terminator are all positionals", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "update", "id", "--", "--domains", "x"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -401,7 +401,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a lone - is a positional", () => {
-      const scan = pflagArgvScan(["sso", "update", "-"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "update", "-"], SSO_UPDATE_PATH, SPEC);
       expect(scan.positionals).toEqual(["-"]);
     });
   });
@@ -414,28 +414,28 @@ describe("pflagArgvScan", () => {
     };
 
     test("`-t saml` consumes the next token and records under the long name", () => {
-      const scan = pflagArgvScan(["sso", "add", "-t", "saml"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "-t", "saml"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.get("type")).toEqual(["saml"]);
       expect(scan.positionals).toEqual([]);
     });
 
     test("`-o json` consumes the next token via the persistent shorthand map", () => {
-      const scan = pflagArgvScan(["sso", "update", "-o", "json", "id"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "update", "-o", "json", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.occurrences.get("output")).toEqual(["json"]);
       expect(scan.positionals).toEqual(["id"]);
     });
 
     test("`-o=json` and `-ojson` are self-contained", () => {
-      const eq = pflagArgvScan(["sso", "update", "-o=json", "id"], SSO_UPDATE_PATH, SPEC);
+      const eq = scanArgvFlags(["sso", "update", "-o=json", "id"], SSO_UPDATE_PATH, SPEC);
       expect(eq.occurrences.get("output")).toEqual(["json"]);
       expect(eq.positionals).toEqual(["id"]);
-      const glued = pflagArgvScan(["sso", "update", "-ojson", "id"], SSO_UPDATE_PATH, SPEC);
+      const glued = scanArgvFlags(["sso", "update", "-ojson", "id"], SSO_UPDATE_PATH, SPEC);
       expect(glued.occurrences.get("output")).toEqual(["json"]);
       expect(glued.positionals).toEqual(["id"]);
     });
 
     test("unknown/boolean shorthands consume nothing", () => {
-      const scan = pflagArgvScan(["sso", "update", "-h", "id"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "update", "-h", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.occurrences.size).toBe(0);
       expect(scan.positionals).toEqual(["id"]);
     });
@@ -443,7 +443,7 @@ describe("pflagArgvScan", () => {
 
   describe("anchoring across interspersed flags", () => {
     test("a persistent value flag between group and leaf still anchors", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "--profile", "foo", "update", "id", "--domains", "a.com"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -455,7 +455,7 @@ describe("pflagArgvScan", () => {
 
     test("an interspersed value flag consuming a path-named token still anchors", () => {
       // The first "update" is --profile's value; the second is the real leaf segment.
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "--profile", "update", "update", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -465,22 +465,22 @@ describe("pflagArgvScan", () => {
     });
 
     test("interspersed boolean and self-contained shorthand flags still anchor", () => {
-      const debug = pflagArgvScan(["sso", "--debug", "update", "id"], SSO_UPDATE_PATH, SPEC);
+      const debug = scanArgvFlags(["sso", "--debug", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(debug.anchored).toBe(true);
       expect(debug.positionals).toEqual(["id"]);
-      const glued = pflagArgvScan(["sso", "-ojson", "update", "id"], SSO_UPDATE_PATH, SPEC);
+      const glued = scanArgvFlags(["sso", "-ojson", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(glued.anchored).toBe(true);
       expect(glued.positionals).toEqual(["id"]);
     });
 
     test("an interspersed value shorthand consumes its value token", () => {
-      const scan = pflagArgvScan(["sso", "-o", "json", "update", "id"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "-o", "json", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.anchored).toBe(true);
       expect(scan.positionals).toEqual(["id"]);
     });
 
     test("a leading value flag whose value collides with a path segment still anchors", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["--profile", "sso", "sso", "update", "id"],
         SSO_UPDATE_PATH,
         SPEC,
@@ -490,13 +490,13 @@ describe("pflagArgvScan", () => {
     });
 
     test("a stray operand before the path fails the anchor open", () => {
-      const scan = pflagArgvScan(["sso", "foo", "update", "id"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "foo", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.anchored).toBe(false);
       expect(scan.positionals).toEqual([]);
     });
 
     test("a -- before the path completes fails the anchor open", () => {
-      const scan = pflagArgvScan(["sso", "--", "update", "id"], SSO_UPDATE_PATH, SPEC);
+      const scan = scanArgvFlags(["sso", "--", "update", "id"], SSO_UPDATE_PATH, SPEC);
       expect(scan.anchored).toBe(false);
     });
   });
@@ -509,19 +509,19 @@ describe("pflagArgvScan", () => {
     };
 
     test("a consumed bare `--type` is tracked and not marked changed", () => {
-      const scan = pflagArgvScan(["sso", "add", "--domains", "--type", "saml"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "--domains", "--type", "saml"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.has("type")).toBe(false);
       expect(scan.consumedFlagNames.has("type")).toBe(true);
     });
 
     test("a consumed `--type=saml` is tracked by its name before the `=`", () => {
-      const scan = pflagArgvScan(["sso", "add", "--domains", "--type=saml"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "--domains", "--type=saml"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.has("type")).toBe(false);
       expect(scan.consumedFlagNames.has("type")).toBe(true);
     });
 
     test("a consumed `-t` shorthand is tracked under its long name", () => {
-      const scan = pflagArgvScan(["sso", "add", "--domains", "-t", "saml"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "--domains", "-t", "saml"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.has("type")).toBe(false);
       expect(scan.consumedFlagNames.has("type")).toBe(true);
       expect(scan.occurrences.get("domains")).toEqual(["-t"]);
@@ -529,22 +529,22 @@ describe("pflagArgvScan", () => {
     });
 
     test("consumed `-t=saml` and `-tsaml` shorthand forms are tracked too", () => {
-      const inline = pflagArgvScan(["sso", "add", "--domains", "-t=saml"], ADD_PATH, ADD_SPEC);
+      const inline = scanArgvFlags(["sso", "add", "--domains", "-t=saml"], ADD_PATH, ADD_SPEC);
       expect(inline.occurrences.has("type")).toBe(false);
       expect(inline.consumedFlagNames.has("type")).toBe(true);
-      const glued = pflagArgvScan(["sso", "add", "--domains", "-tsaml"], ADD_PATH, ADD_SPEC);
+      const glued = scanArgvFlags(["sso", "add", "--domains", "-tsaml"], ADD_PATH, ADD_SPEC);
       expect(glued.occurrences.has("type")).toBe(false);
       expect(glued.consumedFlagNames.has("type")).toBe(true);
     });
 
     test("a consumed unmapped shorthand records no name", () => {
-      const scan = pflagArgvScan(["sso", "add", "--domains", "-h"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "--domains", "-h"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.get("domains")).toEqual(["-h"]);
       expect(scan.consumedFlagNames.size).toBe(0);
     });
 
     test("a shorthand `-t` occurrence coexists with a consumed `--type` token", () => {
-      const scan = pflagArgvScan(
+      const scan = scanArgvFlags(
         ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
         ADD_PATH,
         ADD_SPEC,
@@ -554,7 +554,7 @@ describe("pflagArgvScan", () => {
     });
 
     test("a consumed `--` records no name", () => {
-      const scan = pflagArgvScan(["sso", "add", "--domains", "--", "x"], ADD_PATH, ADD_SPEC);
+      const scan = scanArgvFlags(["sso", "add", "--domains", "--", "x"], ADD_PATH, ADD_SPEC);
       expect(scan.occurrences.get("domains")).toEqual(["--"]);
       expect(scan.consumedFlagNames.size).toBe(0);
       expect(scan.positionals).toEqual(["x"]);
@@ -581,10 +581,10 @@ describe("GLOBAL_VALUE_FLAG_TOKENS", () => {
   });
 });
 
-describe("cobraMutuallyExclusiveErrorMessage", () => {
+describe("mutuallyExclusiveFlagsMessage", () => {
   test("formats the mutually-exclusive group message", () => {
     expect(
-      cobraMutuallyExclusiveErrorMessage(
+      mutuallyExclusiveFlagsMessage(
         ["use-api", "use-docker", "legacy-bundle"],
         ["use-docker", "use-api"],
       ),
@@ -595,7 +595,7 @@ describe("cobraMutuallyExclusiveErrorMessage", () => {
 
   test("sorts the changed subset alphabetically regardless of input order", () => {
     expect(
-      cobraMutuallyExclusiveErrorMessage(
+      mutuallyExclusiveFlagsMessage(
         ["use-api", "use-docker", "legacy-bundle"],
         ["use-api", "legacy-bundle"],
       ),

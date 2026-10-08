@@ -65,7 +65,7 @@ const EMPTY_RESPONSE: SnippetsResponse = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   // The handler consumes the raw JSON body (schema-bypass, see the handler's
   // tolerant accessors), so tests may pass shapes the generated schema would
   // reject — e.g. snippets without the `description` key.
@@ -91,7 +91,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, telemetry, cache };
 }
@@ -161,7 +161,7 @@ describe("snippets list integration", () => {
   });
 
   it.live("--output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
-    const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
+    const { layer, out } = setup({ outputFlag: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       // Raw-HTTP bypass echoes whatever the API sent — no `nullForEmptyArrays`
@@ -174,7 +174,7 @@ describe("snippets list integration", () => {
   });
 
   it.live("--output=yaml emits a `data:` block", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("data:");
@@ -186,7 +186,7 @@ describe("snippets list integration", () => {
     // The nullable `description` field can't be represented in TOML, so this
     // fails whenever any snippet has a `description` key (present-with-value
     // or explicit null).
-    const { layer } = setup({ goOutput: "toml" });
+    const { layer } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -206,7 +206,7 @@ describe("snippets list integration", () => {
     // for the shape where the key is absent.
     const { description: _omitted, ...withoutDescription } = SNIPPET_BASE;
     const { layer, out } = setup({
-      goOutput: "toml",
+      outputFlag: "toml",
       response: { data: [withoutDescription] },
     });
     return Effect.gen(function* () {
@@ -236,7 +236,7 @@ describe("snippets list integration", () => {
   it.live(
     "--output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
     () => {
-      const { layer, api, telemetry, cache } = setup({ goOutput: "env" });
+      const { layer, api, telemetry, cache } = setup({ outputFlag: "env" });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
@@ -253,7 +253,7 @@ describe("snippets list integration", () => {
   );
 
   it.live("--output=pretty falls through to the text renderer", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("VISIBILITY");
@@ -262,7 +262,7 @@ describe("snippets list integration", () => {
   });
 
   it.live("--output wins over --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("data:");

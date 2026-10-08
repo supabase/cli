@@ -20,7 +20,7 @@ function unicodeEscape(codeUnit: number): string {
  * Iterates by UTF-16 code unit; the only non-ASCII runes escaped (U+2028, U+2029) are single
  * BMP code units, so code units suffice.
  */
-export function escapeGoJsonString(value: string): string {
+export function escapeHtmlSafeJsonString(value: string): string {
   let out = '"';
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i);
@@ -64,7 +64,7 @@ function walk(value: unknown, depth: number, pretty: boolean): string {
   if (value === null || value === undefined) return "null";
   switch (typeof value) {
     case "string":
-      return escapeGoJsonString(value);
+      return escapeHtmlSafeJsonString(value);
     case "number":
       // JSON.stringify collapses `-0` to `"0"`, but a float64 negative
       // zero marshals as `-0` — reachable via `gen bearer-jwt`'s signed payload, where the signed bytes
@@ -94,7 +94,8 @@ function walk(value: unknown, depth: number, pretty: boolean): string {
   if (entries.length === 0) return "{}";
   const colon = pretty ? ": " : ":";
   const lines = entries.map(
-    ([key, val]) => `${indent}${escapeGoJsonString(key)}${colon}${walk(val, depth + 1, pretty)}`,
+    ([key, val]) =>
+      `${indent}${escapeHtmlSafeJsonString(key)}${colon}${walk(val, depth + 1, pretty)}`,
   );
   return `{${open}${lines.join(separator)}${close}${closeIndent}}`;
 }
@@ -103,7 +104,7 @@ function walk(value: unknown, depth: number, pretty: boolean): string {
  * Encodes a value with 2-space indentation, object keys in insertion order,
  * HTML-safe string escaping, and a trailing newline.
  */
-export function encodeGoJsonIndented(value: unknown): string {
+export function encodeHtmlSafeJsonIndented(value: unknown): string {
   return walk(value, 0, true) + "\n";
 }
 
@@ -112,15 +113,15 @@ export function encodeGoJsonIndented(value: unknown): string {
  * (`{"k":v}`), object keys in insertion order, HTML-safe string escaping,
  * and no trailing newline.
  */
-export function encodeGoJsonCompact(value: unknown): string {
+export function encodeHtmlSafeJsonCompact(value: unknown): string {
   return walk(value, 0, false);
 }
 
 /**
- * Type names for the JSON-representable kinds a decode rejects. Used to build the
- * `"json: cannot unmarshal <kind> into Go value of type <target>"` message.
+ * Type names for the JSON-representable kinds a decode rejects, used in "expected X, got <kind>"
+ * decode errors.
  */
-export function goJsonKindName(value: unknown): string {
+export function jsonKindName(value: unknown): string {
   if (Array.isArray(value)) return "array";
   switch (typeof value) {
     case "number":
@@ -128,7 +129,7 @@ export function goJsonKindName(value: unknown): string {
     case "string":
       return "string";
     case "boolean":
-      return "bool";
+      return "boolean";
     default:
       return "value";
   }

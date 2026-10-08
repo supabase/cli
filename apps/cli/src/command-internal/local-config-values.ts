@@ -48,7 +48,7 @@ import {
   type HookInput,
   type LocalSmtpInput,
   type MfaFactorInput,
-  parseGoBool,
+  parseBoolLiteral,
   type PasskeyInput,
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
@@ -60,7 +60,12 @@ import {
   type ThirdPartyInput,
   validateResolvedConfig,
 } from "./config-validate.ts";
-import { DEFAULT_SIGNING_KEY, generateAsymmetricGoJwt, generateGoJwt, type Jwk } from "./go-jwt.ts";
+import {
+  DEFAULT_SIGNING_KEY,
+  generateAsymmetricLocalJwt,
+  generateLocalJwt,
+  type Jwk,
+} from "./local-jwt.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 
 /**
@@ -195,7 +200,7 @@ export function envOverridePort(
 ): number {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configuredPort;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > BigInt(MAX_PORT)) {
     throw new InvalidPortEnvOverrideError(dottedFieldPath, value);
   }
@@ -263,7 +268,7 @@ export function envOverrideBool(
 ): boolean {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBool(value);
+  const parsed = parseBoolLiteral(value);
   if (parsed === undefined) {
     throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
@@ -624,8 +629,8 @@ function resolveSignedKey(
 ): string {
   if (configured !== undefined && configured.length > 0) return configured;
   return signingKey !== undefined
-    ? generateAsymmetricGoJwt(signingKey, role)
-    : generateGoJwt(jwtSecret, role);
+    ? generateAsymmetricLocalJwt(signingKey, role)
+    : generateLocalJwt(jwtSecret, role);
 }
 
 /** JWK fields, matching {@link Jwk}. */
@@ -956,7 +961,7 @@ const UINT_MAX = 18446744073709551615n; // 2^64 - 1
  * leading sign is never accepted. Returns `undefined` for anything invalid instead of throwing,
  * leaving bit-width bounds to the caller.
  */
-function parseGoBaseZeroUint(value: string): bigint | undefined {
+function parseBaseZeroUint(value: string): bigint | undefined {
   if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;
 
   let literal: string | undefined;
@@ -985,7 +990,7 @@ function parseGoBaseZeroUint(value: string): bigint | undefined {
 
 /**
  * `SUPABASE_<NAME>` sibling of {@link envOverridePort} for uncapped `uint`-typed fields
- * (`db.major_version`, `auth.jwt_expiry`, …). Parses with {@link parseGoBaseZeroUint} and
+ * (`db.major_version`, `auth.jwt_expiry`, …). Parses with {@link parseBaseZeroUint} and
  * folds an invalid or out-of-{@link UINT_MAX} override into the generic "Invalid <field>"
  * error message.
  */
@@ -997,7 +1002,7 @@ export function envOverrideUint(
 ): number {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
@@ -1044,7 +1049,7 @@ function envOverrideOptionalUint(
 ): number | undefined {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
@@ -1063,7 +1068,7 @@ function envOverrideOptionalBool(
 ): boolean | undefined {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBool(value);
+  const parsed = parseBoolLiteral(value);
   if (parsed === undefined) {
     throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
@@ -2132,7 +2137,7 @@ export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boole
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
-    const parsed = parseGoBool(value);
+    const parsed = parseBoolLiteral(value);
     if (parsed === undefined) {
       throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
     }
@@ -2302,7 +2307,7 @@ function validateAuthExternalProviders(
  * {@link readApiTlsFiles}.
  * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
  * malformed, or its first key uses an unsupported algorithm — see
- * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricGoJwt}.
+ * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricLocalJwt}.
  * @throws when an email template's `content` is present without `content_path`, or a
  * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
  * @throws {InvalidAnalyticsBackendEnvOverrideError} when `SUPABASE_ANALYTICS_BACKEND` doesn't

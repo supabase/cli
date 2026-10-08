@@ -285,7 +285,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         routes: {
           [listRoute]: {
             status: 200,
@@ -315,7 +315,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
@@ -551,7 +551,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -576,7 +576,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "yaml",
+        outputFlag: "yaml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -600,12 +600,12 @@ describe("compute list", () => {
   // other resource command, including this one, renders text for them too.
   it.live.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
-    (goOutput) =>
+    (outputFlag) =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({
           workdir: repo.dir,
-          goOutput,
+          outputFlag,
           routes: {
             [listRoute]: {
               status: 200,

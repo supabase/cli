@@ -54,7 +54,7 @@ const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly stdinIsTty?: boolean;
   readonly byMethod?: Partial<Record<HttpMethod, ApiResponse>>;
   readonly network?: "fail";
@@ -93,7 +93,7 @@ function setup(opts: SetupOpts = {}) {
     tty,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   const layer = Layer.mergeAll(
     runtime,
@@ -423,7 +423,7 @@ describe("projects create integration", () => {
   });
 
   it.live("encodes the created project for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* projectsCreate({
         ...BASE_FLAGS,
@@ -437,7 +437,7 @@ describe("projects create integration", () => {
   });
 
   it.live("encodes the created project for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
         ...BASE_FLAGS,
@@ -451,7 +451,7 @@ describe("projects create integration", () => {
   });
 
   it.live("emits byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
         ...BASE_FLAGS,
@@ -466,7 +466,7 @@ describe("projects create integration", () => {
   });
 
   it.live("wraps the created project under [project]-style toml output", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
         ...BASE_FLAGS,

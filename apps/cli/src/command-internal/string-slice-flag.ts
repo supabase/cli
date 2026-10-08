@@ -254,14 +254,14 @@ export function stringSliceFlag(
   options?: { readonly alias?: string },
 ) {
   const alias = options?.alias;
-  const pflagName = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
+  const flagLabel = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
   const base = Flag.string(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
   return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
     Flag.mapTryCatch(
       (rawValues) => parseStringSliceFlag(rawValues),
       (err) =>
         err instanceof StringSliceFlagParseError
-          ? `invalid argument ${JSON.stringify(err.value)} for "${pflagName}" flag: ${err.message}`
+          ? `invalid argument ${JSON.stringify(err.value)} for "${flagLabel}" flag: ${err.message}`
           : err instanceof Error
             ? err.message
             : String(err),

@@ -21,27 +21,27 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
-  parseGoBool,
+  parseBoolLiteral,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
 
-describe("parseGoBool", () => {
+describe("parseBoolLiteral", () => {
   it("accepts the true forms", () => {
     for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(parseGoBool(value)).toBe(true);
+      expect(parseBoolLiteral(value)).toBe(true);
     }
   });
 
   it("accepts the false forms, including the empty string", () => {
     for (const value of ["0", "f", "F", "FALSE", "false", "False", ""]) {
-      expect(parseGoBool(value)).toBe(false);
+      expect(parseBoolLiteral(value)).toBe(false);
     }
   });
 
   it("returns undefined for a value outside the accepted set", () => {
-    expect(parseGoBool("yes")).toBeUndefined();
-    expect(parseGoBool("2")).toBeUndefined();
+    expect(parseBoolLiteral("yes")).toBeUndefined();
+    expect(parseBoolLiteral("2")).toBeUndefined();
   });
 });
 

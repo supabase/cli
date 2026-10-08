@@ -208,7 +208,7 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   isLocal?: boolean;
   agent?: "auto" | "yes" | "no";
-  goOutput?: "env" | "json" | "pretty" | "toml" | "yaml" | "table" | "csv";
+  outputFlag?: "env" | "json" | "pretty" | "toml" | "yaml" | "table" | "csv";
   aiTool?: string;
   stdinTTY?: boolean;
   piped?: string;
@@ -253,7 +253,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(AgentFlag, opts.agent ?? "auto"),
     Layer.succeed(
       OutputFlag,
-      opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ),
     Layer.succeed(DnsResolverFlag, "native"),
     mockCommandSettings({
@@ -425,7 +425,7 @@ describe("db query integration", () => {
   });
 
   it.live("renders plain JSON (no envelope) for a human with -o json", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "json" });
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       const parsed = yield* decodeJson(out.stdoutText);
@@ -491,7 +491,7 @@ describe("db query integration", () => {
       result: SELECT_RESULT,
       agent: "no",
       format: "json",
-      goOutput: "pretty",
+      outputFlag: "pretty",
     });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
@@ -504,7 +504,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({
       result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
       agent: "no",
-      goOutput: "json",
+      outputFlag: "json",
     });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -519,7 +519,7 @@ describe("db query integration", () => {
   it.live("records the resolved -o as the telemetry output_format", () => {
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
-    const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
+    const csv = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "csv" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
         Effect.provide(human.layer),
@@ -537,7 +537,7 @@ describe("db query integration", () => {
   });
 
   it.live("renders CSV with -o csv", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "csv" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
@@ -545,7 +545,7 @@ describe("db query integration", () => {
   });
 
   it.live("honors an explicit -o table over the agent JSON default", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "table" });
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", outputFlag: "table" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toContain("│ id │ name  │");
@@ -554,7 +554,7 @@ describe("db query integration", () => {
   });
 
   it.live("honors an explicit -o csv over the agent JSON default", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "csv" });
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", outputFlag: "csv" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
