@@ -79,6 +79,8 @@ export interface PreparedNativeArtifact {
   readonly version: string;
   readonly root: string;
   readonly executable: string;
+  /** The generation's digest lock file; a native workload spawned from `root` pins this too. */
+  readonly lockPath: string;
 }
 
 interface ArtifactDefinition {
@@ -131,7 +133,14 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
       },
     },
     "bin/supabase-postgres-start",
-    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
+    [
+      "bin/supabase-postgres-start",
+      "bin/postgres",
+      "bin/pg_dump",
+      "bin/pg_dumpall",
+      "bin/pg_prove",
+      "bin/psql",
+    ],
     {
       "15.19.0.004": {
         upstreamVersion: "15.19.0.004",
@@ -230,23 +239,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     {
-      upstreamVersion: "v2.140.10",
+      upstreamVersion: "v2.142.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/realtime:v2.140.10-r0@sha256:592caf1e1c896e395bdf40feba61ef7a3609e0fae7dc77f13e0d34c4b8aed716",
-      upstreamImage: "supabase/realtime:v2.140.10",
+        "ghcr.io/supabase/cli/realtime:v2.142.0-r0@sha256:36bd0d3c0e73e358ef44f35f34977c3e4c577e095e775d61cfc87e75860474d6",
+      upstreamImage: "supabase/realtime:v2.142.0",
       natives: {
         "darwin-arm64": {
-          archive: "51d536d743fb2cd8c23a632b28338951b2883a7ff8ca04239dee3b2e27786d5a",
-          manifest: "c58bb48429c854c206b18817da4d9e43f80fe495cea6a49e9ac2e1566e6ba5ac",
+          archive: "4bb2db0373a2db0fe523457ed270ff5d5da41a41cc0d6deb76ad0a4af4aa753d",
+          manifest: "7cc91adc5f079a8fa4c6fe29f02fc477cd47317a730b43208c8bc9ee98b18d12",
         },
         "linux-amd64": {
-          archive: "8e8994b97862478d9d6cc917d374442b33900435867dbd915e950f9a0317cb9f",
-          manifest: "53d5be6a61c3488d31ea4bff5fdd895ce83571af648026a8223a984e2d9cc5da",
+          archive: "23e71f28b15f1c13e0009360db78d44d55781b368acc5dac97954a2a0d27359b",
+          manifest: "7418855f23e3ea38f9d66a115c3c34fb4df254158a382385b4ada2f170e24e93",
         },
         "linux-arm64": {
-          archive: "439acc097353d2f074edea2728d1d18d672b03a4c1e74321f4eeb8f756fbb6ca",
-          manifest: "6007cefb3e33ed9f434ae9b2d0a924b075d16ba32405a7d8005b7b143dc4f858",
+          archive: "11fb5dd4a498325fc5dbbe25f72bbc0a133902358dfec2ff29bdde2ba2640238",
+          manifest: "df7e46aca883e0888ca01e356d167b64cd741b2c26c3a8c73eac735345994f80",
         },
       },
     },
@@ -256,23 +265,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.79.36",
+      upstreamVersion: "v1.80.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.79.36-r0@sha256:83d831c2e0b3d0070c340135a70f93df4be32b2274d777b9b316f31f9c792dfc",
-      upstreamImage: "supabase/storage-api:v1.79.36",
+        "ghcr.io/supabase/cli/storage:v1.80.0-r0@sha256:255328dfeb0ddb60cf76eb609a4444fadac7f4b5f4d423cccff79930d0f264cf",
+      upstreamImage: "supabase/storage-api:v1.80.0",
       natives: {
         "darwin-arm64": {
-          archive: "373d85e2db5237fbd239dc368355e738f2887329c50c3d8d562cd42b01a2b824",
-          manifest: "060d672776ec77e9dceaf3463f3acbe4bce34a4fac2429eb8975b076d2acc370",
+          archive: "006ab158f6b6a66ef731f67c4c38598380ab15e97843fb12ba0521ee9ff45484",
+          manifest: "8e2cdc1a3df0a334ca4d19cfa9dc5e795073f4cc66cf0063256a68cc80819860",
         },
         "linux-amd64": {
-          archive: "75aad9077a7e7c93aa75ac3a701f55172eee30cc909ba3e9fac6bcb9a7c0fbc4",
-          manifest: "34ad52308c92cc09336cd77266ae6c329aac952eefc11e388e85afad1231d791",
+          archive: "328cfdc8ec741ea4bb171bf2289cef019794901c0d51027d6a0058ffdadc1f7e",
+          manifest: "33efa68bb201959f89565e6451c6766dcd1e09d226ce03be73401a59716c30fe",
         },
         "linux-arm64": {
-          archive: "4b9d29084549c10d72cff60b98dafa68f4439f355c471e37a2945f2395fbe153",
-          manifest: "4ae5ec1879061980ed049b8bdf6492ccc419fd45994e33c1739fccb11ac879ca",
+          archive: "85e38743bd48f87e35f4bc10624503d0c785d2b4537c01a2f40e0f90f7cc0970",
+          manifest: "ecf3aad6606aaa6865956b85e33a720ea11ce6f5e687e0fd9cda2d35a62742ba",
         },
       },
     },
@@ -650,6 +659,49 @@ export const catalogPins = (): ReadonlyArray<{
 const artifactKey = (artifact: SlimServicesArtifact): string =>
   `slim-services/${artifact.service}/${artifact.version}/${artifact.target}`;
 
+/** Builds the native store request shared by ahead-of-time preparation and launch-time use. */
+const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
+  request: { readonly service: ArtifactKind; readonly version?: string },
+  platform: { readonly os: string; readonly arch: string },
+) {
+  const resolved = yield* resolveArtifact(request);
+  const target = targetForPlatform(platform);
+  if (target === undefined)
+    return yield* new ArtifactError({
+      message: `Native artifacts are unsupported on ${platformText(platform)}`,
+      service: request.service,
+      version: resolved.version,
+      platform: platformText(platform),
+    });
+  const sourceArtifact = artifactFor(request.service, resolved, target);
+  const key = artifactKey(sourceArtifact);
+  const source = makeSlimServicesSource((candidate) =>
+    candidate.key === key ? sourceArtifact : undefined,
+  );
+  return {
+    resolved,
+    storeRequest: {
+      key,
+      requiredRuntimePaths: resolved.requiredRuntimePaths,
+      executablePath: resolved.executablePath,
+    },
+    source,
+  };
+});
+
+const toNativeArtifact = (
+  resolved: ArtifactResolution,
+  prepared: { readonly path: string; readonly lockPath: string },
+  path: Path.Path,
+): PreparedNativeArtifact => ({
+  service: resolved.service,
+  version: resolved.version,
+  root: prepared.path,
+  executable: path.join(prepared.path, resolved.executablePath),
+  lockPath: prepared.lockPath,
+});
+
+/** Ahead-of-time: downloads and publishes the generation, but pins nothing. */
 export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact")(function* (
   request: { readonly service: ArtifactKind; readonly version?: string },
   cacheRoot: string,
@@ -660,32 +712,44 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
 ) {
   const resolved = yield* resolveArtifact(request);
   return yield* Effect.gen(function* () {
-    const target = targetForPlatform(platform);
-    if (target === undefined)
-      return yield* new ArtifactError({
-        message: `Native artifacts are unsupported on ${platformText(platform)}`,
-        service: request.service,
-        version: resolved.version,
-        platform: platformText(platform),
-      });
-    const sourceArtifact = artifactFor(request.service, resolved, target);
-    const key = artifactKey(sourceArtifact);
-    const source = makeSlimServicesSource((candidate) =>
-      candidate.key === key ? sourceArtifact : undefined,
-    );
-    const store = yield* makeArtifactStore({ cacheRoot, source });
-    const prepared = yield* store.prepare({
-      key,
-      requiredRuntimePaths: resolved.requiredRuntimePaths,
-      executablePath: resolved.executablePath,
-    });
+    const built = yield* nativeStoreRequest(request, platform);
+    const store = yield* makeArtifactStore({ cacheRoot, source: built.source });
+    const prepared = yield* store.prepare(built.storeRequest);
     const path = yield* Path.Path;
-    return {
-      service: resolved.service,
-      version: resolved.version,
-      root: prepared.path,
-      executable: path.join(prepared.path, resolved.executablePath),
-    };
+    return toNativeArtifact(built.resolved, prepared, path);
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ArtifactError
+        ? cause
+        : new ArtifactError({
+            message: `Unable to prepare ${request.service} artifact: ${errorMessage(cause)}`,
+            service: request.service,
+            version: resolved.version,
+            cause,
+          }),
+    ),
+  );
+});
+
+/**
+ * The one scoped launch-time operation: pins the generation, resolves or prepares it, and returns
+ * its paths. Every consumer must use the returned paths only inside this scope.
+ */
+export const useNativeArtifact = Effect.fn("Artifacts.useNativeArtifact")(function* (
+  request: { readonly service: ServiceKind; readonly version?: string },
+  cacheRoot: string,
+  platform: { readonly os: string; readonly arch: string } = {
+    os: process.platform,
+    arch: process.arch,
+  },
+) {
+  const resolved = yield* resolveArtifact(request);
+  return yield* Effect.gen(function* () {
+    const built = yield* nativeStoreRequest(request, platform);
+    const store = yield* makeArtifactStore({ cacheRoot, source: built.source });
+    const prepared = yield* store.use(built.storeRequest);
+    const path = yield* Path.Path;
+    return toNativeArtifact(built.resolved, prepared, path);
   }).pipe(
     Effect.mapError((cause) =>
       cause instanceof ArtifactError

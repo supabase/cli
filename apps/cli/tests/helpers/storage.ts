@@ -18,6 +18,7 @@ import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
+import { unusedGateway } from "./unused-stack.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { generateGoJwt } from "../../src/command-internal/go-jwt.ts";
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
@@ -156,13 +157,9 @@ const observation = (
   health,
   error:
     error === undefined ? undefined : { _tag: "ServiceError", operation: "status", message: error },
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
-  intentRevision: 1,
   wakeEnabled,
-  registered: true,
 });
 
 const instance = <K extends ServiceCreation["service"]>(
@@ -263,6 +260,7 @@ export function buildStorageStackApi(
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   };
   const definition = {
@@ -275,7 +273,6 @@ export function buildStorageStackApi(
     ],
     composition: { members, dependencies: [] },
     lifetime: "detached" as const,
-    ports: [],
   };
   const findStackCalls: Array<{ readonly projectRoot: string }> = [];
   const layer =

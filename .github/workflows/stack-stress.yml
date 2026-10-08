@@ -1,0 +1,59 @@
+name: Stack stress
+
+# Repeats the idle/wake and parallel-stack scenarios back to back on each
+# backend to surface timing-dependent races. Manual only: a failing iteration
+# fails the job outright and is never retried.
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Runs per backend
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    name: Run stack stress scenarios (${{ matrix.runtime }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 90
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, docker, podman]
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
+
+      # vitest's --repeats counts the runs after the first.
+      - name: Run idle and parallel-stack scenarios repeatedly
+        working-directory: packages/stack
+        env:
+          ITERATIONS: ${{ inputs.iterations }}
+        run: |
+          if ! [ "$ITERATIONS" -ge 1 ] 2>/dev/null; then
+            echo "iterations must be a whole number of at least 1, got '$ITERATIONS'" >&2
+            exit 1
+          fi
+          pnpm run test:e2e:run \
+            whole-stack.${{ matrix.runtime }}.idle-parallel \
+            --repeats=$((ITERATIONS - 1)) \
+            --passWithNoTests=false

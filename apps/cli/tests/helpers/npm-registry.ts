@@ -217,10 +217,7 @@ export function describeError(e: unknown): string {
   return String(e);
 }
 
-export async function runNpmTest(
-  version: string,
-  tag: "latest" | "alpha" | "beta" = "latest",
-): Promise<boolean> {
+export async function runNpmTest(version: string, tag = "latest"): Promise<boolean> {
   await using _pkgJsons = await savePackageJsons();
   await using tmp = await createTmpDir("npm-smoke-");
 

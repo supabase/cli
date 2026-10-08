@@ -1,11 +1,11 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
 import { postgresVersion } from "../Artifacts.ts";
-import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
+import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackKeysInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
-import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
+import { endpointNames, endpointPort, sharesApiEndpoint } from "../host/Endpoints.ts";
 
 const DEFAULT_IDLE_MILLIS = 60_000;
 /** Studio idles slower than its peers: a background tab shouldn't cold-start it every minute. */
@@ -19,6 +19,7 @@ const managedBindings: ReadonlyArray<{
   readonly output: string;
   readonly targetKind: ServiceCreation["service"];
   readonly input: string;
+  readonly lifecycleDependency?: boolean;
 }> = [
   {
     sourceKind: "database",
@@ -110,6 +111,7 @@ const managedBindings: ReadonlyArray<{
     output: "url",
     targetKind: "studio",
     input: "functionsUrl",
+    lifecycleDependency: false,
   },
   {
     sourceKind: "mail",
@@ -247,9 +249,6 @@ const differences = (left: unknown, right: unknown, path: string): ReadonlyArray
       .flatMap((key) => differences(left[key], right[key], path === "" ? key : `${path}.${key}`));
   return Object.is(left, right) ? [] : [path];
 };
-
-const sharesApiEndpoint = (creation: ServiceCreationInput): boolean =>
-  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
 
 /** Fixed ports requested for the shared API endpoint; composition accepts at most one. */
 const fixedApiPorts = (creations: ReadonlyArray<ServiceCreationInput>): ReadonlySet<number> =>
@@ -423,7 +422,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                 operations.status(id).pipe(
                   Effect.mapError(compositionErrorFrom),
                   Effect.flatMap((status) =>
-                    status.lifecycle === "stopped" && !status.wakeEnabled
+                    isStoppedAndWakeDisabled(status)
                       ? Effect.void
                       : Effect.fail(
                           compositionError(
@@ -454,10 +453,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
       const byKind = new Map(normalized.map((creation) => [creation.service, creation]));
-      const apiSource = normalized.find(
-        (creation) =>
-          apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
-      );
+      const apiSource = normalized.find(sharesApiEndpoint);
       if (
         apiSource === undefined &&
         normalized.some((creation) => ["auth", "functions", "studio"].includes(creation.service))
@@ -546,6 +542,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           output: outputName,
           targetKind,
           input: inputName,
+          lifecycleDependency = true,
         } of managedBindings) {
           const source = entriesByKind.get(sourceKind);
           const target = entriesByKind.get(targetKind);
@@ -561,6 +558,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           }
           values[inputName] = yield* operations.output(source.id, outputName);
           configInputs.set(target.id, values);
+          if (!lifecycleDependency) continue;
           const key = `${source.id}->${target.id}`;
           const dependency = dependencyMap.get(key) ?? {
             from: source.id,
@@ -617,9 +615,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             creation.service !== "database" &&
             endpointNames(creation).length > 0;
           return lazy
-            ? creation.service === "functions"
-              ? { id, activation: "lazy" as const }
-              : { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
+            ? { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({

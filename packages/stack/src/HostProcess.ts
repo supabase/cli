@@ -31,7 +31,11 @@ import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dis
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
 import { StackRpc } from "./Rpc.ts";
-import { SavedStack, type Interface as StateInterface, type StateError } from "./State.ts";
+import {
+  SavedStack,
+  type Interface as StateInterface,
+  type NamespaceError,
+} from "./StackNamespace.ts";
 
 declare const SUPABASE_STACK_BUILD_ID: string | undefined;
 
@@ -259,7 +263,7 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
   options: ConnectOptions = {},
 ): Effect.fn.Return<
   HostAccess,
-  HostProcessError | StateError,
+  HostProcessError | NamespaceError,
   HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const stack = yield* registered(state, stackId);
@@ -342,6 +346,8 @@ export interface LaunchOptions {
   readonly cacheRoot: string;
   readonly stackId: string;
   readonly entrypoint?: string;
+  /** Extra positional arguments a non-default `entrypoint` reads, ahead of `register`. */
+  readonly entrypointArgs?: ReadonlyArray<string>;
   /** Registers this definition once the spawned owner holds the lease. */
   readonly register?: SavedStack;
   /** Ties a spawned owner to the enclosing scope, whose closure destroys the stack. */
@@ -459,7 +465,14 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
             try: () => {
               const started = spawn(
                 process.execPath,
-                [entrypoint, options.stateRoot, options.cacheRoot, options.stackId, ...register],
+                [
+                  entrypoint,
+                  options.stateRoot,
+                  options.cacheRoot,
+                  options.stackId,
+                  ...(options.entrypointArgs ?? []),
+                  ...register,
+                ],
                 {
                   cwd: process.cwd(),
                   detached: true,
@@ -527,7 +540,11 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                 }
                 return yield* line.reason === "lease-held" || line.reason === "exists"
                   ? error("startup", "Stack already exists; use open")
-                  : failure(line.message, line.reason);
+                  : error(
+                      "startup",
+                      `Stack owner failed to start: ${line.message} (owner log: ${log})`,
+                      line.reason,
+                    );
               }
               if (line.endpoint.stackId !== options.stackId)
                 return yield* failure(
@@ -564,7 +581,7 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   options: LaunchOptions,
 ): Effect.fn.Return<
   HostAccess,
-  HostProcessError | StateError,
+  HostProcessError | NamespaceError,
   Scope.Scope | HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const entrypoint = options.entrypoint ?? hostEntrypointFor(import.meta.url);

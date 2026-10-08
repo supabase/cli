@@ -8,6 +8,7 @@ import {
   Fiber,
   FileSystem,
   Latch,
+  Option,
   Path,
   PlatformError,
   PubSub,
@@ -37,9 +38,7 @@ const fakeInstance = (
       options.capacity === undefined
         ? yield* PubSub.unbounded<LaunchOutput>()
         : yield* PubSub.sliding<LaunchOutput>(options.capacity);
-    const launch = yield* SubscriptionRef.make<{ readonly launchId: number | undefined }>({
-      launchId: undefined,
-    });
+    const launch = yield* SubscriptionRef.make<number | undefined>(undefined);
     const sequences = new Map<number, number>();
     const chunk = (launchId: number, text: string, stream: "stdout" | "stderr" = "stdout") => {
       const seq = sequences.get(launchId) ?? 0;
@@ -58,7 +57,7 @@ const fakeInstance = (
       service: options.service ?? "auth",
       instanceId,
       logs: PubSub.subscribe(logs),
-      observation: SubscriptionRef.changes(launch),
+      launches: SubscriptionRef.changes(launch),
       publish: (...chunks: ReadonlyArray<LaunchOutput>) =>
         Clock.currentTimeMillis.pipe(
           Effect.flatMap((time) =>
@@ -69,7 +68,7 @@ const fakeInstance = (
           ),
         ),
       chunk,
-      setLaunch: (launchId: number | undefined) => SubscriptionRef.set(launch, { launchId }),
+      setLaunch: (launchId: number | undefined) => SubscriptionRef.set(launch, launchId),
     };
   });
 
@@ -213,7 +212,7 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("writes a launch's partial line when its observation leaves the launch", () =>
+  it.effect("writes a launch's partial line when the instance leaves the launch", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-partial-");
       const { store } = yield* openStore(root);
@@ -252,14 +251,12 @@ describe("LogStore", () => {
       const left = yield* Deferred.make<void>();
       const fake = yield* fakeInstance("queued-end");
       // The store pulls past the transition only after it has handled it.
-      const observation = Stream.make({ launchId: 1 }).pipe(
-        Stream.concat(
-          Stream.fromEffect(Deferred.await(leave).pipe(Effect.as({ launchId: undefined }))),
-        ),
+      const launches: Stream.Stream<number | undefined> = Stream.make(1).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.await(leave).pipe(Effect.as(undefined)))),
         Stream.concat(Stream.fromEffectDrain(Deferred.succeed(left, undefined))),
         Stream.concat(Stream.never),
       );
-      yield* store.attach({ ...fake, observation });
+      yield* store.attach({ ...fake, launches });
       const reader = yield* collect(store.read("queued-end", { from: "oldest", follow: true }));
       const euro = encoder.encode("€");
       const withBytes = (chunk: LaunchOutput, bytes: ReadonlyArray<number>): LaunchOutput => ({
@@ -941,6 +938,30 @@ describe("LogStore", () => {
       const records = yield* persisted({ root });
       expect(texts(records)).toEqual(["before restart", "after restart"]);
       expect(records.map(({ position }) => position?.generation)).toEqual([1, 1, 2, 2]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("numbers launches above retained history when the newest segment is empty", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* tempRoot("log-store-empty-newest-");
+      const opened = yield* openStore(root);
+      const instance = yield* fakeInstance("crashed");
+      yield* opened.store.attach(instance);
+      const reader = yield* collect(
+        opened.store.read("crashed", { from: "oldest", tail: 0, follow: true }),
+      );
+      yield* instance.publish(instance.chunk(7, "launch seven\n"));
+      yield* reader.take(2);
+      yield* opened.close;
+      yield* fs.writeFileString(path.join(root, "auth", "crashed", segmentName(2)), "");
+
+      const restarted = yield* openStore(root);
+
+      expect(
+        yield* restarted.store.latestLaunchId({ service: "auth", instanceId: "crashed" }),
+      ).toEqual(Option.some(7));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

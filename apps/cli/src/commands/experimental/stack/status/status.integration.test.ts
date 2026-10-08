@@ -9,6 +9,7 @@ import {
   StackError,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -102,13 +103,9 @@ const makeObservation = (
   lifecycle: "stopped",
   health: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
-  intentRevision: 1,
   wakeEnabled: true,
-  registered: true,
   ...input,
 });
 
@@ -176,6 +173,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
+  gateway: unusedGateway,
   commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },
@@ -239,7 +237,6 @@ const runStatus = (input: {
       })),
       composition: { members: input.members ?? [], dependencies: [] },
       lifetime: "detached" as const,
-      ports: [],
     };
     const api = Layer.succeed(StackApi, {
       create: () => Effect.die("create must not run"),

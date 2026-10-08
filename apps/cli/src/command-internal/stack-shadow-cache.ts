@@ -50,7 +50,7 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
     image("realtime", input.setup.realtimeEnabledForSetup),
   ]);
   const keyInputs: ShadowCacheKeyInputs = {
-    postgresImage: JSON.stringify(["stack-v1", runtime, platform, arch, postgres.image]),
+    postgresImage: JSON.stringify(["stack-v2", runtime, platform, arch, postgres.image]),
     majorVersion: input.setup.majorVersion,
     jwtSecret: input.jwtSecret,
     jwtExpiry: input.jwtExpiry,

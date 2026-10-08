@@ -3,10 +3,10 @@ import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
+import { StackApi } from "./stack-api.ts";
 import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
-import { selectStackRuntime } from "./stack-runtime.ts";
+import { selectStackRuntime, type StackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -20,15 +20,13 @@ import { applyMigrations } from "./migration-apply.ts";
 import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
 import { stackDatabaseVersion } from "./stack-database-version.ts";
 
-type Runtime = "native" | "docker" | "podman";
-
 export interface StackShadowAcquiredHandle {
   readonly stack: Stack;
   readonly database: DatabaseInstance;
   readonly url: string;
   readonly host: string;
   readonly port: number;
-  readonly runtime: Runtime;
+  readonly runtime: StackRuntime;
   readonly version: string;
   /** Cache lineage when a baseline was restored or atomically published by this handle. */
   readonly snapshotKey?: string;
@@ -37,7 +35,7 @@ export interface StackShadowAcquiredHandle {
 
 interface ShadowOptions {
   readonly port?: number;
-  readonly runtime?: Runtime;
+  readonly runtime?: StackRuntime;
   readonly webhooks?: SetupDatabaseOptions["webhooks"];
   readonly bypassCache?: boolean;
 }
@@ -82,7 +80,7 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
 
 const initialize = Effect.fn("StackShadow.initialize")(function* (
   stack: Stack,
-  runtime: Runtime,
+  runtime: StackRuntime,
   version: string,
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions,
@@ -247,14 +245,6 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   );
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
-      Effect.flatMap((result) =>
-        result.runtimeCleanup === "skipped"
-          ? output.raw(
-              `Warning: ${skippedRuntimeCleanupWarning(`shadow stack ${stack.id}`, result)}\n`,
-              "stderr",
-            )
-          : Effect.void,
-      ),
       Effect.catch((cause) =>
         output.raw(`Failed to destroy shadow stack ${stack.id}: ${cause.message}.\n`, "stderr"),
       ),

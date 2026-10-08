@@ -24,6 +24,7 @@ import {
   automaticRuntimeNotice,
   recordStackRuntimeTelemetry,
   selectStackRuntime,
+  type StackRuntime,
 } from "./stack-runtime.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
@@ -127,7 +128,7 @@ const RUNTIME_UNAVAILABLE = new StackRuntimeUnavailableError({
 });
 
 export const stackRequireProjectRuntime: Effect.Effect<
-  "native" | "docker" | "podman",
+  StackRuntime,
   StackRuntimeUnavailableError,
   CommandSettings | StackApi | Path.Path
 > = stackProjectRuntime.pipe(

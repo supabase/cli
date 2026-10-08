@@ -128,135 +128,72 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
   return isRecord(value) ? value : undefined;
 };
 
-const explicitPort = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-): number | undefined => {
-  const value = section(document, sectionName)?.[key];
-  return typeof value === "number" ? value : undefined;
-};
-
-const envPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-  configured: number,
-  env: Readonly<Record<string, string>>,
-): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  return explicitPort(document, sectionName, key) === undefined ? undefined : configured;
-};
-
-const envNestedPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  nestedSection: string,
-  key: string,
-  configured: number,
-  env: Readonly<Record<string, string>>,
-): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  const nested = section(section(document, sectionName), nestedSection);
-  return typeof nested?.[key] === "number" ? configured : undefined;
-};
-
 /** A setting's `config.toml` key and the `SUPABASE_*` env var that overrides it. */
 export interface StackEndpointSetting {
   readonly configPath: string;
   readonly envVar: string;
 }
 
-/**
- * A port setting's `config.toml` key and env var, shared by `createCreations` and
- * `stackEndpointSetting` so both report the same names; a new endpoint still needs an entry in
- * `endpointSettingsByServiceEndpoint`.
- */
-interface PortSetting extends StackEndpointSetting {
-  readonly section: string;
-  readonly nestedSection?: string;
-  readonly key: string;
-}
-
-const DB_PORT: PortSetting = {
+// Shared by `createCreations` and `stackEndpointSetting`; a new endpoint also needs an entry in
+// `endpointSettingsByServiceEndpoint`.
+const DB_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_DB_PORT",
-  section: "db",
-  key: "port",
   configPath: "db.port",
 };
-const API_PORT: PortSetting = {
+const API_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_API_PORT",
-  section: "api",
-  key: "port",
   configPath: "api.port",
 };
-const STUDIO_PORT: PortSetting = {
+const STUDIO_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_STUDIO_PORT",
-  section: "studio",
-  key: "port",
   configPath: "studio.port",
 };
-const DB_POOLER_PORT: PortSetting = {
+const DB_POOLER_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_DB_POOLER_PORT",
-  section: "db",
-  nestedSection: "pooler",
-  key: "port",
   configPath: "db.pooler.port",
 };
-const LOCAL_SMTP_PORT: PortSetting = {
+const LOCAL_SMTP_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_PORT",
-  section: "local_smtp",
-  key: "port",
   configPath: "local_smtp.port",
 };
-const LOCAL_SMTP_SMTP_PORT: PortSetting = {
+const LOCAL_SMTP_SMTP_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-  section: "local_smtp",
-  key: "smtp_port",
   configPath: "local_smtp.smtp_port",
 };
-const LOCAL_SMTP_POP3_PORT: PortSetting = {
+const LOCAL_SMTP_POP3_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_POP3_PORT",
-  section: "local_smtp",
-  key: "pop3_port",
   configPath: "local_smtp.pop3_port",
 };
-const ANALYTICS_PORT: PortSetting = {
+const ANALYTICS_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_ANALYTICS_PORT",
-  section: "analytics",
-  key: "port",
   configPath: "analytics.port",
 };
-const EDGE_RUNTIME_INSPECTOR_PORT: PortSetting = {
+const EDGE_RUNTIME_INSPECTOR_PORT: StackEndpointSetting = {
   envVar: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-  section: "edge_runtime",
-  key: "inspector_port",
   configPath: "edge_runtime.inspector_port",
 };
 
-/** Resolves one `PortSetting` against the loaded document and env, picking the nested variant when needed. */
+/** The configured port when the setting is present in `config.toml` or its env var, else undefined. */
 const resolvePort = (
-  setting: PortSetting,
+  setting: StackEndpointSetting,
   document: Readonly<Record<string, unknown>> | undefined,
   configured: number,
   env: Readonly<Record<string, string>>,
-): number | undefined =>
-  setting.nestedSection === undefined
-    ? envPortOrConfigured(setting.envVar, document, setting.section, setting.key, configured, env)
-    : envNestedPortOrConfigured(
-        setting.envVar,
-        document,
-        setting.section,
-        setting.nestedSection,
-        setting.key,
-        configured,
-        env,
-      );
+): number | undefined => {
+  if (envOverride(setting.envVar, undefined, env) !== undefined) return configured;
+  const path = setting.configPath.split(".");
+  const key = path[path.length - 1] ?? "";
+  const parent = path
+    .slice(0, -1)
+    .reduce<Readonly<Record<string, unknown>> | undefined>(
+      (node, name) => section(node, name),
+      document,
+    );
+  return typeof parent?.[key] === "number" ? configured : undefined;
+};
 
 /**
- * Maps a saved stack endpoint (service + endpoint name) to the `PortSetting` that controls it.
+ * Maps a saved stack endpoint (service + endpoint name) to the `StackEndpointSetting` that controls it.
  * An endpoint missing here (e.g. `pooler.http`, `realtime.rpc`) is always automatic.
  */
 const endpointSettingsByServiceEndpoint: Readonly<Record<string, StackEndpointSetting>> = {

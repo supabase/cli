@@ -120,6 +120,25 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live("refuses a stack with an unknown service kind and names its directory", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const statePath = f.path.join(f.locations.stateRoot, f.stack.id, "state.json");
+      const saved = yield* f.fs.readFileString(statePath);
+      yield* f.fs.writeFileString(
+        statePath,
+        saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
+      );
+
+      const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
+
+      expect(error.message).toContain(
+        `Remove its directory ${f.path.join(f.locations.stateRoot, f.stack.id)}`,
+      );
+      expect(yield* f.fs.exists(statePath)).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
   it.live("destroys only the stack addressed by the short ID that stack list shows", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
@@ -155,7 +174,6 @@ describe("stack destroy", () => {
                   id,
                   destroy: Effect.sync(() => {
                     destroyed += 1;
-                    return { runtimeCleanup: "complete" } as const;
                   }),
                 })
               : Option.none(),

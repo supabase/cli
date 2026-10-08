@@ -7,7 +7,7 @@ import {
   DEFAULT_LOCAL_SECRET_KEY,
   DEFAULT_SIGNING_KEY,
 } from "../Defaults.ts";
-import type { StackCredentials, StackKeysInput } from "../State.ts";
+import type { StackCredentials, StackKeysInput } from "../StackNamespace.ts";
 
 const serviceError = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
