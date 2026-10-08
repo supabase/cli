@@ -1,5 +1,12 @@
 import { Config, Effect, Option } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { isBitbucketPipeline } from "../../../command-internal/bitbucket-pipeline.ts";
+import {
+  COMPOSE_PROJECT_LABEL,
+  ensureVolume,
+} from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
+import { CLI_PROJECT_LABEL } from "../../../command-internal/docker-ids.ts";
 import { NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -128,7 +135,7 @@ const containerDatabaseUrl = Effect.fnUntraced(function* (url: string) {
 });
 
 /** Builds the shared SOURCE/TARGET/SSL/schema env for both migra paths. */
-const buildMigraEnv = Effect.fnUntraced(function* (params: {
+const buildMigraEnv = Effect.fn("Migra.buildEnv")(function* (params: {
   readonly source: string;
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
@@ -154,7 +161,7 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
  * Loads the target's user-defined schemas for the bash fallback: migra.sh iterates over an
  * explicit schema list and cannot diff in exclude mode.
  */
-const loadTargetUserSchemas = Effect.fnUntraced(function* (
+const loadTargetUserSchemas = Effect.fn("Migra.loadTargetUserSchemas")(function* (
   target: string,
   connectOptions: DbConnectOptions,
 ) {
@@ -186,7 +193,7 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
  * network. When no `--schema` is given, the included schemas are loaded from the target and
  * passed as positional args to migra.sh.
  */
-const diffMigraBash = Effect.fnUntraced(function* (params: {
+const diffMigraBash = Effect.fn("Migra.diffBash")(function* (params: {
   readonly source: string;
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
@@ -247,12 +254,37 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
   return new TextDecoder().decode(result.stdout);
 });
 
+/** Pre-creates the project-labeled Deno-cache volume so `stop --no-backup` prunes it. */
+const ensureCacheVolume = Effect.fn("Migra.ensureCacheVolume")(function* (ctx: PgDeltaContext) {
+  const inBitbucket = yield* isBitbucketPipeline(ctx.projectEnv).pipe(
+    Effect.mapError(
+      (error) =>
+        new MigraDiffError({
+          message: `error diffing schema: failed to resolve Docker environment: ${error.message}`,
+        }),
+    ),
+  );
+  if (inBitbucket) return;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  yield* ensureVolume(spawner, edgeRuntimeId(ctx.projectId), {
+    [CLI_PROJECT_LABEL]: ctx.projectId,
+    [COMPOSE_PROJECT_LABEL]: ctx.projectId,
+  }).pipe(
+    Effect.mapError((cause) => {
+      const message = `error diffing schema: ${cause.message}`;
+      return cause.reason === "runtime"
+        ? new MigraDiffError({ message, docker: "daemon" })
+        : new MigraDiffError({ message });
+    }),
+  );
+});
+
 /**
  * Diffs SOURCE → TARGET with migra via the edge-runtime template, falling back to the
  * `supabase/migra` Docker image when the edge-runtime worker runs out of memory.
  * `source`/`target` are live Postgres URLs (the shadow source and the diff target).
  */
-export const diffMigra = Effect.fnUntraced(function* (
+export const diffMigra = Effect.fn("Migra.diff")(function* (
   ctx: PgDeltaContext,
   params: {
     readonly source: string;
@@ -263,6 +295,7 @@ export const diffMigra = Effect.fnUntraced(function* (
 ) {
   const edgeRuntime = yield* EdgeRuntimeScript;
   const env = yield* buildMigraEnv(params);
+  yield* ensureCacheVolume(ctx);
   const result = yield* edgeRuntime
     .run({
       script: migraDiffScript,

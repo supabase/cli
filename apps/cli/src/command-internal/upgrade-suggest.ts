@@ -80,7 +80,7 @@ export const gateMapError =
  * `linked-project-cache.layer.ts`). Returns whether the feature was
  * confirmed plan-gated.
  */
-export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
+export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts: {
   readonly projectRef: string;
   /**
    * Entitlements-fallback key. Omit for envelope-only sites: the domains
@@ -116,6 +116,7 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
   const analytics = yield* Analytics;
   const cliSettings = yield* CommandSettings;
   const httpClient = yield* HttpClient.HttpClient;
+  yield* Effect.annotateCurrentSpan("upgrade.gated", false);
 
   let gate:
     | { readonly billingUrl: string; readonly feature: string; readonly orgSlug: string }
@@ -203,6 +204,7 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
     };
   }
 
+  yield* Effect.annotateCurrentSpan("upgrade.gated", true);
   const suggestion = `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", gate.billingUrl)}`;
 
   if (output.format === "text") {

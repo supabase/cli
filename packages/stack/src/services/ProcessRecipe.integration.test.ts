@@ -25,6 +25,7 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { nativePortBase, nativePortSpan } from "../Ports.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -37,7 +38,9 @@ import {
   type ContainerProcess,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
-import { makeService, ServiceError } from "../Service.ts";
+import { ServiceError } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -188,16 +191,19 @@ describe("ProcessRecipe launch cleanup", () => {
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
           } satisfies ProcessDependencies;
-          const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
-          const service = yield* makeService(recipe.definition, {
+          const recipe = yield* makeProcessRecipe(options, dependencies, spec);
+          const service = yield* makeStandaloneService(recipe.definition, {
             id: `rest-process-recipe-${scenario}`,
             config: creation,
           });
 
           expect(Exit.isFailure(yield* service.start.pipe(Effect.exit))).toBe(true);
-          expect((yield* service.get).lifecycle).toBe("stopping");
-          expect((yield* service.get).cleanupError?.operation).toBe("stop");
+          expect(yield* service.get).toMatchObject({
+            lifecycle: "stopping",
+            error: { operation: "launch" },
+          });
           expect(yield* Ref.get(startupLaunches)).toBe(1);
           expect(yield* Ref.get(serviceLaunches)).toBe(0);
           expect(yield* Ref.get(active)).toBe(1);
@@ -275,23 +281,25 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
-        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-native",
           config: creation,
         });
 
         const failure = yield* service.start.pipe(Effect.exit);
         expect(Exit.isFailure(failure)).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("stopping");
-        expect((yield* service.get).cleanupError?.operation).toBe("stop");
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "stopping",
+          error: { operation: "launch" },
+        });
         expect(startupWrapped).toBe(true);
 
         yield* Ref.set(cleanupFailure, false);
         yield* service.stop;
         expect((yield* service.get).lifecycle).toBe("stopped");
-        expect((yield* service.get).cleanupError).toBeUndefined();
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
   );
@@ -385,9 +393,10 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
-        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-port-order",
           config: creation,
         });
@@ -400,6 +409,10 @@ describe("ProcessRecipe launch cleanup", () => {
         expect(blocker?.listening).toBe(true);
         expect(ports).toHaveLength(3);
         expect(ports.every((port) => port > 0)).toBe(true);
+        for (const port of ports) {
+          expect(port).toBeGreaterThanOrEqual(nativePortBase);
+          expect(port).toBeLessThan(nativePortBase + nativePortSpan);
+        }
         yield* service.stop;
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
@@ -443,7 +456,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     config: { databaseUrl: "postgresql://postgres:postgres@host.docker.internal:54322/postgres" },
   };
   const recipe = yield* makeProcessRecipe(
-    creation,
     {
       stackId: "process-recipe-test",
       instanceId: "instance",
@@ -452,6 +464,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       runtime: "docker",
     },
     {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
       crypto: yield* Crypto.Crypto,
@@ -461,7 +474,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     },
     Realtime.makeSpec(),
   );
-  return yield* makeService(recipe.definition, { id: "realtime", config: creation });
+  return yield* makeStandaloneService(recipe.definition, { id: "realtime", config: creation });
 });
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -486,15 +499,19 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
-  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
+  const { releaseVersion, natives } = yield* resolveArtifact({ service: artifact.service });
   const request: ArtifactRequest = {
     key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
   const fs = yield* FileSystem.FileSystem;
+  // The generation directory is content-addressed by this digest: it must match what the real
+  // artifact source resolves for this platform, or this fixture is invisible to consumers that
+  // resolve the real catalog source for the same key.
+  const digest = natives[target].archive;
   const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
+    checksum: () => Effect.succeed(digest),
     materialize: (_entry, destination) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -647,7 +664,6 @@ const nativeRestRecipe = Effect.fn(function* (
   const cacheRoot = path.join(root, "cache");
   yield* nativeRestArtifact(cacheRoot, program);
   return yield* makeProcessRecipe(
-    creation,
     {
       ...options,
       root,
@@ -655,7 +671,15 @@ const nativeRestRecipe = Effect.fn(function* (
       runtime: "native",
       platform: { os: process.platform, arch: process.arch },
     },
-    { fs, path, crypto, client, spawner, container: undefined },
+    {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+      fs,
+      path,
+      crypto,
+      client,
+      spawner,
+      container: undefined,
+    },
     {
       ...spec,
       env: (_creation, endpoints) =>
@@ -728,7 +752,10 @@ describe("process recipe startup", () => {
             `server.listen(Number(process.env.PORT), "127.0.0.1");\n`,
           collidingSpawner,
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         yield* service.ready;
@@ -738,7 +765,7 @@ describe("process recipe startup", () => {
         expect(yield* Ref.get(taken)).toHaveLength(2);
         expect(yield* Ref.get(taken)).not.toContain(endpoint?.port);
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/`),
+          HttpClientRequest.get(`http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/`),
         );
         expect(yield* response.text).toBe("owned-fixture");
         yield* service.stop;
@@ -782,7 +809,10 @@ describe("process recipe startup", () => {
             {},
             (line) => line.includes("listener bound"),
           );
-          const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+          const service = yield* makeStandaloneService(recipe.definition, {
+            id: "rest",
+            config: creation,
+          });
 
           yield* service.start;
           const failure = yield* Effect.flip(service.ready);
@@ -827,7 +857,10 @@ describe("process recipe startup", () => {
           spawner,
           { PID_FILE: pidFile },
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         const failure = yield* Effect.flip(service.ready);
@@ -915,7 +948,6 @@ describe("process recipe startup", () => {
             ),
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-race",
             instanceId: "instance",
@@ -924,13 +956,22 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: interceptingSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: interceptingSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(testScope, "sequential");
         const runtime = yield* recipe.definition.launch({
           id: "pooler",
+          launchId: 1,
           config: creation,
           scope,
         });
@@ -948,7 +989,9 @@ describe("process recipe startup", () => {
         );
         expect(yield* competingResponse.text).toBe("competing-listener");
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/api/health`),
+          HttpClientRequest.get(
+            `http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/api/health`,
+          ),
         );
         expect(yield* response.text).toBe(`owned-fixture:${endpoint?.port}`);
         expect(yield* Ref.get(collisionInstalled)).toBe(true);
@@ -982,7 +1025,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-exhaustion",
             instanceId: "instance",
@@ -992,6 +1034,7 @@ describe("process recipe startup", () => {
             platform: { os: process.platform, arch: process.arch },
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
@@ -1001,7 +1044,10 @@ describe("process recipe startup", () => {
           },
           Pooler.makeSpec(),
         );
-        const service = yield* makeService(recipe.definition, { id: "pooler", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "pooler",
+          config: creation,
+        });
         const subscribed = yield* Deferred.make<void>();
         const exitObserved = yield* Deferred.make<void>();
         yield* service.observation.pipe(
@@ -1116,7 +1162,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-deadline",
             instanceId: "instance",
@@ -1125,12 +1170,25 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: deadlineSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: deadlineSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.flip(runtime.health).pipe(Effect.forkChild);
         yield* Deferred.await(clockAdvanced);
         const failure = yield* Fiber.join(health);
@@ -1171,7 +1229,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-unrelated-failure",
             instanceId: "instance",
@@ -1181,6 +1238,7 @@ describe("process recipe startup", () => {
             platform: { os: process.platform, arch: process.arch },
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
@@ -1192,7 +1250,12 @@ describe("process recipe startup", () => {
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.exit(runtime.health);
         expect(yield* Ref.get(mainLaunches)).toBe(1);
         expect(yield* Ref.get(startupLaunches)).toEqual(["prepare", "provision-tenant"]);
@@ -1275,7 +1338,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-exit-failure",
             instanceId: "instance",
@@ -1284,12 +1346,25 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: failingSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: failingSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.exit(runtime.health);
         expect(Exit.isFailure(health)).toBe(true);
         const exit = yield* runtime.exit;

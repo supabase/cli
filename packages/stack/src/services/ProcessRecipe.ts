@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Clock,
@@ -19,9 +20,15 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as Net from "node:net";
-import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
-import { accepts } from "../Ports.ts";
+import {
+  prepareNativeArtifact,
+  resolveArtifact,
+  useNativeArtifact,
+  type ServiceKind,
+} from "../Artifacts.ts";
+import * as Environment from "../namespace/Environment.ts";
+import { containerInstancePath, destroyOwnedRoot, type BorrowedPath } from "../namespace/Paths.ts";
+import { accepts, reserveNativePort } from "../Ports.ts";
 import {
   type ContainerError,
   type ContainerProcess,
@@ -35,20 +42,21 @@ import {
   spawnNativeProcess,
 } from "../runtime/NativeProcess.ts";
 import {
+  launchOutputPublisher,
   mapToServiceError,
   processExit as sharedProcessExit,
   publishProcessLogs,
   runtimeSessionFromContainer,
+  type LaunchOutput,
+  type PublishOutput,
 } from "../runtime/Session.ts";
-import { ServiceError, ServiceLaunchError, type RuntimeSession } from "../Service.ts";
 import {
-  containerInstancePath,
-  ensureOwnedInstanceRoot,
-  removeOwnedInstanceRoot,
-} from "./InstanceRoot.ts";
+  ServiceError,
+  ServiceLaunchError,
+  type RuntimeSession,
+  type ServiceLaunchContext,
+} from "../Service.ts";
 import {
-  type CatalogLog,
-  CatalogError,
   type CatalogOptions,
   type ProcessRecipeResult,
   type RecipeCreation,
@@ -60,6 +68,22 @@ interface RecipeMount {
   readonly target: string;
   readonly readOnly: boolean;
 }
+
+/** `uid:gid` a container runs as when it writes into a borrowed host path, so the caller keeps ownership. */
+const hostUser: string | undefined =
+  process.getuid === undefined || process.getgid === undefined
+    ? undefined
+    : `${process.getuid()}:${process.getgid()}`;
+
+/** The host-user override for a launch whose mounts write into one of its recipe's caller paths. */
+const userForMounts = (
+  mounts: ReadonlyArray<RecipeMount>,
+  callerPaths: ReadonlyArray<string>,
+): string | undefined =>
+  hostUser !== undefined &&
+  mounts.some((mount) => !mount.readOnly && callerPaths.includes(mount.source))
+    ? hostUser
+    : undefined;
 
 export interface StartupCommand {
   readonly args: ReadonlyArray<string>;
@@ -105,6 +129,11 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
   /** Claims an owned instance directory, mounted at `/instance` in containers. */
   readonly instanceDirectory?: boolean;
+  /**
+   * Every caller-supplied path this recipe reads or mounts, validated against the stack's data
+   * root before `prepare` and launch run (see `namespace/Paths.borrow`).
+   */
+  readonly callerPaths?: (creation: C) => ReadonlyArray<string>;
 }
 
 export interface ResolvedStartupCommand {
@@ -161,19 +190,13 @@ export interface ProcessDependencies {
   readonly client: HttpClient.HttpClient;
   readonly spawner: ChildProcessSpawnerService["Service"];
   readonly container: ContainerRuntime | undefined;
+  /** Validates a caller-supplied path against the stack's data root; see `namespace/Paths.borrow`. */
+  readonly borrowCallerPath: (candidate: string) => Effect.Effect<BorrowedPath, ServiceError>;
 }
 
 const serviceError = mapToServiceError;
 
 const describeProcessExit = (code: number) => `Process exited with ${code}`;
-
-const catalogError = (operation: string, message: string, service?: ServiceKind, cause?: unknown) =>
-  new CatalogError({
-    operation,
-    message,
-    ...(service === undefined ? {} : { service }),
-    ...(cause === undefined ? {} : { cause }),
-  });
 
 const processExit = (
   exitCode: Effect.Effect<number, { readonly message: string }>,
@@ -189,58 +212,21 @@ const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
   remove: Effect.void,
 });
 
-interface NativePortReservation {
-  readonly port: number;
-  readonly server: Net.Server;
-}
-
-const closeNativePort = (server: Net.Server): Effect.Effect<void> =>
-  Effect.callback<void, never>((resume) => {
-    if (!server.listening) {
-      resume(Effect.void);
-      return Effect.void;
-    }
-    server.close(() => resume(Effect.void));
-    return Effect.void;
-  });
-
-const reserveNativePort = Effect.fn("ProcessRecipe.reserveNativePort")(
-  (requested: number): Effect.Effect<NativePortReservation, CatalogError, Scope.Scope> =>
-    Effect.acquireRelease(
-      Effect.callback<NativePortReservation, CatalogError>((resume) => {
-        const server = Net.createServer((socket) => socket.destroy());
-        const onError = (cause: Error) =>
-          resume(
-            Effect.fail(
-              catalogError("launch", "Unable to reserve native service port", undefined, cause),
-            ),
-          );
-        server.once("error", onError);
-        server.listen({ host: "127.0.0.1", port: requested }, () => {
-          const address = server.address();
-          if (address === null || typeof address === "string") {
-            onError(new Error("Native service port reservation returned no address"));
-          } else {
-            resume(Effect.succeed({ port: address.port, server }));
-          }
-        });
-        return Effect.sync(() => {
-          server.off("error", onError);
-          if (server.listening) server.close();
-        });
-      }),
-      ({ server }) => closeNativePort(server),
-    ),
-);
+const emptyNativePortSet: ReadonlySet<number> = new Set();
 
 const startupTimeoutSeconds = 60;
 const nativeLaunchAttempts = 3;
 const probeTimeout = Duration.seconds(10);
+/**
+ * Bounds one readiness HTTP call: a request that connects but never answers is retried instead
+ * of spending the whole check on that one attempt.
+ */
+const readinessAttemptTimeout = Duration.seconds(3);
 const outputDrainGrace = Duration.seconds(2);
 const startupOutputTailLines = 20;
 const startupOutputLineChars = 1_000;
 
-type StartupOutput = Readonly<Record<CatalogLog["stream"], ReadonlyArray<string>>>;
+type StartupOutput = Readonly<Record<LaunchOutput["stream"], ReadonlyArray<string>>>;
 
 const clipLine = (line: string) =>
   line.length > startupOutputLineChars
@@ -263,14 +249,14 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
       readonly stderr: Stream.Stream<Uint8Array, NativeProcessError | ContainerError>;
       readonly exitCode: Effect.Effect<number, NativeProcessError | ContainerError>;
     },
-    logs: PubSub.PubSub<CatalogLog>,
+    publish: PublishOutput,
   ): Effect.Effect<
     Readonly<{ readonly code: number; readonly output: StartupOutput }>,
     ServiceError
   > =>
     awaitCommandOutput(process, {
       timeout: Duration.seconds(startupTimeoutSeconds),
-      onOutput: (stream, bytes) => PubSub.publish(logs, { stream, bytes }),
+      onOutput: publish,
     }).pipe(
       Effect.mapError((cause) => serviceError("launch", cause)),
       Effect.flatMap((result) =>
@@ -313,7 +299,7 @@ const anotherListenerHolds = (endpoints: ReadonlyMap<string, ServiceEndpoint>) =
 
 const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(function* (
   process: NativeProcess,
-  logs: PubSub.PubSub<CatalogLog>,
+  publish: PublishOutput,
   endpoints: ReadonlyMap<string, ServiceEndpoint>,
   readinessOutput:
     | ((line: string, endpoints: ReadonlyMap<string, ServiceEndpoint>) => boolean)
@@ -328,7 +314,7 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
 
   const consume = Effect.fnUntraced(function* (
     stream: Stream.Stream<Uint8Array, NativeProcessError>,
-    name: CatalogLog["stream"],
+    name: LaunchOutput["stream"],
     tail: Ref.Ref<ReadonlyArray<string>>,
   ) {
     const partial = yield* Ref.make("");
@@ -348,7 +334,7 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
         { discard: true },
       );
     yield* stream.pipe(
-      Stream.tap((bytes) => PubSub.publish(logs, { stream: name, bytes })),
+      Stream.tap((bytes) => publish(name, bytes)),
       Stream.decodeText,
       Stream.runForEach((text) =>
         Ref.modify(
@@ -385,14 +371,15 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
   return { bindReady, bindError, stdout, stderr, drained };
 });
 
-const readiness = Effect.fn("ProcessRecipe.readiness")(
-  (
-    client: HttpClient.HttpClient,
-    endpoint: ServiceEndpoint,
-    path: string,
-    timeout: Duration.Input = "60 seconds",
-  ): Effect.Effect<void, ServiceError> =>
-    client.execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`)).pipe(
+const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
+  client: HttpClient.HttpClient,
+  endpoint: ServiceEndpoint,
+  path: string,
+  timeout: Duration.Input = "60 seconds",
+) {
+  const attempt = client
+    .execute(HttpClientRequest.get(`http://127.0.0.1:${endpoint.port}${path}`))
+    .pipe(
       Effect.flatMap((response) =>
         (response.status >= 200 && response.status < 300) || response.status === 401
           ? Effect.void
@@ -400,48 +387,55 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(
               new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
             ),
       ),
+      Effect.timeout(readinessAttemptTimeout),
+    );
+  return yield* withAttemptCount(attempt, (counted) =>
+    counted.pipe(
       Effect.retry({ schedule: Schedule.spaced("250 millis") }),
       Effect.timeout(timeout),
       Effect.mapError((cause) => serviceError("health", cause)),
       Effect.asVoid,
     ),
-);
+  );
+});
 
 export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>>(
-  creation: C,
   options: CatalogOptions,
   deps: ProcessDependencies,
   spec: ProcessRecipeSpec<C>,
 ): Effect.Effect<ProcessRecipeResult<C>> =>
   Effect.gen(function* () {
-    const prepared = yield* Ref.make<string | undefined>(undefined);
-    const preparedRoot = yield* Ref.make<string | undefined>(undefined);
     const endpoints = yield* Ref.make<ReadonlyMap<string, ServiceEndpoint>>(new Map());
-    const logs = yield* PubSub.sliding<CatalogLog>(256);
+    const logs = yield* PubSub.sliding<LaunchOutput>(256);
+    // Ownership is by location: instanceRoot is owned simply by being under options.root, created
+    // on demand by whatever first writes under it (no separate marker to establish or verify).
     const instanceRoot = deps.path.join(options.root, options.instanceId);
-    const ownedInstanceRoot = {
-      fs: deps.fs,
-      path: deps.path,
-      parentRoot: options.root,
-      stackId: options.stackId,
-      instanceId: options.instanceId,
-      ownerFileName: ".supabase-instance-owner.json",
-      label: "Instance root",
-    };
     const nativeInstanceDir = spec.instanceDirectory === true ? instanceRoot : undefined;
     const containerInstanceDir =
       spec.instanceDirectory === true ? containerInstancePath : undefined;
+    // A dedicated, fully namespace-owned subdirectory for native confinement, so it never mixes
+    // with the recipe's own owned files.
+    const environmentRoot = deps.path.join(instanceRoot, ".supabase-environment");
 
     const prepare = Effect.fn("ProcessRecipe.prepare")(function* (candidate: C) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(options.instanceId))
+        return yield* serviceError("identity", "Instance id is not a safe path segment");
       if (spec.instanceDirectory === true)
-        yield* ensureOwnedInstanceRoot(ownedInstanceRoot, serviceError);
+        yield* deps.fs
+          .makeDirectory(instanceRoot, { recursive: true, mode: 0o700 })
+          .pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
+      if (spec.callerPaths !== undefined)
+        for (const candidatePath of spec.callerPaths(candidate))
+          yield* deps.borrowCallerPath(candidatePath);
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
       const resolved = yield* resolveArtifact({
         service: candidate.service,
         version: candidate.version,
       }).pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
       if (options.runtime === "native") {
-        const artifact = yield* prepareNativeArtifact(
+        // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
+        // `launch` resolves (or prepares) and pins its own copy right before it spawns.
+        yield* prepareNativeArtifact(
           { service: candidate.service, version: candidate.version },
           options.cacheRoot,
           options.platform,
@@ -453,8 +447,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           Effect.provideService(HttpClient.HttpClient, deps.client),
           Effect.mapError((cause) => serviceError("prepare", cause)),
         );
-        yield* Ref.set(prepared, artifact.executable);
-        yield* Ref.set(preparedRoot, artifact.root);
       } else {
         if (deps.container === undefined)
           return yield* serviceError("prepare", "Container runtime unavailable");
@@ -464,28 +456,50 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       }
     });
 
-    const launch = Effect.fn("ProcessRecipe.launch")(function* (context: {
-      readonly id: string;
-      readonly config: C;
-      readonly scope: Scope.Closeable;
-    }) {
+    const launch = Effect.fn("ProcessRecipe.launch")(function* (context: ServiceLaunchContext<C>) {
+      const output = yield* launchOutputPublisher(logs, context.launchId);
       const portNames = Object.entries(spec.ports).filter(
         ([name]) => spec.enabledPort === undefined || spec.enabledPort(context.config, name),
       );
       if (options.runtime === "native") {
-        const executable = yield* Ref.get(prepared);
-        const artifactRoot = yield* Ref.get(preparedRoot);
-        if (executable === undefined)
-          return yield* serviceError("launch", "Artifact was not prepared");
-        if (artifactRoot === undefined)
-          return yield* serviceError("launch", "Artifact root was not prepared");
+        // `context.scope` finalizes its direct children in parallel (it is forked "parallel" in
+        // Service.ts), so registering the pin there directly would race its release against the
+        // spawned processes' own cleanup. A "sequential" child scope finalizes LIFO instead: the
+        // pin is registered on it first, every native process scope below forks from it (not from
+        // `context.scope`), so closing it always runs their cleanup before releasing the pin.
+        const launchScope = yield* Scope.fork(context.scope, "sequential");
+        const artifact = yield* useNativeArtifact(
+          { service: context.config.service, version: context.config.version },
+          options.cacheRoot,
+          options.platform,
+        ).pipe(
+          Scope.provide(launchScope),
+          Effect.provideService(FileSystem.FileSystem, deps.fs),
+          Effect.provideService(Path.Path, deps.path),
+          Effect.provideService(Crypto.Crypto, deps.crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+          Effect.provideService(HttpClient.HttpClient, deps.client),
+          Effect.mapError((cause) => serviceError("launch", cause)),
+        );
+        const executable = artifact.executable;
+        const artifactRoot = artifact.root;
+        const environment = yield* Environment.confine(deps.fs, deps.path, environmentRoot).pipe(
+          Effect.mapError((cause) => serviceError("launch", cause)),
+        );
+        const keyFor = (name: string) => `${options.instanceId}:${context.id}:${name}`;
+        // A port a prior attempt lost stays excluded so a retry advances instead of repeating it.
+        const excludedByKey = yield* Ref.make<ReadonlyMap<string, ReadonlySet<number>>>(new Map());
         const reserveEndpoints = Effect.fn("ProcessRecipe.reserveEndpoints")(function* (
           parent: Scope.Closeable,
         ) {
           const portScope = yield* Scope.fork(parent, "sequential");
-          const reservations = yield* Effect.forEach(portNames, () => reserveNativePort(0), {
-            concurrency: 1,
-          }).pipe(
+          const excluded = yield* Ref.get(excludedByKey);
+          const reservations = yield* Effect.forEach(
+            portNames,
+            ([name]) =>
+              reserveNativePort(keyFor(name), excluded.get(keyFor(name)) ?? emptyNativePortSet),
+            { concurrency: 1 },
+          ).pipe(
             Scope.provide(portScope),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
@@ -510,7 +524,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             }
           | undefined;
         if (spec.startupCommands.length > 0) {
-          const startupScope = yield* Scope.fork(context.scope, "sequential");
+          const startupScope = yield* Scope.fork(launchScope, "sequential");
           const reservation =
             spec.nativeStartupEnv === undefined
               ? undefined
@@ -531,7 +545,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                 executable: `${artifactRoot}/bin/${command.executable}`,
                 args: command.args,
                 env: command.env,
+                environment,
                 cwd: artifactRoot,
+                artifactLockPath: artifact.lockPath,
               },
               defaultNativeProcessLauncher(),
               {
@@ -543,7 +559,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
               Effect.mapError((cause) => serviceError("launch", cause)),
             );
-            const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+            const result = yield* awaitStartup(
+              context.config.service,
+              startupProcess,
+              yield* output.part,
+            ).pipe(
               Effect.mapError(
                 (failure) =>
                   new ServiceLaunchError({ failure, runtime: runtimeFromNative(startupProcess) }),
@@ -564,7 +584,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           readonly portScope: Scope.Closeable;
           readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
         }) {
-          const scope = yield* Scope.fork(context.scope, "sequential");
+          const scope = yield* Scope.fork(launchScope, "sequential");
           const reservation = held ?? (yield* reserveEndpoints(scope));
           const selected = reservation.endpoints;
           const args = yield* spec.args(context.config, selected, {
@@ -578,6 +598,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               executable,
               args,
               env,
+              environment,
+              artifactLockPath: artifact.lockPath,
               gracefulStopSignal: "SIGTERM",
               gracefulStopTimeout: "5 seconds",
             },
@@ -588,15 +610,15 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
-          const output = yield* collectNativeOutput(
+          const collected = yield* collectNativeOutput(
             native,
-            logs,
+            yield* output.part,
             selected,
             spec.nativeReadinessOutput,
             scope,
           );
           yield* Ref.set(endpoints, selected);
-          return { native, output, selected, scope };
+          return { native, output: collected, selected, scope };
         });
         type NativeAttempt = Effect.Success<ReturnType<typeof spawnAttempt>>;
 
@@ -701,6 +723,15 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               (!(yield* Deferred.isDone(attempt.output.bindReady)) &&
                 (yield* anotherListenerHolds(attempt.selected))));
           if (!collided) return yield* settleFailure(failure);
+          yield* Ref.update(excludedByKey, (current) => {
+            const next = new Map(current);
+            for (const [name, endpoint] of attempt.selected) {
+              if (endpoint.kind !== "tcp") continue;
+              const key = keyFor(name);
+              next.set(key, new Set([...(next.get(key) ?? []), endpoint.port]));
+            }
+            return next;
+          });
           return yield* new NativePortCollision({
             failure: serviceError(
               "launch",
@@ -762,6 +793,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             entrypoint: command.entrypoint,
             args: command.args,
             mounts: command.mounts,
+            user: userForMounts(command.mounts, spec.callerPaths?.(context.config) ?? []),
           })
           .pipe(
             Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
@@ -777,7 +809,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             ),
             Scope.provide(context.scope),
           );
-        const result = yield* awaitStartup(context.config.service, startupProcess, logs).pipe(
+        const result = yield* awaitStartup(
+          context.config.service,
+          startupProcess,
+          yield* output.part,
+        ).pipe(
           Effect.mapError(
             (failure) =>
               new ServiceLaunchError({
@@ -801,6 +837,12 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             runtime: runtimeFromContainer(startupProcess),
           });
       }
+      const launchMounts = [
+        ...(yield* spec.mounts(context.config, { container: true })),
+        ...(spec.instanceDirectory === true
+          ? [{ source: instanceRoot, target: containerInstancePath, readOnly: false }]
+          : []),
+      ];
       const launched = yield* deps.container
         .launch({
           image: resolved.image,
@@ -811,12 +853,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           env: yield* spec.env(context.config, containerDesired, true, containerInstanceDir),
           entrypoint: spec.containerEntrypoint?.(context.config),
           args: yield* spec.args(context.config, containerDesired, { container: true }),
-          mounts: [
-            ...(yield* spec.mounts(context.config, { container: true })),
-            ...(spec.instanceDirectory === true
-              ? [{ source: instanceRoot, target: containerInstancePath, readOnly: false }]
-              : []),
-          ],
+          mounts: launchMounts,
+          user: userForMounts(launchMounts, spec.callerPaths?.(context.config) ?? []),
           ports: [...containerDesired.values()].map((endpoint) => endpoint.port),
         })
         .pipe(
@@ -844,7 +882,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         selected.set(name, { kind: "tcp", host: "127.0.0.1", port: published });
       }
       yield* Ref.set(endpoints, selected);
-      yield* publishProcessLogs(launched, logs, context.scope);
+      yield* publishProcessLogs(launched, yield* output.part, context.scope);
       const runtime = runtimeFromContainer(launched);
       const ready = selected.get("http");
       const noReadinessEndpoint = Effect.fail(
@@ -868,19 +906,19 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       definition: {
         prepare,
         launch,
+        // instanceRoot (environmentRoot's parent, and the recipe's own owned files) is removed as
+        // one recursive delete; a recipe with nothing on the host filesystem simply finds it absent.
         removeData: (context) =>
-          (spec.instanceDirectory === true
-            ? removeOwnedInstanceRoot(
-                ownedInstanceRoot,
-                spec.removeData?.(context.config) ?? Effect.void,
-                serviceError,
-              )
-            : (spec.removeData?.(context.config) ?? Effect.void)
+          destroyOwnedRoot(
+            deps.fs,
+            deps.path,
+            instanceRoot,
+            options.root,
+            spec.removeData?.(context.config) ?? Effect.void,
+            serviceError,
           ).pipe(Effect.andThen(Ref.set(endpoints, new Map()))),
       },
       endpoints,
-      logs: Stream.fromPubSub(logs).pipe(
-        Stream.mapError((cause) => catalogError("logs", String(cause), creation.service)),
-      ),
+      logs: PubSub.subscribe(logs),
     };
   });

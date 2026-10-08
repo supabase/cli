@@ -17,7 +17,7 @@ import { stackStartCommand } from "../commands/experimental/stack/start/start.co
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
-import { stackBackendLayer } from "../command-internal/stack-backend.ts";
+import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -51,7 +51,6 @@ import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
-import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
@@ -60,8 +59,9 @@ import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
-import type { CliRootCommand } from "../shared/cli/run.ts";
+import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
+import type { OutputFormat } from "../shared/output/types.ts";
 import {
   GLOBAL_FLAGS,
   AgentFlag,
@@ -71,6 +71,7 @@ import {
   ExperimentalFlag,
   NetworkIdFlag,
   OutputFlag,
+  OutputFormatFlag,
   ProfileFlag,
   WorkdirFlag,
   YesFlag,
@@ -133,6 +134,8 @@ export function rootDescription(version: string): string {
       return "Supabase CLI.";
     case "beta":
       return "Supabase CLI (beta channel).";
+    case "next":
+      return "Supabase CLI (next channel).";
     case "preview":
       return "Supabase CLI (preview build).";
     case "development":
@@ -140,12 +143,21 @@ export function rootDescription(version: string): string {
   }
 }
 
-export const rootCommandForFeatures = (
-  options: {
-    readonly stackBackend?: StackBackend;
-    readonly computeEnabled?: boolean;
-  } = {},
-): CliRootCommand =>
+interface RootCommandFeatures {
+  readonly stackBackend?: StackBackend;
+  readonly computeEnabled?: boolean;
+}
+
+/** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
+const agentDefaultOutputFormatFor = (
+  features: RootCommandFeatures,
+  args: ReadonlyArray<string>,
+): OutputFormat =>
+  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
+    ? "stream-json"
+    : "json";
+
+export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
@@ -213,6 +225,7 @@ export const rootCommandForFeatures = (
           // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
+            agentDefaultOutputFormat: agentDefaultOutputFormatFor(options, cliArgs.args),
             goOutputFormat: goOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
@@ -245,7 +258,9 @@ export const rootCommandForFeatures = (
             : outputLayerFor(outputFormat);
 
           return Layer.mergeAll(
-            stackBackendLayer(options.stackBackend ?? "legacy"),
+            options.stackBackend === undefined
+              ? Layer.empty
+              : stackBackendLayer(options.stackBackend),
             outputLayer,
             makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
           );
@@ -253,6 +268,15 @@ export const rootCommandForFeatures = (
       ),
     ),
     Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
-  );
+  ) satisfies CliRootCommand;
 
-export const rootCommand: CliRootCommand = rootCommandForFeatures();
+/** Pairs the root with the agent default `runCli` applies before this root parses. */
+export const cliEntrypointForFeatures = (
+  features: RootCommandFeatures,
+  args: ReadonlyArray<string>,
+) => ({
+  rootCommand: rootCommandForFeatures(features),
+  agentDefaultOutputFormat: agentDefaultOutputFormatFor(features, args),
+});
+
+export const rootCommand = rootCommandForFeatures();

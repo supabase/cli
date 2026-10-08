@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
 import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
+import * as Environment from "../namespace/Environment.ts";
 import type {
   ChildProcessHandle,
   ExitCode,
@@ -12,8 +13,17 @@ import type {
 export interface NativeProcessSpec {
   readonly executable: string;
   readonly args?: ReadonlyArray<string>;
+  /** Merged over {@link environment}'s confined values; it is rejected if it sets any of them. */
   readonly env?: Readonly<Record<string, string>>;
+  /** The owned HOME/TMPDIR/XDG/Deno directories this workload is confined to. */
+  readonly environment: Environment.NativeEnvironment;
   readonly cwd?: string;
+  /**
+   * The native artifact generation's digest lock file. The launcher takes its own SHARED pin on
+   * this before spawning the workload, and holds it until the workload's process group has
+   * exited, including the forced-kill path.
+   */
+  readonly artifactLockPath?: string;
   readonly stdin?: "ignore" | "pipe";
   /** Numeric identity the workload runs as; omitted keeps the launcher's identity. */
   readonly uid?: number;
@@ -71,7 +81,7 @@ export const defaultNativeProcessLauncher = (): NativeProcessLauncher => ({
   args: [nativeLauncherEntrypointFor(import.meta.url)],
 });
 
-const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
+const encodeSpec = (spec: NativeProcessSpec, env: Readonly<Record<string, string>>): Uint8Array => {
   const timeout =
     spec.gracefulStopSignal === undefined
       ? Option.none<number>()
@@ -84,10 +94,11 @@ const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
     JSON.stringify({
       executable: spec.executable,
       args: spec.args ?? [],
-      env: spec.env,
+      env,
       cwd: spec.cwd,
       uid: spec.uid,
       gid: spec.gid,
+      ...(spec.artifactLockPath === undefined ? {} : { artifactLockPath: spec.artifactLockPath }),
       ...(Option.isSome(timeout)
         ? {
             gracefulStopSignal: spec.gracefulStopSignal,
@@ -105,6 +116,9 @@ const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcess
     cause: error,
   });
 
+/** Guard against a stuck launcher reap/confirm, backed by measured real reap latency; missing it only falls through to a (still correct) forced launcher kill. */
+const launcherReapGuardTimeout: Duration.Input = "1 second";
+
 /**
  * Starts one native process through a tiny parent-loss-aware launcher. The
  * launcher receives an inherited pipe (fd3); closing this process scope closes
@@ -116,6 +130,11 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
   launcher: NativeProcessLauncher = defaultNativeProcessLauncher(),
   identity?: NativeProcessIdentity,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": spec.executable.split(/[\\/]/u).pop() ?? spec.executable,
+    "process.arg_count": spec.args?.length ?? 0,
+  });
+  const env = yield* Environment.apply(spec.environment, spec.env);
   return yield* Effect.gen(function* () {
     // Shutdown must precede the spawner's finalizer even when the caller closes in parallel.
     const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
@@ -182,6 +201,10 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
       );
     });
     const cleanupProcessGroup = Effect.fn("NativeProcess.cleanupProcessGroup")(function* () {
+      yield* Effect.annotateCurrentSpan({
+        pid: Number(handle.pid),
+        platform: globalThis.process.platform,
+      });
       return yield* Effect.try({
         try: () => {
           if (globalThis.process.platform === "win32") return;
@@ -218,6 +241,8 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
           }
           return Effect.fail(error);
         }),
+        Effect.tap(() => Effect.annotateCurrentSpan({ outcome: "succeeded" })),
+        Effect.tapError(() => Effect.annotateCurrentSpan({ outcome: "failed" })),
       );
     });
     const signalLauncher = (signal: NodeJS.Signals): Effect.Effect<void, NativeProcessError> =>
@@ -237,7 +262,21 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             : Effect.fail(error);
         }),
       );
+    // A killed launcher reports its exit as a failure (signal-interrupted),
+    // not a success; settling at all, even with that failure, means it is
+    // gone. Only a genuine timeout (never settling) means it is not.
+    const launcherSettled = (timeout: Duration.Input): Effect.Effect<boolean> =>
+      handle.exitCode.pipe(
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.isSome),
+        Effect.orElseSucceed(() => true),
+      );
+    const spanAttributes = () => ({
+      pid: Number(handle.pid),
+      platform: globalThis.process.platform,
+    });
     const killProcess = Effect.fn("NativeProcess.kill")(function* () {
+      yield* Effect.annotateCurrentSpan(spanAttributes());
       const running = yield* handle.isRunning.pipe(
         Effect.mapError((error) => mapProcessError(error, spec)),
       );
@@ -254,15 +293,57 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             );
       const stopped = yield* graceful.pipe(
         Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
+        Effect.tap((result) =>
+          Effect.annotateCurrentSpan({ outcome: Option.isSome(result) ? "exited" : "timedOut" }),
+        ),
+        Effect.tapError(() => Effect.annotateCurrentSpan({ outcome: "failed" })),
+        Effect.withSpan("NativeProcess.kill.graceful", { attributes: spanAttributes() }),
       );
+      yield* Effect.annotateCurrentSpan({ forcedPathTaken: Option.isNone(stopped) });
       if (Option.isNone(stopped)) {
-        const stillRunning = yield* handle.isRunning.pipe(
-          Effect.mapError((error) => mapProcessError(error, spec)),
-        );
-        if (stillRunning)
-          yield* handle
-            .kill({ killSignal: "SIGKILL" })
-            .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+        if (globalThis.process.platform === "win32") {
+          const stillRunning = yield* handle.isRunning.pipe(
+            Effect.mapError((error) => mapProcessError(error, spec)),
+          );
+          if (stillRunning)
+            yield* handle
+              .kill({ killSignal: "SIGKILL" })
+              .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+        } else {
+          // Kill the workload's group first so the still-alive launcher reaps
+          // its direct child itself; only force the launcher if it doesn't. A
+          // failed group cleanup must not skip forcing and confirming it.
+          const cleanupFailure = yield* cleanupProcessGroup().pipe(
+            Effect.as(Option.none<NativeProcessError>()),
+            Effect.catch((error) => Effect.succeed(Option.some(error))),
+          );
+          const reaped = yield* launcherSettled(launcherReapGuardTimeout).pipe(
+            Effect.tap((settled) =>
+              Effect.annotateCurrentSpan({ outcome: settled ? "exited" : "timedOut" }),
+            ),
+            Effect.withSpan("NativeProcess.kill.reapWait", { attributes: spanAttributes() }),
+          );
+          if (!reaped) {
+            yield* Effect.gen(function* () {
+              yield* handle.kill({ killSignal: "SIGKILL" }).pipe(
+                Effect.mapError((error) => mapProcessError(error, spec)),
+                Effect.tapError(() => Effect.annotateCurrentSpan({ outcome: "failed" })),
+              );
+              const confirmed = yield* launcherSettled(launcherReapGuardTimeout);
+              yield* Effect.annotateCurrentSpan({ outcome: confirmed ? "exited" : "timedOut" });
+              if (!confirmed)
+                return yield* new NativeProcessError({
+                  message: "Native launcher did not confirm exit after a forced stop",
+                  executable: spec.executable,
+                });
+            }).pipe(
+              Effect.withSpan("NativeProcess.kill.forcedLauncherKill", {
+                attributes: spanAttributes(),
+              }),
+            );
+          }
+          if (Option.isSome(cleanupFailure)) return yield* cleanupFailure.value;
+        }
       }
       if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup();
     });
@@ -275,7 +356,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
         Effect.orDie,
       ),
     );
-    yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
+    yield* Stream.run(Stream.succeed(encodeSpec(spec, env)), handle.getInputFd(4));
     const groupIdLine = yield* handle
       .getOutputFd(5)
       .pipe(Stream.decodeText, Stream.splitLines, Stream.runHead);

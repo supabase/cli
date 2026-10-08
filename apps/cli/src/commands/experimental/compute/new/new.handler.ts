@@ -341,6 +341,12 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // Everything below this line changes the user's disk, and nothing below it
     // can fail for a reason the plan above could have caught.
     const starters = Object.entries(COMPUTE_STACKS[runtime]);
+    yield* Effect.annotateCurrentSpan({
+      "compute.runtime": runtime,
+      "compute.size": size,
+      "compute.exposure": exposure,
+      "compute.starter_file_count": starters.length,
+    });
     const destinationExisted = yield* fs.exists(destination);
     const removeScaffold = Effect.gen(function* () {
       for (const [filename] of starters) {

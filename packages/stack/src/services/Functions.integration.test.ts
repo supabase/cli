@@ -16,10 +16,15 @@ import {
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+import { makeProcessRecipe } from "./ProcessRecipe.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -31,98 +36,161 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
-const dockerInfo = Effect.scoped(
+const engineInfo = Effect.scoped(
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["info"], { stdout: "pipe", stderr: "pipe" }),
+      ChildProcess.make(testEngine, ["info"], { stdout: "pipe", stderr: "pipe" }),
     );
     return yield* Stream.mkString(Stream.decodeText(child.all));
   }),
-).pipe(Effect.orElseSucceed(() => "docker info unavailable"));
+).pipe(Effect.orElseSucceed(() => `${testEngine} info unavailable`));
 
 describe("service catalog", () => {
-  it.live("serves a standalone Functions bootstrap over HTTP", () =>
+  it.live(
+    "serves a standalone Functions bootstrap over HTTP",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-functions-" });
+          const stackId = "b".repeat(64);
+          const instanceId = "functions-instance";
+          // Ownership is by location: a borrowed caller path must live outside the whole stack
+          // data root, so the user's functions project lives in its own, separate tree.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-functions-caller-",
+          });
+          const functionsRoot = callerRoot + "/user-functions";
+          yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
+          yield* fs.writeFileString(
+            functionsRoot + "/hello/index.ts",
+            "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              config: {
+                functionsRoot,
+                databaseUrl: "postgres://functions-db",
+                apiUrl: "http://functions-api",
+                jwtSecret: "functions-jwt-secret",
+                jwks: "functions-jwks",
+                anonKey: "active-anon-key",
+                serviceRoleKey: "active-service-role-key",
+                publishableKey: "active-publishable-key",
+                secretKey: "active-secret-key",
+                env: {
+                  CUSTOM_ENV: "custom-value",
+                  SUPABASE_INTERNAL_FUNCTIONS_ROOT: "overridden-root",
+                  EDGE_RUNTIME_PORT: "overridden-port",
+                  SUPABASE_URL: "overridden-url",
+                  SUPABASE_DB_URL: "overridden-db",
+                  SUPABASE_INTERNAL_JWT_SECRET: "overridden-jwt",
+                  SUPABASE_ANON_KEY: "overridden-anon",
+                  SUPABASE_SERVICE_ROLE_KEY: "overridden-service",
+                  SUPABASE_JWKS: "overridden-jwks",
+                  SUPABASE_INTERNAL_PUBLISHABLE_KEY: "overridden-publishable",
+                  SUPABASE_INTERNAL_SECRET_KEY: "overridden-secret",
+                },
+                verifyJwt: false,
+                inspector: true,
+              },
+            },
+            {
+              ...dockerOptions(root),
+              stackId,
+              instanceId,
+            },
+          );
+          const instance = yield* makeStandaloneService(recipe.definition, {
+            id: instanceId,
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready;
+          const endpoint = yield* recipe.endpoint("http");
+          const response = yield* client.execute(
+            HttpClientRequest.get("http://" + httpHost(endpoint) + ":" + endpoint.port + "/hello"),
+          );
+          expect(response.status).toBe(200);
+          expect(yield* response.json).toEqual(
+            expect.objectContaining({
+              custom: "custom-value",
+              port: "9000",
+              url: "http://functions-api",
+              db: "postgres://functions-db",
+              jwks: "functions-jwks",
+              anon: "active-anon-key",
+              service: "active-service-role-key",
+              publishable: '{"default":"active-publishable-key"}',
+              secret: '{"default":"active-secret-key"}',
+            }),
+          );
+          const inspector = yield* recipe.endpoint("inspector");
+          const inspectorResponse = yield* client.execute(
+            HttpClientRequest.get(
+              "http://" + httpHost(inspector) + ":" + inspector.port + "/json/version",
+            ),
+          );
+          expect(inspectorResponse.status).toBe(200);
+          yield* instance.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const client = yield* HttpClient.HttpClient;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-functions-" });
-        const stackId = "b".repeat(64);
-        const instanceId = "functions-instance";
-        const functionsRoot = root + "/user-functions";
-        yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
-        yield* fs.writeFileString(
-          functionsRoot + "/hello/index.ts",
-          "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
-        );
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
+        const stackId = "c".repeat(64);
+        const instanceId = "functions-symlink-instance";
+        const callerRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "functions-symlink-caller-",
+        });
+        const functionsRoot = `${callerRoot}/user-functions`;
+        yield* fs.makeDirectory(functionsRoot, { recursive: true });
+        yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
         const recipe = yield* makeServiceRecipe(
           {
             service: "functions",
-            config: {
-              functionsRoot,
-              databaseUrl: "postgres://functions-db",
-              apiUrl: "http://functions-api",
-              jwtSecret: "functions-jwt-secret",
-              jwks: "functions-jwks",
-              anonKey: "active-anon-key",
-              serviceRoleKey: "active-service-role-key",
-              publishableKey: "active-publishable-key",
-              secretKey: "active-secret-key",
-              env: {
-                CUSTOM_ENV: "custom-value",
-                SUPABASE_INTERNAL_FUNCTIONS_ROOT: "overridden-root",
-                EDGE_RUNTIME_PORT: "overridden-port",
-                SUPABASE_URL: "overridden-url",
-                SUPABASE_DB_URL: "overridden-db",
-                SUPABASE_INTERNAL_JWT_SECRET: "overridden-jwt",
-                SUPABASE_ANON_KEY: "overridden-anon",
-                SUPABASE_SERVICE_ROLE_KEY: "overridden-service",
-                SUPABASE_JWKS: "overridden-jwks",
-                SUPABASE_INTERNAL_PUBLISHABLE_KEY: "overridden-publishable",
-                SUPABASE_INTERNAL_SECRET_KEY: "overridden-secret",
-              },
-              verifyJwt: false,
-              inspector: true,
-            },
+            config: { functionsRoot, databaseUrl: "postgres://functions-db" },
           },
-          { ...dockerOptions(root), stackId, instanceId },
+          {
+            ...options(root),
+            stackId,
+            instanceId,
+          },
         );
-        const instance = yield* makeService(recipe.definition, {
-          id: instanceId,
-          config: recipe.creation,
+        const config = recipe.creation;
+        yield* recipe.definition.prepare?.(config) ?? Effect.void;
+        const instanceRoot = path.join(root, instanceId);
+        const runtimeDir = path.join(instanceRoot, "runtime");
+        expect(yield* fs.exists(runtimeDir)).toBe(true);
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "functions-symlink-outside-",
         });
-        yield* instance.start;
-        yield* instance.ready;
-        const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
-        );
-        expect(response.status).toBe(200);
-        expect(yield* response.json).toEqual(
-          expect.objectContaining({
-            custom: "custom-value",
-            port: "9000",
-            url: "http://functions-api",
-            db: "postgres://functions-db",
-            jwks: "functions-jwks",
-            anon: "active-anon-key",
-            service: "active-service-role-key",
-            publishable: '{"default":"active-publishable-key"}',
-            secret: '{"default":"active-secret-key"}',
-          }),
-        );
-        const inspector = yield* recipe.endpoint("inspector");
-        const inspectorResponse = yield* client.execute(
-          HttpClientRequest.get(
-            "http://" + inspector.host + ":" + inspector.port + "/json/version",
-          ),
-        );
-        expect(inspectorResponse.status).toBe(200);
-        yield* instance.stop;
+        // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
+        // directory; the sentinel sits there so this test proves that previously endangered
+        // data survives, not just the symlink target's top level.
+        const sentinel = path.join(outside, "functions", "sentinel");
+        yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
+        yield* fs.writeFileString(sentinel, "do not remove me");
+        // The planted attack: the recipe's own runtime directory replaced by a symlink.
+        yield* fs.remove(runtimeDir, { recursive: true, force: true });
+        yield* fs.symlink(outside, runtimeDir);
+        const scope = yield* Scope.make();
+        yield* recipe.definition.removeData({ id: instanceId, config, scope });
+        yield* Scope.close(scope, Exit.void);
+        expect(yield* fs.exists(sentinel)).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
@@ -161,6 +229,11 @@ describe("service catalog", () => {
               prefix: "functions-ancestor-",
             });
             yield* ancestor.setup(fs, root);
+            // Separate from the stack's own data root: this test's ancestor walk needs
+            // functionsRoot nested under `root`, which a borrowed caller path may not be.
+            const stackRoot = yield* fs.makeTempDirectoryScoped({
+              prefix: "functions-ancestor-stack-",
+            });
             const functionsRoot = `${root}/project/supabase/functions`;
             yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
             yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
@@ -185,20 +258,20 @@ describe("service catalog", () => {
                 },
               },
               {
-                ...options(root),
+                ...options(stackRoot),
                 stackId: "d".repeat(64),
                 instanceId: "ancestor",
-                cacheRoot: "/tmp/supabase-stack-artifacts",
+                cacheRoot: testArtifactCacheRoot,
               },
             );
             const logs = yield* Ref.make("");
-            yield* recipe.logs.pipe(
+            yield* Stream.fromSubscription(yield* recipe.logs).pipe(
               Stream.runForEach(({ bytes }) =>
                 Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
               ),
               Effect.forkScoped({ startImmediately: true }),
             );
-            const instance = yield* makeService(recipe.definition, {
+            const instance = yield* makeStandaloneService(recipe.definition, {
               id: "ancestor",
               config: recipe.creation,
             });
@@ -207,7 +280,9 @@ describe("service catalog", () => {
               Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
             );
             const endpoint = yield* recipe.endpoint("http");
-            const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+            const response = yield* client.get(
+              `http://${httpHost(endpoint)}:${endpoint.port}/hello`,
+            );
             expect(response.status, yield* Ref.get(logs)).toBe(200);
             expect(yield* response.text).toBe("shared");
             yield* instance.stop;
@@ -228,6 +303,9 @@ describe("service catalog", () => {
           const root = yield* fs.makeTempDirectoryScoped({
             directory: temporaryRoot,
             prefix: "functions-deno-config-",
+          });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-deno-config-stack-",
           });
           const functionsRoot = `${root}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
@@ -253,20 +331,20 @@ describe("service catalog", () => {
               },
             },
             {
-              ...options(root),
+              ...options(stackRoot),
               stackId: "e".repeat(64),
               instanceId: "deno-config",
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "deno-config",
             config: recipe.creation,
           });
@@ -276,7 +354,7 @@ describe("service catalog", () => {
           );
           const endpoint = yield* recipe.endpoint("http");
 
-          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+          const response = yield* client.get(`http://${httpHost(endpoint)}:${endpoint.port}/hello`);
 
           expect(response.status, yield* Ref.get(logs)).toBe(200);
           expect(yield* response.text).toBe("config");
@@ -298,6 +376,9 @@ describe("service catalog", () => {
           const root = yield* fs.makeTempDirectoryScoped({
             directory: temporaryRoot,
             prefix: "functions-plain-deno-config-",
+          });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-plain-deno-config-stack-",
           });
           const functionsRoot = `${root}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
@@ -324,15 +405,15 @@ describe("service catalog", () => {
               },
             },
             {
-              ...options(root),
+              ...options(stackRoot),
               stackId: "f".repeat(64),
               instanceId: "plain-deno-config",
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");
           const warned = yield* Deferred.make<void>();
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.updateAndGet(logs, (text) => text + new TextDecoder().decode(bytes)).pipe(
                 Effect.flatMap((text) =>
@@ -344,7 +425,7 @@ describe("service catalog", () => {
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "plain-deno-config",
             config: recipe.creation,
           });
@@ -354,7 +435,7 @@ describe("service catalog", () => {
           );
           const endpoint = yield* recipe.endpoint("http");
 
-          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+          const response = yield* client.get(`http://${httpHost(endpoint)}:${endpoint.port}/hello`);
           yield* Deferred.await(warned).pipe(
             Effect.timeout("30 seconds"),
             Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
@@ -371,7 +452,7 @@ describe("service catalog", () => {
   );
 });
 
-for (const runtime of ["native", "docker"] as const) {
+for (const runtime of ["native", testEngine] as const) {
   it.live(
     `serves configured function files, secrets and JWT policies in ${runtime}`,
     () =>
@@ -385,6 +466,10 @@ for (const runtime of ["native", "docker"] as const) {
           const root = yield* fs.makeTempDirectoryScoped({
             directory: temporaryRoot,
             prefix: "functions-configured-",
+          });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            directory: temporaryRoot,
+            prefix: "functions-configured-stack-",
           });
           const filesRoot = `${root}/project`;
           const functionsRoot = `${filesRoot}/supabase/functions`;
@@ -433,21 +518,22 @@ for (const runtime of ["native", "docker"] as const) {
               },
             },
             {
-              ...options(root),
+              ...options(stackRoot),
               stackId: "c".repeat(64),
               instanceId: "configured",
               runtime,
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              ...(runtime !== "native" ? { engineTarget } : {}),
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "configured",
             config: recipe.creation,
           });
@@ -463,7 +549,7 @@ for (const runtime of ["native", "docker"] as const) {
               ),
             );
             const endpoint = yield* recipe.endpoint("http");
-            const base = `http://${endpoint.host}:${endpoint.port}`;
+            const base = `http://${httpHost(endpoint)}:${endpoint.port}`;
             const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
             const responseText = yield* response.text;
             expect(response.status, responseText).toBe(200);
@@ -490,8 +576,8 @@ for (const runtime of ["native", "docker"] as const) {
             Effect.tapCause(() =>
               Effect.gen(function* () {
                 yield* Effect.logError(`Functions ${runtime} logs:\n${yield* Ref.get(logs)}`);
-                if (runtime === "docker")
-                  yield* Effect.logError(`docker info:\n${yield* dockerInfo}`);
+                if (runtime !== "native")
+                  yield* Effect.logError(`${testEngine} info:\n${yield* engineInfo}`);
               }),
             ),
           );
@@ -533,8 +619,23 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           },
         },
       };
-      const recipe = yield* Functions.makeRecipe(
-        creation,
+      // A real bootstrap owner would join the Win32 stack root below with real fs calls, writing a
+      // garbled path on this POSIX test host; a fake owner keeps the test to what it exercises
+      // here, the Windows caller-path translation in `env`/`args`.
+      const fakeBootstrap: FunctionsBootstrapOwner = {
+        root: "/fake-bootstrap-root",
+        write: () => Effect.succeed("/fake-bootstrap-root/generation-fake/index.ts"),
+      };
+      const deps = {
+        borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+        fs: yield* FileSystem.FileSystem,
+        path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
+        crypto: yield* Crypto.Crypto,
+        client: yield* HttpClient.HttpClient,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        container,
+      };
+      const recipe = yield* makeProcessRecipe(
         {
           stackId: "e".repeat(64),
           instanceId: "windows",
@@ -542,18 +643,12 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           cacheRoot: "C:\\Users\\dev\\cache",
           runtime: "docker",
         },
-        {
-          fs: yield* FileSystem.FileSystem,
-          path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
-          crypto: yield* Crypto.Crypto,
-          client: yield* HttpClient.HttpClient,
-          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-          container,
-        },
+        deps,
+        Functions.makeSpec(fakeBootstrap, deps.path, deps.fs),
       );
       const scope = yield* Scope.make();
       yield* recipe.definition
-        .launch({ id: "windows", config: creation, scope })
+        .launch({ id: "windows", config: creation, scope, launchId: 1 })
         .pipe(Effect.flip, Effect.ensuring(Scope.close(scope, Exit.void)));
 
       const spec = yield* Ref.get(launched);
@@ -561,7 +656,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         "/__supabase_project/supabase/functions",
       );
       expect(spec?.env.SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT).toBe("/__supabase_project");
-      expect(spec?.args).toContain("--main-service=/__supabase_functions");
+      expect(spec?.args).toContain("--main-service=/__supabase_bootstrap/generation-fake");
       const config = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Record(

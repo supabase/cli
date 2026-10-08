@@ -6,6 +6,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
@@ -20,8 +21,8 @@ import {
 } from "../stack-summary.ts";
 import {
   StackApi,
-  StackTargetError,
   StackTargetResolver,
+  mapTargetError,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -57,7 +58,7 @@ type StackReport = {
     readonly project_root: string;
     readonly branch_context: string;
   };
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: StackRuntime;
   readonly owner: "reachable" | "unavailable";
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly readiness: "unavailable" | "starting" | "sleeping" | "stopped" | "ready" | "unhealthy";
@@ -81,14 +82,6 @@ type StackReport = {
   /** The `status --env` connection map, degrading to what's available when credentials or the owner are unreachable. */
   readonly env: Readonly<Record<string, string>>;
 };
-
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandStatusError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
 
 const mapStackError = (error: StackError) =>
   new StackCommandStatusError({
@@ -156,7 +149,7 @@ const reportFor = (
       readonly branchContext: string;
       readonly stackName: string;
     };
-    readonly runtime: "native" | "docker" | "podman";
+    readonly runtime: StackRuntime;
   },
   owner: StackReport["owner"],
   observed: ReadonlyArray<ObservedService>,
@@ -263,7 +256,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       ...(id === undefined ? {} : { id }),
       runtime: "auto",
     })
-    .pipe(Effect.mapError(mapTargetError));
+    .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
@@ -278,22 +271,24 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   };
 });
 
-const observe = (stack: Stack, owner: StackReport["owner"]) =>
-  Effect.gen(function* () {
-    const instances = yield* stack.services.list.pipe(Effect.mapError(mapStackError));
-    const composition = yield* stack.composition.describe.pipe(Effect.mapError(mapStackError));
-    const observed = yield* Effect.forEach(instances, (instance): Effect.Effect<ObservedService> =>
-      owner === "unavailable"
-        ? Effect.succeed({ instance, observation: undefined })
-        : instance.status.pipe(
-            Effect.map((observation) => ({ instance, observation })),
-            Effect.catchTag("StackError", (error) =>
-              Effect.succeed({ instance, observation: undefined, error }),
-            ),
+const observe = Effect.fn("experimental.stack.status.observe")(function* (
+  stack: Stack,
+  owner: StackReport["owner"],
+) {
+  const instances = yield* stack.services.list.pipe(Effect.mapError(mapStackError));
+  const composition = yield* stack.composition.describe.pipe(Effect.mapError(mapStackError));
+  const observed = yield* Effect.forEach(instances, (instance): Effect.Effect<ObservedService> =>
+    owner === "unavailable"
+      ? Effect.succeed({ instance, observation: undefined })
+      : instance.status.pipe(
+          Effect.map((observation) => ({ instance, observation })),
+          Effect.catchTag("StackError", (error) =>
+            Effect.succeed({ instance, observation: undefined, error }),
           ),
-    );
-    return { observed, members: composition.members };
-  });
+        ),
+  );
+  return { observed, members: composition.members };
+});
 
 const driftFrom = (planned: ReadonlyArray<PlannedInstance>): StackReport["config_drift"] => {
   const paths = planned.flatMap((entry) =>
@@ -318,8 +313,8 @@ const unavailableDrift = (message: string): StackReport["config_drift"] => ({
   message,
 });
 
-const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boolean) =>
-  Effect.gen(function* () {
+const configDrift = Effect.fn("experimental.stack.status.configDrift")(
+  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean) {
     const loaded = yield* loadStackConfig(projectRoot);
     const creations = yield* loaded.creations(stack.id);
     // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
@@ -327,22 +322,25 @@ const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boole
       ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
       : creations;
     return driftFrom(yield* stack.composition.plan(requested));
-  }).pipe(
-    Effect.catchTags({
-      StackConfigError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-        ),
-      StackFunctionsEnvError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-        ),
-      StackError: (error) =>
-        Effect.succeed(
-          unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
-        ),
-    }),
-  );
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catchTags({
+        StackConfigError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+          ),
+        StackFunctionsEnvError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+          ),
+        StackError: (error) =>
+          Effect.succeed(
+            unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
+          ),
+      }),
+    ),
+);
 
 export const stackStatus = Effect.fn("experimental.stack.status")(function* (
   flags: StackStatusFlags,
@@ -368,7 +366,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
     if (!flags.env && flags.overrideName.length > 0)
       return yield* new StackCommandStatusError({
         reason: "flags",

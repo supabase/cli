@@ -3,8 +3,9 @@ name: Test
 # Release-notes PRs (head ref `release-notes/*`) only add markdown under
 # `release-notes/` and are published via approval — skip the full CI suite.
 #
-# Default path: ready (non-draft) PRs targeting `develop`, plus the merge queue.
-# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
+# Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
+# `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
+# `run-ci.yml` calls this workflow for drafts and stacked PRs.
 on:
   pull_request:
     types:
@@ -15,11 +16,15 @@ on:
       - converted_to_draft
     branches:
       - develop
+      - main
+      - next
+      - "v*.x"
   merge_group:
     types:
       - checks_requested
     branches:
       - develop
+      - next
   workflow_call:
     inputs:
       force:
@@ -123,6 +128,16 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration
 
+      # Not covered by test:integration above (a different vitest project); runs here so the
+      # registry cross-process and publication-crash scenarios run on Linux too.
+      - name: Run stack namespace e2e tests
+        working-directory: packages/stack
+        run: >-
+          pnpm test:e2e:run
+          src/namespace/Namespace.e2e.test.ts
+          src/port-reservation.e2e.test.ts
+          --passWithNoTests=false
+
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -155,16 +170,25 @@ jobs:
           pnpm test:integration
           src/Ports.integration.test.ts
           src/storage/DirectoryCopy.integration.test.ts
-          src/State.integration.test.ts
-          src/State.windows.integration.test.ts
-          src/State.process.integration.test.ts
+          src/namespace/Namespace.integration.test.ts
+          src/namespace/Paths.integration.test.ts
           src/HostProcess.integration.test.ts
           src/Network.integration.test.ts
           src/Proxy.integration.test.ts
           src/HttpProxy.integration.test.ts
           --passWithNoTests=false
 
-      # Windows-only CLI subset: paths, PATH lookup, and permission semantics diverge there.
+      - name: Run stack namespace e2e tests
+        working-directory: packages/stack
+        run: pnpm test:e2e:run src/namespace/Namespace.e2e.test.ts --passWithNoTests=false
+
+      # Windows-only: sharing-violation retries and CLI paths, PATH lookup, and permission
+      # semantics that only diverge there.
+      - name: Run stack namespace Windows e2e tests
+        if: runner.os == 'Windows'
+        working-directory: packages/stack
+        run: pnpm test:e2e:run src/namespace/Namespace.windows.e2e.test.ts --passWithNoTests=false
+
       - name: Run CLI integration tests
         if: runner.os == 'Windows'
         working-directory: apps/cli
@@ -173,6 +197,37 @@ jobs:
           src/commands/db/reset/reset.integration.test.ts
           src/commands/experimental/stack/start/start.integration.test.ts
           --passWithNoTests=false
+
+  test-stack-native-scenarios:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack native scenarios (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native artifacts exist for macOS and Linux only, and macOS runners have
+        # no Docker; Linux coverage for both backends comes from test-stack-e2e.
+        os: [macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Run stack native whole-stack scenarios
+        working-directory: packages/stack
+        run: pnpm test:e2e:native-scenarios --passWithNoTests=false
 
   test-summary:
     if: |
@@ -280,8 +335,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [native, docker]
+        runtime: [native, docker, podman]
         suite: [lifecycle, idle-parallel]
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -291,6 +348,10 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
 
       - name: Run stack end-to-end tests
         run: >-
@@ -305,6 +366,53 @@ jobs:
           src/public.e2e.test.ts
           --passWithNoTests=false
 
+  test-stack-podman-integration:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack Podman integration tests
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      SUPABASE_STACK_TEST_ENGINE: podman
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Setup Podman
+        uses: ./.github/actions/setup-podman
+
+      # The suites that drive a real container engine; the rest of the integration project is
+      # engine-independent and runs in test-integration.
+      - name: Run stack Podman integration tests
+        working-directory: packages/stack
+        run: >-
+          pnpm test:integration:run
+          src/Owner.integration.test.ts
+          src/Sweep.integration.test.ts
+          src/Commands.integration.test.ts
+          src/StackHost.container-shutdown.integration.test.ts
+          src/runtime/Container.integration.test.ts
+          src/storage/DockerDatabaseStorage.integration.test.ts
+          src/services/Database.integration.test.ts
+          src/services/Functions.integration.test.ts
+          src/services/Realtime.integration.test.ts
+          src/services/Rest.integration.test.ts
+          src/services/AuthStorage.integration.test.ts
+          src/services/StorageGateway.integration.test.ts
+          src/services/AnalyticsImgproxy.integration.test.ts
+          src/services/Mail.integration.test.ts
+          src/services/Pooler.integration.test.ts
+          tests/docker-volume-run.integration.test.ts
+          --passWithNoTests=false
+
   # Summary job that gates branch protection. It preserves the original check
   # name and succeeds iff every CLI shard and stack runtime succeeded.
   test-e2e-summary:
@@ -315,13 +423,16 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: [test-e2e, test-stack-e2e]
+    needs: [test-e2e, test-stack-e2e, test-stack-native-scenarios, test-stack-podman-integration]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all shards succeeded
         run: |
-          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ]; then
-            echo "::error ::One or more e2e jobs failed: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"
+          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || \
+            [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ] || \
+            [ "${{ needs.test-stack-native-scenarios.result }}" = "failure" ] || [ "${{ needs.test-stack-native-scenarios.result }}" = "cancelled" ] || \
+            [ "${{ needs.test-stack-podman-integration.result }}" = "failure" ] || [ "${{ needs.test-stack-podman-integration.result }}" = "cancelled" ]; then
+            echo "::error ::One or more e2e jobs failed: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}, stack-native-scenarios=${{ needs.test-stack-native-scenarios.result }}, stack-podman-integration=${{ needs.test-stack-podman-integration.result }}"
             exit 1
           fi
-          echo "All e2e jobs reported: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"
+          echo "All e2e jobs reported: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}, stack-native-scenarios=${{ needs.test-stack-native-scenarios.result }}, stack-podman-integration=${{ needs.test-stack-podman-integration.result }}"

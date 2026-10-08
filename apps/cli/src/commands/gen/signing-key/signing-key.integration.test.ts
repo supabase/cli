@@ -277,9 +277,7 @@ describe("gen signing-key integration", () => {
           TelemetryRuntime,
           TelemetryRuntime.of({
             configDir: path.join(tempRoot.current, ".supabase"),
-            tracesDir: path.join(tempRoot.current, ".supabase", "traces"),
             consent: "granted",
-            showDebug: false,
             deviceId: "test-device-id",
             sessionId: "test-session-id",
             identity: makeTelemetryIdentity(undefined),

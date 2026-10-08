@@ -27,6 +27,7 @@ export default defineConfig({
           // Integration workers start real service processes and containers.
           maxWorkers: 4,
           sequence: { groupOrder: 1 },
+          globalSetup: ["tests/docker-volume-run.ts"],
         },
       },
       {
@@ -34,6 +35,7 @@ export default defineConfig({
           name: "e2e",
           hookTimeout: 120_000,
           include: ["**/*.e2e.test.ts"],
+          globalSetup: ["tests/docker-volume-run.ts"],
         },
       },
     ],

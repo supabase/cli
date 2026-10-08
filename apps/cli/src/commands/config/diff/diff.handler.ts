@@ -121,6 +121,10 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       mapBranchResolveError,
     );
     resolvedRef = ref;
+    yield* Effect.annotateCurrentSpan({
+      "project.ref": ref,
+      "config.target_is_branch": branch !== undefined,
+    });
 
     // Reload only if a `[remotes.*]` entry matches the resolved ref (ADR 0018), matched against
     // the raw pre-`env()` `project_id` literal so an `env(REF)` entry that merely resolves to
@@ -183,7 +187,8 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     // the same ProjectConfigParseError boundary applies here.
     const changeSet = yield* configProjectConfigTry(() =>
       diffProjectConfig({ local: loaded, remote }),
-    );
+    ).pipe(Effect.withSpan("config.diff.computeDiff"));
+    yield* Effect.annotateCurrentSpan("change.count", changeSet.counts.total);
 
     const data = configIsRecord(responseJson) ? responseJson["data"] : undefined;
     const scope = configApiScope(

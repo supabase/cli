@@ -1,423 +1,660 @@
-import { NodeServices, NodeSocketServer } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Ref, Scope } from "effect";
-import { makePorts, PortError } from "./Ports.ts";
-import * as State from "./State.ts";
+import {
+  Context,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Hash,
+  Layer,
+  Path,
+  Schedule,
+  Scope,
+} from "effect";
+import * as Net from "node:net";
+import { userInfo } from "node:os";
+import { randomUUID } from "node:crypto";
+import {
+  makePorts,
+  nativePortBase,
+  nativePortSpan,
+  PortError,
+  probeVacant,
+  reserveNativePort,
+} from "./Ports.ts";
+import { systemError } from "effect/PlatformError";
+import { bindTcp } from "./Proxy.ts";
+import { CONTAINER_ENV_DIRNAME } from "./namespace/Paths.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import { ownerFor } from "../tests/owner-rpc.ts";
+
+/**
+ * Scenarios the public `effect.ts` facade cannot reach deterministically: forcing an
+ * auto-allocation retry onto a known candidate, which needs the exact first port a real round trip
+ * picked; a real TCP bind failure, which a probe-equipped `Network.ts` callback would otherwise
+ * intercept first on a platform where overlapping binds succeed; and a stack-wide destroy's
+ * retained row release through a real, in-process `Owner`, whose first attempt a concrete sweep
+ * failure leaves uncertain. All exercise the real per-user registry and real sockets; see
+ * `port-reservation.e2e.test.ts` for the end-to-end scenarios, and `Network.integration.test.ts`'s
+ * "keeps shared routes independent and retains the shared claim" for the shared-listener
+ * self-reuse case.
+ */
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
-const bind = (host: string, port: number) =>
-  NodeSocketServer.make({ host, port }).pipe(
-    Effect.mapError((cause) => new PortError({ key: "sql", message: "Cannot bind", cause })),
-  );
-
-it.live("retains distinct claims for stopped stacks and rebinds the original public port", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      for (const id of ["first", "second"])
-        yield* state.save({
-          id,
-          runtime: "native",
-          identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
-          instances: [],
-          lifetime: "detached",
-          composition: { members: [], dependencies: [] },
-          ports: [],
-        });
-      const ports = yield* makePorts(state);
-      const firstScope = yield* Scope.make();
-      const request = { stackId: "first", key: "db/sql", host: "127.0.0.1", port: "auto" as const };
-      const first = yield* ports
-        .acquire(request, bind)
-        .pipe(Effect.provideService(Scope.Scope, firstScope));
-      yield* Scope.close(firstScope, Exit.void);
-      const second = yield* ports.acquire({ ...request, stackId: "second" }, bind);
-      expect(second.port).not.toBe(first.port);
-      const reopened = yield* makePorts(yield* makeTestState(root));
-      const again = yield* reopened.acquire(request, bind);
-      expect(again.port).toBe(first.port);
-      expect((yield* state.read("first"))?.ports).toEqual([
-        { key: "db/sql", host: "127.0.0.1", port: first.port },
-      ]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("reports an occupied saved port without moving its assignment", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
-        instances: [],
-        lifetime: "detached",
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const ports = yield* makePorts(state);
-      const scope = yield* Scope.make();
-      const request = { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" as const };
-      const first = yield* ports
-        .acquire(request, bind)
-        .pipe(Effect.provideService(Scope.Scope, scope));
-      yield* Scope.close(scope, Exit.void);
-      yield* bind("127.0.0.1", first.port);
-      const failure = yield* ports.acquire(request, bind).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(PortError);
-      expect(failure.message).toContain(`api at 127.0.0.1:${first.port}`);
-      expect(failure.message).not.toContain("claims this port");
-      expect((yield* state.read("stack"))?.ports[0]?.port).toBe(first.port);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("allocates an auto port outside a contiguous range that refuses to bind", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
-        instances: [],
-        lifetime: "detached",
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const ports = yield* makePorts(state);
-      // Reserves most of the span contiguously, as Windows excluded ranges do.
-      const reservedBelow = 30000;
-      const acquired = yield* ports.acquire(
-        { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" },
-        (host, port) =>
-          port < reservedBelow
-            ? Effect.fail(new PortError({ key: "api", message: `bind EACCES ${host}:${port}` }))
-            : Effect.succeed(port),
-      );
-      expect(acquired.port).toBeGreaterThanOrEqual(reservedBelow);
-      expect((yield* state.read("stack"))?.ports).toEqual([
-        { key: "api", host: "127.0.0.1", port: acquired.port },
-      ]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("reassigns the same auto port after its claim is released", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
-        instances: [],
-        lifetime: "detached",
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const ports = yield* makePorts(state);
-      const request = { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" as const };
-      const accept = (_host: string, port: number) => Effect.succeed(port);
-      const first = yield* ports.acquire(request, accept);
-      yield* ports.release("stack", "api");
-      const again = yield* ports.acquire(request, accept);
-      expect(again.port).toBe(first.port);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("names the last bind failure when no public port is available", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* state.save({
-        id: "stack",
-        runtime: "native",
-        identity: { projectRoot: root, branchContext: "test", stackName: "ports" },
-        instances: [],
-        lifetime: "detached",
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      });
-      const ports = yield* makePorts(state);
-      const failure = yield* ports
-        .acquire({ stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" }, (host, port) =>
-          Effect.fail(new PortError({ key: "api", message: `bind EACCES ${host}:${port}` })),
-        )
-        .pipe(Effect.flip);
-      expect(failure.message).toContain("No public port is available");
-      expect(failure.message).toContain("bind EACCES 127.0.0.1:");
-      expect((yield* state.read("stack"))?.ports).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-const saveStack = (
-  state: State.Interface,
-  root: string,
-  id: string,
-  ports: State.SavedStack["ports"] = [],
-) =>
+const saveStack = (state: StackNamespace.Interface, root: string, id: string) =>
   state.save({
     id,
     runtime: "native",
-    identity: { projectRoot: root, branchContext: `branch-${id}`, stackName: id },
+    identity: { projectRoot: root, branchContext: "test", stackName: id },
     instances: [],
     lifetime: "detached",
     composition: { members: [], dependencies: [] },
-    ports,
   });
 
-it.live("allocates past siblings whose state is unreadable or from a newer format", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "healthy");
-      yield* fs.makeDirectory(`${root}/broken`);
-      yield* fs.writeFileString(`${root}/broken/state.json`, "{broken");
-      yield* fs.makeDirectory(`${root}/newer`);
-      yield* fs.writeFileString(
-        `${root}/newer/state.json`,
-        '{"id":"newer","runtime":"future","ports":[]}',
+/** Binds like a brand-new listener Network.ts would create: probed first, then really bound, so
+ * the assertion exercises Linux's real EADDRINUSE path and macOS's probe alike. */
+const probedBind = (key: string) => (host: string, port: number) =>
+  probeVacant(process.platform)(key, host, port).pipe(Effect.andThen(bindTcp(host, port)));
+
+/**
+ * Binds a real wildcard listener directly in the native span, skipping any already-occupied
+ * candidate, instead of reserving a port through the allocator and racing to rebind it as a
+ * blocker afterward.
+ */
+const bindNativeWildcard = (): Effect.Effect<{
+  readonly port: number;
+  readonly server: Net.Server;
+}> =>
+  Effect.gen(function* () {
+    for (let offset = 0; offset < nativePortSpan; offset++) {
+      const port = nativePortBase + offset;
+      const attempt = yield* Effect.exit(
+        Effect.callback<Net.Server, Error>((resume) => {
+          const server = Net.createServer();
+          server.once("error", (cause) => resume(Effect.fail(cause)));
+          server.listen(port, "0.0.0.0", () => resume(Effect.succeed(server)));
+        }),
       );
-      const ports = yield* makePorts(state);
-      const acquired = yield* ports.acquire(
-        { stackId: "healthy", key: "sql", host: "127.0.0.1", port: "auto" },
-        bind,
-      );
-      expect((yield* state.read("healthy"))?.ports).toEqual([
-        { key: "sql", host: "127.0.0.1", port: acquired.port },
-      ]);
-      expect(yield* fs.readFileString(`${root}/broken/state.json`)).toBe("{broken");
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+      if (Exit.isSuccess(attempt)) return { port, server: attempt.value };
+    }
+    return yield* Effect.die("No port in the native span was free for the fixture");
+  });
 
-it.live("keeps auto allocation off ports claimed by a sibling in a newer format", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "stack");
-      const ports = yield* makePorts(state);
-      const request = { stackId: "stack", key: "api", host: "127.0.0.1", port: "auto" as const };
-      const accept = (_host: string, port: number) => Effect.succeed(port);
-      const preferred = yield* ports.acquire(request, accept);
-      yield* ports.release("stack", "api");
-      yield* fs.makeDirectory(`${root}/newer`);
-      yield* fs.writeFileString(
-        `${root}/newer/state.json`,
-        `{"id":"newer","runtime":"future","ports":[{"key":"api","host":"127.0.0.1","port":${preferred.port}}]}`,
-      );
-      const moved = yield* ports.acquire(request, accept);
-      expect(moved.port).not.toBe(preferred.port);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+/**
+ * Brute-forces a key whose hash-seeded first scan candidate is exactly `port`, so a test can plant
+ * a blocker there ahead of time and assert the scan skips it, rather than merely missing it by
+ * chance.
+ */
+const keyWithFirstCandidate = (port: number): string => {
+  const offset = port - nativePortBase;
+  for (let attempt = 0; attempt < nativePortSpan * 20; attempt++) {
+    const key = `native-fixture-${attempt}`;
+    if (Math.abs(Hash.string(key)) % nativePortSpan === offset) return key;
+  }
+  throw new Error(`No key found whose first candidate is port ${port}`);
+};
 
-it.live("lets a stack bind an explicit port that a stopped stack still claims", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "stopped");
-      yield* saveStack(state, root, "current");
-      const ports = yield* makePorts(state);
-      const stoppedScope = yield* Scope.make();
-      const stopped = yield* ports
-        .acquire({ stackId: "stopped", key: "db/sql", host: "127.0.0.1", port: "auto" }, bind)
-        .pipe(Effect.provideService(Scope.Scope, stoppedScope));
-      yield* Scope.close(stoppedScope, Exit.void);
-
-      const current = yield* ports.acquire(
-        { stackId: "current", key: "db/sql", host: "127.0.0.1", port: stopped.port },
-        bind,
-      );
-      expect(current.port).toBe(stopped.port);
-      expect((yield* state.read("stopped"))?.ports).toEqual([
-        { key: "db/sql", host: "127.0.0.1", port: stopped.port },
-      ]);
-      expect((yield* state.read("current"))?.ports).toEqual([
-        { key: "db/sql", host: "127.0.0.1", port: stopped.port },
-      ]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("names the stack claiming an explicit port that a live listener holds", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "holder");
-      yield* saveStack(state, root, "current");
-      const ports = yield* makePorts(state);
-      const held = yield* ports.acquire(
-        { stackId: "holder", key: "db/sql", host: "127.0.0.1", port: "auto" },
-        bind,
-      );
-
-      const failure = yield* ports
-        .acquire({ stackId: "current", key: "db/sql", host: "127.0.0.1", port: held.port }, bind)
-        .pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(PortError);
-      expect(failure.message).toContain(`db/sql at 127.0.0.1:${held.port}`);
-      expect(failure.message).toContain(`stack "holder" on branch-holder in ${root}`);
-      expect((yield* state.read("current"))?.ports).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-for (const [held, requested] of [
-  ["127.0.0.1", "0.0.0.0"],
-  ["::1", "127.0.0.1"],
-] as const)
-  it.live(`rejects ${requested} on a port a ${held} listener holds where binds can overlap`, () =>
+it.live(
+  "on this platform, auto allocation skips a port a foreign listener occupies, even where overlapping binds would otherwise succeed",
+  () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped();
+        const id = `auto-skip-${randomUUID()}`;
         const state = yield* makeTestState(root);
-        yield* saveStack(state, root, "holder");
-        yield* saveStack(state, root, "current");
-        const ports = yield* makePorts(state, "darwin");
-        const listener = yield* ports.acquire(
-          { stackId: "holder", key: "api", host: held, port: "auto" },
-          bind,
-        );
-        const overlappingBinds = yield* Ref.make(0);
+        yield* saveStack(state, root, id);
+        const ports = yield* makePorts(state);
+        const request = { stackId: id, key: "api", host: "127.0.0.1", port: "auto" as const };
+        const probed = probedBind("api");
 
+        // The scan's first candidate is already reserved when it reaches `bind`; occupying it
+        // there leaves no gap for a parallel test to take the port before the foreign listener.
+        const foreign = Net.createServer();
+        let firstCandidate: number | undefined;
+        let foreignBound = false;
+        const bind = (host: string, port: number) =>
+          Effect.gen(function* () {
+            if (firstCandidate === undefined) {
+              firstCandidate = port;
+              foreignBound = yield* Effect.callback<boolean>((resume) => {
+                foreign.once("error", (cause: NodeJS.ErrnoException) =>
+                  resume(cause.code === "EADDRINUSE" ? Effect.succeed(false) : Effect.die(cause)),
+                );
+                foreign.listen(port, "127.0.0.1", () => resume(Effect.succeed(true)));
+              });
+              // An unrelated process already holds the candidate: report the collision it caused
+              // rather than probing a listener this test doesn't own.
+              if (!foreignBound)
+                return yield* new PortError({
+                  key: "api",
+                  message: `Port ${port} is already in use`,
+                  conflict: { port, endpoint: "api", holder: "foreign" },
+                });
+            }
+            return yield* probed(host, port);
+          });
+        yield* Effect.addFinalizer(() =>
+          Effect.callback<void>((resume) => {
+            if (foreignBound) foreign.close(() => resume(Effect.void));
+            else resume(Effect.void);
+          }),
+        );
+
+        const acquired = yield* ports.acquire(request, bind);
+        expect(firstCandidate).toBeDefined();
+        expect(acquired.port).not.toBe(firstCandidate);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live(
+  "a fixed TCP request surfaces a structured, foreign conflict when a real bind fails with EADDRINUSE",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const id = `tcp-foreign-${randomUUID()}`;
+        const state = yield* makeTestState(root);
+        yield* saveStack(state, root, id);
+        const ports = yield* makePorts(state);
+
+        const foreign = yield* Effect.acquireRelease(
+          Effect.callback<Net.Server, Error>((resume) => {
+            const server = Net.createServer();
+            server.once("error", (cause) => resume(Effect.fail(cause)));
+            server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+          }),
+          (server) =>
+            Effect.callback<void>((resume) => {
+              server.close(() => resume(Effect.void));
+            }),
+        );
+        const address = foreign.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a test port");
+
+        // No probe wrapper here, unlike `Network.ts`'s own callback: this exercises the real TCP
+        // bind failure (EADDRINUSE) directly, which the probe would otherwise intercept first on a
+        // platform where overlapping binds succeed.
         const failure = yield* ports
-          .acquire({ stackId: "current", key: "api", host: requested, port: listener.port }, () =>
-            Ref.update(overlappingBinds, (count) => count + 1),
-          )
+          .acquire({ stackId: id, key: "api", host: "127.0.0.1", port: address.port }, bindTcp)
           .pipe(Effect.flip);
-        expect(failure.message).toContain("already in use");
-        expect(failure.message).toContain(`stack "holder"`);
-        expect(yield* Ref.get(overlappingBinds)).toBe(0);
-        expect((yield* state.read("current"))?.ports).toEqual([]);
+        if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
+        expect(failure.conflict?.holder).toBe("foreign");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live(
+  "interrupting an initial auto acquisition while its bind attempt is pending leaves no row behind",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const id = `auto-interrupt-${randomUUID()}`;
+        const state = yield* makeTestState(root);
+        yield* saveStack(state, root, id);
+        const ports = yield* makePorts(state);
+        const realRoot = yield* fs.realPath(root);
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
+        );
+
+        // Stands in for a probe or bind that never settles: the first candidate's row is
+        // committed, then the acquisition is interrupted while still inside it.
+        const bind = (_host: string, _port: number) => Effect.never;
+        const fiber = yield* ports
+          .acquire({ stackId: id, key: "api", host: "127.0.0.1", port: "auto" }, bind)
+          .pipe(Effect.forkChild);
+        const scanned = yield* portReservations.find(realRoot, id, "api").pipe(
+          Effect.repeat({
+            while: (port) => port === undefined,
+            schedule: Schedule.spaced("5 millis"),
+          }),
+          Effect.timeout("5 seconds"),
+        );
+        expect(scanned).toBeDefined();
+
+        yield* Fiber.interrupt(fiber);
+        expect(yield* portReservations.find(realRoot, id, "api")).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live(
+  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, releases it",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-defer-destroy-" });
+        const id = `defer-destroy-${randomUUID()}`;
+        const state = yield* makeTestState(`${root}/state`);
+        const saved = {
+          id,
+          runtime: "native" as const,
+          identity: { projectRoot: root, branchContext: "test", stackName: id },
+          instances: [],
+          lifetime: "detached" as const,
+          composition: { members: [], dependencies: [] },
+        };
+        yield* state.save(saved);
+
+        // Fails removing a leftover scratch directory under the data root on the first attempt
+        // only, standing in for any concrete cleanup failure (an unreachable engine, a locked
+        // file, and so on); resolved for the retry once the uncertainty would realistically have
+        // cleared.
+        const scratch = path.join(root, "data", CONTAINER_ENV_DIRNAME);
+        let resolved = false;
+        const unreliableFileSystem = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.map(FileSystem.FileSystem, (real) =>
+            FileSystem.FileSystem.of({
+              ...real,
+              remove: (target, options) =>
+                Effect.suspend(() =>
+                  target === scratch && !resolved
+                    ? Effect.fail(
+                        systemError({
+                          _tag: "PermissionDenied",
+                          module: "test",
+                          method: "remove",
+                          description: "Injected cleanup failure",
+                        }),
+                      )
+                    : real.remove(target, options),
+                ),
+            }),
+          ),
+        ).pipe(Layer.provide(NodeFileSystem.layer));
+
+        const owner = yield* ownerFor({
+          saved,
+          state,
+          root: `${root}/data`,
+          cacheRoot: `${root}/cache`,
+        }).pipe(Effect.provide(unreliableFileSystem));
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            resolved = true;
+            yield* owner.namespace.destroy;
+          }).pipe(Effect.ignore),
+        );
+        // Composing reserves every member's public port up front (including a lazy one like
+        // mail), with no member ever started: a real reservation with no native artifact needed,
+        // so this runs on every platform, Windows included.
+        const definitions = yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+        });
+        const mail = definitions.find((entry) => entry.creation.service === "mail");
+        if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+
+        const realStateRoot = yield* fs.realPath(`${root}/state`);
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
+        );
+        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+
+        yield* fs.makeDirectory(scratch, { recursive: true });
+        const firstAttempt = yield* owner.namespace.destroy.pipe(Effect.exit);
+        expect(firstAttempt._tag).toBe("Failure");
+        // Retained: the row survives a destroy that could not confirm nothing remains.
+        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+
+        resolved = true;
+        yield* owner.namespace.destroy;
+        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.merge(
+            NodeHttpClient.layerNodeHttp,
+            PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          ),
+        ),
+      ),
+    ),
+);
+
+it.live("a destroy that cannot remove the registration keeps every reservation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-remove-fails-" });
+      const id = `destroy-remove-fails-${randomUUID()}`;
+      const state = yield* makeTestState(`${root}/state`);
+      const saved = {
+        id,
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "test", stackName: id },
+        instances: [],
+        lifetime: "detached" as const,
+        composition: { members: [], dependencies: [] },
+      };
+      yield* state.save(saved);
+      let removable = false;
+      const unremovableState: StackNamespace.Interface = {
+        ...state,
+        remove: (target) =>
+          Effect.suspend(() =>
+            removable
+              ? state.remove(target)
+              : Effect.fail(
+                  new StackNamespace.NamespaceError({
+                    operation: "remove",
+                    message: "injected failure",
+                  }),
+                ),
+          ),
+      };
+      const owner = yield* ownerFor({
+        saved,
+        state: unremovableState,
+        root: `${root}/data`,
+        cacheRoot: `${root}/cache`,
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.suspend(() => {
+          removable = true;
+          return owner.namespace.destroy;
+        }).pipe(Effect.ignore),
+      );
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = Context.get(
+        yield* Layer.build(PortReservations.layer),
+        PortReservations.Service,
+      );
+      const assigned = yield* portReservations.find(realStateRoot, id, `${mail.id}:http`);
+      expect(assigned).toBeDefined();
+
+      const failed = yield* owner.namespace.destroy.pipe(Effect.exit);
+
+      expect(failed._tag).toBe("Failure");
+      expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBe(assigned);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.merge(
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.live("reserveNativePort skips a port a wildcard listener already holds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const blocked = yield* bindNativeWildcard();
+      yield* Effect.addFinalizer(() =>
+        Effect.callback<void>((resume) => {
+          blocked.server.close(() => resume(Effect.void));
+        }),
+      );
+      // A key whose hash-seeded first candidate is exactly the blocked port, so the scan must skip
+      // past the wildcard listener instead of merely missing it by chance.
+      const key = keyWithFirstCandidate(blocked.port);
+
+      const reserved = yield* reserveNativePort(key, new Set());
+      expect(reserved.port).not.toBe(blocked.port);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("reserveNativePort excludes a port a previous attempt lost from the next reservation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const key = `native-exclude-${randomUUID()}`;
+      const firstScope = yield* Scope.make();
+      const first = yield* reserveNativePort(key, new Set()).pipe(
+        Effect.provideService(Scope.Scope, firstScope),
+      );
+      yield* Scope.close(firstScope, Exit.void);
+
+      const second = yield* reserveNativePort(key, new Set([first.port]));
+      expect(second.port).not.toBe(first.port);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// Windows has no POSIX mode bits and no stepped-down native database.
+it.live.skipIf(process.platform === "win32")(
+  "opening the port registry keeps the traverse bit a stepped-down database needs on its directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const openRegistry = Layer.build(
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        );
+        const directory = path.join(userInfo().homedir, ".supabase");
+        yield* openRegistry;
+        // The registry directory is an ancestor of native data, so a root-run Postgres that
+        // stepped down to another user traverses it through o+x granted by the runtime.
+        const original = (yield* fs.stat(directory)).mode & 0o7777;
+        yield* Effect.addFinalizer(() => fs.chmod(directory, original).pipe(Effect.ignore));
+        yield* fs.chmod(directory, 0o701);
+
+        yield* openRegistry;
+
+        expect(yield* fs.exists(path.join(directory, "ports.sqlite"))).toBe(true);
+        expect((yield* fs.stat(directory)).mode & 0o777).toBe(0o701);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** A pinned port above the auto range, so it never meets a registry row from an auto allocation. */
+const pinnedPort = () => 33000 + (Math.abs(Hash.string(randomUUID())) % 16000);
+
+const withRegistry = Effect.provide(
+  Layer.merge(NodeServices.layer, PortReservations.layer.pipe(Layer.provide(NodeServices.layer))),
+);
+
+/** Two stacks of separate projects registered in one state root. */
+const twoProjects = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped();
+  const state = yield* makeTestState(root);
+  const projectA = `${root}/project-a`;
+  const projectB = `${root}/project-b`;
+  const a = `pinned-a-${randomUUID()}`;
+  const b = `pinned-b-${randomUUID()}`;
+  yield* saveStack(state, projectA, a);
+  yield* saveStack(state, projectB, b);
+  const ports = yield* makePorts(state);
+  const registry = Context.get(
+    yield* Layer.build(PortReservations.layer),
+    PortReservations.Service,
   );
+  return { state, ports, registry, stateRoot: yield* fs.realPath(root), a, b, projectA };
+});
 
-it.live("leaves a fixed port to the bind where overlapping binds are rejected", () =>
+it.live("a stopped stack's pinned port is free for another project's stack", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "holder");
-      yield* saveStack(state, root, "current");
-      const ports = yield* makePorts(state, "linux");
-      const listener = yield* ports.acquire(
-        { stackId: "holder", key: "api", host: "127.0.0.1", port: "auto" },
+      const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+      const port = pinnedPort();
+      const bind = (_host: string, bound: number) => Effect.succeed(bound);
+
+      yield* Effect.scoped(
+        ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind),
+      );
+
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+      const started = yield* ports.acquire(
+        { stackId: b, key: "db:sql", host: "127.0.0.1", port },
         bind,
       );
-      const binds = yield* Ref.make(0);
-
-      const acquired = yield* ports.acquire(
-        { stackId: "current", key: "api", host: "0.0.0.0", port: listener.port },
-        () => Ref.update(binds, (count) => count + 1),
-      );
-      expect(acquired.port).toBe(listener.port);
-      expect(yield* Ref.get(binds)).toBe(1);
+      expect(started.port).toBe(port);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(withRegistry),
 );
 
-it.live("lets a stack bind a port that a running stack claims but does not listen on", () =>
+it.live("a running stack's pinned port conflict names the port, its project, and the fix", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "running");
-      yield* saveStack(state, root, "current");
-      const ports = yield* makePorts(state);
-      yield* ports.acquire(
-        { stackId: "running", key: "admin", host: "127.0.0.1", port: "auto" },
-        bind,
-      );
-      const restScope = yield* Scope.make();
-      const rest = yield* ports
-        .acquire({ stackId: "running", key: "api", host: "127.0.0.1", port: "auto" }, bind)
-        .pipe(Effect.provideService(Scope.Scope, restScope));
-      yield* Scope.close(restScope, Exit.void);
+      const { state, ports, a, b, projectA } = yield* twoProjects;
+      const port = pinnedPort();
+      const bind = (_host: string, bound: number) => Effect.succeed(bound);
+      yield* state.acquireLease(a);
+      yield* ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind);
 
-      const current = yield* ports.acquire(
-        { stackId: "current", key: "api", host: "127.0.0.1", port: rest.port },
-        bind,
-      );
-      expect(current.port).toBe(rest.port);
-      expect((yield* state.read("current"))?.ports).toEqual([
-        { key: "api", host: "127.0.0.1", port: rest.port },
-      ]);
+      const failure = yield* ports
+        .acquire({ stackId: b, key: "db:sql", host: "127.0.0.1", port }, bind)
+        .pipe(Effect.flip);
+
+      expect(failure.message).toContain(String(port));
+      expect(failure.message).toContain(projectA);
+      expect(failure.message).toContain("supabase stack stop");
+      expect(failure.message).not.toContain("destroy");
+      if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
+      expect(failure.conflict?.holder).toMatchObject({ stackId: a });
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(withRegistry),
 );
 
-it.live("lets exactly one of two stacks sharing a saved port bind it when both start at once", () =>
+it.live(
+  "a pinned reservation left behind by a dead owner is released when the next owner stops",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+        const port = pinnedPort();
+        const bind = (_host: string, bound: number) => Effect.succeed(bound);
+        yield* registry.reserve(stateRoot, a, "db:sql", port);
+
+        yield* Effect.scoped(
+          ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind),
+        );
+
+        expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+        expect(
+          (yield* ports.acquire({ stackId: b, key: "db:sql", host: "127.0.0.1", port }, bind)).port,
+        ).toBe(port);
+      }),
+    ).pipe(withRegistry),
+);
+
+it.live(
+  "a pinned port held by an owner that died without closing is free for another project",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+        const port = pinnedPort();
+        yield* registry.reserve(stateRoot, a, "db:sql", port);
+
+        const started = yield* ports.acquire(
+          { stackId: b, key: "db:sql", host: "127.0.0.1", port },
+          (_host, bound) => Effect.succeed(bound),
+        );
+
+        expect(started.port).toBe(port);
+        expect(yield* registry.find(stateRoot, b, "db:sql")).toBe(port);
+      }),
+    ).pipe(withRegistry),
+);
+
+it.live("a configured port takes over a reservation whose stack is only held by a sweeper", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "first");
-      const ports = yield* makePorts(state);
-      const request = { stackId: "first", key: "api", host: "127.0.0.1", port: "auto" as const };
-      const seedScope = yield* Scope.make();
-      const seed = yield* ports
-        .acquire(request, bind)
-        .pipe(Effect.provideService(Scope.Scope, seedScope));
-      yield* Scope.close(seedScope, Exit.void);
-      yield* saveStack(state, root, "second", [{ key: "api", host: "127.0.0.1", port: seed.port }]);
+      const { state, ports, registry, stateRoot, a, b } = yield* twoProjects;
+      const port = pinnedPort();
+      yield* registry.reserve(stateRoot, a, "db:sql", port);
+      const lease = yield* state.acquireLease(a);
+      yield* lease.publishHolder({
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
 
-      const [first, second] = yield* Effect.all(
-        [
-          Effect.exit(ports.acquire(request, bind)),
-          Effect.exit(ports.acquire({ ...request, stackId: "second" }, bind)),
-        ],
-        { concurrency: "unbounded" },
+      const started = yield* ports.acquire(
+        { stackId: b, key: "db:sql", host: "127.0.0.1", port },
+        (_host, bound) => Effect.succeed(bound),
       );
-      const outcomes = [
-        { claimant: "second", exit: first },
-        { claimant: "first", exit: second },
-      ];
-      expect(outcomes.filter(({ exit }) => Exit.isSuccess(exit))).toHaveLength(1);
-      const loser = outcomes.find(({ exit }) => Exit.isFailure(exit));
-      const failure =
-        loser !== undefined && Exit.isFailure(loser.exit)
-          ? Cause.findErrorOption(loser.exit.cause)
-          : Option.none();
-      if (Option.isNone(failure)) return yield* Effect.die("expected a port conflict");
-      expect(failure.value).toBeInstanceOf(PortError);
-      expect(failure.value.message).toContain(`127.0.0.1:${seed.port}`);
-      expect(failure.value.message).toContain(`stack "${loser?.claimant}"`);
-      for (const id of ["first", "second"])
-        expect((yield* state.read(id))?.ports).toEqual([
-          { key: "api", host: "127.0.0.1", port: seed.port },
-        ]);
+
+      expect(started.port).toBe(port);
+      expect(yield* registry.find(stateRoot, b, "db:sql")).toBe(port);
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(withRegistry),
+);
+
+it.live("a pinned port that fails to bind is not left reserved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, registry, stateRoot, a } = yield* twoProjects;
+      const port = pinnedPort();
+
+      yield* ports
+        .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, () =>
+          Effect.fail(new PortError({ key: "db:sql", message: "bind failed" })),
+        )
+        .pipe(Effect.flip);
+
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live("a pinned port inside the native backend range names the range and the endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, a } = yield* twoProjects;
+
+      const failure = yield* ports
+        .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port: 15432 }, (_host, bound) =>
+          Effect.succeed(bound),
+        )
+        .pipe(Effect.flip);
+
+      expect(failure.message).toContain("db:sql");
+      expect(failure.message).toContain("native service backends");
+    }),
+  ).pipe(withRegistry),
 );

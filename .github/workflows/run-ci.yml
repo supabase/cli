@@ -1,8 +1,9 @@
 name: run-ci
 
 # Opt-in full develop CI for PRs that Test.yml does not already cover: stacked
-# PRs (base is not develop) and drafts. Ready develop PRs stay on the existing
-# workflows so required check names and concurrency are unchanged.
+# PRs (base is not develop, main, next or v*.x) and drafts. Ready PRs into
+# those stay on the existing workflows so required check names and concurrency
+# are unchanged.
 #
 # Add the `run-ci` label to start the suite; remove it to cancel in-progress
 # runs via this workflow's concurrency group. Other labels do not retrigger.
@@ -41,7 +42,9 @@ jobs:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       contains(github.event.pull_request.labels.*.name, 'run-ci') &&
-      (github.event.pull_request.draft || github.base_ref != 'develop') &&
+      (github.event.pull_request.draft ||
+        (github.base_ref != 'develop' && github.base_ref != 'main' && github.base_ref != 'next' &&
+          !(startsWith(github.base_ref, 'v') && endsWith(github.base_ref, '.x')))) &&
       ((github.event.action != 'labeled' &&
           github.event.action != 'unlabeled') ||
         github.event.label.name == 'run-ci')

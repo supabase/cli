@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Sink, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
-import { systemError } from "effect/PlatformError";
+import { systemError, type PlatformError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
@@ -10,6 +10,7 @@ import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import { execFileSync, spawn as spawnProcess } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The test waits for actual inherited-fd and process events.
 import { once } from "node:events";
+import type { NativeEnvironment } from "../namespace/Environment.ts";
 import {
   defaultNativeProcessLauncher,
   spawnNativeProcess,
@@ -18,6 +19,21 @@ import {
 } from "./NativeProcess.ts";
 
 const targetPid = 87_035;
+
+/** These tests exercise process lifecycle, not confinement; the paths need not exist. */
+const testEnvironment: NativeEnvironment = {
+  values: {
+    HOME: "/tmp/native-process-test-home",
+    TMPDIR: "/tmp/native-process-test-home/tmp",
+    TMP: "/tmp/native-process-test-home/tmp",
+    TEMP: "/tmp/native-process-test-home/tmp",
+    XDG_CACHE_HOME: "/tmp/native-process-test-home/.cache",
+    XDG_CONFIG_HOME: "/tmp/native-process-test-home/.config",
+    XDG_DATA_HOME: "/tmp/native-process-test-home/.local/share",
+    XDG_STATE_HOME: "/tmp/native-process-test-home/.local/state",
+    DENO_DIR: "/tmp/native-process-test-home/.cache/deno",
+  },
+};
 
 interface FakeProcessOptions {
   readonly groupOutput?: string;
@@ -31,7 +47,11 @@ interface FakeProcessOptions {
   readonly groupStallReady?: Deferred.Deferred<void>;
   readonly groupStallClosed?: Deferred.Deferred<void>;
   readonly exitStarted?: Deferred.Deferred<void>;
-  readonly exitCode?: Deferred.Deferred<ExitCode>;
+  readonly exitCode?: Deferred.Deferred<ExitCode, PlatformError>;
+  /** Reports the launcher as still running instead of the default already-exited fake. */
+  readonly isRunning?: boolean;
+  /** Observes the signal a forced `kill` sends to the launcher. */
+  readonly onForcedKill?: (signal: string | undefined) => void;
 }
 
 const makeSpawner = (options: FakeProcessOptions) => {
@@ -107,8 +127,8 @@ const makeSpawner = (options: FakeProcessOptions) => {
                 return yield* Deferred.await(exit);
               });
         })(),
-        isRunning: Effect.succeed(false),
-        kill: () => Effect.void,
+        isRunning: Effect.succeed(options.isRunning ?? false),
+        kill: (killOptions) => Effect.sync(() => options.onForcedKill?.(killOptions?.killSignal)),
         stdin: Sink.drain,
         stdout: Stream.empty,
         stderr: Stream.empty,
@@ -129,25 +149,32 @@ const makeSpawner = (options: FakeProcessOptions) => {
   return spawner;
 };
 
-const spec: NativeProcessSpec = { executable: "test-native-process" };
+const spec: NativeProcessSpec = { executable: "test-native-process", environment: testEnvironment };
 
+// Intercepts every signal sent to the positive launcher pid and its negative
+// group so tests using a placeholder pid never reach a real OS process, for
+// the effect and its own scope cleanup (e.g. a finalizer-driven retry).
 const withMockedTargetKill = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   target: number,
-  code: "EPERM" | "ESRCH" = "EPERM",
+  code: "EPERM" | "ESRCH" | "SUCCEED" = "EPERM",
   failAlways = true,
+  onSignal?: (pid: number, signal: NodeJS.Signals) => void,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       const originalKill = globalThis.process.kill;
       let failed = false;
       globalThis.process.kill = (pid, signal) => {
+        onSignal?.(Number(pid), signal as NodeJS.Signals);
         if (pid === -target) {
+          if (code === "SUCCEED") return true;
           if (!failAlways && failed)
             throw Object.assign(new Error("operation ESRCH"), { code: "ESRCH" });
           failed = true;
           throw Object.assign(new Error(`operation ${code}`), { code });
         }
+        if (pid === target) return true;
         return originalKill(pid, signal);
       };
       return originalKill;
@@ -235,6 +262,7 @@ const descendantSpec = (): NativeProcessSpec => {
   return {
     executable: process.execPath,
     args: ["--input-type=module", "-e", workloadCode],
+    environment: testEnvironment,
   };
 };
 
@@ -249,7 +277,9 @@ describe("native process group cleanup", () => {
           try: async () => {
             const launcher = defaultNativeProcessLauncher();
             const workloadMarker = `fd5-workload-${process.pid}`;
-            const child = spawnProcess(launcher.command, launcher.args, {
+            // Carried as a trailing argv entry so the launcher's own command line is checkable
+            // the same way as the workload's, without the launcher reading or acting on it.
+            const child = spawnProcess(launcher.command, [...launcher.args, workloadMarker], {
               detached: true,
               stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "pipe"],
             });
@@ -294,18 +324,40 @@ describe("native process group cleanup", () => {
               }
               return rows;
             };
-            const killGroup = (pid: number | undefined) => {
-              if (pid === undefined) return;
+            // A recycled PID or PGID can belong to an unrelated process group (another user's,
+            // in the EPERM case); only a marker match proves it is still this test's own.
+            const groupCarriesMarker = (groupId: number): boolean => {
               try {
-                process.kill(-pid, "SIGKILL");
+                return execFileSync("ps", ["-axo", "pgid=,command="], { encoding: "utf8" })
+                  .split(/\r?\n/)
+                  .some((line) => {
+                    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+                    return (
+                      match !== null &&
+                      match[1] !== undefined &&
+                      match[2] !== undefined &&
+                      Number(match[1]) === groupId &&
+                      match[2].includes(workloadMarker)
+                    );
+                  });
+              } catch {
+                return false;
+              }
+            };
+            const errorCode = (cause: unknown): string | undefined =>
+              typeof cause === "object" && cause !== null && "code" in cause
+                ? String(cause.code)
+                : undefined;
+            const killGroup = (groupId: number | undefined) => {
+              if (groupId === undefined || !groupCarriesMarker(groupId)) return;
+              try {
+                process.kill(-groupId, "SIGKILL");
               } catch (cause) {
-                if (
-                  typeof cause !== "object" ||
-                  cause === null ||
-                  !("code" in cause) ||
-                  cause.code !== "ESRCH"
-                )
-                  throw cause;
+                const code = errorCode(cause);
+                // A group that lost its marker between the check and the signal already exited;
+                // ESRCH or EPERM against a group that still carries it is a real failure.
+                if ((code === "ESRCH" || code === "EPERM") && !groupCarriesMarker(groupId)) return;
+                throw cause;
               }
             };
             const killOwnedGroups = () => {
@@ -457,6 +509,7 @@ describe("native process group cleanup", () => {
         Effect.gen(function* () {
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             stdin: "pipe",
             args: [
               "--input-type=module",
@@ -487,17 +540,22 @@ describe("native process group cleanup", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          // Identifies the descendant's own argv so a PID the kernel recycled for an unrelated
+          // process right after the descendant exited is never mistaken for a still-live member.
+          const descendantMarker = `native-process-descendant-${process.pid}`;
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             args: [
               "--input-type=module",
               "-e",
               [
                 "import { spawn } from 'node:child_process';",
-                "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
+                "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', process.argv[1]], { stdio: ['ignore', 'inherit', 'inherit'] });",
                 "process.stdout.write(`READY ${process.pid} ${descendant.pid}\\n`);",
                 "setInterval(() => {}, 1000);",
               ].join("\n"),
+              descendantMarker,
             ],
           });
           const output = yield* Effect.acquireRelease(
@@ -527,11 +585,11 @@ describe("native process group cleanup", () => {
           const match = /READY \d+ (\d+)/.exec(yield* Ref.get(output.text));
           expect(match).not.toBeNull();
           if (match === null) return;
-          const [state, status] = yield* Effect.scoped(
+          const [psOutput, status] = yield* Effect.scoped(
             Effect.gen(function* () {
               const descendant = yield* ChildProcess.make(
                 "/bin/ps",
-                ["-p", match[1] ?? "", "-o", "stat="],
+                ["-p", match[1] ?? "", "-o", "stat=,command="],
                 { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
               );
               return yield* Effect.all(
@@ -540,9 +598,13 @@ describe("native process group cleanup", () => {
               );
             }),
           );
+          const line = psOutput.trim();
+          const state = line.split(/\s+/u)[0] ?? "";
+          // A recycled PID belongs to an unrelated process, not the descendant; its argv won't
+          // carry the marker, and that counts the same as the descendant already being gone.
+          const stillTracksDescendant = line.includes(descendantMarker);
           expect(
-            (Number(status) === 1 && state.trim() === "") ||
-              (Number(status) === 0 && state.trim().startsWith("Z")),
+            Number(status) === 1 || line === "" || !stillTracksDescendant || state.startsWith("Z"),
           ).toBe(true);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
@@ -706,6 +768,7 @@ describe("native process group cleanup", () => {
           const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             args: [
               "--input-type=module",
               "-e",
@@ -782,7 +845,10 @@ describe("native process group cleanup", () => {
 
   it.live("reports a native launcher startup failure when workload spawn fails", () =>
     Effect.scoped(
-      spawnNativeProcess({ executable: "/definitely/missing/native-workload" }).pipe(Effect.exit),
+      spawnNativeProcess({
+        executable: "/definitely/missing/native-workload",
+        environment: testEnvironment,
+      }).pipe(Effect.exit),
     ).pipe(
       Effect.provide(NodeServices.layer),
       Effect.tap((result) =>
@@ -925,6 +991,7 @@ describe("native process group cleanup", () => {
               spawnNativeProcess(
                 {
                   executable: process.execPath,
+                  environment: testEnvironment,
                   args: [
                     "-e",
                     "process.on('SIGTERM', () => {}); process.stdout.write('native-workload-ready\\n'); setInterval(() => {}, 1000)",
@@ -945,11 +1012,157 @@ describe("native process group cleanup", () => {
       ),
   );
 
+  it.effect.skipIf(process.platform === "win32")(
+    "does not settle kill until the launcher's exit is confirmed",
+    () => {
+      const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
+          const spawner = makeSpawner({ isRunning: true, exitCode });
+          // A manually owned scope isolates the explicit kill call below from
+          // the scope-finalizer's own kill, which would otherwise race the
+          // assertion.
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill);
+          yield* TestClock.adjust("20 millis");
+          yield* Effect.yieldNow;
+          // The graceful signal timed out: the reaping phase (group cleanup)
+          // must have run before the confirmation wait can be pending.
+          expect(signals.some(({ pid }) => pid === -targetPid)).toBe(true);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
+          yield* Scope.close(processScope, Exit.void);
+        }),
+        targetPid,
+        "SUCCEED",
+        true,
+        (pid, signal) => {
+          signals.push({ pid, signal });
+        },
+      );
+    },
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "forces the launcher and waits for its exit to be confirmed",
+    () => {
+      const forcedSignals: Array<string | undefined> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
+          const spawner = makeSpawner({
+            isRunning: true,
+            exitCode,
+            onForcedKill: (signal) => forcedSignals.push(signal),
+          });
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill);
+          yield* TestClock.adjust("20 millis"); // graceful signal timeout
+          yield* Effect.yieldNow;
+          // launcherReapGuardTimeout in NativeProcess.ts; kept in sync here.
+          yield* TestClock.adjust("1 second"); // launcher reap-grace timeout
+          yield* Effect.yieldNow;
+          expect(forcedSignals).toEqual(["SIGKILL"]);
+          // The launcher was force-killed but its exit is not resolved yet:
+          // kill must still wait for confirmation, not complete right away.
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          // A killed process reports its exit as a signal-interrupted
+          // failure, not a success; that must still count as confirmed.
+          yield* Deferred.fail(
+            exitCode,
+            systemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "exitCode",
+              description: "Process interrupted due to receipt of signal: 'SIGKILL'",
+            }),
+          );
+          expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
+          yield* Scope.close(processScope, Exit.void);
+        }),
+        targetPid,
+        "SUCCEED",
+      );
+    },
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "forces and confirms the launcher even when group cleanup fails, then reports the cleanup error",
+    () => {
+      const forcedSignals: Array<string | undefined> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
+          const spawner = makeSpawner({
+            isRunning: true,
+            exitCode,
+            groupOutput: `${targetPid} S\n`,
+            onForcedKill: (signal) => forcedSignals.push(signal),
+          });
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill.pipe(Effect.exit));
+          yield* TestClock.adjust("20 millis");
+          yield* Effect.yieldNow;
+          // launcherReapGuardTimeout in NativeProcess.ts; kept in sync here.
+          yield* TestClock.adjust("1 second");
+          yield* Effect.yieldNow;
+          expect(forcedSignals).toEqual(["SIGKILL"]);
+          // A killed process reports its exit as a signal-interrupted
+          // failure, not a success; that must still count as confirmed.
+          yield* Deferred.fail(
+            exitCode,
+            systemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "exitCode",
+              description: "Process interrupted due to receipt of signal: 'SIGKILL'",
+            }),
+          );
+          const result = yield* Fiber.join(fiber);
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+            expect(error).toMatchObject({ cause: { code: "EPERM" } });
+          }
+          // The finalizer retries the same still-failing group cleanup; only
+          // the explicit kill result above is under test.
+          yield* Scope.close(processScope, Exit.void).pipe(Effect.exit);
+        }),
+        targetPid,
+        "EPERM",
+        true,
+      );
+    },
+  );
+
   it.live("keeps the shared exit observation alive after a canceled waiter", () =>
     withMockedTargetKill(
       Effect.gen(function* () {
         const exitStarted = yield* Deferred.make<void>();
-        const exitCode = yield* Deferred.make<ExitCode>();
+        const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
         yield* Effect.scoped(
           Effect.gen(function* () {
             const native = yield* spawnNativeProcess(spec, {

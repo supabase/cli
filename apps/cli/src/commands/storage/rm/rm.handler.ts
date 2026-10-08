@@ -146,6 +146,12 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
             }
           }
 
+          yield* Effect.annotateCurrentSpan({
+            "bucket.count": groups.size,
+            "file.count": summary.deleted.length,
+            "bucket.deleted_count": summary.buckets_deleted.length,
+          });
+
           if (output.format !== "text") {
             yield* output.success("", {
               deleted: summary.deleted,
@@ -184,51 +190,53 @@ const deleteObjects = (
  * Walks the prefix tree with a stack, deleting files per directory, then the bucket
  * itself once the prefix is empty. `prefix` ends with `/` or is empty.
  */
-const removeStoragePathAll = (
+const removeStoragePathAll = Effect.fn("storage.rm.removeAll")(function* (
   gateway: StorageGateway,
   output: typeof Output.Service,
   bucket: string,
   prefix: string,
   summary: RmSummary,
-) =>
-  Effect.gen(function* () {
-    const queue: Array<string> = [prefix];
-    while (queue.length > 0) {
-      const dirPrefix = queue.pop();
-      if (dirPrefix === undefined) break;
-      const paths = yield* listStoragePaths(gateway, output, `/${bucket}/${dirPrefix}`);
-      if (paths.length === 0 && prefix.length > 0) {
-        return yield* new StorageObjectNotFoundError(`${bucket}/${prefix}`);
-      }
-      const files: Array<string> = [];
-      for (const objectName of paths) {
-        const objectPrefix = dirPrefix + objectName;
-        if (objectName.endsWith("/")) {
-          queue.push(objectPrefix);
-        } else {
-          files.push(objectPrefix);
-        }
-      }
-      if (files.length > 0) {
-        yield* output.raw(`Deleting objects: [${files.join(" ")}]\n`, "stderr");
-        yield* deleteObjects(gateway, bucket, files, summary);
+) {
+  let deletedCount = 0;
+  const queue: Array<string> = [prefix];
+  while (queue.length > 0) {
+    const dirPrefix = queue.pop();
+    if (dirPrefix === undefined) break;
+    const paths = yield* listStoragePaths(gateway, output, `/${bucket}/${dirPrefix}`);
+    if (paths.length === 0 && prefix.length > 0) {
+      return yield* new StorageObjectNotFoundError(`${bucket}/${prefix}`);
+    }
+    const files: Array<string> = [];
+    for (const objectName of paths) {
+      const objectPrefix = dirPrefix + objectName;
+      if (objectName.endsWith("/")) {
+        queue.push(objectPrefix);
+      } else {
+        files.push(objectPrefix);
       }
     }
-    if (prefix.length === 0) {
-      yield* output.raw(`Deleting bucket: ${bucket}\n`, "stderr");
-      yield* gateway.deleteBucket(bucket).pipe(
-        Effect.flatMap((message) =>
-          Effect.gen(function* () {
-            yield* output.raw(`${message}\n`, "stderr");
-            summary.buckets_deleted.push(bucket);
-          }),
-        ),
-        Effect.catch((error) =>
-          error instanceof StorageGatewayStatusError &&
-          error.body.includes('"error":"Bucket not found"')
-            ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
-            : Effect.fail(error),
-        ),
-      );
+    if (files.length > 0) {
+      yield* output.raw(`Deleting objects: [${files.join(" ")}]\n`, "stderr");
+      yield* deleteObjects(gateway, bucket, files, summary);
+      deletedCount += files.length;
     }
-  });
+  }
+  yield* Effect.annotateCurrentSpan({ "file.count": deletedCount });
+  if (prefix.length === 0) {
+    yield* output.raw(`Deleting bucket: ${bucket}\n`, "stderr");
+    yield* gateway.deleteBucket(bucket).pipe(
+      Effect.flatMap((message) =>
+        Effect.gen(function* () {
+          yield* output.raw(`${message}\n`, "stderr");
+          summary.buckets_deleted.push(bucket);
+        }),
+      ),
+      Effect.catch((error) =>
+        error instanceof StorageGatewayStatusError &&
+        error.body.includes('"error":"Bucket not found"')
+          ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
+          : Effect.fail(error),
+      ),
+    );
+  }
+});

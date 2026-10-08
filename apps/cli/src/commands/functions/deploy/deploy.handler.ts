@@ -62,7 +62,10 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
       Effect.suspend(() =>
         Option.match(resolvedProjectRef, {
           onNone: () => Effect.void,
-          onSome: (ref) => linkedProjectCache.cache(ref),
+          onSome: (ref) =>
+            Effect.annotateCurrentSpan("project.ref", ref).pipe(
+              Effect.andThen(linkedProjectCache.cache(ref)),
+            ),
         }),
       ),
     ),

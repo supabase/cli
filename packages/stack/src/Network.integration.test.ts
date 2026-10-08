@@ -1,37 +1,46 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
+import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, Ref } from "effect";
+import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 const makeTestNetwork = (options: {
   readonly stackId: string;
   readonly runtime: Network.NetworkRuntime;
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
 }) =>
   Layer.build(
     Network.layer({ stackId: options.stackId, runtime: options.runtime }).pipe(
-      Layer.provide(Layer.succeed(State.Service, options.state)),
+      Layer.provide(Layer.succeed(StackNamespace.Service, options.state)),
     ),
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
-const stack = (id: string, port: number | "auto") => ({
+const stack = (id: string) => ({
   id,
   identity: { projectRoot: "/tmp", branchContext: "test", stackName: id },
   runtime: "native" as const,
   lifetime: "detached" as const,
   instances: [],
   composition: { members: [], dependencies: [] },
-  ports: port === "auto" ? [] : [{ key: "api", host: "127.0.0.1", port }],
 });
+
+/** The port the machine-wide registry holds for this stack's endpoint key, if any. */
+const reservedPort = (root: string, stackId: string, key: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const registry = yield* PortReservations.Service;
+    return yield* registry.find(yield* fs.realPath(root), stackId, key);
+  }).pipe(Effect.provide(PortReservations.layer));
 
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
 
@@ -101,7 +110,7 @@ it.live("retains dedicated assignments across network reopen", () =>
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-retain-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
       const first = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
@@ -112,8 +121,7 @@ it.live("retains dedicated assignments across network reopen", () =>
       yield* firstNamespace.bind;
       const firstAddress = yield* firstNamespace.address("api", "host");
       expect(yield* request(firstAddress.host, firstAddress.port, "/one")).toBe("backend:/one");
-      const saved = yield* state.read("stack");
-      expect(saved?.ports).toHaveLength(1);
+      expect(yield* reservedPort(root, "stack", "one:api")).toBe(firstAddress.port);
       yield* Ref.set(enabled, false);
       yield* firstNamespace.close;
       yield* firstNamespace.bind;
@@ -134,7 +142,9 @@ it.live("retains dedicated assignments across network reopen", () =>
         "backend:/reopen",
       );
       yield* secondNamespace.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(0);
+      expect(yield* reservedPort(root, "stack", "one:api")).toBe(firstAddress.port);
+      yield* secondNamespace.releasePorts;
+      expect(yield* reservedPort(root, "stack", "one:api")).toBeUndefined();
       expect(yield* fs.exists(path.join(root, "stack", "state.json"))).toBe(true);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -146,7 +156,7 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-shared-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const firstEnabled = yield* Ref.make(true);
       const secondEnabled = yield* Ref.make(true);
@@ -186,7 +196,7 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
       expect(yield* request(address.host, address.port, "/auth/v1")).toBe("backend:/auth/v1");
       yield* Ref.set(secondEnabled, false);
       yield* second.close;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(1);
+      expect(yield* reservedPort(root, "stack", "api")).toBe(address.port);
       yield* first.bind;
       expect((yield* first.address("api", "host")).port).toBe(address.port);
       expect(yield* request(address.host, address.port, "/rest/reopen")).toBe(
@@ -194,20 +204,22 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
       );
       yield* first.close;
       yield* second.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(1);
+      yield* second.releasePorts;
+      expect(yield* reservedPort(root, "stack", "api")).toBe(address.port);
       expect(yield* fs.exists(root)).toBe(true);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("reports a dedicated port conflict without rewriting saved ownership", () =>
+it.live("reports a dedicated port conflict without taking over the holder's reservation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-conflict-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("first", "auto"));
-      yield* state.save(stack("second", 20001));
+      yield* state.save(stack("first"));
+      yield* state.save(stack("second"));
+      yield* state.acquireLease("first");
       const target = yield* backend;
       const firstEnabled = yield* Ref.make(true);
       const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
@@ -231,57 +243,14 @@ it.live("reports a dedicated port conflict without rewriting saved ownership", (
       });
       const failure = yield* second.bind.pipe(Effect.flip);
       expect(failure.operation).toBe("bind");
-      expect((yield* state.read("second"))?.ports).toEqual([
-        { key: "api", host: "127.0.0.1", port: 20001 },
-      ]);
+      expect(yield* reservedPort(root, "first", "db:sql")).toBe(firstPort);
+      expect(yield* reservedPort(root, "second", "db:sql")).toBeUndefined();
       yield* Ref.set(firstEnabled, false);
       yield* first.release;
+      yield* first.releasePorts;
       yield* Ref.set(secondEnabled, false);
       yield* second.release;
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live("can bind a shared listener after saving its first assignment failed", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-save-" });
-      const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
-      const failing = yield* Ref.make(true);
-      const network = yield* makeTestNetwork({
-        stackId: "stack",
-        runtime: "native",
-        state: {
-          ...state,
-          save: (value) =>
-            Ref.get(failing).pipe(
-              Effect.flatMap((fail) =>
-                fail
-                  ? Effect.fail(
-                      new State.StateError({ operation: "save", message: "write failed" }),
-                    )
-                  : state.save(value),
-              ),
-            ),
-        },
-      });
-      const target = yield* backend;
-      const namespace = yield* network.register({
-        id: "rest",
-        endpoints: {
-          api: { ...endpoint(target, Effect.succeed(false)), shared: [{ prefix: "/rest" }] },
-        },
-      });
-      yield* namespace.bind.pipe(Effect.flip);
-      yield* Ref.set(failing, false);
-      yield* namespace.bind;
-      const address = yield* namespace.address("api", "host");
-      expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
-      yield* namespace.release;
-      yield* network.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(0);
+      yield* second.releasePorts;
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -292,7 +261,7 @@ it.live("releases dedicated HTTP activity after the response while keep-alive st
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-http-activity-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const released = yield* Deferred.make<void>();
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
@@ -347,7 +316,7 @@ it.live(
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-fixed-port-" });
         const state = yield* makeTestState(root);
-        yield* state.save(stack("stack", "auto"));
+        yield* state.save(stack("stack"));
         const target = yield* backend;
         const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
         const studio = yield* network.register({
@@ -357,8 +326,7 @@ it.live(
         yield* studio.bind;
         // The join route is queued, not installed: it never claims or asserts the shared "api"
         // port, so no shared listener or claim exists yet, whatever port a later claimant picks.
-        const beforeClaimant = yield* state.read("stack");
-        expect(beforeClaimant?.ports.some((claim) => claim.key === "api")).toBe(false);
+        expect(yield* reservedPort(root, "stack", "api")).toBeUndefined();
         const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
         yield* rest.bind;
         const address = yield* rest.address("api", "host");
@@ -376,7 +344,7 @@ it.live("drops a queued join route when its namespace closes before any claimant
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-cancel-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
       const studio = yield* network.register({
@@ -404,7 +372,7 @@ it.live("stays idempotent across repeated binds of the joining namespace", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-idempotent-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
       const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
@@ -430,7 +398,7 @@ it.live("keeps a namespace's own shared route when its join endpoint also binds"
         prefix: "network-join-shares-namespace-",
       });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
       const combo = yield* network.register({
@@ -457,7 +425,7 @@ it.live("re-adds a joined route after its namespace closes and rebinds", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-rebind-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
@@ -490,7 +458,7 @@ it.live("never restores a joined route once its namespace is released", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-release-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
@@ -524,7 +492,7 @@ it.live(
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-last-close-" });
         const state = yield* makeTestState(root);
-        yield* state.save(stack("stack", "auto"));
+        yield* state.save(stack("stack"));
         const target = yield* backend;
         const restEnabled = yield* Ref.make(true);
         const studioEnabled = yield* Ref.make(true);
@@ -579,7 +547,7 @@ it.live("wakes a sleeping backend when a request reaches its joined route", () =
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-wake-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const woken = yield* Deferred.make<void>();
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
@@ -611,7 +579,7 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-docker-alias-" });
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      yield* state.save(stack("stack"));
       const target = yield* backend;
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "docker", state });
       const namespace = yield* network.register({
@@ -624,6 +592,108 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
       expect(host.host).toBe("127.0.0.1");
       expect(runtime).toEqual({ ...host, host: DOCKER_HOST_ALIAS });
       yield* namespace.release;
+      yield* namespace.releasePorts;
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** A pinned port above the auto range, so it never meets a registry row from an auto allocation. */
+const pinnedPort = () => 33000 + (Math.abs(Hash.string(randomUUID())) % 16000);
+
+it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-address-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const namespace = yield* network.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Effect.succeed(false)), port } },
+      });
+
+      expect((yield* namespace.address("sql", "host")).port).toBe(port);
+      expect((yield* namespace.address("sql", "runtime")).port).toBe(port);
+      expect(yield* reservedPort(root, "stack", "db:sql")).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a pinned port is reserved only while its listener is open", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-stop-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("first"));
+      yield* state.save(stack("second"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const firstEnabled = yield* Ref.make(true);
+      const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
+      const first = yield* firstNetwork.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Ref.get(firstEnabled)), port } },
+      });
+      yield* first.bind;
+      expect(yield* reservedPort(root, "first", "db:sql")).toBe(port);
+
+      yield* Ref.set(firstEnabled, false);
+      yield* first.close;
+      expect(yield* reservedPort(root, "first", "db:sql")).toBeUndefined();
+
+      const secondNetwork = yield* makeTestNetwork({ stackId: "second", runtime: "native", state });
+      const second = yield* secondNetwork.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Effect.succeed(true)), port } },
+      });
+      yield* second.bind;
+      expect((yield* second.address("sql", "host")).port).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/started")).toBe("backend:/started");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a pinned shared listener keeps its reservation until its last route closes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-shared-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const firstEnabled = yield* Ref.make(true);
+      const secondEnabled = yield* Ref.make(true);
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const first = yield* network.register({
+        id: "rest",
+        endpoints: {
+          api: { ...endpoint(target, Ref.get(firstEnabled)), port, shared: [{ prefix: "/rest" }] },
+        },
+      });
+      const second = yield* network.register({
+        id: "auth",
+        endpoints: {
+          api: { ...endpoint(target, Ref.get(secondEnabled)), port, shared: [{ prefix: "/auth" }] },
+        },
+      });
+      yield* first.bind;
+      yield* second.bind;
+      expect(yield* reservedPort(root, "stack", "api")).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/auth/v1")).toBe("backend:/auth/v1");
+
+      yield* Ref.set(firstEnabled, false);
+      yield* first.close;
+      expect(yield* reservedPort(root, "stack", "api")).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/auth/v1")).toBe("backend:/auth/v1");
+
+      yield* Ref.set(secondEnabled, false);
+      yield* second.close;
+      expect(yield* reservedPort(root, "stack", "api")).toBeUndefined();
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -9,6 +9,11 @@ Native PostgreSQL requires passwords for every role except `supabase_admin`. Its
 and password-reconciliation connection uses that administrative role, so a native
 `supabase_admin` connection is not password-checked.
 
+Native pg_cron runs jobs in background workers, so a job body cannot contain its own `BEGIN` or
+`COMMIT`. Jobs enforce the same `supautils` role policies as client sessions. Native databases
+default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
+`ALTER SYSTEM`, and `[db.settings]` values take precedence.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |
@@ -16,7 +21,7 @@ and password-reconciliation connection uses that administrative role, so a nativ
 | `supabase stack prepare` | Download artifacts without starting services.                                     |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`    | Stream live stack logs.                                                           |
+| `supabase stack logs`    | Print retained stack logs; `-f` streams new lines.                                |
 | `supabase stack restart` | Restart an existing stack using its saved effective configuration.                |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
@@ -27,8 +32,8 @@ when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
 selected runtime is saved with the stack and reused without probing; when auto selection skips
 Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
-`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
-the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+`--stack` name. When an explicit `--runtime docker` or `--runtime podman`, or a saved container
+stack, cannot reach its engine, the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
@@ -124,8 +129,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
 are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
 directory itself fails discovery.
-The text table shortens readable IDs for scanning; use `--output-format json` or
-`--output-format stream-json` for the complete structured inventory with full IDs.
+The text table shortens readable IDs for scanning; every `--stack-id` accepts that short ID, or any
+unique prefix of at least 4 characters. Use `--output-format json` or `--output-format stream-json`
+for the complete structured inventory with full IDs.
 
 Listing is global and has no checkout filter. Owner availability is not service lifecycle or health;
 use `supabase stack status` for live state. Registry directories without a state file are ignored
@@ -160,7 +166,7 @@ Other values are rejected. The override is applied before reading the project co
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit and Vector. PostgreSQL uses the selected major version (15 or 17); invalid configuration
+Mailpit. PostgreSQL uses the selected major version (15 or 17); invalid configuration
 or an unsupported PostgreSQL major warns with the cause and uses catalog defaults. This inventory describes the
 CLI catalog, not running containers, downloaded images, or service health. The Docker and native
 stack runtimes use the same catalog versions, though a running stack launched by another CLI
@@ -211,8 +217,8 @@ env-precedence rule as `start`/`stop`/`status`. See
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
-primary database without changing other services (webhooks setup only; no second overlay or
-migrate-and-seed).
+primary database without changing other services (webhooks setup only, creating a missing
+`supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 `db reset --local` and declarative resets rebuild the existing database while retaining stack
@@ -237,18 +243,26 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` streams live stdout/stderr from composition members without
-starting an owner or service. Select `--stack <name>` or `--stack-id <id>`;
-`--service <kind-or-instance-id>` can include standalone services too. The command
-requires a reachable owner and streams until interrupted. Ctrl-C leaves services
-running. There is no retained history, `--tail`, or `--follow` flag.
+`supabase stack logs` prints the retained stdout/stderr of composition members, plus
+the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
+streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+repeatable `--service <kind-or-instance-id>` can include standalone services too, and
+`--service gateway` reads only the request lines. History is read from the persisted
+log files, so it works while the stack is stopped; `--follow` requires a running owner
+and fails before printing anything without one. Neither mode starts an owner or
+service, and Ctrl-C leaves services running.
 
-Text uses `<timestamp> <service>/<instance-id>/<stream>: <line>` and strips terminal
-control sequences. For automation use `--output-format stream-json`: each
-`log-entry` contains `timestamp`, `service`, `instance_id`, `stream`, `line`, and
-`source: "live"`. Finite JSON output is not supported. Delivery is best effort;
-stdout/stderr and different services may interleave. Missing stacks, unavailable
-owners, and unmatched services fail with status 1; interruption exits 130.
+`--tail N` (default 200) keeps the newest lines across the selected services and
+`--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
+service's latest launch. Text uses `<service> | <HH:MM:SS.mmm> <line>` with aligned
+labels, shows launches and lost output as dim separators, strips terminal control
+sequences, and notes on stderr when the tail hides older lines. For automation use
+`--output-format stream-json`: each `log-entry` contains `timestamp`, `service`,
+`instance_id`, `stream`, `line`, and `source` (`history` or `live`), and markers are
+`log-marker` events with `kind` and, for lost output, `count`. `--output-format json`
+prints the history as one array and does not accept `--follow`. Missing stacks,
+unmatched services, and `--follow` without an owner fail with status 1; interruption
+exits 130.
 
 ## Data and configuration
 
@@ -299,7 +313,7 @@ retained in stack state, so starting without `--exclude` restores the project's 
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
 directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
-success or unavailable summary is emitted when a stop fails.
+success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.

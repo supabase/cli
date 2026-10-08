@@ -2,24 +2,27 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, layer } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Scope } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
   instanceId: "instance",
   root,
-  cacheRoot: "/tmp/supabase-stack-artifacts",
+  cacheRoot: testArtifactCacheRoot,
   runtime: "native" as const,
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
   cacheRoot: `${root}/cache`,
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 interface SharedDatabase {
@@ -55,7 +58,7 @@ const databaseLayer = Layer.effect(
     // own scope starts closing: scope finalizers run in reverse (LIFO) order of registration,
     // so the fork's auto-registered close finalizer runs after ours, not concurrently with it.
     const serviceScope = yield* Scope.fork(yield* Effect.scope, "sequential");
-    const database = yield* makeService(databaseRecipe.definition, {
+    const database = yield* makeStandaloneService(databaseRecipe.definition, {
       id: "database",
       config: databaseRecipe.creation,
     }).pipe(Scope.provide(serviceScope));
@@ -77,7 +80,7 @@ const databaseLayer = Layer.effect(
 
 /** Exercises one (runtime, poolMode) pooler against the shared database, restarting native poolers. */
 const servesPoolerSql = (params: {
-  readonly runtime: "native" | "docker";
+  readonly runtime: "native" | typeof testEngine;
   readonly poolMode: "transaction" | "session";
 }) =>
   Effect.gen(function* () {
@@ -99,7 +102,7 @@ const servesPoolerSql = (params: {
       },
       runtime === "native" ? options(database.root) : dockerOptions(database.root),
     );
-    const pooler = yield* makeService(poolerRecipe.definition, {
+    const pooler = yield* makeStandaloneService(poolerRecipe.definition, {
       id: `pooler-${runtime}-${poolMode}`,
       config: poolerRecipe.creation,
     });
@@ -144,14 +147,14 @@ layer(databaseLayer, { excludeTestServices: true })("service catalog", (it) => {
   );
 
   it.effect(
-    "serves Pooler SQL in transaction mode on the docker runtime",
-    () => servesPoolerSql({ runtime: "docker", poolMode: "transaction" }),
+    "serves Pooler SQL in transaction mode on the container runtime",
+    () => servesPoolerSql({ runtime: testEngine, poolMode: "transaction" }),
     { timeout: 120_000 },
   );
 
   it.effect(
-    "serves Pooler SQL in session mode on the docker runtime",
-    () => servesPoolerSql({ runtime: "docker", poolMode: "session" }),
+    "serves Pooler SQL in session mode on the container runtime",
+    () => servesPoolerSql({ runtime: testEngine, poolMode: "session" }),
     { timeout: 120_000 },
   );
 });

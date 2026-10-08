@@ -1,16 +1,28 @@
-import { Exit, Schema } from "effect";
+import { Cause, Exit, Option, Predicate, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
-import { StackKeysInput } from "./State.ts";
+import { StackKeysInput } from "./StackNamespace.ts";
 import { failureMessage } from "./internal/failure-message.ts";
+import type { PortConflict } from "./Ports.ts";
+import { LogPosition, LogRecord } from "./host/LogRecord.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
   succeeded: Schema.Boolean,
   error: Schema.optionalKey(Schema.String),
+});
+
+const ConflictHolder = Schema.Union([
+  Schema.Struct({ stackId: Schema.String, stateRoot: Schema.String }),
+  Schema.Literal("foreign"),
+]);
+const Conflict = Schema.Struct({
+  port: Schema.Int,
+  endpoint: Schema.String,
+  holder: ConflictHolder,
 });
 
 /** A typed failure returned by the stack owner. */
@@ -26,12 +38,54 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   reason: Schema.optionalKey(
     Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
   ),
+  /** The contested public port, when the failure is a port reservation conflict. */
+  conflict: Schema.optionalKey(Conflict),
 }) {}
+
+const isHolder = (
+  value: unknown,
+): value is { readonly stackId: string; readonly stateRoot: string } =>
+  Predicate.hasProperty(value, "stackId") &&
+  typeof value.stackId === "string" &&
+  Predicate.hasProperty(value, "stateRoot") &&
+  typeof value.stateRoot === "string";
+
+const isPortConflict = (value: unknown): value is PortConflict =>
+  Predicate.hasProperty(value, "port") &&
+  typeof value.port === "number" &&
+  Predicate.hasProperty(value, "endpoint") &&
+  typeof value.endpoint === "string" &&
+  Predicate.hasProperty(value, "holder") &&
+  (value.holder === "foreign" || isHolder(value.holder));
+
+/** The first `conflict` found by walking a failure's `cause` chain, if any carries one. */
+const findConflict = (cause: unknown, depth = 0): PortConflict | undefined => {
+  if (depth > 10 || typeof cause !== "object" || cause === null) return undefined;
+  if ("conflict" in cause && isPortConflict(cause.conflict)) return cause.conflict;
+  if ("cause" in cause) return findConflict(cause.cause, depth + 1);
+  return undefined;
+};
+
+/** A composition failure's member outcomes, each a plain Effect `Exit`, not just this cause's own. */
+const conflictFromOutcomes = (
+  outcomes: ReadonlyArray<{ readonly result: Exit.Exit<void, unknown> }> | undefined,
+): PortConflict | undefined => {
+  if (outcomes === undefined) return undefined;
+  for (const { result } of outcomes) {
+    if (!Exit.isFailure(result)) continue;
+    const failure = Cause.findErrorOption(result.cause);
+    if (Option.isNone(failure)) continue;
+    const conflict = findConflict(failure.value);
+    if (conflict !== undefined) return conflict;
+  }
+  return undefined;
+};
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
 export const stackError = (operation: string, cause: unknown): StackError => {
   if (Schema.is(StackError)(cause)) return cause;
-  if (cause instanceof OrchestratorError && cause.outcomes !== undefined)
+  if (cause instanceof OrchestratorError && cause.outcomes !== undefined) {
+    const conflict = findConflict(cause) ?? conflictFromOutcomes(cause.outcomes);
     return new StackError({
       operation,
       message: failureMessage(cause),
@@ -40,8 +94,15 @@ export const stackError = (operation: string, cause: unknown): StackError => {
         succeeded: Exit.isSuccess(result),
         ...(Exit.isFailure(result) ? { error: causeMessage(result.cause) } : {}),
       })),
+      ...(conflict === undefined ? {} : { conflict }),
     });
-  return new StackError({ operation, message: failureMessage(cause) });
+  }
+  const conflict = findConflict(cause);
+  return new StackError({
+    operation,
+    message: failureMessage(cause),
+    ...(conflict === undefined ? {} : { conflict }),
+  });
 };
 
 const ServiceErrorSchema = Schema.TaggedStruct("ServiceError", {
@@ -63,15 +124,11 @@ export const Observation = Schema.Struct({
   lifecycle: Schema.Literals(["stopped", "starting", "running", "stopping"]),
   health: Schema.UndefinedOr(Schema.Literals(["starting", "healthy", "unhealthy"])),
   error: Schema.UndefinedOr(ServiceErrorSchema),
-  cleanupError: Schema.UndefinedOr(ServiceErrorSchema),
   exit: Schema.UndefinedOr(Schema.Exit(Schema.Void, ServiceErrorSchema, Schema.Defect())),
   currentOperation: Schema.UndefinedOr(
     Schema.Literals(["start", "stop", "restart", "storage", "destroy", "sleep"]),
   ),
-  launchId: Schema.UndefinedOr(Schema.Int),
-  intentRevision: Schema.Int,
   wakeEnabled: Schema.Boolean,
-  registered: Schema.Boolean,
 });
 export interface Observation extends Schema.Schema.Type<typeof Observation> {}
 
@@ -79,11 +136,9 @@ export const Definition = Schema.Struct({ id: Schema.String, creation: ServiceCr
 export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
+/** How many of the latest log records a read starts with. */
+const LogTail = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const SnapshotScope = Schema.Literals(snapshotScopes);
-const Log = Schema.Struct({
-  stream: Schema.Literals(["stdout", "stderr"]),
-  bytes: Schema.Uint8ArrayFromBase64,
-});
 
 export const CommandEvent = Schema.TaggedUnion({
   Attached: { attachmentId: Schema.String },
@@ -120,7 +175,18 @@ export const OwnerRpc = RpcGroup.make(
     error: StackError,
     stream: true,
   }),
-  Rpc.make("logs", { payload: Instance, success: Log, error: StackError, stream: true }),
+  Rpc.make("readLogs", {
+    payload: {
+      ...Instance,
+      from: Schema.optionalKey(LogPosition),
+      since: Schema.optionalKey(Schema.String),
+      tail: Schema.optionalKey(LogTail),
+      follow: Schema.Boolean,
+    },
+    success: LogRecord,
+    error: StackError,
+    stream: true,
+  }),
   Rpc.make("credentials", {
     payload: { ...Instance, from: Schema.Literals(["host", "runtime"]) },
     success: Schema.Record(Schema.String, Schema.String),

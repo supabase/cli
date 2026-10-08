@@ -55,6 +55,7 @@ const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, co
             PROXY_PORT: "0",
             SESSION_PROXY_PORTS: "0",
             TRANSACTION_PROXY_PORTS: "0",
+            SUPAVISOR_BIND_IP: "127.0.0.1",
           }),
       ...(sql === undefined
         ? {}

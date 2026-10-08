@@ -14,6 +14,7 @@ import { stackOpenReadyProject } from "../../../command-internal/stack-local-dat
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
+import { logEvent, markerText } from "../../../command-internal/stack-log-events.ts";
 import { FunctionsServeStackError } from "./serve.errors.ts";
 
 type Instance = Effect.Success<ReturnType<Stack["services"]["get"]>>;
@@ -44,38 +45,25 @@ const follow = Effect.fn("functions.serve.follow")(function* (
   launch: Effect.Effect<void, { readonly message: string }, Scope.Scope>,
 ) {
   const output = yield* Output;
-  const logs = yield* instance.logs.pipe(
-    Stream.groupByKey((entry) => entry.stream),
-    Stream.flatMap(
-      ([channel, entries]) =>
-        entries.pipe(
-          Stream.map(({ bytes }) => bytes),
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.map((line) => ({ channel, line })),
-        ),
-      { concurrency: 2 },
-    ),
-    Stream.runForEach(
-      Effect.fn(function* ({ channel, line }) {
-        const timestamp = DateTime.formatIso(yield* DateTime.now);
-        yield* output.format === "stream-json"
-          ? output.event({
-              type: "log-entry",
-              timestamp,
-              source: "live",
-              service: "functions",
-              instance_id: instance.id,
-              stream: channel,
-              line,
-            })
-          : output.raw(`${line}\n`, channel);
-      }),
-    ),
+  // The owner may pin a follow's start after the launch begins; a time bound taken before launch
+  // keeps its first output.
+  const since = DateTime.formatIso(yield* DateTime.now);
+  const logs = yield* instance.readLogs({ follow: true, since }).pipe(
+    Stream.runForEach((record) => {
+      const lost = record.kind === "lost" && record.count !== undefined;
+      if (record.kind !== "stdout" && record.kind !== "stderr" && !lost) return Effect.void;
+      if (output.format === "stream-json")
+        return output.event(
+          logEvent({ ...record, service: "functions", instanceId: instance.id }, "live"),
+        );
+      return record.kind === "stdout" || record.kind === "stderr"
+        ? output.raw(`${record.text ?? ""}\n`, record.kind)
+        : output.raw(`${markerText(record)}\n`, "stderr");
+    }),
     Effect.forkScoped({ startImmediately: true }),
   );
-  yield* launch;
-  yield* instance.ready;
+  yield* launch.pipe(Effect.withSpan("functions.serve.launch"));
+  yield* instance.ready.pipe(Effect.withSpan("functions.serve.waitReady"));
   const url = (yield* instance.credentials()).url;
   if (url === undefined) return yield* invalidConfig("Functions has no public HTTP endpoint.");
   if (output.format === "stream-json") yield* output.result({ instance_id: instance.id, url });
@@ -168,6 +156,10 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     };
     const changed = !Equal.equals(saved, desired);
+    yield* Effect.annotateCurrentSpan({
+      "functions.instance": "existing",
+      "config.changed": changed,
+    });
     const launch = changed
       ? Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -213,6 +205,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const identity = yield* stack.credentials.get;
   if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
   const config = yield* loadStackConfig(settings.workdir);
+  yield* Effect.annotateCurrentSpan("functions.instance", "temporary");
   const refreshedJwks = yield* config.remoteJwks.pipe(
     Effect.catch((cause) =>
       output
@@ -270,11 +263,13 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     },
     endpoints: { ...source.endpoints, http: { port } },
   };
-  const temporary = yield* Effect.acquireRelease(stack.services.create(creation), (instance) =>
-    instance.status.pipe(
-      Effect.andThen(instance.destroy),
-      Effect.catch((error) => cleanupWarning("Failed to remove temporary Functions", error)),
-    ),
+  const temporary = yield* Effect.acquireRelease(
+    stack.services.create(creation).pipe(Effect.withSpan("functions.serve.createInstance")),
+    (instance) =>
+      instance.status.pipe(
+        Effect.andThen(instance.destroy),
+        Effect.catch((error) => cleanupWarning("Failed to remove temporary Functions", error)),
+      ),
   );
   yield* follow(temporary, temporary.start);
 });

@@ -5,11 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Guards the telemetry identity of every CLI error: the string passed to
- * `Data.TaggedError("...")` becomes `error_fingerprint` on the `cli_command_executed` event, so
+ * `Data.TaggedError("...")` or `Schema.TaggedError` becomes `error_fingerprint` on the `cli_command_executed` event, so
  * changing it (not renaming the class) silently splits one error's history into two
  * fingerprints, undetected until dashboards look wrong.
  *
- * Enumerates every production `Data.TaggedError` tag under `apps/cli/src` and
+ * Enumerates every production tagged-error tag under `apps/cli/src` and
  * `packages/config/src`, resolving tags built via template interpolation
  * (`mintConfigTargetErrors`) at runtime by constructing each class — see
  * {@link collectComputedTagDeclarations}. Compares the set against the committed
@@ -26,10 +26,10 @@ const externalConfigSrcDir = fileURLToPath(
 );
 const fixturePath = fileURLToPath(new URL("./__fixtures__/error-tags.txt", import.meta.url));
 
-// Matches both the inline declaration form and the formatter-wrapped
-// multi-line form, where the string literal lands on its own line before the
-// closing paren.
-const TAGGED_ERROR_PATTERN = /class\s+(\w+)\s+extends\s+Data\.TaggedError\(\s*["']([^"']+)["']/g;
+// Matches `Data.TaggedError("…")` and `Schema.TaggedError<Self>()("…", …)`, inline or
+// formatter-wrapped with the string literal on its own line.
+const TAGGED_ERROR_PATTERN =
+  /class\s+(\w+)\s+extends\s+(?:Data\.TaggedError|Schema\.TaggedError<\w+>\(\))\(\s*["']([^"']+)["']/g;
 
 // Every test tier this repo's vitest config defines (`apps/cli/vitest.config.ts`).
 // Shared by name so a fifth tier can't quietly slip past `isProductionSourceFile`

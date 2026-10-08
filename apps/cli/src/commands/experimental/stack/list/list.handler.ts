@@ -58,6 +58,7 @@ export const stackList = Effect.fn("experimental.stack.list")(function* () {
         }
         return 0;
       });
+    yield* Effect.annotateCurrentSpan({ "stack.count": stacks.length });
     if (output.format === "text") {
       yield* output.raw(
         stacks.length === 0

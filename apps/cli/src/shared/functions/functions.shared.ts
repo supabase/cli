@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import { imageTag, slimImageForCurrentPin } from "../services/slim-images.ts";
 
@@ -45,11 +43,11 @@ export function edgeRuntimeImage(tag: string, slim: boolean): string {
  * resolves a Docker edge-runtime image.
  */
 export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabaseDir: string) {
-  return yield* Effect.tryPromise(() =>
-    readFile(join(supabaseDir, ".temp", "edge-runtime-version"), "utf8"),
-  ).pipe(
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(supabaseDir, ".temp", "edge-runtime-version")).pipe(
     Effect.map((version) => version.trim()),
-    Effect.catch(() => Effect.succeed("")),
+    Effect.orElseSucceed(() => ""),
     Effect.map((version) => version || (imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "")),
   );
 });

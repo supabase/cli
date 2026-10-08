@@ -19,6 +19,7 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import { mockTelemetryStateTracked } from "../../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -65,13 +66,9 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     lifecycle: "running",
     health: "healthy",
     error: undefined,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
-    intentRevision: 1,
     wakeEnabled: false,
-    registered: true,
   };
   const databaseInstance = {
     id: "database-id",
@@ -84,7 +81,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     prepare: Effect.die("unused"),
     status: Effect.succeed(observation),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
     saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
@@ -112,6 +109,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   } satisfies Stack;
 }
@@ -123,7 +121,6 @@ const definitionFor = (id: string, projectRoot: string, creation: ServiceCreatio
   runtime: "native",
   instances: [{ id: "database-id", creation }],
   composition: { members: [{ id: "database-id", activation: "eager" }], dependencies: [] },
-  ports: [],
 });
 
 interface TargetSpec {
@@ -184,6 +181,7 @@ const runStatusEnv = (input: {
       },
       discover: () => Effect.die("unused"),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     });
     // Only `--workdir` selects the project here; an absent flag falls back to the ambient cwd,
     // which is registered under its own distinguishable stack so a dropped `--workdir` fails
@@ -240,10 +238,7 @@ const runStatusEnv = (input: {
           mockTty({ stdinIsTty: false, stdoutIsTty: false }),
           mockStdin(false),
           mockRuntimeInfo({ cwd: input.ambientCwd, homeDir: "/pointer-test/home" }),
-          mockTelemetryRuntime({
-            configDir: "/pointer-test/.supabase",
-            tracesDir: "/pointer-test/.supabase/traces",
-          }),
+          mockTelemetryRuntime({ configDir: "/pointer-test/.supabase" }),
         ),
       ),
     );

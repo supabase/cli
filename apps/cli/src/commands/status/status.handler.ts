@@ -28,7 +28,10 @@ import {
   linkedStateJsonField,
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import {
+  loadLocalProjectContext,
+  recordLocalProjectOrioleDbTelemetry,
+} from "../../command-internal/local-project-context.ts";
 import {
   StatusConfigLoadError,
   StatusDbInspectError,
@@ -136,6 +139,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
     );
+    yield* recordLocalProjectOrioleDbTelemetry(context);
 
     // 3. Config validation runs entirely before the health check/container listing below, so a
     // config error (`InvalidJwtSecretError`, a malformed `SUPABASE_*_PORT`/`_ENABLED` override, a
@@ -167,6 +171,14 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     if (!flags.ignoreHealthCheck) {
       const state = yield* inspectContainerState(spawner, dbContainerId).pipe(
         Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
+        Effect.tap((inspected) =>
+          Effect.annotateCurrentSpan({
+            "db.status": inspected.status,
+            "db.running": inspected.running,
+            ...(inspected.health !== undefined && { "db.health": inspected.health }),
+          }),
+        ),
+        Effect.withSpan("status.inspectDb"),
       );
       if (!state.running) {
         return yield* new StatusDbNotRunningError({
@@ -187,10 +199,18 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       projectIdFilter: filterValue,
       all: false,
       format: "names",
-    }).pipe(Effect.mapError((cause) => new StatusListError({ message: cause.message })));
+    }).pipe(
+      Effect.mapError((cause) => new StatusListError({ message: cause.message })),
+      Effect.withSpan("status.listContainers"),
+    );
     const runningSet = new Set(runningNames);
     const serviceIds = serviceContainerIds(projectId);
     const stopped = serviceIds.filter((id) => !runningSet.has(id));
+    yield* Effect.annotateCurrentSpan({
+      "service.running_count": serviceIds.length - stopped.length,
+      "service.stopped_count": stopped.length,
+      "status.ignore_health_check": flags.ignoreHealthCheck,
+    });
     if (stopped.length > 0) {
       yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
     }

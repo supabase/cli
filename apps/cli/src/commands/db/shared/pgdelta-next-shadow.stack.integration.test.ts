@@ -15,7 +15,7 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";

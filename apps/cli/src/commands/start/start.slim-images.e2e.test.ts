@@ -2,7 +2,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { BunServices } from "@effect/platform-bun";
 import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
-import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
+import { catalogPins, type ArtifactKind } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
@@ -73,7 +73,7 @@ const PULL_ALIASES = [
  * Dockerfile-derived image: whether the Dockerfile's tag currently matches that catalog pin is
  * unrelated to whether the pinned slim image itself accepts the BusyBox argv).
  */
-const WGET_PROBE_SERVICES: ReadonlyArray<ServiceKind> = [
+const WGET_PROBE_SERVICES: ReadonlyArray<ArtifactKind> = [
   "auth",
   "realtime",
   "storage",
@@ -313,6 +313,11 @@ describe("supabase start slim images (e2e)", () => {
           env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
         });
         requireCliSuccess(created, "functions new");
+        // The template imports from live jsr/npm; new.stack.e2e.test.ts covers that resolution.
+        yield* fs.writeFileString(
+          path.join(projectDir, "supabase", "functions", "hello", "index.ts"),
+          'Deno.serve(async (req) => Response.json({ message: "Hello " + (await req.json()).name + "!" }));\n',
+        );
         yield* overridePorts(projectDir);
         const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.toml"));
         const apiPort = readSectionPort(config, "api");

@@ -12,6 +12,8 @@ Before you open a pull request:
 
 Until the `open-for-contribution` label is present, the issue is still in triage, so work should not start and a pull request should not be opened.
 
+Target your pull request at `develop`. Changes that break existing behaviour use a `type(scope)!:` title (for example `feat(cli)!: remove ...`) and target `next` instead; a maintainer will tell you if a change should be breaking.
+
 Pull requests from external contributors that do not follow this workflow are commented on and closed automatically by the [Contribution Gate](.github/workflows/contribution-gate.yml). Supabase members are exempt, so they can work from Linear tickets that are not public on GitHub. Maintainers: see [`.github/MAINTAINERS.md`](.github/MAINTAINERS.md).
 
 ## Setup

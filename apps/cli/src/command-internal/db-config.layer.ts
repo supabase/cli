@@ -103,6 +103,8 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
     return Effect.sync(() => socket.destroy());
   }).pipe(
     Effect.timeoutOrElse({ duration: TCP_PROBE_TIMEOUT, orElse: () => Effect.succeed(false) }),
+    Effect.tap((reachable) => Effect.annotateCurrentSpan("network.reachable", reachable)),
+    Effect.withSpan("DbConfig.tcpProbe", { attributes: { "server.port": port } }),
   );
 
 // POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role. The Management API
@@ -110,7 +112,10 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
 // `CommandPlatformApi` stack), so the access token is resolved only here — when a temp role is
 // actually minted. `--linked --password` returns before reaching this, so it stays auth-free;
 // `--local`/`--db-url` never build this layer at all.
-const initLoginRole = Effect.fnUntraced(function* (ref: string, conn: PgConnInput) {
+const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
+  ref: string,
+  conn: PgConnInput,
+) {
   const output = yield* Output;
   const api = yield* (yield* CommandPlatformApiFactory).make;
   // Written to stderr unconditionally (not gated on --debug).
@@ -133,7 +138,7 @@ const listAndUnban = Effect.fnUntraced(function* (ref: string) {
 
 // Verify-connect with backoff while the pooler refreshes the temp password. On attempt ≥ 3,
 // clear any network ban on the requester.
-const waitForTempRole = Effect.fnUntraced(function* (
+const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
   dnsResolver: "native" | "https",
@@ -144,6 +149,7 @@ const waitForTempRole = Effect.fnUntraced(function* (
     // The temp-role probe always targets the remote Supavisor pooler, so it connects with TLS
     // and honors `--dns-resolver`.
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
+      Effect.ensuring(Effect.annotateCurrentSpan("retry.attempt_count", n)),
       Effect.catch((cause) => {
         // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
@@ -224,7 +230,7 @@ const resolveDbPassword = Effect.fnUntraced(function* (
  *
  * `workdir`/`poolerHost` are explicit parameters (see {@link resolveDbPassword}).
  */
-const resolvePoolerConn = Effect.fnUntraced(function* (
+const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ref: string,
   workdir: string,
   poolerHost: string,
@@ -306,7 +312,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
  * `DbConfigResolver`/`ProjectRefResolver` (both keyed off the ambient, potentially-stale
  * `CommandSettings.workdir`).
  */
-export const resolveLinkedConn = Effect.fnUntraced(function* (
+export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(function* (
   ref: string,
   workdir: string,
   projectHost: string,
@@ -352,6 +358,7 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   };
 
   const reachable = yield* tcpReachable(host, DIRECT_PORT);
+  yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
     if (base.password.length > 0) {
       yield* debug.debug("Using database password from env var...");
@@ -669,9 +676,23 @@ export const dbConfigResolverLayer = Layer.effect(
     });
     return DbConfigResolver.of({
       resolve: (flags) =>
-        resolve(flags).pipe(Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) }))),
+        resolve(flags).pipe(
+          Effect.tap((r) => Effect.annotateCurrentSpan("db.is_local", r.isLocal)),
+          Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
+          Effect.withSpan("DbConfig.resolve", {
+            attributes: { "db.conn_type": flags.connType ?? "local" },
+          }),
+        ),
       resolvePoolerFallback: (flags) =>
-        resolvePoolerFallback(flags).pipe(Effect.map(Option.map(withSuggestion))),
+        resolvePoolerFallback(flags).pipe(
+          Effect.tap((pooler) =>
+            Effect.annotateCurrentSpan("db.pooler.found", Option.isSome(pooler)),
+          ),
+          Effect.map(Option.map(withSuggestion)),
+          Effect.withSpan("DbConfig.resolvePoolerFallback", {
+            attributes: { "db.conn_type": flags.connType ?? "local" },
+          }),
+        ),
     });
   }),
 );

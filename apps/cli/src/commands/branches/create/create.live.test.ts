@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import { throwWithCleanup, test } from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, throwWithCleanup, test } from "../../../../tests/helpers/live.ts";
 import {
   awaitLiveBranchEffect,
   awaitLiveBranchRemovedEffect,
@@ -29,7 +29,7 @@ test("creates a preview branch", ({ cliEffect, project }) =>
           "--output-format",
           "json",
         ]);
-        expect(result.exitCode, result.stderr).toBe(0);
+        requireLiveSuccess(result, "branches create");
         const refBody = yield* Schema.decodeEffect(Schema.fromJsonString(CreatedBranchRef))(
           result.stdout,
         );

@@ -12,7 +12,7 @@ export type {
   PostgresCommandOptions,
   Stack,
 } from "./PromiseClient.ts";
-export type { StackCredentials, StackKeysInput } from "./State.ts";
+export type { StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
@@ -21,13 +21,16 @@ export type {
   CreateOptions,
   CreationChange,
   DatabaseSnapshotOptions,
-  DestroyResult,
   FindOptions,
   FoundStack,
+  LogPosition,
+  LogRecord,
   OpenOptions,
   PgProveOptions,
   PlannedInstance,
+  ReadLogsOptions,
   SavedStack,
+  StackLogRecord,
   StackLocations,
   SupabaseCompositionOptions,
 } from "./effect.ts";

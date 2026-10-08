@@ -13,13 +13,15 @@ import {
   Stream,
 } from "effect";
 import { postgres } from "../../src/Commands.ts";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { create, type Stack } from "../../src/effect.ts";
+import type { ContainerEngine } from "../../src/runtime/Container.ts";
 import type { Observation } from "../../src/Rpc.ts";
-import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
+import { testEngine } from "../test-engine.ts";
+import { testArtifactCacheRoot } from "../artifact-cache.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -35,11 +37,10 @@ export const serviceNames = [
   "pgmeta",
   "mail",
   "analytics",
-  "vector",
   "pooler",
 ] as const;
 
-export type Runtime = "native" | "docker";
+export type Runtime = "native" | ContainerEngine;
 export type WholeStack = Readonly<{
   readonly stack: Stack;
   readonly services: ReadonlyArray<AnyService>;
@@ -62,10 +63,10 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
       services,
       (instance) =>
         Effect.forkScoped(
-          instance.logs.pipe(
-            Stream.runForEach(({ bytes }) =>
+          instance.readLogs({ follow: true }).pipe(
+            Stream.runForEach((record) =>
               Ref.update(logTails, (tails) => {
-                const text = new TextDecoder().decode(bytes);
+                const text = record.text === undefined ? "" : `${record.text}\n`;
                 const existing = tails.find(([name]) => name === instance.service)?.[1] ?? "";
                 const updated = `${existing}${text}`.slice(-8192);
                 const without = tails.filter(([name]) => name !== instance.service);
@@ -112,6 +113,12 @@ const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
 
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
   Effect.gen(function* () {
+    // The test helpers observe and clean up through the selected engine, so a container runtime
+    // must be that engine.
+    if (runtime !== "native" && runtime !== testEngine)
+      return yield* Effect.die(
+        `Whole-stack ${runtime} scenarios need SUPABASE_STACK_TEST_ENGINE=${runtime}`,
+      );
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({
       prefix: `stack-whole-${runtime}-`,
@@ -119,7 +126,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     });
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
-    const vectorConfigPath = `${root}/vector.yaml`;
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
     yield* fs.makeDirectory(storageRoot, { recursive: true });
     yield* fs.writeFileString(
@@ -130,7 +136,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     const secret = `whole-stack-${yield* crypto.randomUUIDv4}-secret`;
     const locations = {
       stateRoot: `${root}/state`,
-      cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+      cacheRoot: testArtifactCacheRoot,
     };
     const stack = yield* create({
       projectRoot: root,
@@ -138,13 +144,12 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       runtime,
       name: `whole-${runtime}`,
     });
-    yield* fs.writeFileString(vectorConfigPath, vectorAnalyticsConfig(`vector-${stack.id}`));
     const owner = yield* Ref.make<Option.Option<Stack>>(Option.some(stack));
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const current = yield* Ref.get(owner);
         const destroy = Option.isSome(current) ? destroyTestStack(current.value) : Effect.void;
-        yield* runtime === "docker"
+        yield* runtime !== "native"
           ? destroy.pipe(Effect.ensuring(cleanupDockerRoot(storageRoot)))
           : destroy;
       }),
@@ -208,14 +213,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         {
           service: "analytics",
           config: { backend: "postgres", apiKey: secret },
-          endpoints: { http: endpoint("auto") },
-        },
-        {
-          service: "vector",
-          config: {
-            apiKey: secret,
-            configPath: vectorConfigPath,
-          },
           endpoints: { http: endpoint("auto") },
         },
         {

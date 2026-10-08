@@ -127,6 +127,10 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
           .queryRaw(sql)
           .pipe(Effect.mapError((cause) => new DbQueryExecError({ message: cause.message })));
 
+        yield* Effect.annotateCurrentSpan({
+          "query.row_count": result.rows.length,
+          "query.column_count": result.fields.length,
+        });
         // DDL/DML statements expose no columns → print the command tag.
         if (result.fields.length === 0) {
           return yield* output.raw(`${result.commandTag}\n`);
@@ -207,6 +211,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         return yield* output.raw(`${body}\n`);
       }
       const rows = parsed as ReadonlyArray<Record<string, unknown> | null>;
+      yield* Effect.annotateCurrentSpan("query.row_count", rows.length);
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
       }
@@ -334,16 +339,26 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // Mirrors the resolved format onto the global telemetry reads, or instrumentation would
     // report the table/human default as `text`.
     yield* telemetryOutputFormat.set(format);
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type":
+        linkedAuth !== undefined ? "linked" : Option.isSome(flags.dbUrl) ? "db-url" : "local",
+      "query.format": format,
+      "query.agent_mode": agentMode,
+    });
 
     // 3. Linked queries go through the Management API; local/--db-url connect directly.
     if (linkedAuth !== undefined) {
-      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token);
+      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token).pipe(
+        Effect.withSpan("db.query.runLinked"),
+      );
     }
     if (localTarget === undefined) {
       // Unreachable: the non-linked branch always resolves a target above.
       return yield* Effect.die(new Error("db query: connection target was not resolved"));
     }
-    return yield* runLocal(localTarget, sql, format, agentMode);
+    return yield* runLocal(localTarget, sql, format, agentMode).pipe(
+      Effect.withSpan("db.query.runLocal"),
+    );
   }).pipe(
     // Writes the linked-project cache whenever a ref was resolved, whether the query succeeds or
     // fails — `linkedRefForCache` is only set on the linked path, so `--local`/`--db-url` never

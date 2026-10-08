@@ -1,10 +1,12 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { inspectReport } from "./report.handler.ts";
-import { inspectReportRuntimeLayer } from "./report.layers.ts";
+import { inspectBaseLayer } from "../inspect.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -52,5 +54,5 @@ export const inspectReportCommand = Command.make("report", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(inspectReportRuntimeLayer),
+  Command.provide(Layer.merge(inspectBaseLayer, commandRuntimeLayer(["inspect", "report"]))),
 );

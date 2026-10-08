@@ -11,6 +11,7 @@ import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { GoChildExitError } from "./go-child-exit.error.ts";
 import { GoProxyInvocation } from "./go-proxy-invocation.ts";
 import { GoProxy } from "./go-proxy.service.ts";
+import { withProcessSpan } from "../shared/telemetry/spans.ts";
 
 const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
   Effect.flatMap((invocation) =>
@@ -193,16 +194,25 @@ export function makeGoProxyLayer(opts?: {
                   ? { SUPABASE_TELEMETRY_DISABLED: "1" }
                   : {}),
               };
-              const command = ChildProcess.make(binary, [...globalArgs, ...args], {
-                cwd: execOpts?.cwd ?? opts?.cwd,
-                env,
-                extendEnv: true,
-                stdin: "inherit",
-                stdout: "inherit",
-                stderr: "inherit",
-                detached: false,
-              });
-              const exitCode = yield* spawner.exitCode(command).pipe(Effect.orDie);
+              const argv = [...globalArgs, ...args];
+              const exitCode = yield* withProcessSpan(
+                "GoProxy.exec",
+                { executable: binary, argCount: argv.length },
+                (traceEnv) =>
+                  spawner
+                    .exitCode(
+                      ChildProcess.make(binary, argv, {
+                        cwd: execOpts?.cwd ?? opts?.cwd,
+                        env: { ...env, ...traceEnv },
+                        extendEnv: true,
+                        stdin: "inherit",
+                        stdout: "inherit",
+                        stderr: "inherit",
+                        detached: false,
+                      }),
+                    )
+                    .pipe(Effect.orDie),
+              );
               if (exitCode !== 0) {
                 return yield* Effect.fail(
                   new GoChildExitError({
@@ -246,22 +256,35 @@ export function makeGoProxyLayer(opts?: {
               // while stdout is collected for wrapping. Callers pass stdin: "ignore" to give the
               // child a non-TTY stdin so it can't block on a prompt before the wrapper emits its
               // machine-output envelope.
-              const command = ChildProcess.make(binary, [...globalArgs, ...args], {
-                cwd: execOpts?.cwd ?? opts?.cwd,
-                env,
-                extendEnv: true,
-                stdin: execOpts?.stdin ?? "inherit",
-                stdout: "pipe",
-                stderr: "inherit",
-                detached: false,
-              });
-              const handle = yield* spawner.spawn(command).pipe(Effect.orDie);
-              // Drain stdout fully before awaiting exit so a full pipe buffer can't
-              // deadlock the child.
-              const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
-                Effect.orDie,
+              const argv = [...globalArgs, ...args];
+              const { captured, exitCode } = yield* withProcessSpan(
+                "GoProxy.execCapture",
+                { executable: binary, argCount: argv.length },
+                (traceEnv) =>
+                  Effect.gen(function* () {
+                    const handle = yield* spawner
+                      .spawn(
+                        ChildProcess.make(binary, argv, {
+                          cwd: execOpts?.cwd ?? opts?.cwd,
+                          env: { ...env, ...traceEnv },
+                          extendEnv: true,
+                          stdin: execOpts?.stdin ?? "inherit",
+                          stdout: "pipe",
+                          stderr: "inherit",
+                          detached: false,
+                        }),
+                      )
+                      .pipe(Effect.orDie);
+                    // Drain stdout fully before awaiting exit so a full pipe buffer can't
+                    // deadlock the child.
+                    const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
+                      Effect.orDie,
+                    );
+                    const exitCode = yield* handle.exitCode.pipe(Effect.orDie);
+                    return { captured, exitCode };
+                  }),
+                (result) => result.exitCode,
               );
-              const exitCode = yield* handle.exitCode.pipe(Effect.orDie);
               if (exitCode !== 0) {
                 return yield* Effect.fail(
                   new GoChildExitError({

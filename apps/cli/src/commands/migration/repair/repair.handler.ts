@@ -49,7 +49,7 @@ export interface MigrationRepairInput {
 }
 
 /** Creates the migration table, then runs one batch transaction. */
-const updateMigrationTable = Effect.fnUntraced(function* (
+const updateMigrationTable = Effect.fn("MigrationRepair.updateMigrationTable")(function* (
   session: DbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -152,6 +152,12 @@ const runRepair = Effect.fnUntraced(function* (
     dnsResolver,
     password: input.password,
     linkedProjectRef: input.projectRef,
+  });
+  yield* Effect.annotateCurrentSpan({
+    "db.conn_type": connType,
+    "db.is_local": cfg.isLocal,
+    "migration.repair_all": repairAll,
+    "migration.status": input.status,
   });
 
   // Loads after the flag-group check above, so a flag conflict surfaces before any

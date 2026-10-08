@@ -11,6 +11,7 @@ import {
   DateTime,
   Schema,
   Stdio,
+  Tracer,
 } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
@@ -793,6 +794,42 @@ describe("compute logs", () => {
           ).toBeLessThan(24 * 60 * 60 * 1000);
         }
       }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("traces the history read but records follow polls only as a count", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [LOGS_ROUTE]: [
+            logsResponse([computeLogRow({ id: "a", tsMs: T1, message: "first" })]),
+            logsResponse([computeLogRow({ id: "b", tsMs: T2, message: "second" })]),
+          ],
+        },
+      });
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      yield* computeLogs(flags({ follow: true }), followFor(3)).pipe(
+        Effect.provide(layer),
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      expect(spans.map((span) => span.name)).toEqual([
+        "compute.logs",
+        "v1GetProjectLogs",
+        "http.client GET",
+      ]);
+      expect(spans[0]?.attributes.get("poll.attempt_count")).toBe(4);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

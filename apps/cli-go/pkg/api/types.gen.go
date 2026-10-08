@@ -7207,6 +7207,9 @@ type PlanGateErrorBodyErrorCode string
 
 // PostgresConfigResponseOutput defines model for PostgresConfigResponse_Output.
 type PostgresConfigResponseOutput struct {
+	AutovacuumMaxWorkers *int    `json:"autovacuum_max_workers,omitempty"`
+	AutovacuumWorkMem    *string `json:"autovacuum_work_mem,omitempty"`
+
 	// CheckpointTimeout Default unit: s
 	CheckpointTimeout  *string `json:"checkpoint_timeout,omitempty"`
 	CronLogStatement   *bool   `json:"cron.log_statement,omitempty"`
@@ -7242,6 +7245,8 @@ type PostgresConfigResponseOutput struct {
 	MaxWalSenders                 *int                                                `json:"max_wal_senders,omitempty"`
 	MaxWalSize                    *string                                             `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                                `json:"max_worker_processes,omitempty"`
+	PgNetBatchSize                *int                                                `json:"pg_net.batch_size,omitempty"`
+	PgStatStatementsMax           *int                                                `json:"pg_stat_statements.max,omitempty"`
 	SessionReplicationRole        *PostgresConfigResponseOutputSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                             `json:"shared_buffers,omitempty"`
 
@@ -8180,6 +8185,9 @@ type UpdatePgsodiumConfigBody struct {
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
+	AutovacuumMaxWorkers *int    `json:"autovacuum_max_workers,omitempty"`
+	AutovacuumWorkMem    *string `json:"autovacuum_work_mem,omitempty"`
+
 	// CheckpointTimeout Default unit: s
 	CheckpointTimeout  *string `json:"checkpoint_timeout,omitempty"`
 	CronLogStatement   *bool   `json:"cron.log_statement,omitempty"`
@@ -8215,6 +8223,8 @@ type UpdatePostgresConfigBody struct {
 	MaxWalSenders                 *int                                            `json:"max_wal_senders,omitempty"`
 	MaxWalSize                    *string                                         `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                            `json:"max_worker_processes,omitempty"`
+	PgNetBatchSize                *int                                            `json:"pg_net.batch_size,omitempty"`
+	PgStatStatementsMax           *int                                            `json:"pg_stat_statements.max,omitempty"`
 	RestartDatabase               *bool                                           `json:"restart_database,omitempty"`
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`

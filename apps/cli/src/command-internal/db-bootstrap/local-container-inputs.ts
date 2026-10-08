@@ -253,4 +253,8 @@ export const buildLocalDbContainerInputs = (
       experimental,
       setup,
     };
-  });
+  }).pipe(
+    Effect.withSpan("DbBootstrap.buildLocalDbContainerInputs", {
+      attributes: { "config.preloaded": preloadedContext !== undefined },
+    }),
+  );

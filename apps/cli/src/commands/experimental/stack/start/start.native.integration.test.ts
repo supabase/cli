@@ -10,7 +10,7 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
-import { dbConnectionLayer } from "../../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../../command-internal/db-connection.sql-pg.layer.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import { parseConnectionString } from "../../../../command-internal/db-config.parse.ts";
 import { stackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
@@ -326,6 +326,65 @@ describe("experimental stack start native lifecycle", () => {
   );
 
   it.live(
+    "names the pinned Studio port setting when another process holds that port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-studio-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        const server = net.createServer();
+        const ownedServer = yield* Effect.acquireRelease(
+          Effect.callback<net.Server, Error>((resume) => {
+            const onError = (cause: Error) => resume(Effect.fail(cause));
+            server.once("error", onError);
+            server.listen(0, "127.0.0.1", () => {
+              server.removeListener("error", onError);
+              resume(Effect.succeed(server));
+            });
+          }),
+          (listeningServer) =>
+            Effect.callback<void>((resume) => {
+              listeningServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = ownedServer.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a native test port");
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          projectConfig.replace(
+            "[studio]\nenabled = false",
+            `[studio]\nenabled = true\nport = ${address.port}`,
+          ),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.addFinalizer(() =>
+              destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache")),
+            );
+            const failedStart = yield* Effect.scoped(
+              Effect.exit(
+                stackStart(flags(excluded.filter((name) => name !== "studio" && name !== "rest"))),
+              ),
+            );
+            expect(Exit.isFailure(failedStart)).toBe(true);
+            if (!Exit.isFailure(failedStart)) return;
+            expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+              Option.some({
+                suggestion:
+                  "Set `studio.port` in supabase/config.toml (or SUPABASE_STUDIO_PORT) to a free port.",
+              }),
+            );
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
     "stops owners after bind and pre-compose config failures across retries",
     () =>
       Effect.gen(function* () {
@@ -381,8 +440,14 @@ describe("experimental stack start native lifecycle", () => {
               // Linux rejects the bind; platforms that allow overlapping binds reject the probe.
               expect(Cause.pretty(failedStart.cause)).toMatch(
                 new RegExp(
-                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is already in use)`,
+                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is in use by another process)`,
                 ),
+              );
+              expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+                Option.some({
+                  suggestion:
+                    "Set `db.port` in supabase/config.toml (or SUPABASE_DB_PORT) to a free port.",
+                }),
               );
               const ownerPid = ownerPids[attempt];
               expect(ownerPid).toBeDefined();

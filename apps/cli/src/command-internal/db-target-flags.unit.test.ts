@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  changedLinkedLocalFlags,
   resolveDbTargetFlags,
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
@@ -256,5 +257,67 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
     }
 
     expect(missing).toEqual([]);
+  });
+});
+
+describe("changedLinkedLocalFlags", () => {
+  it("returns nothing when neither selector is present", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets"])).toEqual([]);
+    expect(changedLinkedLocalFlags(["storage", "ls", "ss:///"])).toEqual([]);
+  });
+
+  it("returns a single selector", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--linked"])).toEqual(["linked"]);
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--local"])).toEqual(["local"]);
+  });
+
+  it("returns both selectors in cobra's sorted order when both are set", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--local", "--linked"])).toEqual([
+      "linked",
+      "local",
+    ]);
+  });
+
+  it("handles = forms", () => {
+    expect(changedLinkedLocalFlags(["--local=true", "--linked=false"])).toEqual([
+      "linked",
+      "local",
+    ]);
+  });
+
+  it("treats the --no-* negation form as changed", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--no-linked"])).toEqual(["linked"]);
+    expect(changedLinkedLocalFlags(["storage", "ls", "--no-local"])).toEqual(["local"]);
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--no-local", "--linked"])).toEqual([
+      "linked",
+      "local",
+    ]);
+  });
+
+  it("does not treat a value-consuming flag's value as a selector", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--workdir", "--linked"])).toEqual([]);
+    expect(changedLinkedLocalFlags(["-o", "--linked", "--local"])).toEqual(["local"]);
+    expect(
+      changedLinkedLocalFlags(["storage", "cp", "--content-type", "--local", "a", "b"]),
+    ).toEqual([]);
+    expect(
+      changedLinkedLocalFlags(["storage", "cp", "--cache-control", "--linked", "a", "b"]),
+    ).toEqual([]);
+    expect(changedLinkedLocalFlags(["storage", "cp", "--jobs", "--local", "a", "b"])).toEqual([]);
+    expect(changedLinkedLocalFlags(["storage", "cp", "-j", "--linked", "a", "b"])).toEqual([]);
+  });
+
+  it("still detects a selector after a value-consuming flag's value", () => {
+    expect(changedLinkedLocalFlags(["storage", "cp", "--jobs", "5", "--local", "a", "b"])).toEqual([
+      "local",
+    ]);
+  });
+
+  it("stops scanning at the -- terminator", () => {
+    expect(changedLinkedLocalFlags(["seed", "buckets", "--", "--local", "--linked"])).toEqual([]);
+  });
+
+  it("detects selectors given after positional arguments", () => {
+    expect(changedLinkedLocalFlags(["storage", "rm", "ss:///b/x", "--local"])).toEqual(["local"]);
   });
 });

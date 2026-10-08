@@ -202,7 +202,12 @@ describe("live branch lifecycle helpers", () => {
       const cli: BranchCli = (args) =>
         Effect.sync(() => {
           state.calls.push(args.join(" "));
-          if (args[1] === "create") return result("", "create failed", 1);
+          if (args[1] === "create")
+            return result(
+              JSON.stringify({ _tag: "Error", error: { message: "branch quota exceeded" } }),
+              "",
+              1,
+            );
           if (args[1] === "delete") {
             state.listed = false;
             return result();
@@ -213,11 +218,21 @@ describe("live branch lifecycle helpers", () => {
         });
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected create failure");
-      expect(String(exit.cause)).toContain("create failed");
+      expect(String(exit.cause)).toContain("branch quota exceeded");
       expect(state.calls).toContain(
         `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
       );
       expect(state.listed).toBe(false);
+    }),
+  );
+
+  it.effect("never echoes branches get stdout, which prints the branch secrets", () =>
+    Effect.gen(function* () {
+      const cli: BranchCli = () => Effect.succeed(result("DB_PASSWORD sentinel-secret", "", 1));
+      const exit = yield* Effect.exit(awaitLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected get failure");
+      expect(String(exit.cause)).not.toContain("sentinel-secret");
+      expect(JSON.stringify(Cause.squash(exit.cause))).not.toContain("sentinel-secret");
     }),
   );
 

@@ -2,6 +2,8 @@ import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
 import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
+import { PropOrioleDb } from "../shared/telemetry/event-catalog.ts";
+import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 
 /**
  * Resolves the local Postgres Docker image for commands that run a pg_dump/shadow-DB container
@@ -48,6 +50,21 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+/** OrioleDB replaces the Postgres image only on 15/17 projects with a version set. */
+export const selectsOrioleDb = (
+  orioledbVersion: string | undefined,
+  majorVersion: number,
+): orioledbVersion is string =>
+  orioledbVersion !== undefined &&
+  orioledbVersion.length > 0 &&
+  (majorVersion === 15 || majorVersion === 17);
+
+/** Records whether the local project selects OrioleDB on the enclosing command event. */
+export const recordOrioleDbTelemetry = (
+  orioledbVersion: string | undefined,
+  majorVersion: number,
+) => recordCommandTelemetry({ [PropOrioleDb]: selectsOrioleDb(orioledbVersion, majorVersion) });
+
 /**
  * Resolves the Postgres image for `majorVersion`, honoring the pinned version written by
  * `supabase start` to `supabase/.temp/postgres-version`. The tag is only replaced when the
@@ -60,13 +77,9 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override: on a 15/17 project with `db.orioledb_version` set, the Postgres image is
-  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
-  if (
-    orioledbVersion !== undefined &&
-    orioledbVersion.length > 0 &&
-    (majorVersion === 15 || majorVersion === 17)
-  ) {
+  yield* recordOrioleDbTelemetry(orioledbVersion, majorVersion);
+  // The OrioleDB tag takes precedence over the default/pinned image.
+  if (selectsOrioleDb(orioledbVersion, majorVersion)) {
     const image =
       versionCompare(orioledbVersion, "15.1.1.13") > 0
         ? `supabase/postgres:${orioledbVersion}-orioledb`
