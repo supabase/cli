@@ -287,7 +287,7 @@ The plan job refuses a dispatch when:
 
 - `channel=next` is not on the `next` ref, or `channel=maintenance` is not on a `v<N>.x` ref;
 - `next` or a `v<N>.x` ref is dispatched with `beta` or `stable` (those refs release only their own channel);
-- `channel=stable` is not a dry run and the ref is neither `main` nor `hotfix/*` (the `hotfix/*` dry run in [Hotfix release flow](#hotfix-release-flow) is unaffected);
+- `channel=stable` is not a dry run and the ref is not `main` (any other ref, including `hotfix/*`, may only dry-run);
 - a non-empty `version` is not semver (no `v` prefix, no build metadata) or does not match the channel: `next` needs `X.Y.Z-next.N`, `beta` needs `X.Y.Z-beta.N`, and `stable` and `maintenance` need plain `X.Y.Z`.
 
 ### Hotfix release flow
