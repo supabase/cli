@@ -1713,8 +1713,8 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const storage = yield* makeDockerDatabaseStorage({
-          runtime: "docker",
-          target: dockerTarget,
+          runtime: testEngine,
+          target: containerTarget,
           stackId: `storage-line-${yield* crypto.randomUUIDv4}`,
           instanceId: "line",
           instanceRoot,
@@ -1723,7 +1723,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
-          container: yield* makeContainerRuntime({ target: dockerTarget, root }),
+          container: yield* makeContainerRuntime({ target: containerTarget, root }),
           spawner,
         });
         let volume: string | undefined;
@@ -1800,8 +1800,8 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         yield* writePgVersion;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const storage = yield* makeDockerDatabaseStorage({
-          runtime: "docker",
-          target: dockerTarget,
+          runtime: testEngine,
+          target: containerTarget,
           stackId: "storage-host-line",
           instanceId: "line",
           instanceRoot,
@@ -1810,7 +1810,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
-          container: yield* makeContainerRuntime({ target: dockerTarget, root }),
+          container: yield* makeContainerRuntime({ target: containerTarget, root }),
           spawner,
         });
         yield* Effect.addFinalizer(() =>
