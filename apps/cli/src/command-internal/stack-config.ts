@@ -732,7 +732,22 @@ const resolveEffectiveCliConfig = (
       pooler: resolvedPooler,
     },
     edge_runtime: resolvedEdge,
-    experimental,
+    // Same S3 overrides legacy Compose applies, so the OrioleDB S3 guard sees env-only values.
+    experimental: {
+      ...experimental,
+      s3_host: envOverride("SUPABASE_EXPERIMENTAL_S3_HOST", experimental.s3_host, env),
+      s3_region: envOverride("SUPABASE_EXPERIMENTAL_S3_REGION", experimental.s3_region, env),
+      s3_access_key: envOverride(
+        "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
+        experimental.s3_access_key,
+        env,
+      ),
+      s3_secret_key: envOverride(
+        "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
+        experimental.s3_secret_key,
+        env,
+      ),
+    },
     realtime: {
       ...realtime,
       enabled: envOverrideBool(

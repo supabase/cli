@@ -1694,82 +1694,85 @@ describe.runIf(testEngine === "docker")(
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
     );
+
+    it.live(
+      "resumes unfinished volume data only on the release line its first start recorded",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const crypto = yield* Crypto.Crypto;
+            const helperImage = yield* postgresImage("17");
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-line-" });
+            const storageRoot = path.join(root, "state", "stack", "data");
+            const cacheRoot = path.join(root, "cache");
+            const instanceRoot = path.join(storageRoot, "line");
+            yield* fs.makeDirectory(instanceRoot, { recursive: true });
+            yield* fs.makeDirectory(cacheRoot, { recursive: true });
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            const storage = yield* makeDockerDatabaseStorage({
+              runtime: "docker",
+              target: dockerTarget,
+              stackId: `storage-line-${yield* crypto.randomUUIDv4}`,
+              instanceId: "line",
+              instanceRoot,
+              root: storageRoot,
+              cacheRoot,
+              fs,
+              path,
+              crypto,
+              container: yield* makeContainerRuntime({ target: dockerTarget, root }),
+              spawner,
+            });
+            let volume: string | undefined;
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                yield* storage.destroyData("17").pipe(Effect.ignore);
+                if (volume !== undefined)
+                  yield* engine(["volume", "rm", volume]).pipe(Effect.ignore);
+              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+            );
+            yield* storage.prepare("17");
+            const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+              yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+            );
+            volume = marker.volume;
+            if (marker.backend !== "docker" || volume === undefined)
+              return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+            // Stands in for initdb output that an interrupted first start leaves without readiness.
+            const writePgVersion = engine([
+              "run",
+              "--rm",
+              "--mount",
+              `type=volume,src=${volume},dst=/store`,
+              helperImage,
+              "/bin/sh",
+              "-c",
+              `printf 17 > ${quote(`/store/${marker.namespace}/data/PG_VERSION`)}`,
+            ]);
+            yield* writePgVersion;
+
+            const oriole = "17.11.0.002-orioledb";
+            expect((yield* storage.prepare(oriole).pipe(Effect.flip)).message).toContain(
+              "PostgreSQL data from an unfinished first start belongs to release line 17, but 17-orioledb was requested",
+            );
+            yield* storage.prepare("17");
+
+            yield* storage.removeData("17");
+            yield* storage.prepare(oriole);
+            yield* writePgVersion;
+            expect((yield* storage.prepare("17").pipe(Effect.flip)).message).toContain(
+              "PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested",
+            );
+            yield* storage.prepare(oriole);
+          }),
+        ).pipe(Effect.provide(NodeServices.layer)),
+    );
   },
 );
 
 describe("Host database storage", { timeout: 120_000 }, () => {
-  it.live("resumes unfinished volume data only on the release line its first start recorded", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const helperImage = yield* postgresImage("17");
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-line-" });
-        const storageRoot = path.join(root, "state", "stack", "data");
-        const cacheRoot = path.join(root, "cache");
-        const instanceRoot = path.join(storageRoot, "line");
-        yield* fs.makeDirectory(instanceRoot, { recursive: true });
-        yield* fs.makeDirectory(cacheRoot, { recursive: true });
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const storage = yield* makeDockerDatabaseStorage({
-          runtime: testEngine,
-          target: containerTarget,
-          stackId: `storage-line-${yield* crypto.randomUUIDv4}`,
-          instanceId: "line",
-          instanceRoot,
-          root: storageRoot,
-          cacheRoot,
-          fs,
-          path,
-          crypto,
-          container: yield* makeContainerRuntime({ target: containerTarget, root }),
-          spawner,
-        });
-        let volume: string | undefined;
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            yield* storage.destroyData("17").pipe(Effect.ignore);
-            if (volume !== undefined) yield* engine(["volume", "rm", volume]).pipe(Effect.ignore);
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-        );
-        yield* storage.prepare("17");
-        const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
-          yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
-        );
-        volume = marker.volume;
-        if (marker.backend !== "docker" || volume === undefined)
-          return yield* new DockerTestError({ message: "Docker test selected host fallback" });
-        // Stands in for initdb output that an interrupted first start leaves without readiness.
-        const writePgVersion = engine([
-          "run",
-          "--rm",
-          "--mount",
-          `type=volume,src=${volume},dst=/store`,
-          helperImage,
-          "/bin/sh",
-          "-c",
-          `printf 17 > ${quote(`/store/${marker.namespace}/data/PG_VERSION`)}`,
-        ]);
-        yield* writePgVersion;
-
-        const oriole = "17.11.0.002-orioledb";
-        expect((yield* storage.prepare(oriole).pipe(Effect.flip)).message).toContain(
-          "PostgreSQL data from an unfinished first start belongs to release line 17, but 17-orioledb was requested",
-        );
-        yield* storage.prepare("17");
-
-        yield* storage.removeData("17");
-        yield* storage.prepare(oriole);
-        yield* writePgVersion;
-        expect((yield* storage.prepare("17").pipe(Effect.flip)).message).toContain(
-          "PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested",
-        );
-        yield* storage.prepare(oriole);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.live("resumes unfinished host data only on the release line its first start recorded", () =>
     Effect.scoped(
       Effect.gen(function* () {
