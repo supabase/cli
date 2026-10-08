@@ -8,16 +8,17 @@ on:
         required: true
         type: string
       version:
-        description: Released version (without the leading v, e.g. 1.2.3)
-        required: true
+        description: Released version (without the leading v, e.g. 1.2.3). Omit for messages that are not about a release.
+        required: false
         type: string
+        default: ""
       channel:
         description: Release channel (beta | stable), used to label the message. Omit for packages that release without channels.
         required: false
         type: string
         default: ""
       status:
-        description: Notification kind (success | failure | awaiting-approval | declined)
+        description: Notification kind (success | failure | awaiting-approval | declined | sync-conflict)
         required: false
         type: string
         default: success
@@ -28,6 +29,11 @@ on:
         default: v
       npm_package:
         description: npm package name. When set, success messages link the npm version page.
+        required: false
+        type: string
+        default: ""
+      pull_request:
+        description: Pull request number for sync-conflict messages.
         required: false
         type: string
         default: ""
@@ -51,6 +57,7 @@ jobs:
           STATUS: ${{ inputs.status }}
           TAG_PREFIX: ${{ inputs.tag_prefix }}
           NPM_PACKAGE: ${{ inputs.npm_package }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -106,6 +113,12 @@ jobs:
               HEADER="⏳ ${PACKAGE} v${VERSION} awaiting release approval"
               FALLBACK_TEXT="⏳ ${PACKAGE} v${VERSION} is awaiting release approval"
               DETAILS="*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Review and approve:* <${RUN_URL}|workflow run>"
+              ;;
+            sync-conflict)
+              HEADER="🔀 ${PACKAGE}: merging main into develop needs a hand"
+              FALLBACK_TEXT="🔀 ${PACKAGE}: merging main into develop conflicts; a sync pull request needs resolving"
+              PR_URL="https://github.com/${REPO}/pull/${PULL_REQUEST}"
+              DETAILS="Merging main into develop conflicts. Resolve it before the next production deploy: merge develop into the sync branch, push, and approve the pull request. Do not use the merge button.\n*Pull request:* <${PR_URL}|#${PULL_REQUEST}>\n*Workflow run:* <${RUN_URL}|view run>"
               ;;
             declined)
               HEADER="🛑 ${PACKAGE} v${VERSION} release not approved"

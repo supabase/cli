@@ -141,8 +141,8 @@ jobs:
               echo "::error::${REF_NAME} only releases the next channel"
               exit 1
             fi
-            if [[ "$channel" == stable && "$dry_run" != true && "$REF_NAME" != main && "$REF_NAME" != hotfix/* ]]; then
-              echo "::error::A stable release must be dispatched on main or a hotfix/* branch"
+            if [[ "$channel" == stable && "$dry_run" != true && "$REF_NAME" != main ]]; then
+              echo "::error::A stable release must be dispatched on main; other refs may only dry-run"
               exit 1
             fi
             if [[ -n "$DISPATCH_VERSION" ]]; then

@@ -164,8 +164,9 @@ Full procedures live in the
 [ADR 0028](../docs/adr/0028-release-branches-and-maintenance-lines.md).
 
 **Resolving a sync PR.** When `Sync branches` cannot merge cleanly it opens
-`sync/<source>-into-<target>` (for example `sync/develop-into-next`). Further
-syncs for that pair skip while it is open. Merge the target into the sync
+`sync/<source>-into-<target>` (for example `sync/develop-into-next`); CODEOWNERS
+requests the CLI team, and for `main-into-develop` the release Slack channel is
+also told. Further syncs for that pair skip while it is open. Merge the target into the sync
 branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
 target and deletes the branch. Never use the merge button. If the target or the
 source moved, the bot merges the latest target and source into the approved head and lands
@@ -187,7 +188,7 @@ Fast-forward PRs are the deploy PR (`develop` → `main`), the major cut
 
 **Dispatch guards.** `release.yml` refuses `channel=next` off `next`,
 `channel=maintenance` off `v<N>.x`, `beta`/`stable` on `next` or `v<N>.x`, a
-non-dry-run `stable` outside `main` and `hotfix/*`, and a `version` that is not
+non-dry-run `stable` outside `main`, and a `version` that is not
 `X.Y.Z[-prerelease]`.
 
 **`release-major` label.** The deploy fast-forward refuses a major version bump
@@ -211,6 +212,13 @@ Only security fixes and fixes for fundamentally broken behaviour go into
 `v<N>.x`, through `hotfix/*` or `backport/*` PRs. Release-infrastructure changes
 must be cherry-picked to every active `v*.x` (see
 [Release infra and maintenance lines](../apps/cli/docs/release-process.md#release-infra-and-maintenance-lines)).
+
+**Hotfixes.** A stable fix that cannot wait for the weekly deploy is a
+`hotfix/*` PR into `main` titled `fix`, `perf`, or `revert`. Its checks,
+including the dry-run release rehearsal, run on every push. After it publishes,
+`Sync branches` merges `main` into `develop`; a conflict is announced in Slack.
+There is no rollback: ship a `revert:` hotfix instead. See
+[Hotfix release flow](../apps/cli/docs/release-process.md#hotfix-release-flow).
 
 **Manual setup (rulesets and labels).**
 
