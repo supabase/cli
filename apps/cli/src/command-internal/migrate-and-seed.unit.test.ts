@@ -141,7 +141,9 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table schema_marker ()");
             expect(execs).not.toContain("create table migration_marker ()");
-            expect(out.rawChunks.map((c) => c.text).join("")).not.toContain("Applying migration");
+            const stderr = out.rawChunks.map((c) => c.text).join("");
+            expect(stderr).not.toContain("Applying migration");
+            expect(stderr).not.toContain("schema_paths is not applied");
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),
@@ -150,7 +152,7 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
   );
 
   it.effect(
-    "falls back to migration files when pg-delta is enabled, even with experimental on and an empty version",
+    "falls back to migration files and warns that schema_paths is ignored when pg-delta is enabled, even with experimental on and an empty version",
     () => {
       const workdir = makeWorkdir();
       writeFile(workdir, "supabase/schemas/a.sql", "create table schema_marker ();");
@@ -177,6 +179,9 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table migration_marker ()");
             expect(execs).not.toContain("create table schema_marker ()");
+            expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+              "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+            );
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),

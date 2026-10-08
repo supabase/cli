@@ -54,7 +54,9 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and finally either every
    pending migration + seed, OR — when `--experimental`/`SUPABASE_EXPERIMENTAL` is set AND
    `[experimental.pgdelta] enabled = false` is set explicitly (it defaults to true) — every `db.migrations.schema_paths` file
-   (declarative schema files) instead of migrations, followed by seed either way
+   (declarative schema files) instead of migrations (with `--experimental`, pg-delta enabled,
+   and non-empty `schema_paths`, a stderr warning says `schema_paths` is not applied),
+   followed by seed either way
    (`MigrateAndSeed`). Skipped IN FULL when `--from-backup` is set (not merely reduced).
 8. Write `supabase/.branches/_current_branch` = `"main"` if absent — runs on EVERY path
    that reaches this point (fresh volume, existing volume, and a swallowed

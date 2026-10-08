@@ -291,7 +291,10 @@ to those defaults (the usual outcome for an interactive terminal).
   branch) is taken on
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
   `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled`
-  resolves false, which requires an explicit `enabled = false` (the default is true). Taking this branch means timestamped
+  resolves false, which requires an explicit `enabled = false` (the default is true).
+  When the branch is skipped only because pg-delta is enabled and `schema_paths` is
+  non-empty, a stderr `WARNING: [db.migrations].schema_paths is not applied while pg-delta
+is enabled …` line is printed (before the confirmation prompt on the remote path). Taking this branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
   nothing. Faithfully reproduces two undocumented quirks inherited from the old
   Go CLI: (1) the `schema_paths`

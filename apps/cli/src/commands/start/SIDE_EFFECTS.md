@@ -54,7 +54,8 @@ prints first, whether or not the file exists — a missing file is silently tole
 runs), any other read/exec error still fails the run. Finally runs every pending migration +
 seed — UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta]
 enabled = false` is set explicitly (it defaults to true), in which case `db.migrations.schema_paths` files are applied INSTEAD of
-`migrations/*.sql`; seed still runs either way.
+`migrations/*.sql`; seed still runs either way. With `--experimental`, pg-delta enabled, and a
+non-empty `schema_paths`, a stderr warning says `schema_paths` is not applied.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
 `startInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
