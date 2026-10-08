@@ -26,13 +26,7 @@
     "port": 55001,
     "projectEnv": {},
     "projectId": "abcdefghijklmnopqrst",
-    "remoteOverrideKeys": [
-      "auth.enabled",
-      "db.migrations.enabled",
-      "db.seed.enabled",
-      "experimental.pgdelta.declarative_schema_path",
-      "project_id"
-    ],
+    "remoteOverrideKeys": [],
     "schemaPathPatterns": [
       "./schemas/*.sql"
     ],
