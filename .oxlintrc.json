@@ -35,6 +35,35 @@
       }
     },
     {
+      // Ambient env reads go through `CliConfigValues` (registry names) or the shared env-option
+      // helpers, so a stray `process.env` can't bypass the flag > shell > .env > config order.
+      "files": ["apps/cli/src/**"],
+      "excludeFiles": [
+        "apps/cli/src/**/*.test.ts",
+        "apps/cli/src/shared/config/cli-config-provider.layer.ts",
+        "apps/cli/src/shared/config/cli-config-env.ts",
+        // Standalone node shim built with `bun build --target node`; it cannot import effect.
+        "apps/cli/src/shared/cli/bin.ts",
+        // Templates that run inside the user's deployed container, not in the CLI process.
+        "apps/cli/src/shared/compute/stacks/**"
+      ],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "env",
+            "message": "Read env through CliConfigValues or the shared env helpers, not process.env."
+          },
+          {
+            "object": "Bun",
+            "property": "env",
+            "message": "Read env through CliConfigValues or the shared env helpers, not Bun.env."
+          }
+        ]
+      }
+    },
+    {
       // `.github/scripts` is the only `bun:test` consumer; `@types/bun`'s shared `Matchers<T>`
       // types `.rejects.toThrow(...)` as returning `void`, even though it must be awaited at
       // runtime. Removing the `await` would make the assertion racy.
