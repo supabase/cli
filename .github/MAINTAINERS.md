@@ -180,6 +180,13 @@ Only security fixes and fixes for fundamentally broken behaviour go into
 must be cherry-picked to every active `v*.x` (see
 [Release infra and maintenance lines](../apps/cli/docs/release-process.md#release-infra-and-maintenance-lines)).
 
+**Hotfixes.** A stable fix that cannot wait for the weekly deploy is a
+`hotfix/*` PR into `main` titled `fix`, `perf`, or `revert`. Its checks,
+including the dry-run release rehearsal, run on every push. After it publishes,
+`Sync branches` merges `main` into `develop`; a conflict is announced in Slack.
+There is no rollback: ship a `revert:` hotfix instead. See
+[Hotfix release flow](../apps/cli/docs/release-process.md#hotfix-release-flow).
+
 **Manual setup (rulesets and labels).**
 
 - Create the `next` branch from `develop`, and the `release-major` label.
