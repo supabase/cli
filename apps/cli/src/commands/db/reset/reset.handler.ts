@@ -8,14 +8,16 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import {
-  SEED_CONSENT_SUGGESTION,
+  SEED_CANCELLED_MESSAGE,
   confirmSeedIntoMatchedRemote,
+  resolveDbSeedInput,
+  seedCancelledSuggestion,
 } from "../../../command-internal/seed-remote-consent.ts";
+import { sqlFilesGlob } from "../../../command-internal/sql-files-glob.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
@@ -238,8 +240,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       workdir,
       projectRef: Option.fromNullishOr(configRef),
     });
-    const seedEnabled = (yield* snapshot.get(CliConfigKeys.db.seed.enabled)).value;
-    const seedSqlPaths = (yield* snapshot.get(CliConfigKeys.db.seed.sqlPaths)).value;
+    const seed = yield* resolveDbSeedInput(snapshot, { workdir, ref: linkedRef ?? "" });
+    const seedEnabled = seed.enabled;
+    const seedSqlPaths = seed.sqlPaths;
 
     // Prompt (default false) → cancel, then reset everything.
     const shouldReset = yield* promptYesNo(
@@ -251,13 +254,21 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     if (!shouldReset) {
       return yield* new DbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
-    if (seedEnabled && Option.isSome(snapshot.appliedRemote)) {
-      const seedConsented = yield* confirmSeedIntoMatchedRemote(yes, snapshot.appliedRemote.value);
-      if (!seedConsented) {
-        return yield* new DbResetCancelledError({
-          message: CONTEXT_CANCELED_MESSAGE,
-          suggestion: SEED_CONSENT_SUGGESTION,
+    if (seedEnabled && seed.consent !== undefined) {
+      const { files } = yield* sqlFilesGlob(fs, path, seedSqlPaths, workdir);
+      if (files.length > 0) {
+        const seedConsented = yield* confirmSeedIntoMatchedRemote({
+          command: "reset",
+          target: seed.consent,
+          files,
+          yes,
         });
+        if (!seedConsented) {
+          return yield* new DbResetCancelledError({
+            message: SEED_CANCELLED_MESSAGE,
+            suggestion: seedCancelledSuggestion("reset"),
+          });
+        }
       }
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");

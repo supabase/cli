@@ -4,6 +4,7 @@ import {
   resolveArtifact,
 } from "@supabase/stack/internal/artifacts";
 import { Effect, Result } from "effect";
+import { isConfigValueFailure } from "../../command-internal/config-value-passthrough.ts";
 import {
   describeConfigSnapshotFailure,
   loadConfigSnapshotContext,
@@ -26,8 +27,10 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   const context = yield* loadConfigSnapshotContext(workdir).pipe(Effect.result);
   let configError: string | undefined;
   let major: number | undefined;
-  if (Result.isFailure(context)) configError = describeConfigSnapshotFailure(context.failure);
-  else {
+  if (Result.isFailure(context)) {
+    if (isConfigValueFailure(context.failure)) return yield* context.failure;
+    configError = describeConfigSnapshotFailure(context.failure);
+  } else {
     const value = context.success.config.db.major_version;
     if (value !== 15 && value !== 17)
       configError = `unsupported PostgreSQL major version: ${value}`;

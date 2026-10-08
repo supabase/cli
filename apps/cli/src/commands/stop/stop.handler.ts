@@ -14,6 +14,8 @@ import {
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
+import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { loadSnapshotSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
 import {
   loadLocalProjectContext,
@@ -50,6 +52,10 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     return flags.projectId.value;
   }
 
+  yield* loadSnapshotSurfacingValueErrors(
+    cliSettings.workdir,
+    (message) => new StopConfigLoadError({ message }),
+  );
   // `loadLocalProjectContext` covers the config-load/env/project-id resolution sequence; see its
   // own doc comment (workdir validation is handled separately, by `stop`'s own call above).
   const context = yield* loadLocalProjectContext(
@@ -71,9 +77,11 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
         context.snapshot.loaded.document,
       ),
     catch: (cause) =>
-      new StopConfigLoadError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+      cause instanceof CliConfigValueError
+        ? cause
+        : new StopConfigLoadError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
   });
 
   return context.projectId;

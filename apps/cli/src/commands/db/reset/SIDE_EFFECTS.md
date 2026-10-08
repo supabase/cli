@@ -276,13 +276,14 @@ to those defaults (the usual outcome for an interactive terminal).
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The linked-database password env is
   withheld when the target differs from `.temp/project-ref`: stderr gets
-  `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.` and a temporary login role is minted.
+  `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted.
 - **Seed consent (remote)**: after the `Do you want to reset the remote database?` prompt and before any change, a `--linked` target that matched a
-  `[remotes.<name>]` block with seeding enabled asks `The target matched [remotes.<name>]. Seed data into this database?` (default no). `--yes` or
-  `SUPABASE_YES` answers yes; a TTY stdin with non-interactive output declines;
-  piped stdin is read for one line. A decline exits 1. A matched remote that
-  does not declare `db.seed.enabled` seeds nothing unless `--sql-paths`, env or
-  config turn it on.
+  `[remotes.<name>]` block that does not itself declare `db.seed.enabled = true`, with seeding enabled and at least one seed file, asks
+  `Project <ref> matches [remotes.<name>]. Run <n> seed file(s) (<paths>) against it?` (default no). `--yes` or
+  `SUPABASE_YES` answers yes and prints `Seeding enabled by <origin>` (for example `SUPABASE_DB_SEED_ENABLED (shell)`); a TTY stdin with
+  non-interactive output, or machine output on a TTY, fails with `SeedConsentRequiredError`
+  (`Seeding <ref> ([remotes.<name>]) needs confirmation and this run can't prompt. Nothing was changed.`, suggesting `--yes` or `--no-seed`);
+  piped stdin is read for one line. An answer of no exits 1 with `Seeding cancelled; nothing was changed.`
 - `--no-seed` forces seeding off; on the
   local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override

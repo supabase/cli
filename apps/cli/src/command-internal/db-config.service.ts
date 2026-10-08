@@ -26,6 +26,10 @@ import type {
   DbPasswordFlagsError,
 } from "./db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigValueError,
+} from "../config/cli-config.errors.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
@@ -33,6 +37,8 @@ export type DbConfigError =
   | DbConfigParseUrlError
   | DbPasswordFlagsError
   | DbConfigLoadError
+  | CliConfigValueError
+  | CliConfigFlagConflictError
   | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError

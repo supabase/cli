@@ -30,6 +30,7 @@ import type { ConnectSuggestionContext } from "../../command-internal/connect-er
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
 import { checkDbToml, loadProjectEnvValues } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
+import { resolveDbSeedInput } from "../../command-internal/seed-remote-consent.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
 import { tempPaths } from "../../shared/config/temp-paths.ts";
@@ -272,33 +273,35 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
     let envFileWritten = true;
-    yield* Effect.gen(function* () {
-      const examplePath = path.join(workdir, ".env.example");
-      const hasExample = yield* fs.exists(examplePath);
-      let example: Record<string, string> | undefined;
-      if (hasExample) {
-        const content = yield* fs.readFileString(examplePath);
-        example = yield* Effect.try({
-          try: () => parseDotEnv(content),
-          catch: (cause) =>
-            new BootstrapDotEnvParseError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
-      }
-      const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
-      yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          envFileWritten = false;
-          yield* output.raw(
-            `Failed to create .env file: ${cause instanceof Error ? cause.message : String(cause)}\n`,
-            "stderr",
-          );
-        }),
+    yield* configValues.writeThrough(
+      Effect.gen(function* () {
+        const examplePath = path.join(workdir, ".env.example");
+        const hasExample = yield* fs.exists(examplePath);
+        let example: Record<string, string> | undefined;
+        if (hasExample) {
+          const content = yield* fs.readFileString(examplePath);
+          example = yield* Effect.try({
+            try: () => parseDotEnv(content),
+            catch: (cause) =>
+              new BootstrapDotEnvParseError({
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
+          });
+        }
+        const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
+        yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            envFileWritten = false;
+            yield* output.raw(
+              `Failed to create .env file: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+              "stderr",
+            );
+          }),
+        ),
+        Effect.withSpan("bootstrap.writeDotEnv"),
       ),
-      Effect.withSpan("bootstrap.writeDotEnv"),
     );
 
     // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
@@ -326,6 +329,10 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // command, since its CommandSettings-based resolvers would be stale after this handler's
     // own chdir above.
     const pushNotify = bootstrapRetryNotify();
+    const seed = yield* resolveDbSeedInput(
+      yield* configValues.load({ workdir, projectRef: Option.some(projectRef) }),
+      { workdir, ref: projectRef },
+    );
     yield* dbPushCore({
       workdir,
       projectRef,
@@ -336,6 +343,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       includeAll: false,
       includeRoles: true,
       includeSeed: true,
+      seed,
       includeVault: true,
       dnsResolver,
       toml,

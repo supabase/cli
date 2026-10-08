@@ -562,6 +562,23 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("fails naming the source when a config value is invalid", () => {
+    const { layer, child } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const exit = yield* Effect.exit(status(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StatusConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
     const { layer, child } = setup();
     return Effect.gen(function* () {

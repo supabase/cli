@@ -28,6 +28,8 @@ import {
   linkedStateJsonField,
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
+import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { loadSnapshotSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import {
   loadLocalProjectContext,
   recordLocalProjectOrioleDbTelemetry,
@@ -135,6 +137,10 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // 2. An absent config.toml is not a hard failure — only a malformed one is; a missing file
     // proceeds with template defaults. `loadLocalProjectContext` also resolves the sanitized
     // project id used below; see its own doc comment for the full rationale.
+    yield* loadSnapshotSurfacingValueErrors(
+      cliSettings.workdir,
+      (message) => new StatusConfigLoadError({ message }),
+    );
     const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
@@ -154,9 +160,11 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
           context.snapshot.loaded.document,
         ),
       catch: (cause) =>
-        new StatusInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
+        cause instanceof CliConfigValueError
+          ? cause
+          : new StatusInvalidConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
     });
 
     // 4. `status` has no --project-id flag: resolution is env → toml → workdir basename, then

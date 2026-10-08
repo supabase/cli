@@ -47,10 +47,14 @@ const requiredFlagArgs = (entry: WalkedCommand): ReadonlyArray<string> =>
     return [`--${flag.name}`, firstChoice ?? "value"];
   });
 
-const selectorArgs = (selector: "db-url" | "local") =>
-  selector === "db-url" ? ["--db-url", "postgres://user:secret@127.0.0.1:1/postgres"] : ["--local"];
+const selectorArgs = (selector: "db-url" | "local" | "none") =>
+  selector === "db-url"
+    ? ["--db-url", "postgres://user:secret@127.0.0.1:1/postgres"]
+    : selector === "local"
+      ? ["--local"]
+      : [];
 
-const runCommand = (entry: WalkedCommand, selector: "db-url" | "local") =>
+const runCommand = (entry: WalkedCommand, selector: "db-url" | "local" | "none") =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-password-rejection-" });
@@ -99,10 +103,29 @@ describe("--password with a direct database target", () => {
 
           expect(failure).toMatchObject({
             _tag: "DbPasswordFlagsError",
-            message: `if any flags in the group [${selector} password] are set none of the others can be; [${selector} password] were all set`,
+            message:
+              selector === "db-url"
+                ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
+                : "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
           });
         }),
       );
     }
   }
+
+  it.effect("explains that migration squash defaults to local when --password has no target", () =>
+    Effect.gen(function* () {
+      const entry = passwordCommands.find(
+        (candidate) => candidate.path.join(" ") === "migration squash",
+      );
+      expect(entry).toBeDefined();
+      const failure = yield* runCommand(entry!, "none");
+
+      expect(failure).toMatchObject({
+        _tag: "DbPasswordFlagsError",
+        message:
+          "migration squash targets the local database unless you pass --linked, and --password only applies to a linked project. Pass --linked, or drop --password.",
+      });
+    }),
+  );
 });

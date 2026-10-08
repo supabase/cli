@@ -12,7 +12,6 @@
 import { Effect, Option } from "effect";
 
 import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../commands/gen/types/types.languages.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../shared/cli/cobra-flag-groups.ts";
 import { DbPasswordFlagsError } from "./db-config.errors.ts";
 
 export type DbConnType = "db-url" | "linked" | "local";
@@ -302,19 +301,23 @@ export function resolveDbTargetFlags(args: ReadonlyArray<string>): DbTargetSelec
 /**
  * `--password` only authenticates against a linked project, so it fails when paired with a target
  * that carries its own credentials (`--db-url`) or reads them from config (`--local`, also the
- * default when no selector is set).
+ * default when no selector is set). `localByDefaultFor` names the command whose unset selector
+ * fell back to local, so the message can point at `--linked` instead of a `--local` the user never typed.
  */
 export const rejectPasswordWithDirectTarget = (
   connType: DbConnType | undefined,
   password: Option.Option<string> | undefined,
+  options: { readonly localByDefaultFor?: string } = {},
 ): Effect.Effect<void, DbPasswordFlagsError> => {
   if (password === undefined || Option.isNone(password) || connType === "linked") {
     return Effect.void;
   }
   const target = connType ?? "local";
-  return Effect.fail(
-    new DbPasswordFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage([target, "password"], [target, "password"]),
-    }),
-  );
+  const message =
+    target === "db-url"
+      ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
+      : options.localByDefaultFor !== undefined
+        ? `${options.localByDefaultFor} targets the local database unless you pass --linked, and --password only applies to a linked project. Pass --linked, or drop --password.`
+        : "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.";
+  return Effect.fail(new DbPasswordFlagsError({ message }));
 };

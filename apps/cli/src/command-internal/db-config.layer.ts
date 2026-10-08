@@ -223,8 +223,18 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
 ) =>
-  error._tag === "ProjectRefReadError"
-    ? (error as Extract<E, { readonly _tag: "ProjectRefReadError" }>)
+  error._tag === "ProjectRefReadError" ||
+  error._tag === "CliConfigValueError" ||
+  error._tag === "CliConfigFlagConflictError"
+    ? (error as Extract<
+        E,
+        {
+          readonly _tag:
+            | "ProjectRefReadError"
+            | "CliConfigValueError"
+            | "CliConfigFlagConflictError";
+        }
+      >)
     : new Errors.DbConfigLoadError({ message: error.message });
 
 /**
@@ -239,6 +249,7 @@ export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")
   ref: string,
   workdir: string,
   explicit: Option.Option<string>,
+  hasPasswordFlag = false,
 ) {
   const debug = yield* DebugLogger;
   if (Option.isSome(explicit)) {
@@ -261,9 +272,10 @@ export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")
     !noticedWithheldPassword.has(snapshot)
   ) {
     noticedWithheldPassword.add(snapshot);
-    yield* output.raw(
-      `WARN: ignoring ${withheld.envName} because this directory is linked to project ${withheld.linkedRef}, not ${withheld.targetRef}. Pass --password to use a database password for ${withheld.targetRef}.\n`,
-      "stderr",
+    yield* output.warn(
+      `Not sending ${withheld.envName} to ${withheld.targetRef}: this directory is linked to ${withheld.linkedRef}. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).${
+        hasPasswordFlag ? ` Pass --password to use a password for ${withheld.targetRef}.` : ""
+      }`,
     );
   }
   if (Option.isNone(resolved.value)) {
@@ -379,14 +391,17 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
      * the "run supabase link" IPv6 error.
      */
     readonly fetchPoolerFromApi?: boolean;
+    /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
+    readonly hasPasswordFlag?: boolean;
   } = {},
 ) {
   const {
     adHocProjectRef = false,
     resolveVaultSecrets = true,
     fetchPoolerFromApi = false,
+    hasPasswordFlag = false,
   } = options;
-  const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword);
+  const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
   const host = `db.${ref}.${projectHost}`;
   const base: PgConnInput = {
     host,
@@ -626,6 +641,7 @@ export const dbConfigResolverLayer = Layer.effect(
                 // pooler fetch, regardless of `adHocProjectRef`'s saved-URL semantics
                 // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
                 fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
+                hasPasswordFlag: flags.password !== undefined,
               },
             );
             // The linked-project telemetry cache (GET /v1/projects/{ref}) is not issued here:
@@ -682,7 +698,12 @@ export const dbConfigResolverLayer = Layer.effect(
           const ref = refOpt.value;
           if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<PgConnInput>();
           const adHocProjectRef = flags.adHocProjectRef ?? false;
-          const password = yield* resolveLinkedPassword(ref, cliSettings.workdir, Option.none());
+          const password = yield* resolveLinkedPassword(
+            ref,
+            cliSettings.workdir,
+            Option.none(),
+            flags.password !== undefined,
+          );
           // Container-fallback: fetch the primary pooler config from the Management API when
           // no `.temp/pooler-url` is saved.
           return yield* resolvePoolerConn(

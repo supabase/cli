@@ -35,7 +35,10 @@ const workdir = (opts: { readonly linkedRef?: string; readonly dotenv?: string }
 
 const run = <A, E>(
   effect: Effect.Effect<A, E, CliConfigValues | DebugLogger | Output>,
-  opts: { readonly env?: Record<string, string>; readonly flagPassword?: string } = {},
+  opts: {
+    readonly env?: Record<string, string>;
+    readonly flagPassword?: string;
+  } = {},
 ) => {
   const out = mockOutput();
   const debugLines: Array<string> = [];
@@ -67,7 +70,12 @@ const run = <A, E>(
   );
   return effect.pipe(
     Effect.provide(layer),
-    Effect.map((result) => ({ result, stderr: out.stderrText, debugLines })),
+    Effect.map((result) => ({
+      result,
+      stderr: out.stderrText,
+      warnings: out.messages.filter((m) => m.type === "warn").map((m) => m.message),
+      debugLines,
+    })),
   );
 };
 
@@ -77,10 +85,10 @@ describe("resolveLinkedPassword", () => {
   it.effect("uses the env password when the target is the linked project", () => {
     const dir = workdir({ linkedRef: TARGET });
     return run(resolveLinkedPassword(TARGET, dir, Option.none()), { env: ENV }).pipe(
-      Effect.tap(({ result, stderr, debugLines }) =>
+      Effect.tap(({ result, warnings, debugLines }) =>
         Effect.sync(() => {
           expect(result).toBe("env-password");
-          expect(stderr).not.toContain("WARN");
+          expect(warnings).toEqual([]);
           expect(debugLines).toEqual([
             "Using database password from SUPABASE_DB_PASSWORD (environment)...",
           ]);
@@ -92,10 +100,10 @@ describe("resolveLinkedPassword", () => {
   it.effect("uses the env password when the workdir is not linked", () => {
     const dir = workdir();
     return run(resolveLinkedPassword(TARGET, dir, Option.none()), { env: ENV }).pipe(
-      Effect.tap(({ result, stderr }) =>
+      Effect.tap(({ result, warnings }) =>
         Effect.sync(() => {
           expect(result).toBe("env-password");
-          expect(stderr).not.toContain("WARN");
+          expect(warnings).toEqual([]);
         }),
       ),
     );
@@ -107,21 +115,18 @@ describe("resolveLinkedPassword", () => {
       const dir = workdir({ linkedRef: LINKED });
       return run(
         Effect.gen(function* () {
-          const first = yield* resolveLinkedPassword(TARGET, dir, Option.none());
-          const second = yield* resolveLinkedPassword(TARGET, dir, Option.none());
+          const first = yield* resolveLinkedPassword(TARGET, dir, Option.none(), true);
+          const second = yield* resolveLinkedPassword(TARGET, dir, Option.none(), true);
           return [first, second];
         }),
         { env: ENV },
       ).pipe(
-        Effect.tap(({ result, stderr, debugLines }) =>
+        Effect.tap(({ result, warnings, debugLines }) =>
           Effect.sync(() => {
             expect(result).toEqual(["", ""]);
-            const warnings = stderr.split("\n").filter((line) => line.includes("WARN"));
-            expect(warnings).toHaveLength(1);
-            expect(warnings[0]).toContain("SUPABASE_DB_PASSWORD");
-            expect(warnings[0]).toContain(LINKED);
-            expect(warnings[0]).toContain(TARGET);
-            expect(warnings[0]).toContain("--password");
+            expect(warnings).toEqual([
+              `Not sending SUPABASE_DB_PASSWORD to ${TARGET}: this directory is linked to ${LINKED}. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for ${TARGET}.`,
+            ]);
             expect(debugLines).toEqual([
               "No database password found; using a temporary login role...",
               "No database password found; using a temporary login role...",
@@ -132,13 +137,26 @@ describe("resolveLinkedPassword", () => {
     },
   );
 
+  it.effect("omits the --password sentence for commands without a --password binding", () => {
+    const dir = workdir({ linkedRef: LINKED });
+    return run(resolveLinkedPassword(TARGET, dir, Option.none()), { env: ENV }).pipe(
+      Effect.tap(({ warnings }) =>
+        Effect.sync(() => {
+          expect(warnings).toEqual([
+            `Not sending SUPABASE_DB_PASSWORD to ${TARGET}: this directory is linked to ${LINKED}. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).`,
+          ]);
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores a project .env password for a project other than the linked one", () => {
     const dir = workdir({ linkedRef: LINKED, dotenv: "SUPABASE_DB_PASSWORD=dotenv-password\n" });
     return run(resolveLinkedPassword(TARGET, dir, Option.none())).pipe(
-      Effect.tap(({ result, stderr }) =>
+      Effect.tap(({ result, warnings }) =>
         Effect.sync(() => {
           expect(result).toBe("");
-          expect(stderr).toContain("WARN");
+          expect(warnings).toHaveLength(1);
         }),
       ),
     );

@@ -2883,7 +2883,7 @@ describe("stack backend", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("SeedConfigLoadError");
+          expect(causeText).toContain("CliConfigValueError");
           expect(causeText).toContain("(sets api.port): expected a port (0-65535).");
         }
         expect(requests).toHaveLength(0);

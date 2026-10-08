@@ -31,7 +31,8 @@ const config = {
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
-    description: "Password to your remote Postgres database.",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
   }),
   // TS-only override of the linked project ref — see push.command.ts (db push).
   projectRef: Flag.string("project-ref").pipe(

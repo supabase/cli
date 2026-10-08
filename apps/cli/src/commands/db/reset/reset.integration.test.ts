@@ -862,6 +862,7 @@ function setup(
     execFailsOn?: string;
     execFailsMessage?: string;
     yes?: boolean;
+    interactive?: boolean;
     noSeed?: boolean;
     sqlPaths?: ReadonlyArray<string>;
     env?: Readonly<Record<string, string>>;
@@ -925,7 +926,11 @@ function setup(
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive: opts.interactive,
+    promptConfirmResponses: opts.confirm,
+  });
   const conn = mockConnection(opts);
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
@@ -3351,17 +3356,21 @@ describe("db reset", () => {
           confirm?: ReadonlyArray<boolean>;
           env?: Readonly<Record<string, string>>;
           sqlPaths?: ReadonlyArray<string>;
+          remoteBlock?: string;
+          interactive?: boolean;
         } = {},
       ) =>
         setup(tmp.current, {
-          toml: REMOTE_TOML,
+          toml: `${REMOTE_TOML}${opts.remoteBlock ?? ""}`,
           files: {
             ...migrationFile("20240101000000"),
+            "supabase/seed.sql": "insert into t values (1);",
             "supabase/custom-seed.sql": "insert into t values (2);",
           },
           sqlPaths: "sqlPaths" in opts ? opts.sqlPaths : ["custom-seed.sql"],
           yes: opts.yes,
           format: opts.format,
+          interactive: opts.interactive,
           confirm: opts.confirm,
           env: opts.env,
         });
@@ -3371,23 +3380,57 @@ describe("db reset", () => {
       const askedAboutRemote = (out: ReturnType<typeof mockOutput>) =>
         out.promptConfirmCalls.some((call) => call.message.includes("[remotes."));
 
-      it.live("asks after the reset prompt, defaulting to no, and seeds on yes", () => {
-        const { layer, out } = remoteSeed({ confirm: [true, true] });
-        return Effect.gen(function* () {
-          yield* dbReset(flags).pipe(Effect.provide(layer));
-          expect(out.promptConfirmCalls[1]?.message).toContain("[remotes.preview]");
-          expect(out.promptConfirmCalls[1]?.opts?.defaultValue).toBe(false);
-          expect(seeded(out)).toBe(true);
-        });
-      });
+      it.live(
+        "asks after the reset prompt, naming the ref, remote and files, defaulting to no",
+        () => {
+          const { layer, out } = remoteSeed({ confirm: [true, true] });
+          return Effect.gen(function* () {
+            yield* dbReset(flags).pipe(Effect.provide(layer));
+            expect(out.promptConfirmCalls[1]?.message).toBe(
+              `Project ${VALID_REF} matches [remotes.preview]. Run 1 seed file (supabase/custom-seed.sql) against it?`,
+            );
+            expect(out.promptConfirmCalls[1]?.opts?.defaultValue).toBe(false);
+            expect(seeded(out)).toBe(true);
+          });
+        },
+      );
 
-      it.live("fails with context canceled before any write when declined", () => {
+      it.live("cancels without a bare context canceled before any write when declined", () => {
         const { layer, out, conn } = remoteSeed({ confirm: [true, false] });
         return Effect.gen(function* () {
           const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              message: "Seeding cancelled; nothing was changed.",
+              suggestion: "Pass --yes to seed, or --no-seed to reset without seeding.",
+            });
+          }
+          expect(out.stderrText).not.toContain("context canceled");
+          expect(out.stderrText).not.toContain("Resetting remote database");
+          expect(conn.execs).toEqual([]);
+        });
+      });
+
+      it.live("proceeds without asking when --yes is passed, naming what enabled seeding", () => {
+        const { layer, out } = remoteSeed({ yes: true });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(false);
+          expect(out.stderrText).toContain("Seeding enabled by --sql-paths");
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.live("fails with SeedConsentRequiredError before any write when non-interactive", () => {
+        const { layer, out, conn } = remoteSeed({ interactive: false, confirm: [true] });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              _tag: "SeedConsentRequiredError",
+              message: `Seeding ${VALID_REF} ([remotes.preview]) needs confirmation and this run can't prompt. Nothing was changed.`,
               suggestion: expect.stringContaining("--yes"),
             });
           }
@@ -3396,22 +3439,17 @@ describe("db reset", () => {
         });
       });
 
-      it.live("proceeds without asking when --yes is passed", () => {
-        const { layer, out } = remoteSeed({ yes: true });
-        return Effect.gen(function* () {
-          yield* dbReset(flags).pipe(Effect.provide(layer));
-          expect(askedAboutRemote(out)).toBe(false);
-          expect(seeded(out)).toBe(true);
+      it.live("does not ask when the matched remote block itself enables seeding", () => {
+        const { layer, out } = remoteSeed({
+          interactive: false,
+          confirm: [true],
+          remoteBlock: "\n[remotes.preview.db.seed]\nenabled = true\n",
+          sqlPaths: undefined,
         });
-      });
-
-      it.live("fails before any write when non-interactive without --yes", () => {
-        const { layer, out, conn } = remoteSeed({ format: "json", confirm: [true] });
         return Effect.gen(function* () {
-          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(out.stderrText).not.toContain("Resetting remote database");
-          expect(conn.execs).toEqual([]);
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(false);
+          expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
         });
       });
 

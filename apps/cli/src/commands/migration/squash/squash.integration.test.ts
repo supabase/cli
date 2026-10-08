@@ -493,7 +493,7 @@ describe("migration squash", () => {
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+            "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres",
           );
         }
       }).pipe(Effect.provide(s.layer));

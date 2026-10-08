@@ -6,7 +6,6 @@ import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
@@ -14,6 +13,7 @@ import {
   loadProjectEnvValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
+import { resolveDbSeedInput } from "../../../command-internal/seed-remote-consent.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -95,8 +95,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       workdir,
       projectRef: projectRef !== "" ? Option.some(projectRef) : Option.none(),
     });
-    const seedEnabled = yield* snapshot.get(CliConfigKeys.db.seed.enabled);
-    const seedSqlPaths = yield* snapshot.get(CliConfigKeys.db.seed.sqlPaths);
+    const seed = yield* resolveDbSeedInput(snapshot, { workdir, ref: projectRef });
     const includeSeed = Option.getOrElse(flags.includeSeed, () => false);
 
     const cfg = yield* resolver.resolve({
@@ -127,11 +126,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       includeAll: flags.includeAll,
       includeRoles: flags.includeRoles,
       includeSeed,
-      seed: {
-        enabled: seedEnabled.value,
-        sqlPaths: seedSqlPaths.value,
-        appliedRemote: Option.getOrUndefined(snapshot.appliedRemote),
-      },
+      seed,
       includeVault: !flags.skipVault,
       dnsResolver,
       toml,
