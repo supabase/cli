@@ -27,7 +27,7 @@ const destroyError = (id: string) => (cause: StackError) =>
         cause,
       })
     : new StackCommandDestroyError({
-        reason: "unknown",
+        reason: "stack",
         message: cause.message,
         cause,
       });
@@ -192,13 +192,14 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       const retry = `"supabase stack destroy ${failed.map(({ id }) => `--stack-id ${id}`).join(" ")} --yes"`;
       const runtime = failed.every(({ error }) => error.reason === "runtime");
       return yield* new StackCommandDestroyError({
-        reason: runtime ? "runtime" : "unknown",
+        reason: runtime ? "runtime" : "stack",
         message: `Failed to destroy ${failed.length} managed stack(s).`,
         detail: failed.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
         suggestion: runtime
           ? `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`
           : `Resolve each error, then run ${retry} to retry the stacks that failed.`,
-        cause: failed,
+        // Telemetry classifies a batch by its first failure; `detail` lists every stack.
+        cause: failure.error,
       });
     }
     if (batch && output.format !== "text")
