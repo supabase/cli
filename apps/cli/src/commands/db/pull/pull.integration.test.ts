@@ -2364,19 +2364,54 @@ describe("db pull", () => {
 });
 
 describe("db remote commit", () => {
-  it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
+  it.effect(
+    "writes a remote_commit migration with pg-delta by default and skips the pull PostRun line",
+    () => {
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          {
+            name: "schema_changes",
+            sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+          },
+        ]),
+        yes: true,
+        args: ["db", "remote", "commit"],
+      });
+      return Effect.gen(function* () {
+        yield* dbRemoteCommit(commitFlags());
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const written = (yield* fs.readDirectory(dir)).filter((f) =>
+          f.endsWith("_remote_commit.sql"),
+        );
+        expect(written).toHaveLength(1);
+        expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
+          "create table remote ();",
+        );
+        expect(streamText(s.out, "stderr")).toContain(
+          `Command "commit" is deprecated, use "db pull" instead.\n`,
+        );
+        expect(streamText(s.out, "stderr")).toContain(
+          `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
+        );
+        expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+        expect(s.engineCalls).toHaveLength(1);
+        expect(s.engineCalls[0]?.operation).toBe("diff");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("diffs with migra when config sets enabled = false", () => {
     const s = setup(tmp.current, {
       migrations: ["20240101000000"],
       files: {
-        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n",
       },
       remoteVersions: ["20240101000000"],
-      edgeStdout: pgDeltaDiffEnvelope([
-        {
-          name: "schema_changes",
-          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
-        },
-      ]),
+      edgeStdout: "create table remote ();\n",
       yes: true,
       args: ["db", "remote", "commit"],
     });
@@ -2392,15 +2427,8 @@ describe("db remote commit", () => {
       expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
         "create table remote ();",
       );
-      expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
-      );
-      expect(streamText(s.out, "stderr")).toContain(
-        `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
-      );
-      expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
-      expect(s.engineCalls).toHaveLength(1);
-      expect(s.engineCalls[0]?.operation).toBe("diff");
+      expect(s.engineCalls).toHaveLength(0);
+      expect(s.edgeCalls).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
