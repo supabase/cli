@@ -169,7 +169,6 @@ describe("aggregate", () => {
     expect(report.runProblems).toEqual([
       { name: "flaky-integration-run1", problem: "ran no tests; check the filter" },
       { name: "flaky-unit-run2", problem: "ran no tests; check the filter" },
-      ,
     ]);
     expect(markdown).toContain("| unit | @<!---->supabase/api > breaks |");
   });
