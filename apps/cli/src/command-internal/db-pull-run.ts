@@ -88,8 +88,7 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
-const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative instead.";
+const DEPRECATION_LINE = "Flag --use-pg-delta has been deprecated, use --declarative instead.";
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
