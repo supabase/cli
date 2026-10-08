@@ -205,14 +205,14 @@ const stackLocalDatabaseUrl: Effect.Effect<
 export const stackLocalDatabaseConn: Effect.Effect<
   PgConnInput,
   LocalDbRunningError,
-  CommandSettings | StackApi | Path.Path
+  CommandSettings | StackApi | FileSystem.FileSystem | Path.Path
 > = stackLocalDatabaseUrl.pipe(
-  Effect.flatMap((url) => {
-    const conn = parseConnectionString(url);
-    return conn === undefined
+  Effect.flatMap((url) => parseConnectionString(url)),
+  Effect.flatMap((conn) =>
+    conn === undefined
       ? Effect.fail(notRunning("failed to parse stack database URL"))
-      : Effect.succeed(conn);
-  }),
+      : Effect.succeed(conn),
+  ),
   Effect.mapError(unavailable),
 );
 

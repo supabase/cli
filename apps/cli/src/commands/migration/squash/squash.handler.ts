@@ -127,7 +127,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             database: "postgres",
           };
           const credentials = yield* handle.database.credentials({ from: "runtime" });
-          const dumpConn = parseConnectionString(credentials.databaseUrl ?? "");
+          const dumpConn = yield* parseConnectionString(credentials.databaseUrl ?? "");
           if (dumpConn === undefined)
             return yield* new MigrationSquashDumpError({
               message: "Shadow database tool URL is unavailable",
