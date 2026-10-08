@@ -292,7 +292,9 @@ The plan job refuses a dispatch when:
 
 ### Hotfix release flow
 
-Use a hotfix when an urgent stable fix must ship before the next scheduled `develop` -> `main` promotion. The hotfix path deliberately reuses the production PR gate instead of adding a second approval mechanism:
+Use a hotfix when the current stable has a problem users cannot work around and that should not wait for the next scheduled `develop` -> `main` promotion: a regression from the last release, a security fix, or breakage caused by a platform change. Anything else goes through `develop`. The hotfix path reuses the production PR gate instead of adding a second approval mechanism; the decisions are recorded in [ADR 0030](../../../docs/adr/0030-hotfix-releases.md).
+
+Releases are forward-only. If the last release broke something and the cause is not yet understood, the hotfix is a revert of the offending PR, titled `revert: <original title>`, which publishes a patch release. Once the real fix is ready, revert the revert and apply the fix together, through `develop` or a second hotfix if it cannot wait. There is no channel rollback; see [Rollback](#rollback).
 
 1. Branch from the current `main` tip:
 
@@ -301,22 +303,15 @@ Use a hotfix when an urgent stable fix must ship before the next scheduled `deve
    git switch -c hotfix/<short-description> origin/main
    ```
 
-2. Make the smallest safe fix and open a PR from `hotfix/<short-description>` into `main`.
-3. Before merging, run a release dry run against the hotfix branch and the next unique stable version:
+2. Make the smallest safe fix and open a PR from `hotfix/<short-description>` into `main`. The title must start with `fix`, `perf`, or `revert`, with an optional `(scope)` and no `!`; any other title would merge and publish nothing. Do not edit the subject in the squash dialog: `Check deploy` guards the PR title, and the squash subject is what semantic-release reads.
+3. Wait for the checks, which run on every push: `Lint Pull Request`, `Check deploy` (head branch and title), the full `Test` suite, and `Release Smoke Test`, which builds every platform package and runs the smoke-test matrix with `dry_run: true`. A red smoke test means the commit cannot be packaged and must not merge. No manual dispatch is needed, and `hotfix/*` refs can only dry-run anyway.
+4. Get one code-owner approval and squash-merge. The `push: main` trigger runs the normal stable release pipeline and publishes the next patch version. Slack posts on success or failure.
+5. `Sync branches` (`main-into-develop`) runs after the successful `Release` and merges `main` back into `develop`, so the fix reaches the next beta and the next production deploy; the `develop` -> `next` sync then carries it on to `next`. Nothing to do unless Slack announces a sync PR. Then resolve it as described in [Sync and fast-forward](#sync-and-fast-forward) and approve it.
+6. If a production deploy PR is open at the same time, land the sync first. The fast-forward refuses while `develop` lacks `main`, and its comment names the sync PR. Once `Check deploy` is a required check on `main`, approve the deploy PR only after its newest run has reported.
 
-   ```sh
-   gh workflow run release.yml \
-       --ref hotfix/<short-description> \
-       --field channel=stable \
-       --field version=<next-patch-version> \
-       --field dry_run=true
-   ```
+A hotfix that touches `packages/config` reaches CLI users immediately through the stable CLI release. npm consumers of `@supabase/config` get it only once the sync lands on `develop` and the config release workflow runs, because that package publishes from `develop`.
 
-4. After review and green checks, merge the hotfix PR into `main`. The `push: main` trigger runs the normal stable release pipeline and publishes the next semantic-release version.
-5. Watch the stable release workflow through publish, Homebrew/Scoop updates, and verification.
-6. Confirm that `Sync branches` (`main-into-develop`) succeeds. It merges `main` back into `develop` after a successful `Release` run on `main`, keeping the hotfix reachable from the next beta and the next scheduled production deploy. If the sync conflicts it opens a sync PR; resolve it as described in [Sync and fast-forward](#sync-and-fast-forward) before the next production promotion. The `develop` → `next` sync then carries the fix on to `next`.
-
-Do not use `workflow_dispatch dry_run=false` as the normal hotfix path. Manual stable dispatch is reserved for re-cutting a unique version after an interrupted or stale-bytes release. Hotfixes should land through a PR to `main` so the production source of truth and release tag history stay aligned.
+Do not use `workflow_dispatch dry_run=false` as a hotfix path. A stable release can only be dispatched from `main`, and that is reserved for re-cutting a unique version after an interrupted or stale-bytes release.
 
 ### The `next` channel
 
@@ -571,14 +566,7 @@ The npm package page should also show **Provenance** linking back to `supabase/c
 
 ### Rollback
 
-The per-channel artifacts are immutable once published, so rollback = point users at the previous good version:
-
-1. **npm:** `npm dist-tag add supabase@<prev-good-version> latest` (or `v<N>.stable` for a maintenance line). The broken version stays installable but loses the tag. Publishing is OIDC-only, so this needs a maintainer's own npm credentials.
-2. **GitHub Release:** `gh release delete v<broken-version> --repo supabase/cli` (or mark it `prerelease: true` via `gh release edit` to keep the tag around). Artifacts remain downloadable unless the release itself is deleted.
-3. **Homebrew:** in `supabase/homebrew-tap`, `git revert <commit that wrote Formula/supabase.rb for broken version>` + push. `brew update` picks it up.
-4. **Scoop:** same pattern in `supabase/scoop-bucket` — `git revert` the manifest commit.
-
-Rollback is straightforward because each channel is its own commit / release. There's no cross-channel state to reconcile.
+There is no rollback. Published artifacts are immutable, and repointing npm `latest`, reverting the Homebrew and Scoop manifest commits, and editing the GitHub Release is slower and riskier than it looks: npm dist-tag behaviour has sharp edges, it needs registry and tap permissions that few maintainers hold, and users who already upgraded are not helped. Ship forward instead, through the [hotfix flow](#hotfix-release-flow): a `revert:` PR into `main` gets users to a known-good build through the same audited pipeline. The same applies to a maintenance line, with a `revert:` PR into `v<N>.x` followed by a maintenance dispatch. The decision is recorded in [ADR 0030](../../../docs/adr/0030-hotfix-releases.md).
 
 ---
 
@@ -586,6 +574,7 @@ Rollback is straightforward because each channel is its own commit / release. Th
 
 - [ADR 0011](../../../docs/adr/0011-cli-release-and-distribution-strategy.md) — the decision record. Channel choices, signing rationale, open pre-cutover gates.
 - [ADR 0028](../../../docs/adr/0028-release-branches-and-maintenance-lines.md) — the `next` channel and `v<N>.x` maintenance lines.
+- [ADR 0030](../../../docs/adr/0030-hotfix-releases.md) — hotfix criteria, forward-only releases, and the required `Check deploy`.
 - `[apps/cli/docs/binary-distribution.md](./binary-distribution.md)` — why each platform package contains two binaries (`supabase` SFE + `supabase-go` sidecar) and how they're resolved at runtime.
 - `[tools/release/local-release.ts](../../../tools/release/local-release.ts)` — Ring 1 implementation.
 - `[apps/cli/scripts/build.ts](../scripts/build.ts)`, `[publish.ts](../scripts/publish.ts)`, `[sync-versions.ts](../scripts/sync-versions.ts)`, `[update-homebrew.ts](../scripts/update-homebrew.ts)`, `[update-scoop.ts](../scripts/update-scoop.ts)` — release script implementations.
