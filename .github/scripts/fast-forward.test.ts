@@ -566,8 +566,8 @@ describe("runFastForward deploy", () => {
     expect(comments[0]).toContain("waiting in #42");
   });
 
-  test("still comments when the sync pull request lookup fails", async () => {
-    const { repo, head, io, comments } = deployScenario({
+  test("still comments with the dispatch guidance when the sync pull request lookup fails", async () => {
+    const { repo, head, io, comments, lookups } = deployScenario({
       openSyncPullRequest: new Error("api down"),
     });
     git(repo.seed, "switch", "main");
@@ -577,7 +577,9 @@ describe("runFastForward deploy", () => {
     const outcome = await runFastForward(io, { reviewCommitId: head });
 
     expect(outcome.status).toBe("refused");
+    expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
     expect(comments[0]).toContain("moved since approval");
+    expect(comments[0]).toContain("pair=main-into-develop");
   });
 
   test("refuses when main moves between the ancestry check and the push", async () => {

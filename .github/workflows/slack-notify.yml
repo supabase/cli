@@ -118,7 +118,7 @@ jobs:
               HEADER="🔀 ${PACKAGE}: merging main into develop needs a hand"
               FALLBACK_TEXT="🔀 ${PACKAGE}: merging main into develop conflicts; a sync pull request needs resolving"
               PR_URL="https://github.com/${REPO}/pull/${PULL_REQUEST}"
-              DETAILS="Merging main into develop after the stable release conflicts. Resolve it before the next production deploy: merge develop into the sync branch, push, and approve the pull request. Do not use the merge button.\n*Pull request:* <${PR_URL}|#${PULL_REQUEST}>\n*Workflow run:* <${RUN_URL}|view run>"
+              DETAILS="Merging main into develop conflicts. Resolve it before the next production deploy: merge develop into the sync branch, push, and approve the pull request. Do not use the merge button.\n*Pull request:* <${PR_URL}|#${PULL_REQUEST}>\n*Workflow run:* <${RUN_URL}|view run>"
               ;;
             declined)
               HEADER="🛑 ${PACKAGE} v${VERSION} release not approved"
