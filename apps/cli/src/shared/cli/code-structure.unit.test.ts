@@ -84,34 +84,64 @@ const isRegistryEnvName = (name: string): boolean =>
   isCliConfigEnvName(name) ||
   /^SUPABASE_REMOTES_[A-Z0-9_]+_PROJECT_ID$/.test(name);
 
-const ENV_SOURCE = String.raw`(?:process\.env|Bun\.env|ambientEnvironment\(\)|\bprojectEnv\w*)`;
-const ENV_READ_PATTERNS: ReadonlyArray<RegExp> = [
-  new RegExp(
-    String.raw`${ENV_SOURCE}(?:\[\s*["'\`]([A-Z0-9_]+)["'\`]\s*\]|\.([A-Z][A-Z0-9_]*)\b)`,
-    "g",
-  ),
-  /\bConfig\.\w+\(\s*["']([A-Z0-9_]+)["']/g,
-  /\b(?:envOption|envValue)\(\s*["']([A-Z0-9_]+)["']/g,
-];
-const DYNAMIC_SUPABASE_ENV_READS: ReadonlyArray<RegExp> = [
-  new RegExp(String.raw`${ENV_SOURCE}\[\s*` + "`" + String.raw`SUPABASE_\$\{`, "g"),
-  /\b(?:Config\.\w+|envOption|envValue)\(\s*`SUPABASE_\$\{/g,
+const stripComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+const NAME_LITERAL = /(["'`])(SUPABASE_[A-Z0-9_]+)\1/g;
+const NAME_PROPERTY = /\.(SUPABASE_[A-Z0-9_]+)\b/g;
+const NAME_DESTRUCTURE = /\{[^{}]*?\b(SUPABASE_[A-Z0-9_]+)\b[^{}]*\}\s*=[^=>]/g;
+const DYNAMIC_SUPABASE_READS: ReadonlyArray<RegExp> = [
+  /\[\s*`SUPABASE_\$\{/g,
+  /\b(?:Config\.\w+|envOption|envValue|envOrDefault)\(\s*`SUPABASE_\$\{/g,
 ];
 
-/** Registry env names read directly, plus dynamically built `SUPABASE_${...}` names. */
+/** Registry env names written as a literal, property or destructured binding, whatever reads them. */
 export function findRegistryEnvReads(source: string): Array<string> {
+  const code = stripComments(source);
   const hits: Array<string> = [];
-  for (const pattern of ENV_READ_PATTERNS) {
-    for (const match of source.matchAll(pattern)) {
-      const name = match[1] ?? match[2];
+  for (const [pattern, group] of [
+    [NAME_LITERAL, 2],
+    [NAME_PROPERTY, 1],
+    [NAME_DESTRUCTURE, 1],
+  ] as const) {
+    for (const match of code.matchAll(pattern)) {
+      const name = match[group];
       if (name !== undefined && isRegistryEnvName(name)) hits.push(name);
     }
   }
-  for (const pattern of DYNAMIC_SUPABASE_ENV_READS) {
-    for (const match of source.matchAll(pattern)) hits.push(match[0]);
+  for (const pattern of DYNAMIC_SUPABASE_READS) {
+    for (const match of code.matchAll(pattern)) hits.push(match[0]);
   }
   return hits;
 }
+
+const AMBIENT_ENV_ESCAPES: ReadonlyArray<RegExp> = [
+  /\b(?:process|Bun)\s*\.\s*env\b/g,
+  /\b(?:process|Bun)\s*\[\s*["'`]env["'`]\s*\]/g,
+  /\b(?:globalThis|global)\s*(?:\.\s*(?:process|Bun)\b|\[\s*["'`](?:process|Bun)["'`]\s*\])/g,
+  /\{[^{}]*\benv\b[^{}]*\}\s*=\s*(?:globalThis\.)?(?:process|Bun)\b/g,
+  /=\s*(?:globalThis\.)?(?:process|Bun)\s*[;,)\n]/g,
+  /import\s+(?!process\b)\w+\s*(?:,[^;]*)?from\s*["'](?:node:)?process["']/g,
+  /import\s*\*\s*as\s*\w+\s*from\s*["'](?:node:)?process["']/g,
+  /import\s*\{[^}]*\benv\b[^}]*\}\s*from\s*["'](?:node:process|process|bun)["']/g,
+  /\brequire\(\s*["'](?:node:)?process["']\s*\)/g,
+];
+
+/** Ways to reach the process environment other than `CliConfigValues`. */
+export function findAmbientEnvEscapes(source: string): Array<string> {
+  const code = stripComments(source);
+  return AMBIENT_ENV_ESCAPES.flatMap((pattern) => Array.from(code.matchAll(pattern), (m) => m[0]));
+}
+
+/** Files that name a registry env variable without reading it, with the reason. */
+const REGISTRY_NAME_EXEMPT: Readonly<Record<string, string>> = {
+  "shared/telemetry/event-catalog.ts": "lists the variables whose presence the telemetry reports",
+};
+
+const AMBIENT_ENV_EXEMPT: ReadonlyArray<RegExp> = [
+  /^shared\/cli\/bin\.ts$/,
+  /^shared\/compute\/stacks\//,
+];
 
 const BANNED_IDENTIFIERS: ReadonlyArray<RegExp> = [
   ...[
@@ -148,11 +178,18 @@ export function findRawConfigFlags(source: string): Array<string> {
   );
 }
 
-const LOAD_PROJECT_ENVIRONMENT_IMPORT =
-  /import\s+(?:type\s+)?\{[^}]*\bloadCliProjectEnvironment\b[^}]*\}\s*from\s*["']@supabase\/config[^"']*["']/g;
+const CONFIG_LOADERS = ["loadCliConfig", "resolveCliConfigSubtree", "loadCliProjectEnvironment"];
 
-export function findLoadCliProjectEnvironmentImport(source: string): Array<string> {
-  return Array.from(source.matchAll(LOAD_PROJECT_ENVIRONMENT_IMPORT), (m) => m[0]);
+/** Imports of the package loaders that resolve config outside the `CliConfigValues` snapshot. */
+export function findConfigLoaderImports(
+  source: string,
+  loaders: ReadonlyArray<string> = CONFIG_LOADERS,
+): Array<string> {
+  const pattern = new RegExp(
+    String.raw`import\s+(?:type\s+)?\{[^}]*\b(?:${loaders.join("|")})\b[^}]*\}\s*from\s*["']@supabase/config[^"']*["']`,
+    "g",
+  );
+  return Array.from(stripComments(source).matchAll(pattern), (m) => m[0]);
 }
 
 const allSpecifiers = (source: string): Array<string> =>
@@ -258,7 +295,22 @@ layer(BunServices.layer)("code structure", (it) => {
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isSourceFile);
       const violations = yield* scanSource(files, (relativePath, source) =>
-        CONFIG_FOUNDATION_FILE.test(relativePath) ? [] : findRegistryEnvReads(source),
+        CONFIG_FOUNDATION_FILE.test(relativePath) || relativePath in REGISTRY_NAME_EXEMPT
+          ? []
+          : findRegistryEnvReads(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps process environment access behind the config foundation", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isSourceFile);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        CONFIG_FOUNDATION_FILE.test(relativePath) ||
+        AMBIENT_ENV_EXEMPT.some((exempt) => exempt.test(relativePath))
+          ? []
+          : findAmbientEnvEscapes(source),
       );
       expect(violations).toEqual([]);
     }),
@@ -309,11 +361,21 @@ layer(BunServices.layer)("code structure", (it) => {
     }),
   );
 
-  it.effect("does not import loadCliProjectEnvironment from @supabase/config", () =>
+  it.effect("imports the package config loaders only in the config foundation", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isSourceFile);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        CONFIG_FOUNDATION_FILE.test(relativePath) ? [] : findConfigLoaderImports(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("never imports loadCliProjectEnvironment, even in tests", () =>
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isAnyTypeScript);
       const violations = yield* scanSource(files, (_, source) =>
-        findLoadCliProjectEnvironmentImport(source),
+        findConfigLoaderImports(source, ["loadCliProjectEnvironment"]),
       );
       expect(violations).toEqual([]);
     }),
@@ -321,7 +383,7 @@ layer(BunServices.layer)("code structure", (it) => {
 });
 
 describe("config precedence guard rules", () => {
-  it("flags registry env reads in every read position", () => {
+  it("flags registry env names in every read position", () => {
     const fixture = [
       'process.env["SUPABASE_DB_PASSWORD"]',
       "process.env.SUPABASE_API_PORT",
@@ -332,16 +394,53 @@ describe("config precedence guard rules", () => {
       'ambientEnvironment()["SUPABASE_REMOTES_STAGING_PROJECT_ID"]',
       "ambientEnvironment().SUPABASE_DB_PORT",
       'projectEnv["SUPABASE_DB_PORT"]',
+      'viperEnvBool("SUPABASE_DB_SEED_ENABLED")',
+      'viperEnvStringWithProjectFallback("SUPABASE_DB_PORT", env)',
+      'snapshot.sources.shell("SUPABASE_DB_PORT")',
+      'lookupCliConfigEnv(snapshot.sources, "SUPABASE_DB_PORT")',
+      'values["SUPABASE_DB_PORT"]',
+      'toml.projectEnv["SUPABASE_DB_PORT"]',
+      "const { SUPABASE_DB_PORT } = env;",
       "process.env[`SUPABASE_${name}`]",
       "envValue(`SUPABASE_${name}`)",
     ].join("\n");
-    expect(findRegistryEnvReads(fixture)).toHaveLength(11);
+    expect(findRegistryEnvReads(fixture)).toHaveLength(18);
   });
 
-  it("ignores names outside the registry and non-read mentions", () => {
-    const fixture =
-      'process.env["SUPABASE_ACCESS_TOKEN"]; const label = "SUPABASE_DB_PORT"; `SUPABASE_${x}_KEY`;';
+  it("ignores names outside the registry, comments and prose", () => {
+    const fixture = [
+      'process.env["SUPABASE_ACCESS_TOKEN"];',
+      'const label = "SUPABASE_DB_PORT is set"; `SUPABASE_${x}_KEY`;',
+      '// values["SUPABASE_DB_PORT"]',
+      "/* process.env.SUPABASE_DB_PORT */",
+    ].join("\n");
     expect(findRegistryEnvReads(fixture)).toEqual([]);
+  });
+
+  it("flags every way to reach the process environment", () => {
+    const fixture = [
+      'import { env } from "node:process";',
+      'import * as proc from "node:process";',
+      'import alias from "node:process";',
+      'import { env as bunEnv } from "bun";',
+      "const { env: e2 } = process;",
+      'const e3 = globalThis.process.env["X"];',
+      'const e4 = process["env"]["X"];',
+      "const e5 = process.env.X;",
+      "const e6 = Bun.env.X;",
+      "const p = process;",
+      'const e7 = require("node:process");',
+    ];
+    for (const line of fixture) expect(findAmbientEnvEscapes(line), line).not.toEqual([]);
+  });
+
+  it("allows ordinary process use", () => {
+    const fixture = [
+      'import process from "node:process";',
+      "process.stderr.write(text); process.exit(1); const cwd = process.cwd();",
+      "// process.env.X",
+    ].join("\n");
+    expect(findAmbientEnvEscapes(fixture)).toEqual([]);
   });
 
   it("flags each banned identifier", () => {
@@ -380,19 +479,18 @@ describe("config precedence guard rules", () => {
     expect(findRawConfigFlags('Flag.string("project-id")')).toEqual([]);
   });
 
-  it("flags loadCliProjectEnvironment imports from @supabase/config", () => {
-    const loader = ["loadCli", "ProjectEnvironment"].join("");
-    expect(
-      findLoadCliProjectEnvironmentImport(`import { ${loader} } from "@supabase/config";`),
-    ).toHaveLength(1);
-    expect(
-      findLoadCliProjectEnvironmentImport(
-        `import {\n  type X,\n  ${loader},\n} from "@supabase/config/internal";`,
-      ),
-    ).toHaveLength(1);
-    expect(
-      findLoadCliProjectEnvironmentImport('import { other } from "@supabase/config";'),
-    ).toEqual([]);
+  it("flags package config loader imports", () => {
+    for (const loader of CONFIG_LOADERS) {
+      expect(findConfigLoaderImports(`import { ${loader} } from "@supabase/config";`)).toHaveLength(
+        1,
+      );
+      expect(
+        findConfigLoaderImports(
+          `import {\n  type X,\n  ${loader},\n} from "@supabase/config/internal";`,
+        ),
+      ).toHaveLength(1);
+    }
+    expect(findConfigLoaderImports('import { other } from "@supabase/config";')).toEqual([]);
   });
 
   it("resolves static and dynamic relative specifiers", () => {

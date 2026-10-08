@@ -132,14 +132,14 @@ export function makeDockerImageResolver(
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
               stdoutChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
               stderrChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
             }),
           ),
@@ -246,9 +246,9 @@ export function makeDockerImageResolver(
           // one, so the two don't glue together.
           yield* Effect.sync(() => {
             if (!lastPullEndedWithNewline) {
-              globalThis.process.stderr.write("\n");
+              process.stderr.write("\n");
             }
-            globalThis.process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
+            process.stderr.write(`Retrying after ${delay / 1000}s: ${candidate}\n`);
           });
           yield* Effect.sleep(`${delay} millis`);
         }

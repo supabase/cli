@@ -624,7 +624,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
       const projectEnvValues = Object.fromEntries(
-        Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
+        Object.entries(config.projectEnv).filter(
+          ([key]) => !CliConfigKeys.linkedDb.password.env.includes(key),
+        ),
       );
       const projectId = config.projectId;
 
