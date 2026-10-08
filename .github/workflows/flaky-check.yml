@@ -27,7 +27,7 @@ on:
         type: number
         default: 10
       repeats:
-        description: Extra executions of each test per focused run (vitest --repeats)
+        description: Extra executions per focused run, each in a separate Vitest process
         type: number
         default: 4
       filter:
@@ -68,7 +68,6 @@ jobs:
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       base: ${{ steps.plan.outputs.base }}
-      repeats: ${{ steps.plan.outputs.repeats }}
       filter: ${{ steps.plan.outputs.filter }}
       tests: ${{ steps.plan.outputs.tests }}
       e2e: ${{ steps.plan.outputs.e2e }}
@@ -153,8 +152,8 @@ jobs:
         id: run
         env:
           SUITE: ${{ matrix.suite }}
+          EXECUTIONS: ${{ matrix.executions }}
           BASE_REF: ${{ needs.plan.outputs.base }}
-          REPEATS: ${{ needs.plan.outputs.repeats }}
           FILTER: ${{ needs.plan.outputs.filter }}
         run: bun "$FLAKY_CLI" run
 
@@ -167,6 +166,7 @@ jobs:
           RUN: ${{ matrix.run }}
           EXECUTIONS: ${{ matrix.executions }}
           EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
         run: bun "$FLAKY_CLI" collect
 
       - name: Upload results
@@ -241,6 +241,7 @@ jobs:
           SUITE: e2e
           RUN: ${{ matrix.run }}
           EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
         run: bun "$FLAKY_CLI" collect
 
       - name: Upload results
@@ -304,6 +305,7 @@ jobs:
           SUITE: stack-e2e
           RUN: ${{ matrix.run }}
           EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
         run: bun "$FLAKY_CLI" collect
 
       - name: Upload results

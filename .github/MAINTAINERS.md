@@ -97,9 +97,9 @@ reported as flaky; one that fails in every run is reported separately.
 | Manual dispatch          | any ref         | chosen suites, runs, repeats, and file filter |
 
 `focused` repeats only the tests affected by the PR (`vitest --changed` against
-the merge base), five executions per run across ten runs. Use it to show that a
-flaky-test fix holds: ten clean full-suite runs still miss a test that fails one
-time in twenty. A PR that changes a `package.json` or Vitest config makes
+the merge base), five executions per run across ten runs, each in a fresh Vitest
+process. Use it to show that a flaky-test fix holds: ten clean full-suite runs
+still miss a test that fails one time in twenty. A PR that changes a `package.json` or Vitest config makes
 `--changed` select every test, so `focused` then repeats the whole suite. To
 target specific files instead, dispatch the workflow with `suites=focused` and
 a `filter`.

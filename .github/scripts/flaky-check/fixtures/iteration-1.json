@@ -1,0 +1,122 @@
+{
+  "numTotalTestSuites": 7,
+  "numPassedTestSuites": 4,
+  "numFailedTestSuites": 3,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 6,
+  "numPassedTests": 4,
+  "numFailedTests": 1,
+  "numPendingTests": 1,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1791471709534,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["hook"],
+          "fullName": "hook runs after the hook",
+          "status": "passed",
+          "title": "runs after the hook",
+          "duration": 0.6284169999999847,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1791471709691,
+      "endTime": 1791471709691.6284,
+      "status": "passed",
+      "message": "",
+      "name": "/repo/packages/api/src/hook.unit.test.ts"
+    },
+    {
+      "assertionResults": [],
+      "startTime": 1791471709534,
+      "endTime": 1791471709534,
+      "status": "failed",
+      "message": "import failure",
+      "name": "/repo/packages/api/src/import-error.unit.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["sometimes"],
+          "fullName": "sometimes fails on the second iteration",
+          "status": "passed",
+          "title": "fails on the second iteration",
+          "duration": 0.8353749999999991,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["two errors"],
+          "fullName": "two errors test and afterEach both fail on the second iteration",
+          "status": "passed",
+          "title": "test and afterEach both fail on the second iteration",
+          "duration": 0.14949999999998909,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api twin",
+          "status": "passed",
+          "title": "twin",
+          "duration": 0.03854200000000674,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api twin",
+          "status": "failed",
+          "title": "twin",
+          "duration": 2.8575830000000053,
+          "failureMessages": ["Error: second twin"],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api skipped",
+          "status": "skipped",
+          "title": "skipped",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1791471709694,
+      "endTime": 1791471709698.8577,
+      "status": "failed",
+      "message": "",
+      "name": "/repo/packages/api/src/probe.unit.test.ts"
+    }
+  ]
+}

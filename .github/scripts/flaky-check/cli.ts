@@ -9,7 +9,13 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { JsonTestResults } from "vitest/node";
-import { commandsFor, RESULTS_DIR, type RunSpec } from "./commands.ts";
+import {
+  collectedName,
+  commandsFor,
+  RESULTS_DIR,
+  type ReportSource,
+  type RunSpec,
+} from "./commands.ts";
 import { matrix, plan, PlanError, type PlanInput } from "./plan.ts";
 import {
   aggregate,
@@ -104,7 +110,6 @@ function planCommand(): void {
   setOutputs({
     sha,
     base: result.base,
-    repeats: String(result.repeats),
     filter: result.filter,
     tests: matrix(result.tests),
     e2e: matrix(result.e2e),
@@ -125,11 +130,11 @@ function runSpec(): RunSpec {
     case "focused": {
       const filters = words(env("FILTER"));
       if (filters.length > 0) {
-        return { suite, repeats: Number(env("REPEATS")), selection: { filters } };
+        return { suite, selection: { filters } };
       }
       const base = env("BASE_REF");
       const changedSince = capture(["git", "merge-base", "HEAD", `origin/${base}`]);
-      return { suite, repeats: Number(env("REPEATS")), selection: { changedSince } };
+      return { suite, selection: { changedSince } };
     }
     case "e2e":
       return {
@@ -148,21 +153,69 @@ function runSpec(): RunSpec {
   }
 }
 
+type TurboTask = { task: string; package: string; directory: string; command: string };
+
+function isTurboDryRun(value: unknown): value is { tasks: TurboTask[] } {
+  return (
+    typeof value === "object" && value !== null && "tasks" in value && Array.isArray(value.tasks)
+  );
+}
+
+/** Collected report names an invocation should produce, so a report that never appears is flagged. */
+function expectedReports(source: ReportSource, turboCache: Map<string, TurboTask[]>): string[] {
+  if ("dir" in source) {
+    return [collectedName(source.dir, source.report)];
+  }
+  const key = source.turbo.join(" ");
+  let tasks = turboCache.get(key);
+  if (tasks === undefined) {
+    const dryRun: unknown = JSON.parse(
+      capture(["pnpm", "exec", "turbo", "run", ...source.turbo, "--dry=json"]),
+    );
+    if (!isTurboDryRun(dryRun)) {
+      throw new CliError(`turbo run ${key} --dry=json returned no task list`);
+    }
+    tasks = dryRun.tasks.filter(
+      (task) => task.task === source.turbo[0] && task.command !== "<NONEXISTENT>",
+    );
+    turboCache.set(key, tasks);
+  }
+  return tasks.map((task) => {
+    // Turbo forwards arguments to the last command of a chained script only.
+    if (task.command.includes("&&")) {
+      throw new CliError(
+        `${task.package} chains commands in ${task.task}, so only its last one would write a report`,
+      );
+    }
+    return collectedName(task.directory, source.report);
+  });
+}
+
 async function runCommand(): Promise<number> {
   let exitCode = 0;
+  const expected: string[] = [];
   try {
-    for (const argv of commandsFor(runSpec())) {
-      console.log(`$ ${argv.join(" ")}`);
-      const code = await Bun.spawn(argv, { stdout: "inherit", stderr: "inherit" }).exited;
-      if (code !== 0) {
-        exitCode = code;
+    const spec = runSpec();
+    const executions = Number(env("EXECUTIONS") || "1");
+    const turboCache = new Map<string, TurboTask[]>();
+    for (let iteration = 1; iteration <= executions; iteration += 1) {
+      for (const { argv, reports } of commandsFor(spec, iteration)) {
+        expected.push(...expectedReports(reports, turboCache));
+        console.log(`$ ${argv.join(" ")}`);
+        const code = await Bun.spawn(argv, { stdout: "inherit", stderr: "inherit" }).exited;
+        if (code !== 0) {
+          exitCode = code;
+        }
       }
     }
   } catch (error) {
-    console.log(`::error ::${error instanceof Error ? error.message : String(error)}`);
+    if (!(error instanceof CliError)) {
+      throw error;
+    }
+    console.log(`::error ::${error.message}`);
     exitCode = 1;
   }
-  setOutputs({ "exit-code": String(exitCode) });
+  setOutputs({ "exit-code": String(exitCode), "expected-reports": JSON.stringify(expected) });
   return exitCode;
 }
 
@@ -172,10 +225,12 @@ function collectCommand(): void {
   mkdirSync(out, { recursive: true });
   const reports = new Bun.Glob(`{apps,packages}/*/${RESULTS_DIR}/*.json`).scanSync({ dot: true });
   for (const report of reports) {
-    // `apps/cli/.flaky-results/unit.json` becomes `apps__cli--unit.json`.
-    const pkg = dirname(dirname(report)).replaceAll("/", "__");
-    copyFileSync(report, join(out, `${pkg}--${basename(report)}`));
+    copyFileSync(
+      report,
+      join(out, collectedName(dirname(dirname(report)), basename(report, ".json"))),
+    );
   }
+  const expectedReports: unknown = JSON.parse(env("EXPECTED_REPORTS") || "[]");
   const meta: RunMeta = {
     name,
     suite: env("SUITE"),
@@ -183,6 +238,7 @@ function collectCommand(): void {
     executions: Number(env("EXECUTIONS") || "1"),
     exitCode: env("EXIT_CODE") === "" ? null : Number(env("EXIT_CODE")),
     root: process.cwd(),
+    expectedReports: Array.isArray(expectedReports) ? expectedReports.map(String) : [],
   };
   writeFileSync(join(out, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
   setOutputs({ dir: out });
@@ -204,7 +260,9 @@ function isRunMeta(value: unknown): value is RunMeta {
     "exitCode" in value &&
     (value.exitCode === null || typeof value.exitCode === "number") &&
     "root" in value &&
-    typeof value.root === "string"
+    typeof value.root === "string" &&
+    "expectedReports" in value &&
+    Array.isArray(value.expectedReports)
   );
 }
 
@@ -235,8 +293,7 @@ function readResults(dir: string): RunResult[] {
     if (!isRunMeta(meta)) {
       return [];
     }
-    const reports: string[] = [];
-    const cases = readdirSync(runDir)
+    const reports = readdirSync(runDir)
       .filter((file) => file.endsWith(".json") && file !== "meta.json")
       .flatMap((file) => {
         // An unreadable report counts as missing, which the aggregation flags.
@@ -244,10 +301,10 @@ function readResults(dir: string): RunResult[] {
         if (!isVitestJson(results)) {
           return [];
         }
-        reports.push(file);
-        return parseVitestJson(results, meta.root);
+        const iteration = Number(/\.(\d+)\.json$/.exec(file)?.[1] ?? "1");
+        return [{ name: file, iteration, cases: parseVitestJson(results, meta.root) }];
       });
-    return [{ meta, reports, cases }];
+    return [{ meta, reports }];
   });
 }
 

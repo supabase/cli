@@ -1,7 +1,7 @@
 {
-  "numTotalTestSuites": 6,
+  "numTotalTestSuites": 7,
   "numPassedTestSuites": 0,
-  "numFailedTestSuites": 6,
+  "numFailedTestSuites": 7,
   "numPendingTestSuites": 0,
   "numTotalTests": 6,
   "numPassedTests": 1,
@@ -24,39 +24,56 @@
     "updated": 0,
     "didUpdate": false
   },
-  "startTime": 1791470493665,
+  "startTime": 1791471710083,
   "success": false,
   "testResults": [
     {
       "assertionResults": [
         {
-          "ancestorTitles": ["mixed"],
-          "fullName": "mixed fails only on the second execution",
+          "ancestorTitles": ["hook"],
+          "fullName": "hook runs after the hook",
+          "status": "skipped",
+          "title": "runs after the hook",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1791471710083,
+      "endTime": 1791471710083,
+      "status": "failed",
+      "message": "",
+      "name": "/repo/packages/api/src/hook.unit.test.ts"
+    },
+    {
+      "assertionResults": [],
+      "startTime": 1791471710083,
+      "endTime": 1791471710083,
+      "status": "failed",
+      "message": "import failure",
+      "name": "/repo/packages/api/src/import-error.unit.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["sometimes"],
+          "fullName": "sometimes fails on the second iteration",
           "status": "failed",
-          "title": "fails only on the second execution",
-          "duration": 48.13462499999997,
-          "failureMessages": ["Error: second"],
+          "title": "fails on the second iteration",
+          "duration": 5.181332999999995,
+          "failureMessages": ["Error: second iteration"],
           "meta": {},
           "tags": [],
           "benchmarks": []
         },
         {
           "ancestorTitles": ["two errors"],
-          "fullName": "two errors test and afterEach both fail once",
+          "fullName": "two errors test and afterEach both fail on the second iteration",
           "status": "failed",
-          "title": "test and afterEach both fail once",
-          "duration": 2.0434170000000336,
+          "title": "test and afterEach both fail on the second iteration",
+          "duration": 2.281166000000013,
           "failureMessages": ["Error: test body", "Error: afterEach too"],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
-        },
-        {
-          "ancestorTitles": ["hook"],
-          "fullName": "hook never runs",
-          "status": "skipped",
-          "title": "never runs",
-          "failureMessages": [],
           "meta": {},
           "tags": [],
           "benchmarks": []
@@ -66,7 +83,7 @@
           "fullName": "@supabase/api twin",
           "status": "passed",
           "title": "twin",
-          "duration": 1.190084000000013,
+          "duration": 0.23887500000000728,
           "failureMessages": [],
           "meta": {},
           "tags": [],
@@ -77,8 +94,8 @@
           "fullName": "@supabase/api twin",
           "status": "failed",
           "title": "twin",
-          "duration": 1.0079999999999814,
-          "failureMessages": ["Error: second twin", "Error: second twin", "Error: second twin"],
+          "duration": 0.12645899999998278,
+          "failureMessages": ["Error: second twin"],
           "meta": {},
           "tags": [],
           "benchmarks": []
@@ -94,19 +111,11 @@
           "benchmarks": []
         }
       ],
-      "startTime": 1791470494020,
-      "endTime": 1791470494076.008,
+      "startTime": 1791471710229,
+      "endTime": 1791471710238.1265,
       "status": "failed",
       "message": "",
       "name": "/repo/packages/api/src/probe.unit.test.ts"
-    },
-    {
-      "assertionResults": [],
-      "startTime": 1791470493665,
-      "endTime": 1791470493665,
-      "status": "failed",
-      "message": "import failure",
-      "name": "/repo/packages/api/src/import-error.unit.test.ts"
     }
   ]
 }

@@ -12,35 +12,39 @@ export type RunMeta = {
   name: string;
   suite: string;
   run: number;
-  /** Executions of each test in this run: 1, or `--repeats` + 1. */
+  /** Executions of the suite in this run, each a separate Vitest process. */
   executions: number;
   /** `null` when the test step did not run or finish, such as after a setup failure or timeout. */
   exitCode: number | null;
   /** Checkout root the reports' absolute file paths are relative to. */
   root: string;
+  /** Collected report names the run's invocations were expected to write. */
+  expectedReports: string[];
 };
 
 export type TestCase = {
   file: string;
   titles: string[];
-  failures: number;
+  failed: boolean;
   skipped: boolean;
-  /** Set for file-level entries, which run once regardless of `--repeats`. */
-  executions?: number;
+  /** File-level entries record `beforeAll` and import failures, which no test entry carries. */
+  fileLevel: boolean;
   message?: string;
 };
 
-/** `reports` names the JSON reports the run produced, one per Vitest invocation. */
-export type RunResult = { meta: RunMeta; reports: string[]; cases: TestCase[] };
+/** One Vitest JSON report; `iteration` tells executions within a run apart. */
+type CollectedReport = { name: string; iteration: number; cases: TestCase[] };
+
+export type RunResult = { meta: RunMeta; reports: CollectedReport[] };
+
+type Execution = { run: number; iteration: number };
 
 type TestVerdict = {
   suite: string;
   file: string;
   name: string;
-  runs: number;
-  failedRuns: number[];
-  /** Failed runs in which other executions of the test passed (only possible with `--repeats`). */
-  partialRuns: number;
+  executions: number;
+  failedIn: Execution[];
   message?: string;
 };
 
@@ -58,45 +62,39 @@ function firstLine(message: string): string {
 }
 
 /**
- * Flattens one Vitest JSON report. Every failed execution adds a failure message, and one
- * execution can add several (a failing test and its failing `afterEach`, for example). Each file
- * also gets a file-level entry, because a failing `beforeAll` or import only marks the file failed.
+ * Flattens one Vitest JSON report of a single execution. Each file also gets a file-level entry,
+ * because a failing `beforeAll` or import only marks the file failed.
  */
 export function parseVitestJson(results: JsonTestResults, root: string): TestCase[] {
   return results.testResults.flatMap((fileResult) => {
     const file = relative(root, fileResult.name);
-    const tests = fileResult.assertionResults.map((assertion) => {
-      const failureMessages = assertion.failureMessages ?? [];
-      const message = failureMessages[0];
+    const tests = fileResult.assertionResults.map((assertion): TestCase => {
+      const message = assertion.failureMessages?.[0];
       return {
         file,
         titles: [...assertion.ancestorTitles, assertion.title],
-        failures: failureMessages.length,
+        failed: assertion.status === "failed",
         skipped: SKIPPED.has(assertion.status),
+        fileLevel: false,
         ...(message === undefined ? {} : { message: firstLine(message) }),
       };
     });
+    // With failing tests and an empty message, the file status says nothing more about hooks.
     const fileFailed =
       fileResult.status === "failed" &&
-      (fileResult.message !== "" || tests.every((test) => test.failures === 0));
-    return [
-      ...tests,
-      {
-        file,
-        titles: [FILE_LEVEL_TITLE],
-        failures: fileFailed ? 1 : 0,
-        skipped: false,
-        executions: 1,
-        ...(fileFailed
-          ? { message: firstLine(fileResult.message) || "failed outside any test (hook or setup)" }
-          : {}),
-      },
-    ];
+      (fileResult.message !== "" || !tests.some((test) => test.failed));
+    const fileLevel: TestCase = {
+      file,
+      titles: [FILE_LEVEL_TITLE],
+      failed: fileFailed,
+      skipped: false,
+      fileLevel: true,
+      ...(fileFailed
+        ? { message: firstLine(fileResult.message) || "failed outside any test (hook or setup)" }
+        : {}),
+    };
+    return [...tests, fileLevel];
   });
-}
-
-function variantOf(meta: RunMeta): string {
-  return meta.name.replace(/-run\d+$/, "");
 }
 
 /** `allowEmpty` names suites where running no tests is legitimate, like `focused` with no affected tests. */
@@ -108,18 +106,8 @@ export function aggregate(
   const verdicts = new Map<string, TestVerdict>();
   const runProblems: RunProblem[] = [];
   const suites = new Map<string, { runs: Set<number>; executions: number; tests: Set<string> }>();
-  // A Vitest process that crashes writes no report while the other commands of the run may still
-  // fail normally, so each run is compared with the other runs of the same matrix variant.
-  const variantReports = new Map<string, Set<string>>();
-  for (const { meta, reports } of results) {
-    const known = variantReports.get(variantOf(meta)) ?? new Set();
-    for (const report of reports) {
-      known.add(report);
-    }
-    variantReports.set(variantOf(meta), known);
-  }
 
-  for (const { meta, reports, cases } of results) {
+  for (const { meta, reports } of results) {
     const suite = suites.get(meta.suite) ?? {
       runs: new Set(),
       executions: meta.executions,
@@ -130,45 +118,47 @@ export function aggregate(
 
     let sawFailure = false;
     let ranTests = 0;
-    // Tests sharing a title in one file stay distinct by their order of appearance.
-    const occurrences = new Map<string, number>();
-    for (const testCase of cases) {
-      const title = testCase.titles.join(" > ");
-      const id = `${testCase.file}\0${testCase.titles.join("\0")}`;
-      const occurrence = (occurrences.get(id) ?? 0) + 1;
-      occurrences.set(id, occurrence);
-      if (testCase.skipped) {
-        continue;
-      }
-      const key = `${meta.suite}\0${id}\0${occurrence}`;
-      if (testCase.executions === undefined) {
-        ranTests += 1;
-        suite.tests.add(key);
-      }
-      const verdict = verdicts.get(key) ?? {
-        suite: meta.suite,
-        file: testCase.file,
-        name: occurrence === 1 ? title : `${title} (#${occurrence})`,
-        runs: 0,
-        failedRuns: [],
-        partialRuns: 0,
-      };
-      verdict.runs += 1;
-      if (testCase.failures > 0) {
-        sawFailure = true;
-        verdict.failedRuns.push(meta.run);
-        // Fewer failure messages than executions proves at least one execution passed.
-        if (testCase.failures < (testCase.executions ?? meta.executions)) {
-          verdict.partialRuns += 1;
+    const iterations = [...new Set(reports.map((report) => report.iteration))].sort(
+      (a, b) => a - b,
+    );
+    for (const iteration of iterations) {
+      // Tests sharing a title in one file stay distinct by their order of appearance.
+      const occurrences = new Map<string, number>();
+      const cases = reports
+        .filter((report) => report.iteration === iteration)
+        .flatMap((report) => report.cases);
+      for (const testCase of cases) {
+        const id = `${testCase.file}\0${testCase.titles.join("\0")}`;
+        const occurrence = (occurrences.get(id) ?? 0) + 1;
+        occurrences.set(id, occurrence);
+        if (testCase.skipped) {
+          continue;
         }
-        verdict.message ??= testCase.message;
+        const key = `${meta.suite}\0${id}\0${occurrence}`;
+        if (!testCase.fileLevel) {
+          ranTests += 1;
+          suite.tests.add(key);
+        }
+        const title = testCase.titles.join(" > ");
+        const verdict = verdicts.get(key) ?? {
+          suite: meta.suite,
+          file: testCase.file,
+          name: occurrence === 1 ? title : `${title} (#${occurrence})`,
+          executions: 0,
+          failedIn: [],
+        };
+        verdict.executions += 1;
+        if (testCase.failed) {
+          sawFailure = true;
+          verdict.failedIn.push({ run: meta.run, iteration });
+          verdict.message ??= testCase.message;
+        }
+        verdicts.set(key, verdict);
       }
-      verdicts.set(key, verdict);
     }
 
-    const missing = [...(variantReports.get(variantOf(meta)) ?? [])]
-      .filter((r) => !reports.includes(r))
-      .sort();
+    const collected = new Set(reports.map((report) => report.name));
+    const missing = meta.expectedReports.filter((name) => !collected.has(name)).sort();
     if (meta.exitCode === null) {
       runProblems.push({
         name: meta.name,
@@ -199,15 +189,16 @@ export function aggregate(
   }
 
   const failed = [...verdicts.values()]
-    .filter((v) => v.failedRuns.length > 0)
+    .filter((v) => v.failedIn.length > 0)
     .sort(
       (a, b) =>
-        b.failedRuns.length / b.runs - a.failedRuns.length / a.runs || a.file.localeCompare(b.file),
+        b.failedIn.length / b.executions - a.failedIn.length / a.executions ||
+        a.file.localeCompare(b.file),
     );
-  const failsEveryRun = (v: TestVerdict) => v.failedRuns.length === v.runs && v.partialRuns === 0;
+  const failsEveryExecution = (v: TestVerdict) => v.failedIn.length === v.executions;
   return {
-    flaky: failed.filter((v) => !failsEveryRun(v)),
-    failing: failed.filter(failsEveryRun),
+    flaky: failed.filter((v) => !failsEveryExecution(v)),
+    failing: failed.filter(failsEveryExecution),
     runProblems: runProblems.sort((a, b) => a.name.localeCompare(b.name)),
     suites: [...suites.entries()]
       .map(([suite, { runs, executions, tests }]) => ({
@@ -238,19 +229,27 @@ function cell(value: string): string {
   return short.replaceAll("|", "\\|").replaceAll("<", "&lt;").replaceAll("@", "@<!---->");
 }
 
-function testTable(title: string, verdicts: TestVerdict[]): string[] {
+function where(executions: Execution[], repeated: boolean): string {
+  return [...executions]
+    .sort((a, b) => a.run - b.run || a.iteration - b.iteration)
+    .map((e) => (repeated ? `${e.run}.${e.iteration}` : `${e.run}`))
+    .join(", ");
+}
+
+function testTable(title: string, verdicts: TestVerdict[], repeated: Set<string>): string[] {
   if (verdicts.length === 0) {
     return [];
   }
-  const rows = verdicts.slice(0, MAX_ROWS).map((v) => {
-    const partial = v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : "";
-    const runs = [...v.failedRuns].sort((a, b) => a - b).join(", ");
-    return `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedRuns.length}/${v.runs}${partial} | ${runs} | ${cell(v.message ?? "")} |`;
-  });
+  const rows = verdicts
+    .slice(0, MAX_ROWS)
+    .map(
+      (v) =>
+        `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedIn.length}/${v.executions} | ${where(v.failedIn, repeated.has(v.suite))} | ${cell(v.message ?? "")} |`,
+    );
   const lines = [
     `### ${title} (${verdicts.length})`,
     "",
-    "| Suite | Test | File | Failed runs | Which runs | First failure |",
+    "| Suite | Test | File | Failed | Where | First failure |",
     "| --- | --- | --- | --- | --- | --- |",
     ...rows,
   ];
@@ -265,7 +264,7 @@ export type RenderContext = { sha: string; runUrl: string };
 export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): string {
   const counts = [
     report.flaky.length > 0 ? `${report.flaky.length} flaky` : "",
-    report.failing.length > 0 ? `${report.failing.length} failed in every run` : "",
+    report.failing.length > 0 ? `${report.failing.length} failed every time` : "",
     report.runProblems.length > 0 ? `${report.runProblems.length} runs without results` : "",
   ].filter(Boolean);
   const heading = isClean(report) ? "✅ no flaky tests" : `⚠️ ${counts.join(", ")}`;
@@ -276,6 +275,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
         : `${s.suite} ×${s.runs}${s.executions > 1 ? ` (${s.executions} executions each)` : ""}, ${s.tests} test${s.tests === 1 ? "" : "s"}`,
     )
     .join(" · ");
+  const repeated = new Set(report.suites.filter((s) => s.executions > 1).map((s) => s.suite));
 
   const lines = [
     COMMENT_MARKER,
@@ -283,8 +283,8 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     "",
     `Commit \`${sha.slice(0, 12)}\` · ${suites || "no runs"} · [workflow run](${runUrl})`,
     "",
-    ...testTable("Flaky tests", report.flaky),
-    ...testTable("Failed in every run", report.failing),
+    ...testTable("Flaky tests", report.flaky, repeated),
+    ...testTable("Failed every time", report.failing, repeated),
   ];
   if (report.runProblems.length > 0) {
     lines.push(
@@ -297,7 +297,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     );
   }
   lines.push(
-    "<sub>A run fails a test when any execution fails; with `--repeats`, a partial run also had passing executions, which makes the test flaky. The full data is in the `flaky-check-report` artifact.</sub>",
+    "<sub>Each execution is a separate Vitest process; `Where` lists failing runs, as `run.iteration` for suites executed more than once per run. The full data is in the `flaky-check-report` artifact.</sub>",
   );
   return `${lines.join("\n")}\n`;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { JsonAssertionResult, JsonTestResults } from "vitest/node";
+import type { JsonTestResults } from "vitest/node";
 import {
   aggregate,
   isClean,
@@ -9,27 +9,22 @@ import {
   type RunResult,
 } from "./report.ts";
 
-// Real `--reporter=json --repeats=2` output (three executions per test): one test fails once,
-// one fails once with an `afterEach` error too, a `beforeAll` fails, the second of two
-// same-titled tests always fails, and a second file throws on import.
-const fixture: JsonTestResults = await Bun.file(
-  `${import.meta.dir}/fixtures/vitest-repeats.json`,
+// Real `--reporter=json` output of the same three probe files run twice. The second iteration
+// fails one test, fails another together with its `afterEach`, and fails a file's `beforeAll`;
+// both iterations fail the second of two same-titled tests and a file that throws on import.
+const iteration1: JsonTestResults = await Bun.file(
+  `${import.meta.dir}/fixtures/iteration-1.json`,
 ).json();
-
-function withPassing(results: JsonTestResults, titles: string[]): JsonTestResults {
-  const copy: JsonTestResults = structuredClone(results);
-  for (const file of copy.testResults) {
-    for (const assertion of file.assertionResults) {
-      if (titles.includes(assertion.title)) {
-        Object.assign(assertion, {
-          status: "passed",
-          failureMessages: [],
-        } satisfies Partial<JsonAssertionResult>);
-      }
-    }
-  }
-  return copy;
-}
+const iteration2: JsonTestResults = await Bun.file(
+  `${import.meta.dir}/fixtures/iteration-2.json`,
+).json();
+// What Vitest reports for a healthy file: the hook file from the first iteration.
+const clean: JsonTestResults = {
+  ...iteration1,
+  testResults: iteration1.testResults.filter((file) => file.name.endsWith("hook.unit.test.ts")),
+};
+const empty: JsonTestResults = { ...iteration1, testResults: [] };
+const API = "packages__api--unit";
 
 function run(
   suite: string,
@@ -45,151 +40,171 @@ function run(
       executions: 1,
       exitCode: 0,
       root: "/repo",
+      expectedReports: Object.keys(reports),
       ...meta,
     },
-    reports: Object.keys(reports),
-    cases: Object.values(reports).flatMap((results) => parseVitestJson(results, "/repo")),
+    reports: Object.entries(reports).map(([name, results]) => ({
+      name,
+      iteration: Number(/\.(\d+)\.json$/.exec(name)?.[1]),
+      cases: parseVitestJson(results, "/repo"),
+    })),
   };
 }
 
-const empty: JsonTestResults = { ...fixture, testResults: [] };
-const probe = fixture.testResults[0]!;
-// What Vitest reports for a healthy file: the probe file reduced to its one passing test.
-const clean: JsonTestResults = {
-  ...fixture,
-  testResults: [
-    {
-      ...probe,
-      status: "passed",
-      assertionResults: probe.assertionResults.filter((a) => a.status === "passed"),
-    },
-  ],
-};
+function summary(results: RunResult[], expected: string[]) {
+  const report = aggregate(results, expected);
+  const rows = (verdicts: typeof report.flaky) =>
+    verdicts.map((v) => [v.file.split("/").pop(), v.name, `${v.failedIn.length}/${v.executions}`]);
+  return {
+    flaky: rows(report.flaky),
+    failing: rows(report.failing),
+    runProblems: report.runProblems,
+  };
+}
 
 describe("parseVitestJson", () => {
-  test("keeps every failure message, skips, and a file-level entry for setup and import failures", () => {
-    const cases = parseVitestJson(fixture, "/repo");
+  test("reads test outcomes and adds a file-level entry for hook and import failures", () => {
+    const cases = parseVitestJson(iteration2, "/repo");
 
     expect(
       cases.map((c) => [
         c.file.split("/").pop(),
         c.titles.join(" > "),
-        c.failures,
+        c.failed,
         c.skipped,
         c.message,
       ]),
     ).toEqual([
+      ["hook.unit.test.ts", "hook > runs after the hook", false, true, undefined],
+      ["hook.unit.test.ts", "(file setup)", true, false, "failed outside any test (hook or setup)"],
+      ["import-error.unit.test.ts", "(file setup)", true, false, "import failure"],
       [
         "probe.unit.test.ts",
-        "mixed > fails only on the second execution",
-        1,
+        "sometimes > fails on the second iteration",
+        true,
         false,
-        "Error: second",
+        "Error: second iteration",
       ],
       [
         "probe.unit.test.ts",
-        "two errors > test and afterEach both fail once",
-        2,
+        "two errors > test and afterEach both fail on the second iteration",
+        true,
         false,
         "Error: test body",
       ],
-      ["probe.unit.test.ts", "hook > never runs", 0, true, undefined],
-      ["probe.unit.test.ts", "@supabase/api > twin", 0, false, undefined],
-      ["probe.unit.test.ts", "@supabase/api > twin", 3, false, "Error: second twin"],
-      ["probe.unit.test.ts", "@supabase/api > skipped", 0, true, undefined],
-      ["probe.unit.test.ts", "(file setup)", 0, false, undefined],
-      ["import-error.unit.test.ts", "(file setup)", 1, false, "import failure"],
+      ["probe.unit.test.ts", "@supabase/api > twin", false, false, undefined],
+      ["probe.unit.test.ts", "@supabase/api > twin", true, false, "Error: second twin"],
+      ["probe.unit.test.ts", "@supabase/api > skipped", false, true, undefined],
+      ["probe.unit.test.ts", "(file setup)", false, false, undefined],
     ]);
-    expect(cases[0]?.file).toBe("packages/api/src/probe.unit.test.ts");
+    expect(cases[0]?.file).toBe("packages/api/src/hook.unit.test.ts");
   });
 });
 
 describe("aggregate", () => {
-  test("classifies repeated runs: partial failures are flaky, failures in every execution of every run are not", () => {
-    const report = aggregate(
+  test("executions classify tests the same whether they are iterations of one run or separate runs", () => {
+    const expected = {
+      flaky: [
+        ["hook.unit.test.ts", "(file setup)", "1/2"],
+        ["probe.unit.test.ts", "sometimes > fails on the second iteration", "1/2"],
+        [
+          "probe.unit.test.ts",
+          "two errors > test and afterEach both fail on the second iteration",
+          "1/2",
+        ],
+      ],
+      failing: [
+        ["import-error.unit.test.ts", "(file setup)", "2/2"],
+        ["probe.unit.test.ts", "@supabase/api > twin (#2)", "2/2"],
+      ],
+      runProblems: [],
+    };
+
+    const iterations = summary(
       [
-        run("focused", 1, { "packages__api--unit.json": fixture }, { executions: 3, exitCode: 1 }),
         run(
           "focused",
-          2,
-          {
-            "packages__api--unit.json": withPassing(fixture, [
-              "fails only on the second execution",
-              "test and afterEach both fail once",
-            ]),
-          },
-          { executions: 3, exitCode: 1 },
+          1,
+          { [`${API}.1.json`]: iteration1, [`${API}.2.json`]: iteration2 },
+          { executions: 2, exitCode: 1 },
         ),
       ],
-      ["flaky-focused-run1", "flaky-focused-run2"],
+      ["flaky-focused-run1"],
+    );
+    const runs = summary(
+      [
+        run("unit", 1, { [`${API}.1.json`]: iteration1 }, { exitCode: 1 }),
+        run("unit", 2, { [`${API}.1.json`]: iteration2 }, { exitCode: 1 }),
+      ],
+      ["flaky-unit-run1", "flaky-unit-run2"],
     );
 
-    expect(report.flaky.map((v) => [v.name, v.failedRuns, v.partialRuns])).toEqual([
-      ["mixed > fails only on the second execution", [1], 1],
-      ["two errors > test and afterEach both fail once", [1], 1],
-    ]);
-    expect(report.failing.map((v) => [v.file.split("/").pop(), v.name, v.failedRuns])).toEqual([
-      ["import-error.unit.test.ts", "(file setup)", [1, 2]],
-      ["probe.unit.test.ts", "@supabase/api > twin (#2)", [1, 2]],
-    ]);
-    expect(report.runProblems).toEqual([]);
-    expect(report.suites).toEqual([{ suite: "focused", runs: 2, executions: 3, tests: 4 }]);
+    expect(iterations).toEqual(expected);
+    expect(runs).toEqual(expected);
   });
 
-  test("reports runs that crashed, lost a report, ran nothing, or never uploaded", () => {
-    const api = "packages__api--unit.json";
-    const cli = "apps__cli--unit.json";
+  test("reports runs that lost an expected report, crashed, ran nothing, or never uploaded", () => {
     const report = aggregate(
       [
-        run("unit", 1, { [api]: clean, [cli]: clean }),
-        run("unit", 2, { [api]: clean }, { exitCode: 1 }),
-        run("unit", 3, { [api]: clean, [cli]: clean }, { exitCode: 1 }),
-        run("unit", 4, { [api]: empty, [cli]: empty }),
-        run("unit", 5, {}, { exitCode: null }),
-        run("focused", 1, { [api]: empty }),
+        run(
+          "unit",
+          1,
+          { [`${API}.1.json`]: clean },
+          { expectedReports: [`${API}.1.json`, "apps__cli--unit.1.json"] },
+        ),
+        run("unit", 2, { [`${API}.1.json`]: clean }, { exitCode: 1 }),
+        run("unit", 3, { [`${API}.1.json`]: empty }),
+        run("unit", 4, {}, { exitCode: null }),
+        run("focused", 1, { [`${API}.1.json`]: empty }),
       ],
-      ["1", "2", "3", "4", "5", "6"].map((n) => `flaky-unit-run${n}`).concat("flaky-focused-run1"),
+      ["1", "2", "3", "4", "5"].map((n) => `flaky-unit-run${n}`).concat("flaky-focused-run1"),
       ["focused"],
     );
 
     expect(report.runProblems).toEqual([
-      { name: "flaky-unit-run2", problem: `no report for ${cli}` },
+      { name: "flaky-unit-run1", problem: "no report for apps__cli--unit.1.json" },
       {
-        name: "flaky-unit-run3",
+        name: "flaky-unit-run2",
         problem: "exited 1 without a failing test (unhandled error or crash)",
       },
-      { name: "flaky-unit-run4", problem: "ran no tests; check the filter" },
+      { name: "flaky-unit-run3", problem: "ran no tests; check the filter" },
       {
-        name: "flaky-unit-run5",
+        name: "flaky-unit-run4",
         problem: "test step did not run or finish (setup failure, timeout, or cancel)",
       },
-      { name: "flaky-unit-run6", problem: "no results uploaded" },
+      { name: "flaky-unit-run5", problem: "no results uploaded" },
     ]);
     expect([report.flaky, report.failing]).toEqual([[], []]);
   });
 });
 
 describe("renderMarkdown", () => {
-  test("a failing report escapes mentions, and a clean one leads with the PR comment marker", () => {
+  test("a failing report escapes mentions and locates iterations, and a clean one leads with the marker", () => {
+    const context = { sha: "0123456789abcdef", runUrl: "https://example.test/run" };
     const failing = renderMarkdown(
       aggregate(
-        [run("unit", 1, { "packages__api--unit.json": fixture }, { exitCode: 1 })],
-        ["flaky-unit-run1"],
+        [
+          run(
+            "focused",
+            1,
+            { [`${API}.1.json`]: iteration1, [`${API}.2.json`]: iteration2 },
+            { executions: 2, exitCode: 1 },
+          ),
+        ],
+        ["flaky-focused-run1"],
       ),
-      { sha: "0123456789abcdef", runUrl: "https://example.test/run" },
+      context,
     );
     const cleanReport = aggregate(
-      [run("unit", 1, { "packages__api--unit.json": clean })],
+      [run("unit", 1, { [`${API}.1.json`]: clean })],
       ["flaky-unit-run1"],
     );
-    const cleanMarkdown = renderMarkdown(cleanReport, {
-      sha: "0123456789abcdef",
-      runUrl: "https://example.test/run",
-    });
+    const cleanMarkdown = renderMarkdown(cleanReport, context);
 
     expect(failing).toContain(
-      "| unit | @<!---->supabase/api > twin (#2) | `packages/api/src/probe.unit.test.ts` | 1/1 | 1 |",
+      "| focused | sometimes > fails on the second iteration | `packages/api/src/probe.unit.test.ts` | 1/2 | 1.2 | Error: second iteration |",
     );
+    expect(failing).toContain("| focused | @<!---->supabase/api > twin (#2) |");
     expect(isClean(cleanReport)).toBe(true);
     expect(cleanMarkdown.split("\n").slice(0, 4)).toEqual([
       "<!-- flaky-check -->",

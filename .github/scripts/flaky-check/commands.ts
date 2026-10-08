@@ -7,118 +7,138 @@ type Selection = { filters: string[] } | { changedSince: string };
 
 export type RunSpec =
   | { suite: "unit" | "integration"; filters: string[] }
-  | { suite: "focused"; repeats: number; selection: Selection }
+  | { suite: "focused"; selection: Selection }
   | ({ suite: "e2e" } & Pick<E2eEntry, "target" | "shard">)
   | ({ suite: "stack-e2e" } & Pick<StackEntry, "runtime" | "scenario">);
 
-/** Each report name must be unique within a package, since all of them land in its `RESULTS_DIR`. */
-function report(name: string): string[] {
-  return ["--reporter=default", "--reporter=json", `--outputFile.json=${RESULTS_DIR}/${name}.json`];
+/**
+ * Where an invocation's report lands: one package directory, or every package that runs a Turbo
+ * task (`turbo` holds the task and its filters, resolved with `turbo run --dry=json`).
+ */
+export type ReportSource = { report: string } & ({ dir: string } | { turbo: string[] });
+
+export type Invocation = { argv: string[]; reports: ReportSource };
+
+/** The name a collected report gets: `apps/cli` + `unit.1` becomes `apps__cli--unit.1.json`. */
+export function collectedName(dir: string, report: string): string {
+  return `${dir.replaceAll("/", "__")}--${report}.json`;
 }
 
-function unit(extra: string[]): string[][] {
-  return [["pnpm", "run", "test:unit", ...report("unit"), "--passWithNoTests", ...extra]];
-}
-
-// @supabase/api chains a Node and a Bun Vitest run in one script, and Turbo forwards arguments
-// only to the last command, so its two projects run separately with their own reports.
-function integration(extra: string[]): string[][] {
-  const vitest = (runtime: string[], project: string, name: string) => [
-    "pnpm",
-    "--dir",
-    "packages/api",
-    "exec",
-    ...runtime,
-    "vitest",
-    "run",
-    "--project",
-    project,
-    ...report(name),
-    "--passWithNoTests",
-    ...extra,
-  ];
+function reporter(report: string): string[] {
   return [
-    [
+    "--reporter=default",
+    "--reporter=json",
+    `--outputFile.json=${RESULTS_DIR}/${report}.json`,
+  ];
+}
+
+function turbo(task: string[], report: string, extra: string[]): Invocation {
+  return {
+    argv: [
       "pnpm",
       "exec",
       "turbo",
       "run",
-      "test:integration:run",
+      ...task,
       "--continue=always",
-      "--filter=!@supabase/api",
       "--",
-      ...report("integration"),
-      "--passWithNoTests",
+      ...reporter(report),
       ...extra,
     ],
-    vitest([], "integration", "integration-node"),
-    vitest(["bun", "--bun"], "bun-integration", "integration-bun"),
-  ];
+    reports: { turbo: task, report },
+  };
 }
 
-function stackE2e(file: string): string[] {
+function unit(iteration: number, extra: string[]): Invocation[] {
   return [
-    "pnpm",
-    "--filter",
-    "@supabase/stack",
-    "test:e2e:run",
-    `src/${file}.e2e.test.ts`,
-    "--passWithNoTests=false",
-    ...report(file),
+    turbo(["test:unit:run", "--filter=!@supabase/cli-go"], `unit.${iteration}`, [
+      "--passWithNoTests",
+      ...extra,
+    ]),
   ];
 }
 
-/** The commands a matrix job runs, in order; every one runs even when an earlier one fails. */
-export function commandsFor(spec: RunSpec): string[][] {
+// @supabase/api chains a Node and a Bun Vitest run in one script, and Turbo forwards arguments
+// only to the last command, so its two projects run separately with their own reports.
+function integration(iteration: number, extra: string[]): Invocation[] {
+  const api = (runtime: string[], project: string, name: string): Invocation => {
+    const report = `${name}.${iteration}`;
+    return {
+      argv: [
+        "pnpm",
+        "--dir",
+        "packages/api",
+        "exec",
+        ...runtime,
+        "vitest",
+        "run",
+        "--project",
+        project,
+        ...reporter(report),
+        "--passWithNoTests",
+        ...extra,
+      ],
+      reports: { dir: "packages/api", report },
+    };
+  };
+  return [
+    turbo(["test:integration:run", "--filter=!@supabase/api"], `integration.${iteration}`, [
+      "--passWithNoTests",
+      ...extra,
+    ]),
+    api([], "integration", "integration-node"),
+    api(["bun", "--bun"], "bun-integration", "integration-bun"),
+  ];
+}
+
+function stackE2e(file: string): Invocation {
+  const report = `${file}.1`;
+  return {
+    argv: [
+      "pnpm",
+      "--filter",
+      "@supabase/stack",
+      "test:e2e:run",
+      `src/${file}.e2e.test.ts`,
+      "--passWithNoTests=false",
+      ...reporter(report),
+    ],
+    reports: { dir: "packages/stack", report },
+  };
+}
+
+/**
+ * The invocations of one execution of a matrix job, in order; every one runs even when an earlier
+ * one fails. Focused jobs call this once per iteration, so each execution is a fresh Vitest process.
+ */
+export function commandsFor(spec: RunSpec, iteration = 1): Invocation[] {
   switch (spec.suite) {
     case "unit":
-      return unit(spec.filters);
+      return unit(iteration, spec.filters);
     case "integration":
-      return integration(spec.filters);
+      return integration(iteration, spec.filters);
     case "focused": {
       const select =
         "filters" in spec.selection
           ? spec.selection.filters
           : ["--changed", spec.selection.changedSince];
-      const extra = [`--repeats=${spec.repeats}`, ...select];
-      return [...unit(extra), ...integration(extra)];
+      return [...unit(iteration, select), ...integration(iteration, select)];
     }
     case "e2e":
       return spec.target === "cli"
         ? [
-            [
-              "pnpm",
-              "exec",
-              "turbo",
-              "run",
-              "test:e2e:run",
-              "--only",
-              "--filter=supabase",
-              "--",
-              ...report("e2e"),
+            turbo(["test:e2e:run", "--only", "--filter=supabase"], "e2e.1", [
               `--shard=${spec.shard}/${CLI_E2E_SHARDS}`,
-            ],
+            ]),
           ]
-        : [
-            [
-              "pnpm",
-              "exec",
-              "turbo",
-              "run",
-              "test:e2e:run",
-              "--only",
-              "--filter=@supabase/cli-e2e",
-              "--",
-              ...report("e2e"),
-            ],
-          ];
+        : [turbo(["test:e2e:run", "--only", "--filter=@supabase/cli-e2e"], "e2e.1", [])];
     case "stack-e2e": {
-      const commands = [stackE2e(`whole-stack.${spec.runtime}.${spec.scenario}`)];
+      const invocations = [stackE2e(`whole-stack.${spec.runtime}.${spec.scenario}`)];
       // test.yml runs the public API suite only in this combination.
       if (spec.runtime === "native" && spec.scenario === "lifecycle") {
-        commands.push(stackE2e("public"));
+        invocations.push(stackE2e("public"));
       }
-      return commands;
+      return invocations;
     }
   }
 }
