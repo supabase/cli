@@ -1,5 +1,7 @@
-import { Option } from "effect";
+import { Effect, Option } from "effect";
 
+import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 
 /**
@@ -21,23 +23,35 @@ export interface PgDeltaContext {
 }
 
 /**
- * Resolves {@link PgDeltaContext.projectId} — not `CommandSettings.projectId` alone, which is
- * env-only and resolves to `""` for a project relying on config.toml's `project_id` or the
- * workdir-basename default, mounting the wrong `supabase_edge_runtime_` Deno-cache volume.
- * Shared by every pg-delta context builder (`db diff`, `db pull`, declarative generate/sync).
- *
- * When a matched `[remotes.<ref>]` block already resolved its own `project_id` into
- * `toml.projectId`, the raw `cliProjectId` argument is suppressed entirely — otherwise an
- * unrelated ambient `SUPABASE_PROJECT_ID` could win back over the matched remote's id.
+ * The local Docker project id from the config snapshot: `SUPABASE_PROJECT_ID`, then the matched
+ * remote's or base `project_id`, then the sanitized workdir basename. The registry types the key as
+ * an `Option`, but its workdir default makes it always a string.
+ */
+export const snapshotLocalProjectId = (snapshot: CliConfigSnapshot) =>
+  snapshot
+    .get(CliConfigKeys.projectId)
+    .pipe(
+      Effect.map(({ value }) =>
+        typeof value === "string" ? value : Option.getOrElse(value, () => ""),
+      ),
+    );
+
+/** Resolves {@link PgDeltaContext.projectId} from the config snapshot. */
+export const pgDeltaProjectId = (snapshot: CliConfigSnapshot) =>
+  snapshotLocalProjectId(snapshot).pipe(Effect.map(sanitizeProjectId));
+
+/**
+ * Resolves the project id for callers that only hold a parsed `DbTomlValues`; `SUPABASE_PROJECT_ID`
+ * beats the config's `project_id`, matched remote included.
  */
 export function resolvePgDeltaProjectId(
   cliProjectId: Option.Option<string>,
-  toml: { readonly projectId: Option.Option<string>; readonly appliedRemote: string | undefined },
+  toml: { readonly projectId: Option.Option<string> },
   workdir: string,
 ): string {
   return sanitizeProjectId(
     resolveLocalProjectId(
-      toml.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliProjectId),
+      Option.getOrUndefined(cliProjectId),
       Option.getOrUndefined(toml.projectId),
       workdir,
     ),

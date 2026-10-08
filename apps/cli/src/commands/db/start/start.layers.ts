@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { localDockerEngineLayer } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
@@ -22,6 +23,7 @@ const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 
 export const dbStartRuntimeLayer = Layer.mergeAll(
+  cliConfigValuesLayer,
   cliSettings,
   telemetryStateLayer,
   // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).

@@ -23,6 +23,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { dbCommandConfigValuesLayer } from "../../../../tests/helpers/db-command-config-values.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
@@ -370,6 +371,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
+    dbCommandConfigValuesLayer(out.layer),
     cliSettings,
     telemetry.layer,
     child.layer,

@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
@@ -85,4 +86,5 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     }),
   ),
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
+  withCliConfigFlags(config),
 );

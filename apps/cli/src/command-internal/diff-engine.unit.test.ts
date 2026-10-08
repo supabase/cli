@@ -5,25 +5,7 @@ import {
   resolveDeclarativeFromArgs,
   resolveDiffEngine,
   resolvePullDiffEngine,
-  shouldUsePgDelta,
 } from "./diff-engine.ts";
-
-describe("shouldUsePgDelta", () => {
-  it("is the OR of config, flag, and env", () => {
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(false);
-    expect(
-      shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: true }),
-    ).toBe(true);
-  });
-});
 
 describe("resolveDiffEngine", () => {
   const base = {

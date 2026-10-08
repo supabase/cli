@@ -8,9 +8,10 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
-import { readDbToml } from "../db-config.toml-read.ts";
-import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
+import { resolveLocalProjectId, localDbContainerId, sanitizeProjectId } from "../docker-ids.ts";
+import { snapshotLocalProjectId } from "../pgdelta.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
@@ -309,9 +310,8 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  *
  * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
  * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
- * classification) only when the Engine gives no definitive answer. `resolveDbToml` is a
- * best-effort read: only `projectId` is needed, and an unreadable `.env` falls back to the
- * workdir basename.
+ * classification) only when the Engine gives no definitive answer. The project id is a
+ * best-effort read of the config snapshot: an unreadable config falls back to the workdir basename.
  */
 export function isLocalDbRunning(
   spawner: Spawner,
@@ -319,23 +319,15 @@ export function isLocalDbRunning(
   path: Path.Path,
   workdir: string,
   configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine> {
+): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine | CliConfigValues> {
   return Effect.scoped(
     Effect.gen(function* () {
-      // Config was already validated (and any unresolved-env WARN already printed) by the
-      // caller; only the resolved projectId matters here.
-      const tomlProjectId = yield* readDbToml(fs, path, workdir, undefined, {
-        validate: false,
-        warnOnUnresolvedEnv: false,
-      }).pipe(
-        Effect.map((toml) => toml.projectId),
-        Effect.orElseSucceed(() => Option.none<string>()),
+      const values = yield* CliConfigValues;
+      const snapshotProjectId = yield* values.load({ workdir, projectRef: Option.none() }).pipe(
+        Effect.flatMap(snapshotLocalProjectId),
+        Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
       );
-      const projectId = resolveLocalProjectId(
-        configuredProjectId,
-        Option.getOrUndefined(tomlProjectId),
-        workdir,
-      );
+      const projectId = resolveLocalProjectId(configuredProjectId, snapshotProjectId, workdir);
       const containerId = localDbContainerId(projectId);
       // Engine probe first; `Option.none()` falls through to the CLI spawn below.
       const engine = yield* LocalDockerEngine;

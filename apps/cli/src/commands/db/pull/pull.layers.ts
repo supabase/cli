@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { linkedDbResolverRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -13,6 +14,7 @@ import {
 
 export const dbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
   Layer.mergeAll(
+    cliConfigValuesLayer,
     pgDeltaDbConfigRuntimeLayer,
     pgDeltaCommandRuntimeLayer,
     migraRuntimeLayer,

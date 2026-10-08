@@ -26,6 +26,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { dbCommandConfigValuesLayer } from "../../../tests/helpers/db-command-config-values.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -650,6 +651,7 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    dbCommandConfigValuesLayer(finalOutputLayer),
     buildTestRuntime({
       out: { layer: finalOutputLayer },
       api,

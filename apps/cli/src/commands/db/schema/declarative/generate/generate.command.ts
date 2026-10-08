@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -121,4 +122,5 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     }),
   ),
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
+  withCliConfigFlags(config),
 );

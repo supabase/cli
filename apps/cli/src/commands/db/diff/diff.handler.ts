@@ -12,6 +12,8 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
   readDbToml,
@@ -52,10 +54,8 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  parseBoolEnv,
   resolveDiffEngine,
   schemaPathsTransitionWarning,
-  shouldUsePgDelta,
 } from "../../../command-internal/diff-engine.ts";
 import {
   formatMigrationTimestamp,
@@ -74,7 +74,7 @@ import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import {
   type PgDeltaContext,
   isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
+  pgDeltaProjectId,
 } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
@@ -122,6 +122,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
   const stackApi = yield* Effect.serviceOption(StackApi);
+  const configValues = yield* CliConfigValues;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
@@ -320,8 +321,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
+      const explicitSnapshot = yield* configValues.load({
+        workdir: cliSettings.workdir,
+        projectRef: Option.fromNullishOr(mergedLinkedRef),
+      });
       const explicitCtx: PgDeltaContext = {
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+        projectId: yield* pgDeltaProjectId(explicitSnapshot),
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -407,6 +412,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
+    const snapshot = yield* configValues.load({
+      workdir: cliSettings.workdir,
+      projectRef: Option.fromNullishOr(linkedRef),
+    });
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const networkIdFlag = yield* NetworkIdFlag;
@@ -443,25 +452,16 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then the
-      // workdir basename fallback; the matched `[remotes.<ref>]` block's own `project_id`
-      // suppresses the raw env argument on the linked path — see `readDbToml`'s doc comment.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      projectId: yield* pgDeltaProjectId(snapshot),
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
-    // (possibly remote-merged) config.
     const pgDeltaDefault =
       (yield* currentStackBackend).kind === "stack" ||
-      shouldUsePgDelta({
-        configEnabled: cfg.pgDelta.enabled,
-        usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-        envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-      });
+      (yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled)).value;
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
       usePgAdmin,

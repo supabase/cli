@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../../shared/runtime/stdin.layer.ts";
 import { identityStitchLayer } from "../../../../../command-internal/identity-stitch.ts";
@@ -11,6 +12,7 @@ import {
 } from "../../../../../command-internal/pgdelta-engine-runtime.layer.ts";
 
 export const dbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
+  cliConfigValuesLayer,
   pgDeltaDbConfigRuntimeLayer,
   pgDeltaCommandRuntimeLayer,
   identityStitchLayer,

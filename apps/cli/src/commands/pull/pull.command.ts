@@ -3,6 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -84,4 +85,5 @@ export const pullCommand = Command.make("pull", config).pipe(
   ]),
   Command.withHandler(pullHandler),
   Command.provide(pullRuntimeLayer),
+  withCliConfigFlags(config),
 );

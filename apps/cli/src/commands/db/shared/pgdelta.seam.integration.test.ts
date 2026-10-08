@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
   useShadowCacheDisabled,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { dbCommandConfigValuesLayer } from "../../../../tests/helpers/db-command-config-values.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -127,6 +128,7 @@ function setup(
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
     readonly stackBackend?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const out = mockOutput();
@@ -146,6 +148,7 @@ function setup(
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
   const seam = declarativeSeamLayer.pipe(
+    Layer.provide(dbCommandConfigValuesLayer(out.layer, { env: opts.env })),
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
@@ -245,6 +248,29 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
           "same SUPABASE_USE_SLIM_IMAGES setting",
         );
         expect((error as DeclarativeShadowDbError).message).not.toContain("--no-backup");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "inspects the container named by SUPABASE_PROJECT_ID over config.toml's project_id",
+    () => {
+      const dir = tmp.current;
+      const { layer, shadowSpawned } = setup(dir, {
+        dbInspectImage: dockerfileServiceImageRaw("pg"),
+        env: { SUPABASE_PROJECT_ID: "envproj" },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", "config.toml"),
+          'project_id = "tomlproj"\n',
+        );
+        const seam = yield* DeclarativeSeam;
+        yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+        expect(shadowSpawned.some((call) => call.args.includes("supabase_db_envproj"))).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );

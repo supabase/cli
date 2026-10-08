@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 
 import { httpClientLayer } from "../auth/http-debug.layer.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { dbConfigLayer } from "./db-config.layer.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
@@ -49,6 +50,7 @@ export const migraRuntimeLayer = Layer.mergeAll(
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const localDockerEngine = localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer));
 const seam = declarativeSeamLayer.pipe(
+  Layer.provide(cliConfigValuesLayer),
   Layer.provide(stackCatalogSetupLayer),
   Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
   Layer.provide(dbConnectionLayer),

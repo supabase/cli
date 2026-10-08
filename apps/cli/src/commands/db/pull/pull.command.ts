@@ -1,6 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -21,13 +23,10 @@ const config = {
     ),
     Flag.optional,
   ),
-  usePgDelta: Flag.boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to pull declarative schema."),
-    // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints
-    // cobra's deprecation line.
-    Flag.withHidden,
-    Flag.optional,
-  ),
+  usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
+    name: "use-pg-delta",
+    description: "Use pg-delta to pull declarative schema (deprecated: use --declarative).",
+  }),
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
@@ -66,11 +65,11 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description: "Password to your remote Postgres database.",
+  }),
 } as const;
 
 export type DbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -104,4 +103,5 @@ export const dbPullCommand = Command.make("pull", config).pipe(
     ),
   ),
   Command.provide(dbPullRuntimeLayer),
+  withCliConfigFlags(config),
 );
