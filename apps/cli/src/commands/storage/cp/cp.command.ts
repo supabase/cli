@@ -2,6 +2,8 @@ import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -108,4 +110,6 @@ export const storageCpCommand = Command.make("cp", config).pipe(
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

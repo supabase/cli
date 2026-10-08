@@ -290,7 +290,7 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
  * `skipEnvOverride` lets a matched remote-config value win over a conflicting
  * `SUPABASE_ANALYTICS_BACKEND`.
  */
-export function envOverrideAnalyticsBackend(
+function envOverrideAnalyticsBackend(
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   skipEnvOverride = false,
@@ -1018,7 +1018,7 @@ export function envOverrideMajorVersion(
 }
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
-export function envOverrideDenoVersion(
+function envOverrideDenoVersion(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {

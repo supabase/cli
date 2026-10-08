@@ -22,6 +22,7 @@ import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-f
 import { stackStart } from "./start.handler.ts";
 import { stackPrepare } from "../prepare/prepare.handler.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-snapshot-layer.ts";
 
 const excluded = [
   "rest",
@@ -157,6 +158,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
     output,
     telemetry,
     layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       FetchHttpClient.layer,
       runtimeInfoLayer,

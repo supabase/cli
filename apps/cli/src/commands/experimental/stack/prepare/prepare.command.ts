@@ -4,6 +4,8 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import { STACK_PREPARABLE_CAPABILITIES } from "../start/start.options.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
@@ -40,4 +42,6 @@ export const stackPrepareCommand = Command.make("prepare", config).pipe(
   Command.withHandler((flags) =>
     stackPrepare(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

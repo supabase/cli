@@ -5,6 +5,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   fromBackup: Flag.string("from-backup").pipe(
@@ -29,4 +31,6 @@ export const dbStartCommand = Command.make("start", config).pipe(
     ),
   ),
   Command.provide(dbStartRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

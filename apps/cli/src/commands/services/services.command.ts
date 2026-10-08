@@ -1,4 +1,6 @@
 import { Command } from "effect/unstable/cli";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -15,4 +17,6 @@ export const servicesCommand = Command.make("services", config).pipe(
     services(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(servicesRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

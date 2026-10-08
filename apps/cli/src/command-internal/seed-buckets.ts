@@ -230,7 +230,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     // consults these legacy-only inputs, so it skips this validation entirely.
     const backend = yield* currentStackBackend;
     if (backend.kind !== "stack") {
-      yield* validateLocalStorageConfig(config, projectEnvValues);
+      yield* validateLocalStorageConfig();
     }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
@@ -239,13 +239,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials =
-    opts.credentials ??
-    (yield* resolveStorageCredentials({
-      projectRef,
-      config,
-      projectEnvValues,
-    }));
+  const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
 
   // Gateway operations use an explicit non-DoH fetch (CA-trusting for local + https, plain
   // `globalThis.fetch` otherwise); the api-keys lookup in `resolveStorageCredentials` runs

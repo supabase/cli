@@ -611,7 +611,7 @@
       "seed": {
         "enabled": true,
         "sql_paths": [
-          "./seed.sql"
+          "supabase/seed.sql"
         ]
       },
       "settings": {},
@@ -640,9 +640,7 @@
     "functions": {},
     "local_smtp": {
       "enabled": true,
-      "pop3_port": 0,
-      "port": 54324,
-      "smtp_port": 0
+      "port": 54324
     },
     "project_id": "golden-stack",
     "realtime": {

@@ -32,6 +32,7 @@ import {
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { start } from "./start.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
 const GOLDEN_DIR = "./testdata/config-precedence/start";
@@ -295,6 +296,7 @@ describe("start container env precedence goldens", () => {
         const session = fakeDbSession();
         const layer = Layer.mergeAll(
           unusedStackServices,
+          cliConfigValuesTestLayer,
           BunServices.layer,
           out.layer,
           mockCommandSettings({ workdir }),

@@ -102,10 +102,7 @@ export const connectStorageGateway = <E, R>(
   body: (gateway: StorageGateway) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
-    const credentials = yield* resolveStorageCredentials({
-      projectRef: opts.projectRef,
-      config: opts.config,
-    });
+    const credentials = yield* resolveStorageCredentials({ projectRef: opts.projectRef });
     const gatewayOps = Effect.gen(function* () {
       const gateway = yield* makeStorageGateway({
         baseUrl: credentials.baseUrl,

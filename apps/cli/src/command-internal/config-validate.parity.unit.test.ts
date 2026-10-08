@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
+import { stringify as stringifyToml } from "smol-toml";
 import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
 import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
@@ -13,6 +14,7 @@ import { readDbToml } from "./db-config.toml-read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
@@ -315,13 +317,14 @@ describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
 // assert the identical message, so the shared branches cannot drift.
 describe("shared api + auth validation branches, cross-caller parity (S vs L)", () => {
   /** Drives S's real pipeline (`resolveStorageCredentials`, local branch) to failure. */
-  const failsWithS = (config: CliConfig, message: string) =>
+  const failsWithS = (overrides: Record<string, unknown>, message: string) =>
     Effect.gen(function* () {
-      const dir = withConfig("");
-      const exit = yield* resolveStorageCredentials({ projectRef: "", config }).pipe(
+      const dir = withConfig(stringifyToml({ project_id: "test", ...overrides }));
+      const exit = yield* resolveStorageCredentials({ projectRef: "" }).pipe(
         Effect.provide(
           Layer.mergeAll(
             unusedStackServices,
+            cliConfigValuesTestLayer,
             BunServices.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
@@ -360,7 +363,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       Effect.gen(function* () {
         const message = "Missing required field in config: api.port";
         failsWithL({ api: { port: 0 } }, message);
-        yield* failsWithS(baseConfig({ api: { port: 0 } }), message);
+        yield* failsWithS({ api: { port: 0 } }, message);
       }),
     ),
   );
@@ -370,10 +373,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       Effect.gen(function* () {
         const message = "Missing required field in config: api.tls.key_path";
         failsWithL({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
-        yield* failsWithS(
-          baseConfig({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }),
-          message,
-        );
+        yield* failsWithS({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
       }),
     ),
   );
@@ -383,7 +383,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
       Effect.gen(function* () {
         const message = "Invalid config for auth.jwt_secret. Must be at least 16 characters";
         failsWithL({ auth: { jwt_secret: "short" } }, message);
-        yield* failsWithS(baseConfig({ auth: { jwt_secret: "short" } }), message);
+        yield* failsWithS({ auth: { jwt_secret: "short" } }, message);
       }),
     ),
   );
@@ -396,7 +396,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
           const message = "failed to parse config";
           const auth = { service_role_key: "encrypted:not-a-real-ciphertext" };
           failsWithL({ auth }, message);
-          yield* failsWithS(baseConfig({ auth }), message);
+          yield* failsWithS({ auth }, message);
         }),
       ),
   );

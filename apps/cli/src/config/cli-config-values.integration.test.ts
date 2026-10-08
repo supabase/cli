@@ -4,10 +4,10 @@ import type { CliConfig } from "@supabase/config";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
-import { loadLocalProjectContext } from "../command-internal/local-project-context.ts";
-import { loadStackConfig, StackConfigError } from "../command-internal/stack-config.ts";
+import { loadStackConfig } from "../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { CliConfigFlagInputs } from "./cli-config-flags.ts";
@@ -752,16 +752,11 @@ policy = "per_worker"
 
   const stackOverlay = (root: string, ref?: string) =>
     Effect.gen(function* () {
-      const context =
-        ref === undefined
-          ? undefined
-          : yield* loadLocalProjectContext(
-              root,
-              (message) => new StackConfigError({ message }),
-              ref,
-            );
-      return (yield* loadStackConfig(root, context === undefined ? undefined : { context })).source;
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+      return (yield* loadStackConfig(root, ref === undefined ? undefined : { projectRef: ref }))
+        .source;
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
+    );
 
   const materialize = (
     root: string,

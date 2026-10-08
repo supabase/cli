@@ -4,8 +4,10 @@ import {
   resolveArtifact,
 } from "@supabase/stack/internal/artifacts";
 import { Effect, Result } from "effect";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
-import { envOverrideMajorVersion } from "../../command-internal/local-config-values.ts";
+import {
+  describeConfigSnapshotFailure,
+  loadConfigSnapshotContext,
+} from "../../command-internal/config-snapshot-context.ts";
 import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
@@ -21,25 +23,15 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   workdir: string,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ) {
-  const context = yield* loadLocalProjectContext(workdir, (message) => message).pipe(Effect.result);
+  const context = yield* loadConfigSnapshotContext(workdir).pipe(Effect.result);
   let configError: string | undefined;
   let major: number | undefined;
-  if (Result.isFailure(context)) configError = context.failure;
+  if (Result.isFailure(context)) configError = describeConfigSnapshotFailure(context.failure);
   else {
-    const resolvedMajor = yield* Effect.try({
-      try: () => {
-        const value = envOverrideMajorVersion(
-          context.success.config.db.major_version,
-          context.success.projectEnvValues,
-        );
-        if (value !== 15 && value !== 17)
-          throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return value;
-      },
-      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(Effect.result);
-    if (Result.isFailure(resolvedMajor)) configError = resolvedMajor.failure;
-    else major = resolvedMajor.success;
+    const value = context.success.config.db.major_version;
+    if (value !== 15 && value !== 17)
+      configError = `unsupported PostgreSQL major version: ${value}`;
+    else major = value;
   }
   yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
   return yield* Effect.forEach(artifactServiceKinds(), (service) =>

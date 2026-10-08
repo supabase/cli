@@ -42,6 +42,7 @@ import {
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -218,6 +219,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    cliConfigValuesTestLayer,
     runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
