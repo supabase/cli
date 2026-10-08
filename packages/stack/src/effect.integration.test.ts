@@ -41,8 +41,9 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
-const FIXED_API_PORT = 24_393;
+// Below the native backend range (10000-19999), the automatic public range (20000-32767) and every
+// OS ephemeral range, so neither another stack's claim nor an outbound socket can already hold it.
+const FIXED_API_PORT = 8_913;
 
 it.live("registers and discovers saved definitions without inventing live observations", () =>
   Effect.gen(function* () {
@@ -1221,7 +1222,7 @@ it.live("plans requested creations against the saved composition and honours eag
         expect(
           yield* stack.composition.plan([
             { ...database, config: { ...database.config, version: "15" } },
-            { ...rest, endpoints: { http: { port: 54_999 } } },
+            { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
           ]),
         ).toEqual([
           {
@@ -1441,9 +1442,10 @@ it.live(
           expect(change?.service).toBe("rest");
           expect(change?.endpoint).toBe("http");
           expect(change?.from).toBe(FIXED_API_PORT);
-          // Automatic selection can legitimately land back on the old number; what matters is
-          // that it claimed some port and the live bind agrees with that claim, checked below.
+          // The fixed port is outside the automatic range, so the claim is a different number
+          // and the live bind agrees with it, checked below.
           expect(change?.to).toEqual(expect.any(Number));
+          expect(change?.to).not.toBe(FIXED_API_PORT);
 
           expect(yield* reopened.composition.plan([database, requestedAuto])).toEqual([
             { id: databaseId, service: "database", member: true, change: "unchanged" },
@@ -1752,11 +1754,11 @@ it.live(
             requestedAuto,
           ]);
           const changes = yield* reopened.startupEndpointChanges;
-          // Automatic selection can legitimately land back on the old number; what matters is
-          // that it claimed some port and the live bind agrees with that claim, checked below.
+          // The claim is a number outside the fixed port and the live bind agrees with it, below.
           expect(changes).toEqual([
             { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: expect.any(Number) },
           ]);
+          expect(changes[0]?.to).not.toBe(FIXED_API_PORT);
 
           const databaseId = (yield* reopened.services.list).find(
             ({ service }) => service === "database",
@@ -1772,6 +1774,89 @@ it.live(
         destroyTestStack(stack),
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "releases the shared API listener's automatic claim when a different sharing service takes a fixed port",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-swapped-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-swapped");
+          const auth = {
+            service: "auth",
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          } as const;
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, auth], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          if (databaseId === undefined) return yield* Effect.die("Composition is missing a member");
+          expect(yield* reservedPort(stateRoot, stack.id, "api")).toEqual(expect.any(Number));
+
+          // The config now excludes auth and fixes the API port for REST, a kind the saved
+          // composition never held.
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [database, rest]);
+          yield* reopened.composition.supabase([database, rest], {
+            reuseIds: [databaseId],
+            eager: true,
+          });
+
+          const restInstance = (yield* reopened.services.list).find(
+            ({ service }) => service === "rest",
+          );
+          if (restInstance === undefined) return yield* Effect.die("REST was not created");
+          expect(restPort(yield* restInstance.status)).toBe(FIXED_API_PORT);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("attaches to a live owner without re-planning or leaving a startup payload behind", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-attach-" });
+    const stateRoot = `${root}/state`;
+    const cacheRoot = `${root}/cache`;
+    const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const database = replanDatabase("replan-attach");
+        const rest = {
+          service: "rest",
+          config: {},
+          endpoints: { http: { port: FIXED_API_PORT } },
+        } as const;
+        yield* stack.composition.supabase([database, rest], { eager: true });
+
+        const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+        const attached = yield* open({
+          id: stack.id,
+          stateRoot,
+          cacheRoot,
+          startOwner: true,
+          requestedCreations: [database, requestedAuto],
+        });
+        expect(yield* attached.startupEndpointChanges).toEqual([]);
+        expect(yield* reservedPort(stateRoot, stack.id, "api")).toBe(FIXED_API_PORT);
+        const leftover = (yield* fs.readDirectory(`${stateRoot}/${stack.id}`)).filter((name) =>
+          name.startsWith("startup-"),
+        );
+        expect(leftover).toEqual([]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.live(

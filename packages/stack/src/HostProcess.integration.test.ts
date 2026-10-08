@@ -57,11 +57,32 @@ const leftoverStartupPayloads = (ownerDir: string) =>
     return (yield* fs.readDirectory(ownerDir)).filter((name) => name.startsWith("startup-"));
   });
 
-const savedStack = (root: string, stackName: string): StackNamespace.SavedStack => ({
+const savedStack = (
+  root: string,
+  stackName: string,
+  databasePassword?: string,
+): StackNamespace.SavedStack => ({
   id: "stack",
   runtime: "native",
   identity: { projectRoot: root, branchContext: "main", stackName },
-  instances: [],
+  instances:
+    databasePassword === undefined
+      ? []
+      : [
+          {
+            id: "database-1",
+            creation: {
+              service: "database",
+              config: {
+                version: "17",
+                databasePassword: Redacted.make(databasePassword),
+                jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
+                jwtExpiry: 3600,
+              },
+              endpoints: { sql: { port: "auto" } },
+            },
+          },
+        ],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
 });
@@ -559,35 +580,67 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("keeps the spawned owner's requested creations out of its process argv", () =>
+it.live(
+  "keeps the spawned owner's registration and requested creations out of its process argv",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-argv-secrecy-" });
+        const state = yield* makeTestState(root);
+        const marker = `argv-secrecy-password-${root.split("/").at(-1)}`;
+        const registerMarker = `argv-secrecy-register-${root.split("/").at(-1)}`;
+        yield* state.save(savedStack(root, "argv-secrecy"));
+        const requestedCreations: ReadonlyArray<ServiceCreationInput> = [
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make(marker),
+              jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+        ];
+        const access = yield* launchHost(state, {
+          stateRoot: root,
+          cacheRoot: root,
+          stackId: "stack",
+          entrypoint: fixtureEntrypoint,
+          register: savedStack(root, "argv-secrecy", registerMarker),
+          requestedCreations,
+        });
+        yield* Effect.sync(() => {
+          const argv = processCommandLine(access.endpoint.pid);
+          expect(argv).not.toContain(marker);
+          expect(argv).not.toContain(registerMarker);
+        }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("hands the owner a private startup payload file that it deletes once read", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-argv-secrecy-" });
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-payload-mode-" });
       const state = yield* makeTestState(root);
-      yield* state.save(savedStack(root, "argv-secrecy"));
-      const marker = `argv-secrecy-password-${root.split("/").at(-1)}`;
-      const requestedCreations: ReadonlyArray<ServiceCreationInput> = [
-        {
-          service: "database",
-          config: {
-            version: "17",
-            databasePassword: Redacted.make(marker),
-            jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
-            jwtExpiry: 3600,
-          },
-          endpoints: { sql: { port: "auto" } },
-        },
-      ];
+      const ownerDir = path.dirname(state.ownerLog("stack"));
+      yield* state.save(savedStack(root, "payload-mode"));
       const access = yield* launchHost(state, {
         stateRoot: root,
         cacheRoot: root,
         stackId: "stack",
         entrypoint: fixtureEntrypoint,
-        requestedCreations,
+        register: savedStack(root, "payload-mode"),
       });
-      yield* Effect.sync(() => {
-        expect(processCommandLine(access.endpoint.pid)).not.toContain(marker);
+      yield* Effect.gen(function* () {
+        // The fixture records the mode it observed when it read the file.
+        const observed = yield* fs.readFileString(path.join(root, "payload-mode"));
+        if (process.platform !== "win32") expect(observed).toBe("600");
+        expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
       }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

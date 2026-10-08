@@ -609,8 +609,9 @@ describe("experimental stack start native lifecycle", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-n2-replan-" });
         yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
-        // Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
-        const fixedPort = 24_530;
+        // Below the native backend range (10000-19999), the automatic public range (20000-32767)
+        // and every OS ephemeral range, so no concurrent stack claim or outbound socket holds it.
+        const fixedPort = 8_915;
         const locations = (r: string) => ({
           stateRoot: path.join(r, "stacks"),
           cacheRoot: path.join(r, "cache"),
@@ -651,13 +652,13 @@ describe("experimental stack start native lifecycle", () => {
             const statusAfter = yield* restAfter.status;
             const portAfter = statusAfter.endpoints.find(({ name }) => name === "http")?.port;
             expect(portAfter).toBeDefined();
-            // Automatic selection can legitimately land back on the old fixed port, so the
-            // meaningful checks are that a replan to automatic actually ran and that its claim
-            // agrees with the live bind, not that the number differs.
+            // The fixed port is outside the automatic range, so the replan to automatic claims a
+            // different number and that claim agrees with the live bind.
             const changes = yield* restarted.startupEndpointChanges;
             const restChange = changes.find((change) => change.service === "rest");
             expect(restChange?.from).toBe(fixedPort);
             expect(restChange?.to).toBe(portAfter);
+            expect(restChange?.to).not.toBe(fixedPort);
           }),
           Effect.gen(function* () {
             const api = yield* StackApi;

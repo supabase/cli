@@ -35,7 +35,8 @@ export const applyEndpointReplan = Effect.fn("EndpointReplan.apply")(function* (
   requested: ReadonlyArray<ServiceCreationInput>,
 ) {
   const plan = planEndpointReplan(saved, requested);
-  if (plan === undefined || plan.changes.length === 0) return undefined;
+  if (plan === undefined || (plan.changes.length === 0 && !plan.releasesSharedApi))
+    return undefined;
 
   const changed = yield* Effect.forEach(plan.changes, (change) =>
     ports.assigned(saved.id, change.key).pipe(
@@ -59,10 +60,12 @@ export const applyEndpointReplan = Effect.fn("EndpointReplan.apply")(function* (
 
   // Release before saving: a failure between the two leaves the old intent and no row, which
   // the next start re-plans again, never a new intent that an old row contradicts.
-  yield* Effect.forEach(plan.changes, (change) => ports.release(saved.id, change.key), {
-    discard: true,
-  });
-  yield* state.withLock(state.save(replanned));
+  const releasedKeys = new Set([
+    ...plan.changes.map((change) => change.key),
+    ...(plan.releasesSharedApi ? ["api"] : []),
+  ]);
+  yield* Effect.forEach(releasedKeys, (key) => ports.release(saved.id, key), { discard: true });
+  if (plan.changes.length > 0) yield* state.withLock(state.save(replanned));
   yield* Effect.annotateCurrentSpan({ "stack.endpoint_changes": changed.length });
 
   return {

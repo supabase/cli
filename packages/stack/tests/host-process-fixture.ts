@@ -15,7 +15,7 @@ import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture owns inherited readiness and release descriptors.
 import { closeSync, createReadStream, writeSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- consumes its own startup payload file the way the real consumer does.
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { currentRelease, launchHost, authorizes, type HostEndpoint } from "../src/HostProcess.ts";
 import { bindControl } from "../src/StackHost.ts";
 import * as StackNamespace from "../src/StackNamespace.ts";
@@ -57,6 +57,8 @@ if (stateRoot === undefined || stackId === undefined)
  */
 const payloadFile = fourth !== undefined && existsSync(fourth) ? fourth : undefined;
 if (payloadFile !== undefined) {
+  // Tests read this marker to assert the payload file's permissions at the moment it was read.
+  writeFileSync(`${stateRoot}/payload-mode`, (statSync(payloadFile).mode & 0o777).toString(8));
   readFileSync(payloadFile, "utf8");
   try {
     unlinkSync(payloadFile);

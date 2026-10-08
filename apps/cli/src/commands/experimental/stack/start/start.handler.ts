@@ -540,16 +540,26 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ),
         );
       });
-    // The saved stack's owner is not running, so its requested creations travel into the owner's
-    // own startup: it re-plans and commits a changed endpoint's port while it alone holds the
-    // stack's lease, before it registers endpoint namespaces from the saved state. A concurrent
-    // start attaches to whichever owner wins that race instead of re-planning again. A running
-    // owner already bound its endpoints at its own startup and keeps today's behavior of applying
-    // endpoint changes only after stop and start.
+    // The requested creations travel into the owner's own startup: a freshly spawned owner
+    // re-plans and commits a changed endpoint's port while it alone holds the stack's lease,
+    // before it registers endpoint namespaces from the saved state. An owner that is already live
+    // ignores them and keeps applying endpoint changes only after stop and start, so the liveness
+    // observed above never decides whether a replacement owner that wins a stop race re-plans. A
+    // configuration that cannot resolve only fails a start whose owner was not running.
+    const resolveForReplan = (stackId: string) =>
+      Effect.gen(function* () {
+        const loaded = configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
+        return yield* resolveRequested(stackId, loaded.config);
+      });
     const requestedForReplan =
-      target.id !== undefined && !target.hostRunning && configBeforeCreate !== undefined
-        ? yield* resolveRequested(target.id, configBeforeCreate.config)
-        : undefined;
+      target.id === undefined
+        ? undefined
+        : target.hostRunning
+          ? yield* resolveForReplan(target.id).pipe(
+              Effect.option,
+              Effect.map(Option.getOrUndefined),
+            )
+          : yield* resolveForReplan(target.id);
     const startupComplete = yield* Ref.make(false);
     const stack = yield* Effect.acquireRelease(
       target.id === undefined

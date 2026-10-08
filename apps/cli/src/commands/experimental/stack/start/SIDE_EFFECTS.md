@@ -172,11 +172,10 @@ releases the changed endpoints' port registry rows, and claims the new ports thr
 endpoint binding. A requested fixed port that is taken fails the start with the usual port
 conflict; the saved intent stays as requested, the old automatic row stays released, and nothing is
 rolled back, so fixing the configuration and starting again succeeds. A concurrent start attaches
-to whichever owner wins the lease instead of re-planning again. If the saved stack's owner exits
-between this command's liveness check and the moment it opens the stack, the freshly spawned
-replacement owner boots without the requested creations and this start falls back to today's
-rejection; every later start sees that replacement owner as running and skips the re-plan too.
-Recovering means: stop the stack, then start it again. Text
+to whichever owner wins the lease instead of re-planning again. The requested creations are passed
+whenever the stack is saved, whatever liveness this command observed first: an owner that is
+already live ignores them, leaves no payload file and re-plans nothing, and a replacement owner
+that starts after the previous one exited re-plans them. Text
 output prints one line per changed endpoint naming its old and new port; JSON and stream-json output
 add the same changes to the success payload. Any other incompatible path blocks the re-plan for the
 whole composition, even for a member whose own change is purely a changed endpoint: a changed

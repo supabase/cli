@@ -26,9 +26,10 @@ import {
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const cacheRoot = testArtifactCacheRoot;
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
-const FIXED_STUDIO_PORT = 24_391;
-const FIXED_MAIL_PORT = 24_392;
+// Below the native backend range (10000-19999), the automatic public range (20000-32767) and every
+// OS ephemeral range, so neither another stack's claim nor an outbound socket can already hold them.
+const FIXED_STUDIO_PORT = 8_911;
+const FIXED_MAIL_PORT = 8_912;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {

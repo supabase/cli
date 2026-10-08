@@ -234,3 +234,21 @@ it("does not let an excluded sibling's stale fixed port mask a shared endpoint's
     },
   ]);
 });
+
+it("releases the shared listener's automatic claim when another sharing service takes a fixed port", () => {
+  const saved: Pick<SavedStack, "instances" | "composition"> = {
+    instances: [
+      {
+        id: "auth-1",
+        creation: { service: "auth", config: {}, endpoints: { http: { port: "auto" } } },
+      },
+    ],
+    composition: { members: [{ id: "auth-1", activation: "eager" }], dependencies: [] },
+  };
+  // Auth is excluded from this start and REST takes the config's fixed [api] port.
+  const requested: ReadonlyArray<ServiceCreation> = [
+    { service: "rest", config: {}, endpoints: { http: { port: 8_911 } } },
+  ];
+  expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
+  expect(planEndpointReplan(saved, [])).toBeUndefined();
+});

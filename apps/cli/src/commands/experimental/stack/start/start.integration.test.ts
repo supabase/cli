@@ -1486,7 +1486,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not re-plan endpoints while the stack is already running", () =>
+  it.live("passes requested creations to a live owner, which ignores them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-running-no-replan-" });
@@ -1503,23 +1503,114 @@ describe("experimental stack start", () => {
         'project_id = "running-no-replan"\n[api]\nport = 54999\n',
       );
       // A fully running stack reports "already running" and returns before ever comparing the
-      // saved composition against the request, so a changed endpoint neither re-plans nor
-      // rejects; this layer dies if a running stack ever passed requested creations into `open`,
-      // which only a stopped stack's re-plan does.
+      // saved composition against the request. The live owner ignores the requested creations
+      // `open` is handed, so the changed endpoint neither re-plans nor rejects.
+      const requested: Array<unknown> = [];
       const base = layers(root, fixture);
       const api = Layer.succeed(StackApi, {
         create: () => Effect.die("unused"),
-        open: (options) =>
-          options.requestedCreations === undefined
-            ? Effect.succeed(fixture.stack)
-            : Effect.die("a running stack must not pass requested creations to re-plan"),
+        open: (options) => {
+          requested.push(options.requestedCreations);
+          return Effect.succeed(fixture.stack);
+        },
         discover: () => Effect.succeed([]),
         find: () => Effect.die("identity not used"),
         findDeleted: () => Effect.die("identity not used"),
       });
       const result = yield* stackStart(flags()).pipe(Effect.provide(Layer.merge(base, api)));
       expect(result).toBe(fixture.stack.id);
+      expect(requested).toEqual([expect.any(Array)]);
       expect(fixture.composed).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("re-plans when the owner it observed running is gone by the time the stack opens", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-owner-gone-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "owner-gone"\n');
+      const onlyRest = [
+        "auth",
+        "realtime",
+        "storage",
+        "functions",
+        "studio",
+        "mail",
+        "analytics",
+        "pooler",
+      ];
+      const fixture = fakeStack();
+      yield* stackStart(flags(onlyRest)).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "owner-gone"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+      // The resolver observed a live owner; a concurrent stop finished before `open`, so the
+      // fake `open` spawns a fresh owner that re-plans the requested creations.
+      const staleSnapshot = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.succeed({
+            projectRoot: root,
+            id: fixture.stack.id,
+            runtime: "native" as const,
+            hostRunning: true,
+          }),
+      });
+      const output = mockOutput();
+      yield* stackStart(flags(onlyRest)).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture, output), staleSnapshot)),
+      );
+
+      expect(output.messages.map(({ message }) => message)).toContain("api: 23457 → 54999");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("adds endpoint_changes to the json and stream-json success payloads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const onlyRest = [
+        "auth",
+        "realtime",
+        "storage",
+        "functions",
+        "studio",
+        "mail",
+        "analytics",
+        "pooler",
+      ];
+      const expected = [{ endpoint: "api", from: 23457, to: 54999 }];
+      const prepare = (prefix: string) =>
+        Effect.gen(function* () {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "payload"\n');
+          const fixture = fakeStack();
+          yield* stackStart(flags(onlyRest)).pipe(Effect.provide(layers(root, fixture)));
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            'project_id = "payload"\n[api]\nport = 54999\n',
+          );
+          yield* fixture.stack.composition.stop;
+          return { root, fixture };
+        });
+
+      const json = yield* prepare("stack-start-changes-json-");
+      const output = mockOutput({ format: "json" });
+      yield* stackStart(flags(onlyRest)).pipe(
+        Effect.provide(layers(json.root, json.fixture, output)),
+      );
+      expect(output.messages).toContainEqual(
+        expect.objectContaining({ data: expect.objectContaining({ endpoint_changes: expected }) }),
+      );
+
+      const stream = yield* prepare("stack-start-changes-stream-json-");
+      const { layer, stdio } = jsonErrorLayers(stream.root, stream.fixture, "stream-json");
+      yield* stackStart(flags(onlyRest)).pipe(Effect.provide(layer));
+      const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
+      expect(event.data).toMatchObject({ endpoint_changes: expected });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

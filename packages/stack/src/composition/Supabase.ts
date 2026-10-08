@@ -392,6 +392,11 @@ interface EndpointPortChange {
 
 interface EndpointReplan {
   readonly changes: ReadonlyArray<EndpointPortChange>;
+  /**
+   * Whether the shared "api" listener's registry row must be released although no saved member
+   * carries the change: a fixed port is requested that the saved members' listener never held.
+   */
+  readonly releasesSharedApi: boolean;
   /** Each changed member's requested endpoint intents. */
   readonly endpointsByInstance: ReadonlyMap<string, unknown>;
 }
@@ -413,9 +418,21 @@ export const planEndpointReplan = (
   const incompatibleCount = planned.filter(
     (entry) => entry.member && entry.change === "incompatible",
   ).length;
-  if (incompatibleCount === 0) return undefined;
-
   const sharedPort = sharedApiPortFor(saved, requested, planOptions);
+  const savedMemberIds = new Set(saved.composition.members.map(({ id }) => id));
+  const savedSharedPorts = fixedApiPorts(
+    saved.instances.filter(({ id }) => savedMemberIds.has(id)).map(({ creation }) => creation),
+  );
+  // A new sharing member requesting a fixed port the saved members' listener did not hold finds
+  // the listener's old automatic row, which a fixed claim then rejects as a different assignment.
+  const releasesSharedApi =
+    sharedPort !== undefined &&
+    requested.some(sharesApiEndpoint) &&
+    !(savedSharedPorts.size === 1 && savedSharedPorts.has(sharedPort));
+  if (incompatibleCount === 0)
+    return releasesSharedApi
+      ? { changes: [], releasesSharedApi, endpointsByInstance: new Map() }
+      : undefined;
   const changes: Array<EndpointPortChange> = [];
   const endpointsByInstance = new Map<string, unknown>();
 
@@ -461,7 +478,7 @@ export const planEndpointReplan = (
     seenKeys.add(change.key);
     return true;
   });
-  return { changes: uniqueChanges, endpointsByInstance };
+  return { changes: uniqueChanges, releasesSharedApi, endpointsByInstance };
 };
 
 const compositionError = (message: string, cause?: unknown) =>
