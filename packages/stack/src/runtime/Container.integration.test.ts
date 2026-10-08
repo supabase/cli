@@ -91,6 +91,26 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("classifies a pull through a refused Podman socket as an unreachable engine", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const token = yield* (yield* Crypto.Crypto).randomUUIDv4;
+      const spawner = makePullFailureSpawner(
+        delegate,
+        yield* Ref.make(false),
+        "Error: unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: connection refused",
+      );
+      const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
+        Effect.flatMap((runtime) =>
+          runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
+        ),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
+      expect(failureKind(result.cause)).toBe("engine-unavailable");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("keeps missing image pull failures observable", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1704,9 +1724,13 @@ const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: strin
     return digest;
   });
 
+const registryRefusedStderr =
+  "pull rejected by cached-image regression: dial tcp 127.0.0.1:9: connect: connection refused";
+
 const makePullFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   pullAttempted: Ref.Ref<boolean>,
+  stderr = registryRefusedStderr,
 ) =>
   ChildProcessSpawner.make((command) => {
     if (
@@ -1719,10 +1743,7 @@ const makePullFailureSpawner = (
         return yield* delegate.spawn(
           ChildProcess.make(
             process.execPath,
-            [
-              "-e",
-              "console.error('pull rejected by cached-image regression: dial tcp 127.0.0.1:9: connect: connection refused'); process.exit(73)",
-            ],
+            ["-e", `console.error(${JSON.stringify(stderr)}); process.exit(73)`],
             { stdin: "ignore" },
           ),
         );

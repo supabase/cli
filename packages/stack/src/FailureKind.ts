@@ -120,7 +120,12 @@ const classify = (
       return value.reason === "runtime-unavailable" ? "engine-unavailable" : undefined;
     case "ContainerError": {
       const inner = visit(value.cause, "engine");
-      if (value.operation === "pull" && inner !== "engine-unavailable") return "image-pull";
+      if (
+        value.operation === "pull" &&
+        inner !== "engine-unavailable" &&
+        inner !== "engine-timeout"
+      )
+        return "image-pull";
       return inner ?? "engine-command";
     }
     case "ContainerLaunchError":

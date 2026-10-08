@@ -68,6 +68,15 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
     "engine-timeout",
   ],
   [
+    "a pull that timed out as engine-timeout rather than image-pull",
+    new ContainerError({
+      operation: "pull",
+      message: "timed out",
+      cause: new Cause.TimeoutError(),
+    }),
+    "engine-timeout",
+  ],
+  [
     "any other engine failure as engine-command",
     new ContainerError({ operation: "rm", message: "removal failed" }),
     "engine-command",

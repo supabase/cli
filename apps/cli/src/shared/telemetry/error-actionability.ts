@@ -962,7 +962,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
  * own declaration, else its external adapter.
  */
 export function causeDeclaration(cause: unknown): CliErrorActionabilityDeclaration | undefined {
-  // Wrapper getters call back into this, so nesting shares the classifier's depth budget.
+  // Wrapper getters call back into this; its own counter bounds that nesting at MAX_CAUSE_DEPTH.
   if (causeDeclarationDepth >= MAX_CAUSE_DEPTH) return undefined;
   causeDeclarationDepth++;
   try {
