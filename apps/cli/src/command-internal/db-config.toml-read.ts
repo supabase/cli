@@ -473,7 +473,7 @@ const AUTH_EMAIL_NOTIFICATION_FIELDS = ["enabled", "subject", "content_path", "c
  * union, so a typo'd dotted key is a compile error instead of a
  * silently-always-false gate.
  */
-export type RemoteOverridableKey =
+type RemoteOverridableKey =
   | (typeof ENV_OVERRIDABLE_KEYS)[number]
   | `auth.external.${string}.${(typeof AUTH_EXTERNAL_PROVIDER_FIELDS)[number]}`
   | `auth.email.template.${string}.${(typeof AUTH_EMAIL_TEMPLATE_FIELDS)[number]}`
@@ -484,7 +484,7 @@ export type RemoteOverridableKey =
  * resolvers into one helper, typed against {@link RemoteOverridableKey} so a
  * typo'd key is a compile error.
  */
-export function makeRemoteWins(keys: ReadonlySet<string>): (key: RemoteOverridableKey) => boolean {
+function makeRemoteWins(keys: ReadonlySet<string>): (key: RemoteOverridableKey) => boolean {
   return (key) => keys.has(key);
 }
 

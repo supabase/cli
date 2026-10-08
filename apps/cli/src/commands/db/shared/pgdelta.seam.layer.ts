@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
@@ -80,6 +81,7 @@ export const declarativeSeamLayer = Layer.effect(
     const experimentalFlag = yield* ExperimentalFlag;
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
+    const cliConfigValues = yield* CliConfigValues;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -94,6 +96,7 @@ export const declarativeSeamLayer = Layer.effect(
             Effect.provideService(ExperimentalFlag, experimentalFlag),
             Effect.provideService(CliArgs, cliArgs),
             Effect.provideService(StackCatalogSetup, stackCatalogSetup),
+            Effect.provideService(CliConfigValues, cliConfigValues),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({

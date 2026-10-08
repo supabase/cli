@@ -33,6 +33,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -401,6 +402,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
+    cliConfigValuesAmbientTestLayer,
     out.layer,
     telemetry.layer,
     cache.layer,

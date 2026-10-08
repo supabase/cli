@@ -1,18 +1,24 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { loadLocalProjectContext } from "./local-project-context.ts";
+import { mockOutput, processEnvLayer } from "../../tests/helpers/mocks.ts";
+import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { sanitizeProjectId } from "./docker-ids.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
 
 /** Stands in for the whole Docker-client env-key set, which a project dotenv file never reaches. */
 const DOCKER_HOST_KEY = "DOCKER_HOST";
 
 /** Unlike Docker-client keys, this one is read at container-spawn time, so a project dotenv file can still set it. */
 const BITBUCKET_CLONE_DIR_KEY = "BITBUCKET_CLONE_DIR";
+
+const REF = "abcdefghijklmnopqrst";
 
 function writeDotEnv(workdir: string, contents: string): void {
   mkdirSync(workdir, { recursive: true });
@@ -25,78 +31,85 @@ function writeConfigToml(workdir: string, contents: string): void {
   writeFileSync(join(supabaseDir, "config.toml"), contents);
 }
 
+/** Runs against a shell environment of exactly `env`, with the real snapshot service. */
+const layerWithShellEnv = (env: Readonly<Record<string, string>> = {}) =>
+  Layer.fresh(
+    Layer.mergeAll(
+      BunServices.layer,
+      runtimeInfoLayer,
+      cliConfigValuesLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            Layer.succeed(CliConfigFlagInputs, new Map()),
+          ),
+        ),
+      ),
+      processEnvLayer(env),
+    ),
+  );
+
 const tempRoot = useTempWorkdir("supabase-project-context-");
 
 describe("loadLocalProjectContext", () => {
-  const previousDockerHost = process.env[DOCKER_HOST_KEY];
-  const previousBitbucketCloneDir = process.env[BITBUCKET_CLONE_DIR_KEY];
-  const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
+  it.effect("prefers SUPABASE_PROJECT_ID over a matched [remotes.<ref>]'s project_id", () => {
+    const workdir = tempRoot.current;
+    writeConfigToml(
+      workdir,
+      ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${REF}"`, ""].join("\n"),
+    );
 
-  afterEach(() => {
-    if (previousDockerHost === undefined) delete process.env[DOCKER_HOST_KEY];
-    else process.env[DOCKER_HOST_KEY] = previousDockerHost;
-    if (previousBitbucketCloneDir === undefined) delete process.env[BITBUCKET_CLONE_DIR_KEY];
-    else process.env[BITBUCKET_CLONE_DIR_KEY] = previousBitbucketCloneDir;
-    if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
-    else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
+    return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
+      Effect.map((context) => {
+        expect(context.loaded.appliedRemote).toBe("prod");
+        expect(context.projectId).toBe("local");
+      }),
+      Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "local" })),
+    );
   });
 
-  it.effect(
-    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
-    () => {
-      process.env["SUPABASE_PROJECT_ID"] = "local";
-      const ref = "abcdefghijklmnopqrst";
-      const workdir = tempRoot.current;
-      writeConfigToml(
-        workdir,
-        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
-      );
+  it.effect("names the project after the workdir, not the ref, when no project_id is set", () => {
+    const workdir = tempRoot.current;
+    writeConfigToml(workdir, "");
 
-      return loadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
-        Effect.map((context) => {
-          expect(context.loaded?.appliedRemote).toBe("prod");
-          expect(context.projectId).toBe(ref);
-        }),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
-      );
-    },
-  );
+    return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
+      Effect.map((context) => {
+        expect(context.loaded.appliedRemote).toBeUndefined();
+        expect(context.projectId).toBe(sanitizeProjectId(basename(workdir)));
+      }),
+      Effect.provide(layerWithShellEnv()),
+    );
+  });
 
-  it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
-    process.env["SUPABASE_PROJECT_ID"] = "env-project";
-    const ref = "abcdefghijklmnopqrst";
+  it.effect("applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
     const workdir = tempRoot.current;
     writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
 
-    return loadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
+    return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.loaded?.appliedRemote).toBeUndefined();
+        expect(context.loaded.appliedRemote).toBeUndefined();
         expect(context.projectId).toBe("env-project");
       }),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "env-project" })),
+    );
+  });
+
+  it.effect("does not install a project .env's DOCKER_HOST into process.env", () => {
+    const workdir = tempRoot.current;
+    writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
+
+    return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
+      Effect.map(() => {
+        expect(process.env[DOCKER_HOST_KEY]).toBeUndefined();
+      }),
+      Effect.provide(layerWithShellEnv()),
     );
   });
 
   it.effect(
-    "does NOT install a project .env's DOCKER_HOST into process.env, matching Go's Docker client being frozen at binary startup, before godotenv.Load ever runs",
+    "leaves an already-set shell DOCKER_HOST untouched by a conflicting project .env",
     () => {
-      delete process.env[DOCKER_HOST_KEY];
-      const workdir = tempRoot.current;
-      writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
-
-      return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[DOCKER_HOST_KEY]).toBeUndefined();
-        }),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
-      );
-    },
-  );
-
-  it.effect(
-    "leaves an already-set shell DOCKER_HOST untouched regardless of a conflicting project .env value",
-    () => {
-      process.env[DOCKER_HOST_KEY] = "tcp://real-shell-host:2375";
       const workdir = tempRoot.current;
       writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
 
@@ -104,13 +117,12 @@ describe("loadLocalProjectContext", () => {
         Effect.map(() => {
           expect(process.env[DOCKER_HOST_KEY]).toBe("tcp://real-shell-host:2375");
         }),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+        Effect.provide(layerWithShellEnv({ [DOCKER_HOST_KEY]: "tcp://real-shell-host:2375" })),
       );
     },
   );
 
   it.effect("keeps a project's Bitbucket marker in its resolved environment", () => {
-    delete process.env[BITBUCKET_CLONE_DIR_KEY];
     const workdir = tempRoot.current;
     writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
 
@@ -121,21 +133,36 @@ describe("loadLocalProjectContext", () => {
         );
         expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBeUndefined();
       }),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(layerWithShellEnv()),
     );
   });
 
-  it.effect("keeps the shell Bitbucket marker ahead of the project value", () => {
-    process.env[BITBUCKET_CLONE_DIR_KEY] = "/real-shell-clone-dir";
+  it.effect(
+    "leaves a shell-set key out of projectEnvValues so the shell value stays the source",
+    () => {
+      const workdir = tempRoot.current;
+      writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+
+      return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
+        Effect.map((context) => {
+          expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBeUndefined();
+          expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
+        }),
+        Effect.provide(layerWithShellEnv({ [BITBUCKET_CLONE_DIR_KEY]: "/real-shell-clone-dir" })),
+      );
+    },
+  );
+
+  it.effect("holds only project .env file values, never host environment variables", () => {
     const workdir = tempRoot.current;
-    writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+    writeConfigToml(workdir, "");
+    writeFileSync(join(workdir, "supabase", ".env"), "FROM_FILE=file-value\n");
 
     return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
       Effect.map((context) => {
-        expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
-        expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
+        expect(context.projectEnvValues).toEqual({ FROM_FILE: "file-value" });
       }),
-      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      Effect.provide(layerWithShellEnv({ FROM_SHELL: "shell-value" })),
     );
   });
 });

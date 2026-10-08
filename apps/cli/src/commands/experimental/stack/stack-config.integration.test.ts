@@ -14,15 +14,16 @@ import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
 } from "../../../telemetry/command-telemetry-attributes.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
   );
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
   createStackConfigProject(contents, options).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
   );
 
 const publicJwkSchema = Schema.Struct({

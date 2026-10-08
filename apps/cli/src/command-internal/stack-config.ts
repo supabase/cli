@@ -11,6 +11,7 @@ import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stac
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import type { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
@@ -103,7 +104,7 @@ interface StackStartConfig {
 type StackConfigEffect = Effect.Effect<
   StackStartConfig,
   StackConfigError,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
 >;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>

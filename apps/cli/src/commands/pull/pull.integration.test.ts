@@ -17,6 +17,7 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { cliConfigValuesAmbientTestLayer } from "../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
 import {
   mockContextualAnalytics,
@@ -650,6 +651,7 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    cliConfigValuesAmbientTestLayer,
     buildTestRuntime({
       out: { layer: finalOutputLayer },
       api,

@@ -40,6 +40,7 @@ import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { servicesCommand } from "./services.command.ts";
 import { services } from "./services.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
 
@@ -100,6 +101,7 @@ function setup(
     telemetry,
     cachedRefs,
     layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       FetchHttpClient.layer,
       mockRuntimeInfo({
@@ -264,6 +266,7 @@ describe("services", () => {
       const analytics = mockAnalytics();
       const args = ["services"];
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         BunServices.layer,
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),

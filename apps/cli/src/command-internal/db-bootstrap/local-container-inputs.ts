@@ -13,6 +13,7 @@ import { HttpClient } from "effect/unstable/http";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/unstable/cli";
 
+import type { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveExperimentalWithProjectEnv } from "../global-flags.ts";
@@ -81,10 +82,7 @@ export const buildLocalDbContainerInputs = (
   // so the shadow's container-spec fields reflect the matching `[remotes.<ref>]` override.
   // `db start`/`db reset` never pass this.
   projectRef?: string,
-  // Which keys the caller's own `readDbToml(..., ref)` read set from the matched remote block,
-  // so a remote-set field isn't overridden again by a conflicting `SUPABASE_*` env var.
-  // `db start`/`db reset` never pass a `projectRef`, so they never pass this either.
-  remoteOverrideKeys?: ReadonlySet<string>,
+  _remoteOverrideKeys?: ReadonlySet<string>,
   // `db start`'s handler already loads a {@link LocalProjectContext} before calling this
   // function (to validate config ahead of its own "already running" short-circuit). When
   // provided, this function skips its own reload — `@supabase/config`'s `loadCliConfig` prints
@@ -101,6 +99,7 @@ export const buildLocalDbContainerInputs = (
   | GlobalFlag.Setting.Identifier<"experimental">
   | CliArgs
   | HttpClient.HttpClient
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
@@ -114,22 +113,14 @@ export const buildLocalDbContainerInputs = (
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
     const values = yield* Effect.try({
-      try: () =>
-        resolveLocalConfigValues(
-          config,
-          hostname,
-          workdir,
-          projectEnvValues,
-          loaded?.document,
-          remoteOverrideKeys,
-        ),
+      try: () => resolveLocalConfigValues(config, hostname, workdir, undefined, loaded.document),
       catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
     });
 
     const bootstrapConfig = yield* resolveDbBootstrapConfig(
       fs,
       path,
-      { config, projectEnvValues, workdir, remoteOverrideKeys },
+      { config, workdir },
       mapError,
     );
 
@@ -157,11 +148,7 @@ export const buildLocalDbContainerInputs = (
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
         orioledb_version: bootstrapConfig.orioledbVersion,
-        settings: resolveDbSettingsEnvOverrides(
-          config.db.settings,
-          projectEnvValues,
-          remoteOverrideKeys,
-        ),
+        settings: resolveDbSettingsEnvOverrides(config.db.settings),
       },
       experimental: {
         ...config.experimental,
@@ -212,22 +199,12 @@ export const buildLocalDbContainerInputs = (
       dbUrl: values.dbUrl,
       jwtSecret: values.jwtSecret,
       // Lazy: only evaluated when `runFreshDbSetup` reaches realtime setup and it's enabled.
-      jwks: resolveLocalJwks(
-        config,
-        workdir,
-        values.jwtSecret,
-        projectEnvValues,
-        remoteOverrideKeys,
-      ).pipe(
+      jwks: resolveLocalJwks(config, workdir, values.jwtSecret).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.mapError((cause) => mapError(cause.message)),
       ),
       apiUrl: values.apiUrl,
-      authExternalUrl: resolveAuthExternalUrl(
-        loaded?.document,
-        projectEnvValues,
-        remoteOverrideKeys,
-      ),
+      authExternalUrl: resolveAuthExternalUrl(loaded.document),
       siteUrl: values.authSiteUrl,
       anonKey: values.anonKey,
       serviceRoleKey: values.serviceRoleKey,

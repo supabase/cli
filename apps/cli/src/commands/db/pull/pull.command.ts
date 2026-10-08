@@ -6,6 +6,8 @@ import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPull } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   name: Argument.string("migration name").pipe(
@@ -104,4 +106,6 @@ export const dbPullCommand = Command.make("pull", config).pipe(
     ),
   ),
   Command.provide(dbPullRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

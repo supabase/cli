@@ -6,6 +6,8 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
 import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
 import { dbRemoteCommit } from "./commit.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -55,4 +57,6 @@ export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
     ),
   ),
   Command.provide(dbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

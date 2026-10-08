@@ -10,6 +10,7 @@ import {
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -148,6 +149,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const httpClient = yield* HttpClient.HttpClient;
     const cliSettings = yield* CommandSettings;
     const stackApi = yield* StackApi;
+    const cliConfigValues = yield* CliConfigValues;
 
     const runtimeWith = (outputService: typeof Output.Service) => {
       const deps = Layer.mergeAll(
@@ -166,6 +168,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(StackApi, stackApi),
+        Layer.succeed(CliConfigValues, cliConfigValues),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));

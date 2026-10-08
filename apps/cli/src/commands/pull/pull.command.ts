@@ -8,6 +8,8 @@ import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { pull } from "./pull.handler.ts";
 import { pullRuntimeLayer } from "./pull.layers.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 
 const config = {
   // Accepts either a project ref or a branch name of the linked project — no separate `--target`.
@@ -84,4 +86,6 @@ export const pullCommand = Command.make("pull", config).pipe(
   ]),
   Command.withHandler(pullHandler),
   Command.provide(pullRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -18,6 +18,7 @@ import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-snapshot-layer.ts";
 
 const stackId = "a".repeat(64);
 type StatusOutputFormat = "text" | "json" | "stream-json";
@@ -263,6 +264,7 @@ const runStatus = (input: {
       out.layer,
       telemetry.layer,
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
+      cliConfigValuesTestLayer,
       BunServices.layer,
       runtimeInfoLayer,
     );

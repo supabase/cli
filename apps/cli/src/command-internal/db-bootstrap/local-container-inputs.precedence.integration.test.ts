@@ -5,6 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { goldenJson, useShellEnvPin } from "../../../tests/helpers/config-goldens.ts";
@@ -84,35 +85,35 @@ interface Fixture {
 const FIXTURES: ReadonlyArray<Fixture> = [
   {
     golden: "no-overrides",
-    name: "shadow container inputs for a linked ref with no overrides use the base config (pre-refactor)",
+    name: "shadow container inputs for a linked ref with no overrides use the base config",
     config: BASE_CONFIG,
   },
   {
     golden: "matched-remote",
-    name: "shadow container inputs apply a matched remote's port, schemas and auth settings (pre-refactor)",
+    name: "shadow container inputs apply a matched remote's port, schemas and auth settings",
     config: BASE_CONFIG + REMOTE_BLOCK,
   },
   {
     golden: "shell-env",
-    name: "shadow container inputs follow shell env over base config (pre-refactor)",
+    name: "shadow container inputs follow shell env over base config",
     config: BASE_CONFIG,
     shellEnv: SHELL_ENV,
   },
   {
     golden: "project-dotenv",
-    name: "shadow container inputs follow supabase/.env over base config (pre-refactor)",
+    name: "shadow container inputs follow supabase/.env over base config",
     config: BASE_CONFIG,
     dotenv: DOTENV,
   },
   {
     golden: "matched-remote-with-project-id-env",
-    name: "matched remote project_id beats SUPABASE_PROJECT_ID for the shadow container naming (pre-refactor)",
+    name: "SUPABASE_PROJECT_ID beats a matched remote's project_id for the shadow container naming",
     config: BASE_CONFIG + REMOTE_BLOCK,
     shellEnv: { SUPABASE_PROJECT_ID: "shell-project-id" },
   },
   {
     golden: "matched-remote-with-shell-env",
-    name: "matched remote beats conflicting shell env in shadow container inputs while unset keys follow env (pre-refactor)",
+    name: "shell env beats a matched remote in shadow container inputs while unset keys follow the remote",
     config: BASE_CONFIG + REMOTE_BLOCK,
     shellEnv: SHELL_ENV,
   },
@@ -141,6 +142,7 @@ describe("local container inputs precedence goldens", () => {
 
         const layer = Layer.mergeAll(
           BunServices.layer,
+          cliConfigValuesTestLayer,
           mockRuntimeInfo({ platform: "linux" }),
           Layer.succeed(CliArgs, { args: ["db", "diff"] }),
           Layer.succeed(ExperimentalFlag, false),

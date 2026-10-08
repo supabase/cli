@@ -1,6 +1,8 @@
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -78,4 +80,6 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
   // `stdinLayer`: the `--prune` confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["functions", "deploy"]), stdinLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );
