@@ -575,12 +575,15 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   );
 });
 
-/** Connects to the stack's live owner, or spawns one and attaches to whichever owner wins the lease. */
+/**
+ * Connects to the stack's live owner, or spawns one and attaches to whichever owner wins the lease.
+ * `launched` is true only when this call spawned the owner it reached.
+ */
 export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   state: StateInterface,
   options: LaunchOptions,
 ): Effect.fn.Return<
-  HostAccess,
+  { readonly access: HostAccess; readonly launched: boolean },
   HostProcessError | NamespaceError,
   Scope.Scope | HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
@@ -591,14 +594,16 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
         Effect.map(Option.some),
         Effect.catchIf(hasReason("not-running"), () => Effect.succeed(Option.none())),
       );
-      if (Option.isSome(existing)) return existing.value;
+      if (Option.isSome(existing)) return { access: existing.value, launched: false };
     } else if (
       (yield* state.leased(options.stackId)) &&
       (yield* state.readHolder(options.stackId))?.role === "sweeper"
     )
       return yield* error("startup", "Another owner is sweeping this stack", "sweeping");
     const spawned = yield* spawnOwner(state, options, entrypoint);
-    return spawned._tag === "Ready" ? spawned.access : yield* connectHost(state, options.stackId);
+    return spawned._tag === "Ready"
+      ? { access: spawned.access, launched: true }
+      : { access: yield* connectHost(state, options.stackId), launched: false };
   });
   // A sweeper holds a dead stack's lease for a bounded time; a displaced spawn waits it out.
   return yield* withAttemptCount(

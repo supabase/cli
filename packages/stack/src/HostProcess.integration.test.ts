@@ -279,12 +279,13 @@ it.live("starts exactly one owner for concurrent launchers and attaches the othe
         entrypoint,
       };
       yield* Effect.gen(function* () {
-        const launched = yield* Effect.all(
+        const results = yield* Effect.all(
           [launchHost(state, options), launchHost(state, options), launchHost(state, options)],
           { concurrency: "unbounded" },
         );
-        expect(new Set(launched.map(({ endpoint }) => endpoint.pid)).size).toBe(1);
-        expect(new Set(launched.map(({ endpoint }) => endpoint.port)).size).toBe(1);
+        expect(new Set(results.map(({ access }) => access.endpoint.pid)).size).toBe(1);
+        expect(new Set(results.map(({ access }) => access.endpoint.port)).size).toBe(1);
+        expect(results.filter(({ launched }) => launched)).toHaveLength(1);
       }).pipe(Effect.ensuring(bestEffortShutdownByState(root, state, "stack")));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -329,7 +330,10 @@ it.live("relaunches after shutdown while a foreign listener holds the previous c
           cacheRoot: root,
           stackId: "stack",
           entrypoint: fixtureEntrypoint,
-        }).pipe(Effect.provide(FetchHttpClient.layer)),
+        }).pipe(
+          Effect.map(({ access }) => access),
+          Effect.provide(FetchHttpClient.layer),
+        ),
         bestEffortShutdown(root),
       );
       expect(relaunched.endpoint.pid).not.toBe(endpoint.pid);
@@ -364,7 +368,7 @@ it.live("ignores a stale endpoint record once no process holds the lease", () =>
           cacheRoot: root,
           stackId: "stack",
           entrypoint: fixtureEntrypoint,
-        }),
+        }).pipe(Effect.map(({ access }) => access)),
         bestEffortShutdown(root),
       );
       expect(launched.endpoint.port).not.toBe(unresponsive.port);
@@ -466,7 +470,10 @@ it.live("terminates a detached child when readiness is interrupted", () =>
         cacheRoot: root,
         stackId: "stack",
         entrypoint,
-      }).pipe(Effect.forkChild);
+      }).pipe(
+        Effect.map(({ access }) => access),
+        Effect.forkChild,
+      );
       const pid = yield* markerReady;
       expect(Number.isInteger(pid) && pid > 0).toBe(true);
       expect(() => process.kill(pid, 0)).not.toThrow();
@@ -569,7 +576,10 @@ it.live("waits out a sweeper's hold before spawning the owner of a stack it regi
         cacheRoot: root,
         stackId: "stack",
         register: savedStack(root, "held"),
-      }).pipe(Effect.forkChild({ startImmediately: true }));
+      }).pipe(
+        Effect.map(({ access }) => access),
+        Effect.forkChild({ startImmediately: true }),
+      );
 
       yield* Deferred.await(sweeperSeen);
       expect(yield* fs.exists(state.ownerLog("stack")), "no owner spawned during the hold").toBe(

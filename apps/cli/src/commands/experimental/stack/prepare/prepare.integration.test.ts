@@ -136,6 +136,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
 
   const stack: Stack = {
     id,
+    launchedOwner: false,
     services: {
       create,
       get: () => Effect.succeed(database),

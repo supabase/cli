@@ -9,6 +9,7 @@ import {
   Layer,
   Option,
   Redacted,
+  Result,
   Schema,
   Sink,
   Stdio,
@@ -57,6 +58,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
+import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 
@@ -315,6 +317,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   };
   const stack: Stack = {
     id: "a".repeat(64),
+    launchedOwner: true,
     services: {
       create: <Input extends ServiceCreationInput>(_creation: Input) => Effect.die("unused"),
       get: (id: string) => {
@@ -1909,6 +1912,7 @@ describe("experimental stack start", () => {
             }),
           );
         }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      { timeout: 60_000 },
     );
   }
 
@@ -1945,5 +1949,108 @@ describe("experimental stack start", () => {
           expect(fixture.hostDestroyed).toBe(0);
         }
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "keeps the owner running when a concurrent start that attached to it fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-concurrent-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "concurrent"\n');
+        const stateRoot = `${root}/.supabase/stacks`;
+        const cacheRoot = `${root}/.supabase/cache/stack`;
+        const realApi = yield* StackApi.pipe(
+          Effect.provide(stackApiLayer.pipe(Layer.provide(BunServices.layer))),
+        );
+        const registered = yield* Effect.scoped(
+          realApi.create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" }),
+        );
+        yield* Effect.addFinalizer(() => destroyTestStacks(realApi, stateRoot, cacheRoot));
+
+        const launcher = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, launcher)));
+        const attacher = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, attacher)));
+        const auth = attacher.members.find(({ service }) => service === "auth");
+        if (auth === undefined) return yield* Effect.die("Expected an Auth member");
+        attacher.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+        attacher.setMemberReadiness(
+          auth.id,
+          Effect.fail(
+            new StackError({
+              operation: "service.ready",
+              message: "auth HTTP readiness timed out",
+            }),
+          ),
+        );
+
+        // The real open decides which run spawns the owner; the other attaches to it.
+        const attachedExited = yield* Deferred.make<void>();
+        const launches: Array<boolean> = [];
+        const racingApi = Layer.succeed(
+          StackApi,
+          StackApi.of({
+            ...realApi,
+            open: (options) =>
+              realApi.open(options).pipe(
+                Effect.map((handle) => {
+                  launches.push(handle.launchedOwner);
+                  const fixture = handle.launchedOwner ? launcher : attacher;
+                  return {
+                    ...fixture.stack,
+                    id: handle.id,
+                    launchedOwner: handle.launchedOwner,
+                    stop: handle.stop,
+                    services: {
+                      ...fixture.stack.services,
+                      list: handle.launchedOwner
+                        ? Deferred.await(attachedExited).pipe(
+                            Effect.andThen(fixture.stack.services.list),
+                          )
+                        : fixture.stack.services.list,
+                    },
+                  };
+                }),
+              ),
+          }),
+        );
+        const target = Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({
+              projectRoot: root,
+              id: registered.id,
+              runtime: "native" as const,
+              hostRunning: false,
+            }),
+        });
+        const run = (output: ReturnType<typeof mockOutput>) =>
+          stackStart(flags()).pipe(
+            Effect.scoped,
+            Effect.result,
+            Effect.tap((result) =>
+              Result.isFailure(result) ? Deferred.succeed(attachedExited, undefined) : Effect.void,
+            ),
+            Effect.provide(Layer.mergeAll(layers(root, launcher, output), target, racingApi)),
+          );
+        const outputs = [mockOutput(), mockOutput()];
+
+        const results = yield* Effect.all(outputs.map(run), { concurrency: "unbounded" });
+
+        expect(launches).toHaveLength(2);
+        expect(launches.filter((launched) => launched)).toHaveLength(1);
+        const failures = results.filter(Result.isFailure);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.failure).toBeInstanceOf(StackCommandStartError);
+        expect(results.filter(Result.isSuccess).map(({ success }) => success)).toEqual([
+          registered.id,
+        ]);
+        for (const output of outputs) expect(output.stderrText).not.toContain("Failed to stop");
+        const [found] = yield* realApi.discover({ stateRoot });
+        expect(found?.definition.id).toBe(registered.id);
+        expect(found?.host).toBeDefined();
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    { timeout: 60_000 },
   );
 });

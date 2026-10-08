@@ -1666,6 +1666,7 @@ describe("db start stack backend", () => {
     registered = existing ? [database] : [];
     const stack: Stack = {
       id: stackId,
+      launchedOwner: false,
       services: {
         create: () => Effect.die("unused: composition factory creates database"),
         get: (id: string) =>

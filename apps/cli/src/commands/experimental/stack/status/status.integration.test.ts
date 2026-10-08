@@ -152,6 +152,7 @@ const makeStack = (
   credentialsUnavailable = false,
 ): OpenedStack => ({
   id: stackId,
+  launchedOwner: false,
   services: {
     create: (_creation) => Effect.die("unused"),
     get: (_id) => Effect.die("unused"),

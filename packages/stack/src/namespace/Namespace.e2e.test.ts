@@ -75,7 +75,7 @@ it.live(
 
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const first = yield* launchHost(state, options);
+            const first = (yield* launchHost(state, options)).access;
             expect(yield* state.leased(id)).toBe(true);
 
             const released = yield* watchLeaseRelease(root, id);
@@ -84,13 +84,15 @@ it.live(
             expect(yield* state.leased(id)).toBe(false);
 
             // No file is removed or repaired here; the kernel alone released the dead owner's lease.
-            const second = yield* Effect.acquireRelease(launchHost(state, options), (access) =>
-              shutdownHost(access, true).pipe(
-                Effect.ignore,
-                Effect.andThen(
-                  waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(Effect.ignore),
+            const second = yield* Effect.acquireRelease(
+              launchHost(state, options).pipe(Effect.map(({ access }) => access)),
+              (access) =>
+                shutdownHost(access, true).pipe(
+                  Effect.ignore,
+                  Effect.andThen(
+                    waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(Effect.ignore),
+                  ),
                 ),
-              ),
             );
             expect(second.endpoint.pid).not.toBe(first.endpoint.pid);
             expect(yield* connectHost(state, id)).toEqual(second);

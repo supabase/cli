@@ -120,12 +120,12 @@ const owner = Effect.scoped(
 const launcher = Effect.scoped(
   Effect.gen(function* () {
     const state = yield* makeState(stateRoot);
-    const { endpoint } = yield* launchHost(state, {
+    const { endpoint } = (yield* launchHost(state, {
       stateRoot,
       cacheRoot: cacheRoot ?? stateRoot,
       stackId,
       entrypoint: ownerEntrypoint ?? new URL(import.meta.url).pathname,
-    });
+    })).access;
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(endpoint);
     process.stdout.write(`${encoded}\n`);
   }),

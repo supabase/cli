@@ -29,7 +29,9 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
       Effect.gen(function* () {
         const state = yield* StackNamespace.Service;
         const access = yield* mode === "owner"
-          ? launchHost(state, { stateRoot, cacheRoot: cacheRoot ?? stateRoot, stackId })
+          ? launchHost(state, { stateRoot, cacheRoot: cacheRoot ?? stateRoot, stackId }).pipe(
+              Effect.map(({ access }) => access),
+            )
           : connectHost(state, stackId);
         if (mode === "stop") {
           const refusal = yield* shutdownHost(access, false);

@@ -141,6 +141,7 @@ function generateStackApi(workdir: string) {
   };
   const stack: Stack = {
     id: GENERATE_STACK_ID,
+    launchedOwner: false,
     services: {
       create: unusedStackFn,
       list: Effect.succeed([database]),

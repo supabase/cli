@@ -222,12 +222,12 @@ it.live.skipIf(process.platform === "win32")(
       });
       // The shortened poll interval comes only from this dedicated test entrypoint, through
       // the internal `Context.Reference`; production startup never reads an env var or `Config`.
-      const access = yield* launchHost(state, {
+      const access = (yield* launchHost(state, {
         stateRoot,
         cacheRoot,
         stackId,
         entrypoint: shortRegistrationPollFixture,
-      });
+      })).access;
       const client = yield* ownerClient(access);
       const mail = yield* client.createService({
         service: "mail",
@@ -274,11 +274,11 @@ it.live.skipIf(process.platform === "win32")(
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
       });
-      const reclaimedAccess = yield* launchHost(reclaimedState, {
+      const reclaimedAccess = (yield* launchHost(reclaimedState, {
         stateRoot: reclaimedStateRoot,
         cacheRoot,
         stackId: reclaimedId,
-      });
+      })).access;
       const reclaimedClient = yield* ownerClient(reclaimedAccess);
       const reclaimedMail = yield* reclaimedClient.createService({
         service: "mail",

@@ -247,6 +247,7 @@ const fixture = (
     };
     const stack = {
       id: "a".repeat(64),
+      launchedOwner: false,
       services: {
         list: Effect.succeed(
           options.standaloneProjectRoot === undefined ? [database, functions] : [database],

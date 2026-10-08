@@ -154,7 +154,7 @@ it.live.skipIf(process.platform === "win32")(
 
         yield* state.save(saved(deadId, `${rootA}/dead`, testEngine, "detached"));
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))
-          .endpoint;
+          .access.endpoint;
         const orphan = yield* createOwnedContainer(deadId, dataA);
         const otherRoot = yield* createOwnedContainer(deadId, dataB);
         const deadReleased = yield* watchLeaseRelease(rootA, deadId);
@@ -184,7 +184,9 @@ it.live.skipIf(process.platform === "win32")(
           { concurrency: "unbounded" },
         ).pipe(Effect.forkChild({ startImmediately: true }));
         const next = yield* Effect.acquireRelease(
-          launchHost(state, { stateRoot: rootA, cacheRoot, stackId: nextId }),
+          launchHost(state, { stateRoot: rootA, cacheRoot, stackId: nextId }).pipe(
+            Effect.map(({ access }) => access),
+          ),
           (access) => shutdownOwner(access, true).pipe(Effect.ignore),
         );
         yield* Fiber.join(swept).pipe(
