@@ -64,6 +64,7 @@ export function resolveHostsOverHttps(host: string): Effect.Effect<string[], DbC
         HttpClientRequest.setHeader("accept", "application/dns-json"),
       ),
     ).pipe(Effect.mapError((error) => resolveError(error.reason.cause)));
+    yield* Effect.annotateCurrentSpan("http.response.status_code", response.status);
     if (response.status !== 200) {
       return yield* resolveError(`unexpected DNS query status ${response.status}`);
     }
@@ -74,10 +75,12 @@ export function resolveHostsOverHttps(host: string): Effect.Effect<string[], DbC
       try: (): Promise<unknown> => new Response(body).json(),
       catch: resolveError,
     });
-    return yield* Effect.try({
+    const ips = yield* Effect.try({
       try: () => parseResolvedIps(payload, host),
       catch: resolveError,
     });
+    yield* Effect.annotateCurrentSpan("dns.answer_count", ips.length);
+    return ips;
   }).pipe(
     Effect.provideService(HttpClient.TracerDisabledWhen, constTrue),
     Effect.provide(FetchHttpClient.layer),
@@ -90,5 +93,6 @@ export function resolveHostsOverHttps(host: string): Effect.Effect<string[], DbC
           }),
         ),
     }),
+    Effect.withSpan("Db.resolveHostsOverHttps"),
   );
 }

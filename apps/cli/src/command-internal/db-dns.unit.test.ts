@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Tracer } from "effect";
 import { TestClock } from "effect/testing";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -65,14 +65,28 @@ describe("resolveHostsOverHttps", () => {
     );
   const prefix = "failed to resolve db.example.com via DNS-over-HTTPS: ";
 
-  it.effect("returns the resolved addresses from a 200 DNS-JSON answer", () =>
+  it.effect("traces a DNS lookup without sending trace headers", () =>
     Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
       const ips = yield* resolveWith(
-        answering(() =>
-          Promise.resolve(Response.json({ Answer: [{ type: 1, data: "203.0.113.10" }] })),
-        ),
-      );
+        answering((init) => {
+          const headers = new Headers(init?.headers);
+          expect(headers.has("traceparent")).toBe(false);
+          expect(headers.has("b3")).toBe(false);
+          return Promise.resolve(Response.json({ Answer: [{ type: 1, data: "203.0.113.10" }] }));
+        }),
+      ).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
       expect(ips).toEqual(["203.0.113.10"]);
+      expect(spans.map((span) => span.name)).toEqual(["Db.resolveHostsOverHttps"]);
+      expect(spans[0]?.attributes.get("http.response.status_code")).toBe(200);
+      expect(spans[0]?.attributes.get("dns.answer_count")).toBe(1);
     }),
   );
 
