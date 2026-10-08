@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 
 import {
   alwaysReadyHttpClientLayer,
@@ -128,14 +129,10 @@ function generateStackApi(workdir: string) {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_GENERATE_PORT }],
       lifecycle: "running",
       health: "healthy",
-      registered: true,
       wakeEnabled: true,
-      intentRevision: 0,
       currentOperation: undefined,
-      launchId: undefined,
       exit: undefined,
       error: undefined,
-      cleanupError: undefined,
     }),
   };
   const composition = {
@@ -165,6 +162,7 @@ function generateStackApi(workdir: string) {
     startupEndpointChanges: unusedStack,
     stop: unusedStack,
     destroy: unusedStack,
+    gateway: unusedGateway,
     commands: { run: unusedStackFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
@@ -182,11 +180,11 @@ function generateStackApi(workdir: string) {
             instances: [],
             composition,
             lifetime: "detached" as const,
-            ports: [],
           },
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

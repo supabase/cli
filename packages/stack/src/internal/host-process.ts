@@ -1,8 +1,17 @@
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor, and the startup payload file predates any service layer.
 import { closeSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { HostStartupPayload } from "../HostProcess.ts";
-import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
+import {
+  RegistrationCheckInterval,
+  runStackHost,
+  StackHostError,
+  type StackHostOptions,
+} from "../StackHost.ts";
+
+interface HostProcessOverrides extends Pick<StackHostOptions, "release"> {
+  readonly registrationCheckInterval?: Duration.Input;
+}
 
 const writeLine = (value: unknown) =>
   Effect.gen(function* () {
@@ -45,9 +54,7 @@ const options = (
         operation: "startup",
         message: "Expected stateRoot, cacheRoot, stackId and an optional startup payload file",
       });
-    // The launcher writes this file once, under the owner's own state directory with owner-only
-    // permissions; reading and deleting it here, before anything else, keeps its secrets off argv
-    // and off this process's whole lifetime in a live process list.
+    // The file is deleted as soon as it is read so its secrets never outlive startup on disk.
     const payload: HostStartupPayload | undefined =
       payloadFile === undefined || payloadFile === ""
         ? undefined
@@ -68,7 +75,7 @@ const options = (
                 try {
                   unlinkSync(payloadFile);
                 } catch {
-                  // Already removed, or the parent is cleaning up; the secret is gone either way.
+                  // The launcher may already have removed it.
                 }
               }),
             ),
@@ -85,7 +92,10 @@ const options = (
     };
   });
 
-const program = (args: ReadonlyArray<string>, overrides: Pick<StackHostOptions, "release">) =>
+const program = (
+  args: ReadonlyArray<string>,
+  { registrationCheckInterval, ...overrides }: HostProcessOverrides,
+) =>
   Effect.gen(function* () {
     let reported = false;
     const report = (value: unknown) =>
@@ -105,7 +115,11 @@ const program = (args: ReadonlyArray<string>, overrides: Pick<StackHostOptions, 
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );
-  });
+  }).pipe(
+    registrationCheckInterval === undefined
+      ? identity
+      : Effect.provideService(RegistrationCheckInterval, registrationCheckInterval),
+  );
 
 const flushed = (stream: NodeJS.WriteStream) =>
   Effect.callback<void>((resume) => {
@@ -119,7 +133,7 @@ const flushed = (stream: NodeJS.WriteStream) =>
  */
 export const runHostProcess = (
   args: ReadonlyArray<string>,
-  overrides: Pick<StackHostOptions, "release"> = {},
+  overrides: HostProcessOverrides = {},
 ): Promise<never> =>
   Effect.runPromise(
     program(args, overrides).pipe(

@@ -35,39 +35,78 @@ require template serving and shared external JWKS verification respectively.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
-use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
-`supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+use `$SUPABASE_HOME/cache/stack`, keyed by content digest and retired automatically once unused for
+30 days. Storage files use the caller-owned project directory `supabase/.temp/stack-uploads/<stack-id>/`.
+Functions preparation may build the project's source.
 The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
 the stack deletes those logs; stopping the stack and resetting database data keep them.
 PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string included, is
-persisted and shipped to Analytics.
-When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
-members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
-under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
-migration that fails is logged as a warning and retried by the next owner start.
+persisted and shipped to Analytics. The shared API port also records each request and WebSocket
+upgrade under `logs/gateway/gateway/`, with the same retention, as one nginx combined line with a
+millisecond timestamp and a trailing duration:
 
-For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
-Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
-probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
-asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
-saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
-runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
-When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
-Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+```text
+127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=* HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms
+```
+
+Credential query and fragment values (`apikey`, `jwt`, `token`, `token_hash`, `code`, access,
+refresh, ID, and provider tokens, and the `X-Amz-Signature`, `X-Amz-Credential`, and
+`X-Amz-Security-Token` of S3 presigned URLs), in the request target and the Referer, are written
+as `redacted`, whatever their parameter is used for, as are values under any name that hold a
+secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair (a `redirect_to`
+URL with a token), and URL userinfo.
+
+Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
+which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's automatic
+ports stay reserved across every other stack's starts, including in a different state root, and
+starting it again reuses the same ports. A configured port is reserved only while its listener is
+open, so a stopped stack never blocks another project's configured port; a configured port takes
+over a reservation whose stack has no running owner (after a crash or reboot), and that stack gets a
+new automatic port on its next start. A saved or configured port held by another running stack, or
+occupied by a process outside the registry, fails start naming the port and, for a stack, its
+project, instead of picking a different port; only automatic allocation tries another candidate. On macOS a process can still win
+a narrow race against the pre-bind probe before a brand-new listener exists.
+Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
+auto range and below the OS ephemeral range on every supported platform; this range is not
+configurable, and a public port pinned inside it is rejected. A host whose ephemeral range has been widened to overlap it reintroduces the
+ephemeral-port race this reservation exists to avoid.
+
+For a new stack, `--runtime auto` selects Docker when its engine answers, then Podman when its
+engine answers, then native on Linux x64/arm64 and macOS arm64. Each probe resolves the engine
+target the owner later pins (so a local or remote Podman is judged by the same endpoint) and is
+bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and asks
+the user to start Docker or Podman. When auto selection skips Docker, an info line names the saved
+Podman or native runtime and how to switch to Docker. An existing stack keeps its saved runtime and
+runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+When an explicit or saved container runtime is unreachable, the reported failure suggests starting
+that engine, and `--runtime native` for a new stack on platforms that support native. Explicit
 `--runtime native` on a platform with no native artifacts fails before creating a stack.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
 as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
-`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
-root's home directory. Later commands that restrict the artifact cache and stack state roots to
-their owner keep that grant.
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to the parent directories outside the
+cached artifact (the artifact cache and stack state roots, including root's home directory), which
+stay owner-restricted between launches otherwise. A directory inside the cached artifact itself is
+never chmodded; it keeps the archive's own mode, and startup fails if one is not already traversable.
+
+Native PostgreSQL receives `SSL_CERT_FILE` and `SSL_CERT_DIR` when they are non-empty. When
+`SSL_CERT_FILE` is unset or empty, PostgreSQL receives the first of
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`,
+and `/etc/ssl/cert.pem` that exists, if any. The `http` and `pg_net` extensions verify HTTPS
+certificates against these. On macOS, `/etc/ssl/cert.pem` does not include roots added to the
+Keychain; to trust those, export `SSL_CERT_FILE` pointing to a bundle that also holds the public
+roots, such as a copy of `/etc/ssl/cert.pem` with those roots appended. When PostgreSQL runs as a
+separate user, that user must be able to read exported `SSL_CERT_FILE` and `SSL_CERT_DIR` paths,
+which are not chowned to it. The values come from the environment of the command that starts the
+stack owner, and a running owner keeps them through `stack restart` and repeated `stack start`, so
+export them before starting and stop and start the stack after changing them.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
-Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A
+Lazy services stop after 60 seconds without traffic, Studio after 5 minutes. A
 service that a running service depends on, such as pg-meta for Studio, stays up until that
-dependent stops. Functions has no automatic idle stop. `--eager` makes all selected services eager.
+dependent stops. `--eager` makes all selected services eager.
 Changes to activation policy take effect after stopping and starting the stack, including when a
 later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
 artifact preparation.
@@ -90,11 +129,12 @@ Studio requires REST; excluding REST while keeping Studio fails before stopping 
 
 ## Service logs in Analytics
 
-The owner ships the persisted Auth, REST, Realtime, Storage, Functions, and database output lines
-(not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its direct backend,
-using the Analytics API key and the legacy Logflare source names (`gotrue.logs.prod`,
-`postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`, `deno-relay-logs`,
-`postgres.logs`) with the legacy per-service field remaps. This applies to the Docker, Podman, and
+The owner ships the persisted Auth, REST, Realtime, Storage, Functions, database, and gateway
+output lines (not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its
+direct backend, using the Analytics API key and the legacy Logflare source names
+(`gotrue.logs.prod`, `postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`,
+`deno-relay-logs`, `postgres.logs`, and `cloudflare.logs.prod` for Studio's API Gateway page) with
+the legacy per-service field remaps. This applies to the Docker, Podman, and
 native runtimes. Shipping runs only while the composed Analytics service is running and healthy;
 each instance keeps its position in `logs/<service>/<instance-id>/cursor.json`, so lines written
 while Analytics is stopped, starting, or unhealthy are shipped with their original timestamps once
@@ -124,26 +164,19 @@ verification, replace the saved configuration of the existing instances; their i
 and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
 Removed services remain saved and stopped so including them again can reuse them; a saved stopped
 instance of a newly included service is reused when its endpoints and versions still match. The
-project configuration file is unchanged. The requested creations travel into the stack package's own
-owner startup: when every incompatible path across the whole composition is a changed endpoint, each
-is re-planned there while the new owner alone holds the stack's lease, before it registers endpoint
-namespaces from the saved state: as late as practical, just before its own normal endpoint binding
-claims the newly requested port, or a freshly chosen automatic one, it saves the updated endpoint
-intent with the old port claim dropped, reusing every check a live composition bind already applies.
-The rollback covers only this save-and-claim commit, which finishes before the owner serves RPC or
-publishes its holder: a failure or interruption there, not only a claim conflict, restores the saved
-state and claims as they read before the re-plan, except a claim whose old port another stack took in
-the meantime, which is left unclaimed so the next start reports it as a normal port conflict instead
-of overlapping that stack's claim; a hard process death in this window is an accepted limitation, and
-the next successful start converges the saved state again. A later startup failure, once that commit
-succeeds, keeps the committed (consistent) state instead of rolling it back, since an attached client
-may already have persisted its own change by then; the next start reuses it. This includes a failure
-during the CLI's own database preparation (see First startup and retries below). A concurrent start
-attaches to whichever owner wins that race instead of re-planning again. If the
-saved stack's owner exits between this command's liveness check and the moment it opens the stack,
-the freshly spawned replacement owner boots without the requested creations and this start falls
-back to today's rejection; every later start now sees that replacement owner as running and skips
-the re-plan too. Recovering means: stop the stack, then start it again. Text
+project configuration file is unchanged. The requested creations travel into the stack package's own owner startup through a private,
+short-lived file the owner deletes after reading, so no secret appears on the owner's argv. When
+every incompatible path across the whole composition is a changed endpoint, each is re-planned
+there while the new owner alone holds the stack's lease: it saves the requested endpoint intents,
+releases the changed endpoints' port registry rows, and claims the new ports through its normal
+endpoint binding. A requested fixed port that is taken fails the start with the usual port
+conflict; the saved intent stays as requested, the old automatic row stays released, and nothing is
+rolled back, so fixing the configuration and starting again succeeds. A concurrent start attaches
+to whichever owner wins the lease instead of re-planning again. If the saved stack's owner exits
+between this command's liveness check and the moment it opens the stack, the freshly spawned
+replacement owner boots without the requested creations and this start falls back to today's
+rejection; every later start sees that replacement owner as running and skips the re-plan too.
+Recovering means: stop the stack, then start it again. Text
 output prints one line per changed endpoint naming its old and new port; JSON and stream-json output
 add the same changes to the success payload. Any other incompatible path blocks the re-plan for the
 whole composition, even for a member whose own change is purely a changed endpoint: a changed
@@ -157,9 +190,11 @@ a plain label with no revert advice. Either way the failure suggests running the
 ## First startup and retries
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
-services, applies the database overlay, and runs project migrations and seeds. Membership changes
+services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
+database overlay, and runs project migrations and seeds. Membership changes
 apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
-composition reapplies the webhook setting before activation.
+composition reapplies the webhook setting before activation, first creating the
+`supabase_functions` schema when the database lacks it.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
 files using the service-role JWT, silently overwriting or pruning existing buckets without a

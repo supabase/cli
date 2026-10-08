@@ -4,7 +4,9 @@ import {
   Context,
   Data,
   DateTime,
+  Deferred,
   Effect,
+  Exit,
   FileSystem,
   Fiber,
   Layer,
@@ -12,7 +14,9 @@ import {
   Path,
   PlatformError,
   Redacted,
+  Ref,
   Schema,
+  Scope,
   Stream,
   Tracer,
 } from "effect";
@@ -22,8 +26,6 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- reads the spawned owner's own argv.
 import { execFileSync } from "node:child_process";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- checks for the launcher's startup payload file left behind.
-import { existsSync, readdirSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -38,7 +40,8 @@ import {
 import { discover } from "./effect.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { watchLeaseRelease } from "../tests/owner.ts";
-import * as State from "./State.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
 
@@ -46,14 +49,21 @@ const fixtureEntrypoint = fileURLToPath(
   new URL("../tests/host-process-fixture.ts", import.meta.url),
 );
 
-const savedStack = (root: string, stackName: string): State.SavedStack => ({
+/** The startup payload files a launcher left in the owner directory. */
+const leftoverStartupPayloads = (ownerDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(ownerDir))) return [];
+    return (yield* fs.readDirectory(ownerDir)).filter((name) => name.startsWith("startup-"));
+  });
+
+const savedStack = (root: string, stackName: string): StackNamespace.SavedStack => ({
   id: "stack",
   runtime: "native",
   identity: { projectRoot: root, branchContext: "main", stackName },
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 /** The live command line of a running process, read the POSIX or Windows way. */
@@ -98,9 +108,20 @@ const silentListener = Effect.acquireRelease(
 );
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
+
+/** Writes a holder record directly, simulating a process that published then crashed before retracting. */
+const writeStaleHolder = (root: string, id: string, record: StackNamespace.LeaseHolder) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(StackNamespace.LeaseHolder))(
+      record,
+    );
+    yield* fs.writeFileString(path.join(root, id, "owner.json"), encoded);
+  });
 
 type ChildHandle = {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -208,7 +229,11 @@ const bestEffortShutdown = (stateRoot: string) => (access: HostAccess) =>
     }),
   ).pipe(Effect.exit, Effect.asVoid);
 
-const bestEffortShutdownByState = (stateRoot: string, state: State.Interface, stackId: string) =>
+const bestEffortShutdownByState = (
+  stateRoot: string,
+  state: StackNamespace.Interface,
+  stackId: string,
+) =>
   Effect.exit(connectHost(state, stackId).pipe(Effect.flatMap(bestEffortShutdown(stateRoot)))).pipe(
     Effect.asVoid,
   );
@@ -233,30 +258,29 @@ const closeServer = (server: Net.Server) =>
     server.close(() => resume(Effect.void));
   });
 
+/** Attaches now; the returned effect awaits the marker and reads its value. Subscribe before
+ * triggering the fixture that writes the marker, then await the returned effect after. */
 const waitForMarker = (marker: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* fs.watch(path.dirname(marker)).pipe(
-      Stream.filter((event) => event.path === path.basename(marker)),
-      Stream.runHead,
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(new ProcessTestError({ message: "marker watcher ended" })),
-          onSome: Effect.succeed,
+    const ready = yield* watchEntry(path.dirname(marker), path.basename(marker), true);
+    return yield* Effect.succeed(
+      ready.pipe(
+        Effect.flatMap(() =>
+          fs.readFileString(marker).pipe(
+            Effect.map(Number),
+            Effect.mapError(() => new ProcessTestError({ message: "marker read failed" })),
+          ),
+        ),
+        Effect.timeoutOrElse({
+          duration: "10 seconds",
+          orElse: () =>
+            Effect.fail(new ProcessTestError({ message: "slow fixture did not start" })),
         }),
       ),
     );
-    return yield* fs.readFileString(marker).pipe(
-      Effect.map(Number),
-      Effect.mapError(() => new ProcessTestError({ message: "marker read failed" })),
-    );
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "10 seconds",
-      orElse: () => Effect.fail(new ProcessTestError({ message: "slow fixture did not start" })),
-    }),
-  );
+  });
 
 it.live("starts exactly one owner for concurrent launchers and attaches the others", () =>
   Effect.scoped(
@@ -271,7 +295,6 @@ it.live("starts exactly one owner for concurrent launchers and attaches the othe
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const entrypoint = fileURLToPath(
         new URL("../tests/host-process-fixture.ts", import.meta.url),
@@ -351,7 +374,7 @@ it.live("ignores a stale endpoint record once no process holds the lease", () =>
       const state = yield* makeTestState(root);
       yield* state.save(savedStack(root, "local"));
       const unresponsive = yield* silentListener;
-      yield* state.publishHolder("stack", {
+      yield* writeStaleHolder(root, "stack", {
         role: "owner",
         secret: "stale",
         port: unresponsive.port,
@@ -389,8 +412,8 @@ it.live("discovers dead stacks from their free leases without contacting recorde
       const ids = ["dead-a", "dead-b", "dead-c"];
       for (const id of ids) {
         yield* state.save({ ...savedStack(root, id), id });
-        yield* Effect.scoped(state.lease(id));
-        yield* state.publishHolder(id, {
+        yield* Effect.scoped(state.acquireLease(id));
+        yield* writeStaleHolder(root, id, {
           role: "owner",
           secret: "stale",
           port: unresponsive.port,
@@ -425,7 +448,6 @@ it.live(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         const entrypoint = fileURLToPath(
           new URL("../tests/host-process-fixture.ts", import.meta.url),
@@ -460,22 +482,19 @@ it.live("terminates a detached child when readiness is interrupted", () =>
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const entrypoint = fileURLToPath(
         new URL("../tests/host-process-fixture.ts", import.meta.url),
       );
       const marker = path.join(root, "slow-handshake.pid");
-      const markerReady = yield* waitForMarker(marker).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
+      const markerReady = yield* waitForMarker(marker);
       const launch = yield* launchHost(state, {
         stateRoot: root,
         cacheRoot: root,
         stackId: "stack",
         entrypoint,
       }).pipe(Effect.forkChild);
-      const pid = yield* Fiber.join(markerReady);
+      const pid = yield* markerReady;
       expect(Number.isInteger(pid) && pid > 0).toBe(true);
       expect(() => process.kill(pid, 0)).not.toThrow();
       yield* Fiber.interrupt(launch);
@@ -484,7 +503,7 @@ it.live("terminates a detached child when readiness is interrupted", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("keeps the owner log tail in a start failure after the owner removed its log", () =>
+it.live("reports a structured owner startup error without the owner log tail", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -498,7 +517,8 @@ it.live("keeps the owner log tail in a start failure after the owner removed its
         register: savedStack(root, "failing"),
       }).pipe(Effect.flip);
       expect(failure.message).toContain("owner startup failed");
-      expect(failure.message).toContain("failing-owner-diagnostic");
+      expect(failure.message).toContain("owner log:");
+      expect(failure.message).not.toContain("failing-owner-diagnostic");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -591,12 +611,10 @@ it.live("deletes the spawned owner's startup payload file once it reports ready"
         stackId: "stack",
         register: savedStack(root, "payload-cleanup"),
       });
-      yield* Effect.sync(() => {
-        const leftover = existsSync(ownerDir)
-          ? readdirSync(ownerDir).filter((name) => name.startsWith("startup-"))
-          : [];
-        expect(leftover).toEqual([]);
-      }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+      yield* leftoverStartupPayloads(ownerDir).pipe(
+        Effect.map((leftover) => expect(leftover).toEqual([])),
+        Effect.ensuring(bestEffortShutdown(root)(access)),
+      );
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -621,10 +639,7 @@ it.live("deletes the spawned owner's startup payload file even when its startup 
         register: savedStack(root, "payload-cleanup-fail"),
       }).pipe(Effect.flip);
       expect(failure.message).toContain("owner startup failed");
-      const leftover = existsSync(ownerDir)
-        ? readdirSync(ownerDir).filter((name) => name.startsWith("startup-"))
-        : [];
-      expect(leftover).toEqual([]);
+      expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -677,10 +692,58 @@ it.live("deletes a startup payload file that fails to write after creating parti
         register: savedStack(root, "payload-write-failure"),
       }).pipe(Effect.provide(failingWrites), Effect.flip);
       expect(failure.message).toContain("injected write failure");
-      const leftover = existsSync(ownerDir)
-        ? readdirSync(ownerDir).filter((name) => name.startsWith("startup-"))
-        : [];
-      expect(leftover).toEqual([]);
+      expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("waits out a sweeper's hold before spawning the owner of a stack it registers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-sweeper-hold-" });
+      const state = yield* makeTestState(root);
+      const hold = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
+      const lease = yield* state.acquireLease("stack").pipe(Scope.provide(hold));
+      yield* lease.publishHolder({
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const sweeperSeen = yield* Deferred.make<void>();
+      const observations = yield* Ref.make(0);
+      const watched: StackNamespace.Interface = {
+        ...state,
+        readHolder: (id) =>
+          state.readHolder(id).pipe(
+            Effect.tap((holder) =>
+              holder?.role !== "sweeper"
+                ? Effect.void
+                : Ref.updateAndGet(observations, (count) => count + 1).pipe(
+                    Effect.flatMap((count) =>
+                      // The first attempt has ended once the retry observes the hold again.
+                      count === 2 ? Deferred.succeed(sweeperSeen, undefined) : Effect.void,
+                    ),
+                  ),
+            ),
+          ),
+      };
+      const launching = yield* launchHost(watched, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        register: savedStack(root, "held"),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(sweeperSeen);
+      expect(yield* fs.exists(state.ownerLog("stack")), "no owner spawned during the hold").toBe(
+        false,
+      );
+      yield* lease.retractHolder;
+      yield* Scope.close(hold, Exit.void);
+      yield* Effect.acquireRelease(Fiber.join(launching), bestEffortShutdown(root));
+      expect(yield* state.read("stack")).toBeDefined();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

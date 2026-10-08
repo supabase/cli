@@ -33,6 +33,7 @@ import {
   mockTty,
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -456,13 +457,9 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         lifecycle: state === "running" ? "running" : "stopped",
         health: state === "running" ? "healthy" : undefined,
         error: undefined,
-        cleanupError: undefined,
         exit: undefined,
         currentOperation: undefined,
-        launchId: undefined,
-        intentRevision: 0,
         wakeEnabled: state === "running",
-        registered: true,
       }),
       followStatus: Stream.empty,
       readLogs: () => Stream.empty,
@@ -490,6 +487,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       startupEndpointChanges: unused,
       stop: unused,
       destroy: unused,
+      gateway: unusedGateway,
       commands: { run: () => unused },
     };
     return Layer.succeed(StackApi, {
@@ -507,12 +505,12 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
                   instances: [],
                   lifetime: "detached" as const,
                   composition: { members: [], dependencies: [] },
-                  ports: [],
                 },
                 host: undefined,
               })
             : Option.none(),
         ),
+      findDeleted: () => Effect.die("unused"),
     });
   };
 
@@ -598,6 +596,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         open: () => Effect.die("unexpected stack open"),
         discover: () => Effect.die("unexpected stack discover"),
         find: () => Effect.die("unexpected stack lookup"),
+        findDeleted: () => Effect.die("unexpected stack lookup"),
       });
       const resolved = yield* resolveOnStack(
         withWorkdir(),

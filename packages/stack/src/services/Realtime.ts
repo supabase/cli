@@ -52,6 +52,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       return {
         DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
+        ...(container ? {} : { PHX_HTTP_IP: "127.0.0.1" }),
         DB_URL: databaseUrl,
         DB_HOST: db.host,
         DB_PORT: db.port,

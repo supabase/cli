@@ -8,9 +8,11 @@ starts/stops a service.
 ## Selection and files
 
 Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive. By default, only composition members are
-included. `--service <kind-or-instance-id>` is repeatable and can also select
-standalone instances; a value that matches no saved instance fails with status 1.
+The selectors are mutually exclusive. By default, composition members are
+included, plus `gateway` (the shared API port's request lines) when a member is
+served on that port. `--service <kind-or-instance-id>` is repeatable and can also select
+standalone instances or `gateway`; a value that matches no saved instance, or
+`gateway` without the shared API port, fails with status 1.
 A missing stack fails with status 1.
 
 Reads saved definitions under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and
@@ -28,9 +30,8 @@ the selected services, with the `launch` and `lost` markers between them.
 `--since` accepts a duration before now (`30s`, `10m`, `1h30m`, `2d`), an
 ISO-8601 time, or `start`, which keeps the records of each instance's current
 launch and later ones, in history and while following. The current launch is the
-launch id saved in the stack definition, which keeps increasing across owner
-restarts, or else the highest launch record in history (all records when
-retention removed that launch record). Records are
+highest launch record in history; launch ids keep increasing across owner
+restarts (all records when retention removed that launch record). Records are
 ordered by timestamp, service, instance, and file position. Timestamps are the
 owner's clock at each line's first byte. Lines end at `\n`, `\r\n`, or a lone
 `\r`, so carriage-return progress updates print as separate lines. History is

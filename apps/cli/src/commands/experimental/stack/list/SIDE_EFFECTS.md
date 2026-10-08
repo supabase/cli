@@ -10,7 +10,9 @@ Reads `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/state.json` and probes existin
 local owner control endpoints. It makes no hosted API calls. Shared command setup
 may read project configuration for the feature gate and the selected profile for
 CLI settings. Discovery creates the registry directory if absent and sets its mode to 0700;
-no stack state files are written. Telemetry flushes to
+no stack state files are written. List does not read the separate per-user public
+port registry at `<passwd home>/.supabase/ports.sqlite`; listed entries carry no
+port or endpoint information. Telemetry flushes to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on success and failure.
 
 ## Output

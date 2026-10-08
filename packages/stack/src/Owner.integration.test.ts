@@ -1,25 +1,30 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
-import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { randomUUID } from "node:crypto";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "./Owner.ts";
 import { OwnerRpc } from "./Rpc.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
-import { ServiceCreation, type ServiceCreationInput } from "./services/Catalog.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 
 const initial = (id: string): SavedStack => ({
   id,
@@ -28,7 +33,61 @@ const initial = (id: string): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
+});
+
+const initialContainer = (id: string): SavedStack => ({ ...initial(id), runtime: testEngine });
+
+/**
+ * Container ids the engine still reports for `instanceId`, by the labels an instance's own containers
+ * carry. Excludes a stack-wide shared volume helper (labeled only with the stack, never the
+ * instance), which outlives any one instance's destroy and is torn down on its own lifecycle.
+ */
+const containersForInstance = (stackId: string, instanceId: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          testEngine,
+          [
+            ...engineTarget.argv,
+            "ps",
+            "-a",
+            "--filter",
+            `label=com.supabase.stack=${stackId}`,
+            "--filter",
+            `label=com.supabase.instance=${instanceId}`,
+            "--format",
+            "{{.ID}} {{.Names}} {{.Image}} {{.Status}}",
+          ],
+          { stdout: "pipe", stderr: "pipe" },
+        ),
+      );
+      const output = yield* Stream.mkString(Stream.decodeText(child.stdout));
+      return output
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+/** Runs a Docker CLI command and returns its combined stdout, for assertions against the engine. */
+const runDocker = (args: ReadonlyArray<string>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", args, { stdout: "pipe", stderr: "pipe" }),
+      );
+      return yield* Stream.mkString(Stream.decodeText(child.stdout));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+/** The fields read directly off a database instance's own storage marker file. */
+const InstanceMarker = Schema.Struct({
+  backend: Schema.Literals(["docker", "host"]),
+  volume: Schema.optionalKey(Schema.String),
+  namespace: Schema.String,
 });
 
 const query = (url: string, statement: string) =>
@@ -142,7 +201,7 @@ it.live("forwards and rotates saved identity across composed services in one own
           endpoints: { http: { port: "auto" as const } },
         },
       ];
-      const stackKeys = (suffix: string, gotrueJwtKeys: string): State.StackKeysInput => ({
+      const stackKeys = (suffix: string, gotrueJwtKeys: string): StackNamespace.StackKeysInput => ({
         publishableKey: `publishable-${suffix}`,
         secretKey: `secret-${suffix}`,
         anonKey: `anon-${suffix}`,
@@ -291,7 +350,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       const excludedStudio = (yield* owner.rpc.status({ id: studioId })).config;
       expect(excludedStudio.service).toBe("studio");
       if (excludedStudio.service === "studio")
-        expect(excludedStudio.config.anonKey).toBe("anon-one");
+        expect(excludedStudio.config.anonKey).toBe(secondCredentials.anonKey);
       for (const id of retainedIds)
         expect((yield* owner.rpc.status({ id: id })).lifecycle).toBe("stopped");
 
@@ -333,7 +392,7 @@ it.effect("publishes service removal and composition pruning together", () =>
       const state = yield* stateFor(`${root}/state`);
       yield* state.save(stack);
       const removalWrite = yield* Ref.make(false);
-      const failingState: State.Interface = {
+      const failingState: StackNamespace.Interface = {
         ...state,
         save: (next) =>
           Ref.get(removalWrite).pipe(
@@ -341,7 +400,10 @@ it.effect("publishes service removal and composition pruning together", () =>
               next.instances.length === 0
                 ? alreadyWritten
                   ? Effect.fail(
-                      new State.StateError({ operation: "write", message: "injected failure" }),
+                      new StackNamespace.NamespaceError({
+                        operation: "write",
+                        message: "injected failure",
+                      }),
                     )
                   : Ref.set(removalWrite, true).pipe(Effect.andThen(state.save(next)))
                 : state.save(next),
@@ -495,7 +557,7 @@ it.effect("isolates owner graphs built in one scope", () =>
             saved,
             root: `${root}/data`,
             cacheRoot,
-          }).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+          }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           memoMap,
           scope,
         ).pipe(
@@ -714,37 +776,192 @@ it.effect("lets a retry choose other credentials after the first database creati
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.effect("rejects a duplicate instance without releasing the existing instance's claims", () =>
+it.effect(
+  "rejects a duplicate instance without releasing the existing instance's reservations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+        const state = yield* stateFor(`${root}/state`);
+        const stack = initial(`owner-duplicate-${randomUUID().slice(0, 8)}`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const definitions = yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+        });
+        const mail = definitions.find((entry) => entry.creation.service === "mail");
+        if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+        const realStateRoot = yield* fs.realPath(`${root}/state`);
+        const portReservations = yield* PortReservations.Service;
+        const endpoint = `${mail.id}:http`;
+        const assigned = yield* portReservations.find(realStateRoot, stack.id, endpoint);
+        expect(assigned).toBeDefined();
+        const saved = yield* state.read(stack.id);
+        if (saved === undefined) return yield* Effect.die("saved state disappeared");
+        const instance = saved.instances.find((entry) => entry.id === mail.id);
+        if (instance === undefined) return yield* Effect.die("mail instance was not saved");
+
+        const failure = yield* ownerFor({
+          saved: { ...saved, instances: [instance, instance] },
+          state,
+          root: `${root}/data`,
+          cacheRoot,
+        }).pipe(Effect.flip);
+
+        expect(failure.message).toBe(`Duplicate instance ${mail.id}`);
+        expect(yield* portReservations.find(realStateRoot, stack.id, endpoint)).toBe(assigned);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live("destroying one service deletes its port reservation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-destroy-" });
+      const stack = initial(`owner-service-destroy-${randomUUID().slice(0, 8)}`);
       const state = yield* stateFor(`${root}/state`);
-      const creation = yield* Schema.decodeEffect(ServiceCreation)({
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      // Composing reserves every member's public port up front without starting any of them.
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = yield* PortReservations.Service;
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeDefined();
+
+      yield* owner.rpc.destroyService({ id: mail.id });
+
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeUndefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.live("destroying a stack leaves its data root empty after an owner was killed mid-command", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-orphaned-job-" });
+      const stack = initial(`owner-orphaned-job-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const orphanedJob = `${root}/data/jobs/0b1c2d3e-orphan`;
+      yield* fs.makeDirectory(orphanedJob, { recursive: true });
+      yield* fs.writeFileString(`${orphanedJob}/config.json`, "{}");
+
+      yield* owner.namespace.destroy;
+
+      expect(yield* fs.exists(`${root}/data`)).toBe(true);
+      expect(yield* fs.readDirectory(`${root}/data`)).toEqual([]);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.live("refuses to destroy one service after its data directory became a symlink", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-symlink-" });
+      const stack = initial(`owner-service-symlink-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.makeDirectory(data, { recursive: true });
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const service = yield* owner.rpc.createService({
         service: "mail",
         config: {},
-        endpoints: { http: { port: "auto" } },
+        endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
-      const instance = { id: "mail", creation };
-      const claim = { key: "mail:http", host: "127.0.0.1", port: 54_321 };
-      const stack: SavedStack = {
-        ...initial("owner-duplicate"),
-        instances: [instance],
-        ports: [claim],
-      };
-      yield* state.save(stack);
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(`${outside}/${service.id}`, { recursive: true });
+      yield* fs.writeFileString(`${outside}/${service.id}/precious.txt`, "keep");
+      yield* fs.remove(data, { recursive: true });
+      yield* fs.symlink(outside, data);
 
-      const failure = yield* ownerFor({
-        saved: { ...stack, instances: [instance, instance] },
-        state,
-        root: `${root}/data`,
-        cacheRoot,
-      }).pipe(Effect.flip);
+      const failure = yield* owner.rpc.destroyService({ id: service.id }).pipe(Effect.flip);
 
-      expect(failure.message).toBe("Duplicate instance mail");
-      expect((yield* state.read(stack.id))?.ports).toEqual([claim]);
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/${service.id}/precious.txt`)).toBe("keep");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.live("refuses to destroy a stack whose data directory is a symlink and keeps its target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-symlinked-data-" });
+      const stack = initial(`owner-symlinked-data-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(outside);
+      yield* fs.writeFileString(`${outside}/precious.txt`, "keep");
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.symlink(outside, data);
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+
+      const failure = yield* owner.namespace.destroy.pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/precious.txt`)).toBe("keep");
+      expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>
@@ -780,6 +997,104 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       expect(current?.instances).toHaveLength(1);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("blocks a credential change while a standalone credential consumer runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-owner-credential-admission-",
+      });
+      const stack = initial("owner-credential-admission");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const standalone = yield* owner.rpc.createService({
+        service: "rest",
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+        endpoints: {},
+      });
+      yield* owner.rpc.startService({ id: standalone.id });
+      const before = yield* owner.getStackCredentials;
+
+      const refused = yield* owner.rpc
+        .supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: {} }],
+          keys: {
+            publishableKey: "publishable-rotated",
+            secretKey: "secret-rotated",
+            anonKey: "anon-rotated",
+            serviceRoleKey: "service-role-rotated",
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: "[]",
+            anonKeyIsOverride: true,
+            serviceRoleKeyIsOverride: true,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(refused.message).toContain(
+        `Service ${standalone.id} must be stopped with wake disabled before stack credentials change`,
+      );
+      expect(yield* owner.getStackCredentials).toEqual(before);
+      yield* owner.rpc.stopService({ id: standalone.id });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "refreshes a stopped standalone credential consumer when the stack credentials change",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-owner-credential-refresh-",
+        });
+        const stack = initial("owner-credential-refresh");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const rest = yield* owner.rpc.createService({
+          service: "rest",
+          config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+          endpoints: {},
+        });
+        const explicitKeys = '[{"kty":"oct","k":"explicit"}]';
+        const auth = yield* owner.rpc.createService({
+          service: "auth",
+          config: { gotrueJwtKeys: explicitKeys },
+          endpoints: {},
+        });
+        const before = yield* owner.getStackCredentials;
+
+        yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: {} }],
+          keys: {
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: '[{"kty":"EC","kid":"rotated"}]',
+          },
+        });
+
+        const after = yield* owner.getStackCredentials;
+        expect(after.jwks).not.toBe(before.jwks);
+        const observed = yield* owner.rpc.status({ id: rest.id });
+        expect(observed.config).toMatchObject({ config: { jwks: after.jwks } });
+        const saved = yield* state.read(stack.id);
+        expect(saved?.instances.find(({ id }) => id === rest.id)?.creation).toMatchObject({
+          config: { jwks: after.jwks },
+        });
+        expect((yield* owner.rpc.status({ id: auth.id })).config).toMatchObject({
+          config: { gotrueJwtKeys: explicitKeys },
+        });
+
+        yield* owner.rpc.startService({ id: rest.id });
+        yield* owner.rpc.stopService({ id: rest.id });
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live("rejects a missing required input before starting or stopping the service", () =>
@@ -823,3 +1138,166 @@ it.live("rejects a missing required input before starting or stopping the servic
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
+
+it.live(
+  "destroys a database's container, storage namespace and port reservation after its registration file is deleted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stackId = `owner-no-registration-${randomUUID().slice(0, 8)}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-registration-", stackId);
+        const tempRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-owner-no-registration-state-",
+        });
+        const stack = initialContainer(stackId);
+        const state = yield* stateFor(`${tempRoot}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state,
+          root: dataRoot,
+          cacheRoot,
+          engineTarget,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+        const created = yield* owner.rpc.createService({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("owner-no-registration-password"),
+            jwtSecret: Redacted.make("owner-no-registration-jwt-secret-at-least-32-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: created.id });
+        yield* owner.rpc.readyService({ id: created.id });
+
+        const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
+        );
+        expect(
+          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+        ).toBeDefined();
+        expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
+
+        // The registration disappears from under the live owner (deleted externally, or by a
+        // concurrent process); its resource cleanup must still run to completion and release
+        // everything it owns, with the removal simply having nothing left to publish.
+        yield* fs.remove(`${tempRoot}/state/${stackId}/state.json`);
+
+        yield* owner.rpc.destroyService({ id: created.id });
+
+        expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+        expect(
+          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+        ).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  120_000,
+);
+
+// The Docker volume backend has no Podman counterpart: Podman keeps database data in host directories.
+describe.runIf(testEngine === "docker")("Docker volume storage", () => {
+  it.live(
+    "destroys a database's container and storage namespace, and releases its port reservation, after the whole data root is deleted",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const stackId = `owner-no-data-root-${randomUUID().slice(0, 8)}`;
+          const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-data-root-", stackId);
+          const tempRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-owner-no-data-root-state-",
+          });
+          const stack = initialContainer(stackId);
+          const state = yield* stateFor(`${tempRoot}/state`);
+          yield* state.save(stack);
+          const owner = yield* ownerFor({
+            saved: stack,
+            state,
+            root: dataRoot,
+            cacheRoot,
+            engineTarget,
+          });
+          yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+          const created = yield* owner.rpc.createService({
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("owner-no-data-root-password"),
+              jwtSecret: Redacted.make("owner-no-data-root-jwt-secret-at-least-32-characters"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          });
+          yield* owner.rpc.startService({ id: created.id });
+          yield* owner.rpc.readyService({ id: created.id });
+
+          const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
+          const portReservations = Context.get(
+            yield* Layer.build(PortReservations.layer),
+            PortReservations.Service,
+          );
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeDefined();
+          expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(InstanceMarker))(
+            yield* fs.readFileString(`${dataRoot}/${created.id}/.supabase-database-storage.json`),
+          );
+          if (marker.backend !== "docker" || marker.volume === undefined)
+            return yield* Effect.die("Docker test selected host fallback");
+          const volume = marker.volume;
+
+          // The database sleeps; its storage object (inside the still-running owner) keeps the
+          // identity it already resolved in memory, then the whole owned data root disappears (the
+          // volume host, a disk failure, manual cleanup).
+          yield* owner.rpc.stopService({ id: created.id });
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          yield* fs.remove(dataRoot, { recursive: true, force: true });
+
+          yield* owner.rpc.destroyService({ id: created.id });
+
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeUndefined();
+          const remainingNamespace = yield* runDocker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            "docker.io/library/busybox:1.36",
+            "/bin/sh",
+            "-c",
+            `[ -e /store/${marker.namespace} ] && echo present || echo absent`,
+          ]);
+          expect(remainingNamespace.trim()).toBe("absent");
+          yield* runDocker(["volume", "rm", volume]);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeHttpClient.layerNodeHttp,
+            PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          ),
+        ),
+      ),
+    120_000,
+  );
+});

@@ -6,7 +6,7 @@ import {
   testRunEnvVar as stackTestRunEnvVar,
   testRunLabelKey,
 } from "../src/internal/test-run-label.ts";
-import { runDocker } from "./docker-fixture.ts";
+import { runEngine } from "./docker-fixture.ts";
 
 /**
  * Docker test state roots must be private to a run (see `makeDockerDatabaseRoot` and
@@ -44,7 +44,7 @@ const isDead = (pid: number): boolean => {
   }
 };
 
-const dockerUnavailable = runDocker(["info", "--format", "{{.ID}}"]).pipe(
+const dockerUnavailable = runEngine(["version"]).pipe(
   Effect.map((result) => result.code !== 0),
   Effect.catchCause(() => Effect.succeed(true)),
 );
@@ -62,7 +62,7 @@ export const removeTestRunVolumes = Effect.fn("DockerVolumeRun.removeTestRunVolu
         );
         return;
       }
-      const listed = yield* runDocker([
+      const listed = yield* runEngine([
         "volume",
         "ls",
         "-q",
@@ -79,7 +79,7 @@ export const removeTestRunVolumes = Effect.fn("DockerVolumeRun.removeTestRunVolu
         .filter((line) => line.length > 0);
       if (volumes.length === 0) return;
       const removals = yield* Effect.forEach(volumes, (volume) =>
-        runDocker(["volume", "rm", volume]).pipe(Effect.map((result) => ({ volume, result }))),
+        runEngine(["volume", "rm", volume]).pipe(Effect.map((result) => ({ volume, result }))),
       );
       const failed = removals.filter(({ result }) => result.code !== 0);
       if (failed.length > 0)
@@ -97,7 +97,7 @@ const benign = (output: string) => /no such (?:container|volume)/iu.test(output)
 /** Removes a dead run's labelled containers; `Option.none` on success, a message otherwise. */
 const removeDeadRunContainers = Effect.fn("DockerVolumeRun.removeDeadRunContainers")((id: string) =>
   Effect.gen(function* () {
-    const listed = yield* runDocker([
+    const listed = yield* runEngine([
       "ps",
       "--all",
       "--quiet",
@@ -111,7 +111,7 @@ const removeDeadRunContainers = Effect.fn("DockerVolumeRun.removeDeadRunContaine
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     if (ids.length === 0) return Option.none<string>();
-    const removed = yield* runDocker(["rm", "--force", "--volumes", ...ids]);
+    const removed = yield* runEngine(["rm", "--force", "--volumes", ...ids]);
     return removed.code === 0 || benign(removed.output)
       ? Option.none<string>()
       : Option.some(`docker rm failed: ${removed.output.trim()}`);
@@ -121,7 +121,7 @@ const removeDeadRunContainers = Effect.fn("DockerVolumeRun.removeDeadRunContaine
 /** Removes a dead run's labelled, stack-managed volumes; `Option.none` on success. */
 const removeDeadRunVolumes = Effect.fn("DockerVolumeRun.removeDeadRunVolumes")((id: string) =>
   Effect.gen(function* () {
-    const listed = yield* runDocker([
+    const listed = yield* runEngine([
       "volume",
       "ls",
       "-q",
@@ -137,7 +137,7 @@ const removeDeadRunVolumes = Effect.fn("DockerVolumeRun.removeDeadRunVolumes")((
       .filter((line) => line.length > 0);
     if (volumes.length === 0) return Option.none<string>();
     const removals = yield* Effect.forEach(volumes, (volume) =>
-      runDocker(["volume", "rm", volume]).pipe(Effect.map((result) => ({ volume, result }))),
+      runEngine(["volume", "rm", volume]).pipe(Effect.map((result) => ({ volume, result }))),
     );
     const failed = removals.filter(({ result }) => result.code !== 0 && !benign(result.output));
     return failed.length === 0

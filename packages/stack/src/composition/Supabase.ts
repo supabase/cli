@@ -1,11 +1,11 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
 import { postgresVersion } from "../Artifacts.ts";
-import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
+import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackKeysInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
-import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
+import { apiRoute, endpointNames, endpointPort, sharesApiEndpoint } from "../host/Endpoints.ts";
 
 const DEFAULT_IDLE_MILLIS = 60_000;
 /** Studio idles slower than its peers: a background tab shouldn't cold-start it every minute. */
@@ -19,6 +19,7 @@ const managedBindings: ReadonlyArray<{
   readonly output: string;
   readonly targetKind: ServiceCreation["service"];
   readonly input: string;
+  readonly lifecycleDependency?: boolean;
 }> = [
   {
     sourceKind: "database",
@@ -110,6 +111,7 @@ const managedBindings: ReadonlyArray<{
     output: "url",
     targetKind: "studio",
     input: "functionsUrl",
+    lifecycleDependency: false,
   },
   {
     sourceKind: "mail",
@@ -248,9 +250,6 @@ const differences = (left: unknown, right: unknown, path: string): ReadonlyArray
   return Object.is(left, right) ? [] : [path];
 };
 
-const sharesApiEndpoint = (creation: ServiceCreationInput): boolean =>
-  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
-
 /** Fixed ports requested for the shared API endpoint; composition accepts at most one. */
 const fixedApiPorts = (creations: ReadonlyArray<ServiceCreationInput>): ReadonlySet<number> =>
   new Set(
@@ -387,15 +386,13 @@ interface EndpointPortChange {
   readonly service: ServiceCreation["service"];
   readonly endpoint: string;
   readonly key: string;
-  /** The port to request from the port registry: a specific number, or `"auto"`. */
-  readonly port: number | "auto";
-  /** The endpoint's last bound port, when the registry has a claim for its key. */
-  readonly previousPort: number | undefined;
+  /** The saved endpoint intent's port. */
+  readonly previous: number | "auto";
 }
 
 interface EndpointReplan {
   readonly changes: ReadonlyArray<EndpointPortChange>;
-  /** Each changed member's endpoint intents to persist once every change claims successfully. */
+  /** Each changed member's requested endpoint intents. */
   readonly endpointsByInstance: ReadonlyMap<string, unknown>;
 }
 
@@ -406,7 +403,7 @@ interface EndpointReplan {
  * caller leaves that case to the existing incompatible-change rejection.
  */
 export const planEndpointReplan = (
-  saved: Pick<SavedStack, "instances" | "composition" | "ports">,
+  saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
 ): EndpointReplan | undefined => {
   // The start re-plan always replaces the whole composition, so an excluded sibling's stale
@@ -452,8 +449,7 @@ export const planEndpointReplan = (
         service: entry.service,
         endpoint: name,
         key,
-        port: next,
-        previousPort: saved.ports.find((claim) => claim.key === key)?.port,
+        previous,
       });
     }
     endpointsByInstance.set(entry.id, requestedEndpoints);
@@ -542,7 +538,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                 operations.status(id).pipe(
                   Effect.mapError(compositionErrorFrom),
                   Effect.flatMap((status) =>
-                    status.lifecycle === "stopped" && !status.wakeEnabled
+                    isStoppedAndWakeDisabled(status)
                       ? Effect.void
                       : Effect.fail(
                           compositionError(
@@ -573,10 +569,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
       const byKind = new Map(normalized.map((creation) => [creation.service, creation]));
-      const apiSource = normalized.find(
-        (creation) =>
-          apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
-      );
+      const apiSource = normalized.find(sharesApiEndpoint);
       if (
         apiSource === undefined &&
         normalized.some((creation) => ["auth", "functions", "studio"].includes(creation.service))
@@ -665,6 +658,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           output: outputName,
           targetKind,
           input: inputName,
+          lifecycleDependency = true,
         } of managedBindings) {
           const source = entriesByKind.get(sourceKind);
           const target = entriesByKind.get(targetKind);
@@ -680,6 +674,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           }
           values[inputName] = yield* operations.output(source.id, outputName);
           configInputs.set(target.id, values);
+          if (!lifecycleDependency) continue;
           const key = `${source.id}->${target.id}`;
           const dependency = dependencyMap.get(key) ?? {
             from: source.id,
@@ -736,9 +731,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             creation.service !== "database" &&
             endpointNames(creation).length > 0;
           return lazy
-            ? creation.service === "functions"
-              ? { id, activation: "lazy" as const }
-              : { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
+            ? { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({

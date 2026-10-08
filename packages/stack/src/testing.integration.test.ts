@@ -102,19 +102,21 @@ it.live(
       yield* test.checkpoint("0");
 
       const root = path.join(stateRoot, test.stack.id);
-      const owners = (yield* fs.readDirectory(root, { recursive: true })).filter((file) =>
-        file.endsWith(".supabase-database-owner.json"),
+      const readyMarkers = (yield* fs.readDirectory(root, { recursive: true })).filter((file) =>
+        file.endsWith(".supabase-database-ready.json"),
       );
-      expect(owners).toHaveLength(1);
-      const ownerFile = path.join(root, owners[0]!);
-      const originalMarker = yield* fs.readFileString(ownerFile);
-      // Released before the stack's teardown, which destroys only data carrying its own marker.
+      expect(readyMarkers).toHaveLength(1);
+      const instanceRoot = path.dirname(path.join(root, readyMarkers[0]!));
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "reset-failure-outside-" });
+      // Ownership is by location: replacing the owned root with a symlink makes resetData's
+      // destroy step refuse, simulating a failure partway through reset before the checkpoint
+      // restore runs. Released before the stack's teardown, which tolerates a root that is simply
+      // absent.
       yield* Effect.acquireRelease(
-        fs.writeFileString(
-          ownerFile,
-          `{"stackId":"not-this-stack","instanceId":"not-this-instance"}`,
-        ),
-        () => fs.writeFileString(ownerFile, originalMarker).pipe(Effect.orDie),
+        fs
+          .remove(instanceRoot, { recursive: true, force: true })
+          .pipe(Effect.andThen(fs.symlink(outside, instanceRoot))),
+        () => fs.remove(instanceRoot, { force: true }).pipe(Effect.orDie),
       );
 
       const failure = yield* test.reset("0").pipe(Effect.flip);
@@ -160,6 +162,58 @@ it.live(
       const { databaseUrl } = yield* database.credentials();
       if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
       expect(yield* sql(test.stack, databaseUrl, "SELECT 1")).toBe("1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  { timeout: 120_000 },
+);
+
+it.live(
+  "destroys a stack after the snapshot running at the time finishes, removing its data",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-snapshot-" });
+      const test = yield* makeTestStack({ runtime: "native", stateRoot });
+      const database = test.services.database;
+      const { databaseUrl } = yield* database.credentials();
+      if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
+      // Enough data that the snapshot is still copying when the destroy arrives.
+      yield* sql(
+        test.stack,
+        databaseUrl,
+        "CREATE TABLE filler AS SELECT g, repeat('x', 200) AS value FROM generate_series(1, 200000) g",
+      );
+      yield* database.stop;
+      const subscribed = yield* Deferred.make<void>();
+      const storing = yield* Deferred.make<void>();
+      yield* database.followStatus.pipe(
+        Stream.runForEach((status) =>
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.andThen(
+              status.currentOperation === "storage"
+                ? Deferred.succeed(storing, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+
+      const snapshot = yield* database
+        .saveSnapshot("before-destroy", { scope: "instance" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(storing);
+      yield* test.stack.destroy;
+
+      expect(Exit.isSuccess(yield* Fiber.await(snapshot))).toBe(true);
+      expect(yield* discover({ stateRoot })).toEqual([]);
+      expect(yield* fs.exists(path.join(stateRoot, test.stack.id, "state.json"))).toBe(false);
+      const data = path.join(stateRoot, test.stack.id, "data");
+      expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

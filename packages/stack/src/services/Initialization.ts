@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { resolveArtifact } from "../Artifacts.ts";
 import type { InitializationCommand, ResolvedCommand } from "../Commands.ts";
 import { ServiceError } from "../Service.ts";
-import type { StackCredentials } from "../State.ts";
+import type { StackCredentials } from "../StackNamespace.ts";
 import * as Auth from "./Auth.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Storage from "./Storage.ts";

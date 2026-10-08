@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Predicate } from "effect";
+import { Deferred, Effect, Exit, Fiber, Predicate, Ref, Scope } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -149,3 +149,133 @@ it.live("does not log an error when a backend copy resets after a successful con
     }),
   ).pipe(Effect.provide(captureErrors(logs)));
 });
+
+/** Starts a raw TCP echo backend and returns its address, retained until the scope closes. */
+const echoBackend = () =>
+  Effect.acquireRelease(
+    Effect.callback<
+      { readonly server: Server; readonly host: string; readonly port: number },
+      never
+    >((resume) => {
+      const server = createServer((socket) => socket.pipe(socket));
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        resume(
+          Effect.succeed({
+            server,
+            host: "127.0.0.1",
+            port: typeof address === "object" && address !== null ? address.port : 0,
+          }),
+        );
+      });
+      return Effect.void;
+    }),
+    ({ server }) =>
+      Effect.callback<void, never>((resume) => {
+        server.close(() => resume(Effect.void));
+        return Effect.void;
+      }),
+  );
+
+const connectAndWrite = (port: number, message: string) =>
+  Effect.acquireRelease(
+    Effect.callback<Socket, never>((resume) => {
+      const socket = new Socket();
+      socket.once("connect", () => resume(Effect.succeed(socket)));
+      socket.connect(port, "127.0.0.1");
+      return Effect.void;
+    }),
+    (socket) => Effect.sync(() => socket.destroy()),
+  ).pipe(Effect.tap((socket) => Effect.sync(() => socket.write(message))));
+
+const readOnceTcp = (socket: Socket) =>
+  Effect.callback<string, never>((resume) => {
+    const onData = (chunk: Buffer) => resume(Effect.succeed(chunk.toString()));
+    socket.once("data", onData);
+    return Effect.sync(() => socket.off("data", onData));
+  }).pipe(Effect.timeout("5 seconds"));
+
+it.live(
+  "releases the scoped target and keeps serving the next connection after a client resets while readiness is pending",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const listener = yield* bindTcp("127.0.0.1", 0);
+        if (!Predicate.isTagged(listener.address, "TcpAddress"))
+          return yield* Effect.die("Expected TCP listener");
+        const port = listener.address.port;
+        const backend = yield* echoBackend();
+        const acquired = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        const connections = yield* Ref.make(0);
+        // Only the first connection's target acquisition is held behind the gate; a later one
+        // (the "listener still serves" check below) resolves immediately against the real backend.
+        const target = Ref.updateAndGet(connections, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Effect.acquireRelease(Deferred.succeed(acquired, undefined), () =>
+                  Deferred.succeed(released, undefined),
+                ).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                  Effect.as({ host: backend.host, port: backend.port }),
+                )
+              : Effect.succeed({ host: backend.host, port: backend.port }),
+          ),
+        );
+        yield* serveTcp(listener, target, "cold-wake").pipe(Effect.forkScoped);
+
+        const client = yield* Effect.acquireRelease(
+          Effect.callback<Socket, never>((resume) => {
+            const socket = new Socket();
+            socket.once("connect", () => resume(Effect.succeed(socket)));
+            socket.connect(port, "127.0.0.1");
+            return Effect.void;
+          }),
+          (socket) => Effect.sync(() => socket.destroy()),
+        );
+        yield* Deferred.await(acquired);
+        // Readiness is still pending behind `gate`; an unhandled reset here would otherwise crash
+        // the owning process before the fix.
+        yield* Effect.sync(() => client.resetAndDestroy());
+        yield* Deferred.await(released);
+
+        // The listener (and the process running it) survived the reset and still serves a fresh
+        // connection normally.
+        const probe = yield* connectAndWrite(port, "ping");
+        expect(yield* readOnceTcp(probe)).toBe("ping");
+      }),
+    ),
+);
+
+it.live("tears down a connection that arrives before run installs its handler", () =>
+  Effect.gen(function* () {
+    const listenerScope = yield* Scope.make();
+    const listener = yield* bindTcp("127.0.0.1", 0).pipe(Scope.provide(listenerScope));
+    if (!Predicate.isTagged(listener.address, "TcpAddress"))
+      return yield* Effect.die("Expected TCP listener");
+    const port = listener.address.port;
+
+    const connect = Effect.callback<Socket, never>((resume) => {
+      const socket = new Socket();
+      socket.once("connect", () => resume(Effect.succeed(socket)));
+      socket.connect(port, "127.0.0.1");
+      return Effect.void;
+    }).pipe(Effect.timeout("5 seconds"));
+    const awaitClose = (socket: Socket) =>
+      Effect.callback<void, never>((resume) => {
+        const onClose = () => resume(Effect.void);
+        socket.once("close", onClose);
+        if (socket.destroyed) onClose();
+        return Effect.sync(() => socket.off("close", onClose));
+      }).pipe(Effect.timeout("5 seconds"));
+
+    // `run` is never called on this listener: the connection below stays queued. Closing the
+    // listener's own scope destroys it and completes rather than hanging on `server.close()`
+    // waiting for a socket nothing ever destroyed.
+    const queued = yield* connect;
+    const closed = yield* awaitClose(queued).pipe(Effect.forkScoped);
+    yield* Scope.close(listenerScope, Exit.void).pipe(Effect.timeout("5 seconds"));
+    yield* Fiber.join(closed);
+  }).pipe(Effect.scoped),
+);

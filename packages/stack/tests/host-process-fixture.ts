@@ -18,13 +18,13 @@ import { closeSync, createReadStream, writeSync } from "node:fs";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { currentRelease, launchHost, authorizes, type HostEndpoint } from "../src/HostProcess.ts";
 import { bindControl } from "../src/StackHost.ts";
-import * as State from "../src/State.ts";
+import * as StackNamespace from "../src/StackNamespace.ts";
 
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
 
 const makeState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 const awaitBarrier = NodeStream.fromReadable({
@@ -75,11 +75,15 @@ const owner = Effect.scoped(
     const path = yield* Path.Path;
     const stack = yield* state.read(stackId);
     if (stack === undefined) return yield* new FixtureError({ message: "stack is not registered" });
-    if (!(yield* state.lease(stackId))) {
-      report({ type: "error", message: "lease held", reason: "lease-held" });
-      return;
-    }
-    yield* state.retractHolder(stackId);
+    const lease = yield* state.acquireLease(stackId).pipe(
+      Effect.catchTag("Namespace.LeaseHeldError", () =>
+        Effect.sync(() => {
+          report({ type: "error", message: "lease held", reason: "lease-held" });
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    if (lease === undefined) return;
+    yield* lease.retractHolder;
     if (stack.identity.stackName === "slow-handshake") {
       const marker = path.join(stateRoot, "slow-handshake.pid");
       yield* fs.writeFileString(`${marker}.tmp`, String(process.pid));
@@ -116,7 +120,7 @@ const owner = Effect.scoped(
         }),
       )
       .pipe(Effect.forkScoped);
-    yield* state.publishHolder(stackId, {
+    yield* lease.publishHolder({
       role: "owner",
       secret,
       port: endpoint.port,
@@ -128,7 +132,7 @@ const owner = Effect.scoped(
     report({ type: "ready", endpoint, secret });
     if (mode === "held") yield* awaitBarrier;
     else yield* Deferred.await(shutdown);
-    yield* state.retractHolder(stackId);
+    yield* lease.retractHolder;
   }),
 );
 

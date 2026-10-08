@@ -1,6 +1,7 @@
 import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
+  Config,
   Crypto,
   Data,
   Deferred,
@@ -21,13 +22,13 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
+import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
-  readonly reason?: "engine-unavailable";
 }> {}
 
 interface ContainerSpec {
@@ -54,6 +55,8 @@ interface ContainerSpec {
   readonly stopGraceSeconds?: number;
   /** Signal `docker stop` sends first; omitted uses the image's stop signal. */
   readonly stopSignal?: "SIGINT" | "SIGTERM";
+  /** `uid:gid` the container runs as, overriding the image's own user. */
+  readonly user?: string;
 }
 
 export interface ContainerProcess {
@@ -88,7 +91,7 @@ export interface ContainerRuntime {
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
 
-const errorFor = (operation: string, cause: unknown) =>
+const errorFor = (operation: string, cause: unknown): ContainerError =>
   new ContainerError({
     operation,
     message: cause instanceof Error ? cause.message : String(cause),
@@ -99,6 +102,25 @@ const errorFor = (operation: string, cause: unknown) =>
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
   Effect.mapError((cause) => errorFor("config", cause)),
 );
+
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
+ * that rejects the caller (for example on permissions), so callers can leave work for a retry
+ * instead of surfacing a hard failure.
+ */
+export const engineUnreachable = (cause: unknown): boolean => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return (
+    (cause instanceof Object &&
+      "cause" in cause &&
+      cause.cause instanceof PlatformError.PlatformError &&
+      cause.cause.reason._tag === "NotFound" &&
+      cause.cause.reason.method === "spawn") ||
+    /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)|unable to connect to podman socket:[^\n]*the system cannot find the file specified/iu.test(
+      message,
+    )
+  );
+};
 
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
@@ -113,32 +135,179 @@ const transientPullFailure = (error: ContainerError) =>
     error.message,
   );
 
-/**
- * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
- * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
- * authentication and TLS failures, so only their refused or missing-endpoint causes match.
- */
-const engineUnreachable = (error: ContainerError) =>
-  (error.cause instanceof PlatformError.PlatformError &&
-    error.cause.reason._tag === "NotFound" &&
-    error.cause.reason.method === "spawn") ||
-  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
-    error.message,
+/** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
+const runRaw = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  engine: ContainerEngine,
+  args: ReadonlyArray<string>,
+): Effect.Effect<string, ContainerError> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(engine, args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Number(code) !== 0)
+        return yield* errorFor(args[0] ?? "command", stderr.trim() || `Engine exited with ${code}`);
+      return stdout;
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.mapError((cause) =>
+      cause instanceof ContainerError ? cause : errorFor(args[0] ?? "command", cause),
+    ),
   );
 
-/** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
-const retryablePull = (error: ContainerError) =>
-  (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
+/** The container engine CLI a stack's containers run through. */
+export type ContainerEngine = "docker" | "podman";
 
-const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+/**
+ * The engine endpoint and identity an owner resolves once, at startup, and pins for its entire
+ * lifetime: the container runtime, the storage helpers, the host-gateway probes and the
+ * namespace's reconcile loop all share this one target instead of each resolving (and so
+ * potentially disagreeing on) their own. `argv` is the explicit prefix every invocation carries
+ * (`--host <endpoint>` for Docker, `--url`/`--connection` for Podman), since the CLI gives it
+ * priority over its environment and saved defaults, and since an argument, unlike an environment
+ * variable, never leaks to subprocesses a launched workload spawns. `rootless` is whether the
+ * Podman service runs without root, which decides how host uids map into containers.
+ */
+export type EngineTarget =
+  | {
+      readonly engine: "docker";
+      readonly argv: ReadonlyArray<string>;
+      readonly daemonId: string;
+    }
+  | {
+      readonly engine: "podman";
+      readonly argv: ReadonlyArray<string>;
+      readonly daemonId: string;
+      readonly rootless: boolean;
+    };
+
+/**
+ * The active context's own name, pinned by name rather than by its endpoint alone: `context show`
+ * honours `DOCKER_CONTEXT` and the config file, and pinning by name keeps that context's own TLS
+ * material (CA, client certificate and key, skip-verify) intact for every later invocation, which
+ * extracting just its endpoint would otherwise drop.
+ */
+const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+  Effect.gen(function* () {
+    const name = (yield* runRaw(spawner, "docker", ["context", "show"])).trim();
+    if (name.length === 0) return yield* errorFor("context", "Engine returned no active context");
+    return name;
+  });
+
+const nonEmptyEnv = (name: string) =>
+  Config.option(Config.string(name)).pipe(
+    Effect.map(Option.filter((value) => value.length > 0)),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const PODMAN_INFO_FORMAT =
+  "{{.Host.ServiceIsRemote}}|{{.Host.Security.Rootless}}|{{.Host.Hostname}}|{{.Store.GraphRoot}}";
+
+/** Podman has no daemon `.ID`; its host name and graph root together identify the service. */
+const podmanInfo = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  argv: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const output = yield* runRaw(spawner, "podman", [
+      ...argv,
+      "info",
+      "--format",
+      PODMAN_INFO_FORMAT,
+    ]);
+    const [remote, rootless, hostname, ...graphRoot] = output.trim().split("|");
+    const root = graphRoot.join("|");
+    if (hostname === undefined || hostname.length === 0 || root.length === 0)
+      return yield* errorFor("identity", "Engine returned an empty id");
+    return {
+      remote: remote === "true",
+      rootless: rootless === "true",
+      daemonId: `${hostname}|${root}`,
+    };
+  });
+
+/**
+ * Pins the connection the Podman CLI would use: `CONTAINER_HOST` or `CONTAINER_CONNECTION` when
+ * set, otherwise the default saved connection when the CLI talks to a remote service (a
+ * `podman machine`), and nothing when it talks to a local one, which saved connections never
+ * redirect.
+ */
+const resolvePodmanTarget = Effect.fn("Container.resolvePodmanTarget")(function* (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.fn.Return<EngineTarget, ContainerError> {
+  const url = yield* nonEmptyEnv("CONTAINER_HOST");
+  const connection = yield* nonEmptyEnv("CONTAINER_CONNECTION");
+  const explicit: ReadonlyArray<string> | undefined = Option.isSome(url)
+    ? ["--url", url.value]
+    : Option.isSome(connection)
+      ? ["--connection", connection.value]
+      : undefined;
+  const bare = explicit === undefined ? yield* podmanInfo(spawner, []) : undefined;
+  let argv: ReadonlyArray<string> = explicit ?? [];
+  if (bare?.remote === true) {
+    const listing = yield* runRaw(spawner, "podman", [
+      "system",
+      "connection",
+      "list",
+      "--format",
+      "{{.Name}}|{{.Default}}",
+    ]);
+    const name = listing
+      .split("\n")
+      .map((line) => line.trim().split("|"))
+      .find(([, isDefault]) => isDefault === "true")?.[0];
+    if (name === undefined || name.length === 0)
+      return yield* errorFor("connection", "Podman has no default connection to pin");
+    argv = ["--connection", name];
+  }
+  const info = bare !== undefined && argv.length === 0 ? bare : yield* podmanInfo(spawner, argv);
+  return { engine: "podman", argv, daemonId: info.daemonId, rootless: info.rootless };
+});
+
+/**
+ * Resolves and pins, once for an owner's whole lifetime, the single engine endpoint its commands
+ * target and that endpoint's own identity.
+ */
+export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(function* (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  engine: ContainerEngine,
+): Effect.fn.Return<EngineTarget, ContainerError> {
+  yield* Effect.annotateCurrentSpan("container.engine", engine);
+  if (engine === "podman") return yield* resolvePodmanTarget(spawner);
+  const host = yield* nonEmptyEnv("DOCKER_HOST");
+  const argv: ReadonlyArray<string> = Option.isSome(host)
+    ? ["--host", host.value]
+    : ["--context", yield* resolveContextName(spawner)];
+  const daemonId = (yield* runRaw(spawner, "docker", [
+    ...argv,
+    "info",
+    "--format",
+    "{{.ID}}",
+  ])).trim();
+  if (daemonId.length === 0) return yield* errorFor("identity", "Engine returned an empty id");
+  return { engine: "docker", argv, daemonId };
+});
+
+/** A pull worth retrying: rate-limited or a dropped connection. */
+const retryablePull = (error: ContainerError) => rateLimited(error) || transientPullFailure(error);
 
 const PULL_MAX_RETRIES = 4;
 
 /**
  * Host alias mapped in Docker containers' `/etc/hosts` to the engine's IPv4 host gateway, or to
  * `host-gateway` for runtimes that do not await the probe; Docker Desktop's `host.docker.internal`
- * and `host-gateway` also resolve to an IPv6 address. Engines that reject `host-gateway` get the
- * IPv4 address they map to `host.docker.internal` or `host.containers.internal` instead.
+ * and `host-gateway` also resolve to an IPv6 address. An engine that rejects `host-gateway` gets
+ * the IPv4 address it maps to `host.docker.internal` instead.
  */
 export const DOCKER_HOST_ALIAS = "host.supabase.internal";
 
@@ -147,7 +316,7 @@ const HOST_GATEWAY_PROBE_TIMEOUT: Duration.Input = "15 seconds";
 
 const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
 
-/** Names an engine may write into `/etc/hosts` for its host, such as Podman's compat socket. */
+/** The name the engine writes into `/etc/hosts` for its own host. */
 const ENGINE_HOST_NAMES = ["host.docker.internal", "host.containers.internal"];
 
 const firstIpv4For = (hosts: string, names: ReadonlyArray<string>) =>
@@ -159,7 +328,7 @@ const firstIpv4For = (hosts: string, names: ReadonlyArray<string>) =>
         IPV4_ADDRESS.test(address ?? "") && mapped.some((name) => names.includes(name)),
     )?.[0];
 
-/** Matches an engine that rejects the `host-gateway` keyword in `--add-host`, such as older Podman. */
+/** Matches an engine that rejects the `host-gateway` keyword in `--add-host`. */
 const rejectsHostGateway = (error: ContainerError) =>
   /(?:invalid|unknown|unsupported|bad)[^\n]*add-host[^\n]*host-gateway/iu.test(error.message);
 
@@ -233,6 +402,9 @@ const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 /** `docker create` only writes metadata; a healthy daemon answers well within this bound. */
 const CREATE_TIMEOUT: Duration.Input = "2 minutes";
 
+/** A started container's loopback publish can lag under concurrent engine load before landing. */
+const PORT_PUBLISH_TIMEOUT: Duration.Input = "2 minutes";
+
 const PublishedPorts = Schema.Record(
   Schema.String,
   Schema.NullOr(
@@ -244,6 +416,13 @@ const PublishedPorts = Schema.Record(
     ),
   ),
 );
+
+/** The published ports together with the run state they were observed in. */
+const PublicationState = Schema.Struct({
+  Ports: Schema.NullOr(PublishedPorts),
+  Status: Schema.String,
+  ExitCode: Schema.Finite,
+});
 
 const mountField = (key: string, value: string) => {
   const field = `${key}=${value}`;
@@ -258,7 +437,7 @@ const mountField = (key: string, value: string) => {
  * with backoff.
  */
 export const makeContainerRuntime = (options: {
-  readonly engine: "docker" | "podman";
+  readonly target: EngineTarget;
   readonly root: string;
   readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
   /** Omitted gives this runtime its own host-gateway probe. */
@@ -283,6 +462,9 @@ export const makeContainerRuntime = (options: {
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const stackRoot = path.resolve(options.root);
+    // An owned directory for per-launch environment files, never the real system temp directory.
+    const containerEnvRoot = path.join(stackRoot, CONTAINER_ENV_DIRNAME);
+    const engine = options.target.engine;
 
     const command = (
       args: ReadonlyArray<string>,
@@ -290,14 +472,18 @@ export const makeContainerRuntime = (options: {
         readonly stdin?: "ignore" | "pipe";
         readonly forceKillAfter?: Duration.Input;
       } = {},
-    ) => ChildProcess.make(options.engine, args, { stdin: "ignore", ...commandOptions });
+    ) =>
+      ChildProcess.make(engine, [...options.target.argv, ...args], {
+        stdin: "ignore",
+        ...commandOptions,
+      });
 
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
     ) {
       yield* Effect.annotateCurrentSpan({
-        "process.executable.name": options.engine,
+        "process.executable.name": engine,
         "process.arg_count": args.length,
         "container.command": args[0] ?? "",
       });
@@ -400,34 +586,61 @@ export const makeContainerRuntime = (options: {
     );
 
     const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
-    /** Reads `/etc/hosts` from a throwaway container of an already present image. */
-    const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
-      testRunLabelArgs.pipe(
-        Effect.flatMap((testRunLabel) =>
-          run(
-            [
-              "run",
-              "--rm",
-              "--pull",
-              "never",
-              ...addHost,
-              // No instance label: `--rm` removal is asynchronous and must not count as an
-              // instance container; the stack labels keep it sweepable.
-              "--label",
-              `com.supabase.stack=${spec.stackId}`,
-              "--label",
-              `com.supabase.stack-root=${stackRoot}`,
-              ...testRunLabel,
-              "--entrypoint",
-              "cat",
-              image,
-              "/etc/hosts",
-            ],
-            { timeout: undefined },
-          ),
-        ),
-        Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT),
+    /** Polls until the engine confirms a `--rm` container's own asynchronous removal finished. */
+    const awaitRemoved = (name: string) =>
+      run(
+        [
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+          `name=^/?${name.replaceAll(".", "\\.")}$`,
+          "--format",
+          "{{.State}}",
+        ],
+        { timeout: "5 seconds" },
+      ).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("250 millis"),
+          while: (output) => output !== "",
+        }),
+        Effect.timeout("10 seconds"),
+        Effect.asVoid,
       );
+    /** Reads `/etc/hosts` from a throwaway, claimed container of an already present image. */
+    const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const testRunLabel = yield* testRunLabelArgs;
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => errorFor("identity", cause)),
+        );
+        // Not an instance container: no instance label, so it is never mistaken for one.
+        const { name } = identifyContainer(spec, token, true);
+        const hosts = yield* run(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--name",
+            name,
+            ...addHost,
+            "--label",
+            `com.supabase.stack=${spec.stackId}`,
+            "--label",
+            `com.supabase.stack-root=${stackRoot}`,
+            ...testRunLabel,
+            "--entrypoint",
+            "cat",
+            image,
+            "/etc/hosts",
+          ],
+          { timeout: undefined },
+        );
+        yield* awaitRemoved(name);
+        return hosts;
+      }).pipe(Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT));
     /** Resolves the IPv4 host address the engine writes itself, since it rejects `host-gateway`. */
     const engineHostProbe = (image: string, spec: ContainerSpec, rejection: ContainerError) =>
       readProbeHosts(image, spec, []).pipe(
@@ -443,7 +656,7 @@ export const makeContainerRuntime = (options: {
               ? Effect.fail(
                   new ContainerError({
                     operation: "host-gateway",
-                    message: `The container engine rejects host-gateway in --add-host and maps no IPv4 address to ${ENGINE_HOST_NAMES.join(" or ")}; upgrade Podman or use --runtime podman`,
+                    message: `The container engine rejects host-gateway in --add-host and maps no IPv4 address to ${ENGINE_HOST_NAMES.join(" or ")}`,
                     cause: rejection,
                   }),
                 )
@@ -494,9 +707,21 @@ export const makeContainerRuntime = (options: {
         if (!Number.isInteger(port) || port < 1 || port > 65535)
           return yield* errorFor("ports", "Invalid container port");
       }
-      const directory = yield* fs
-        .makeTempDirectoryScoped({ prefix: "supabase-container-" })
+      yield* fs
+        .makeDirectory(containerEnvRoot, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
+      // Not `makeTempDirectoryScoped`: its scoped cleanup removes without `force`, then dies on
+      // any failure, including a confirmed ENOENT when this stack's whole root (this directory's
+      // owned ancestor) is already gone — turning an ordinary stop into an unrecoverable defect.
+      // `acquireRelease` keeps the plain `makeTempDirectory` and installing its tolerant,
+      // `force: true` finalizer uninterruptible together, so an interruption between the two
+      // can never leave the directory created but unregistered for cleanup.
+      const directory = yield* Effect.acquireRelease(
+        fs
+          .makeTempDirectory({ directory: containerEnvRoot, prefix: "container-" })
+          .pipe(Effect.mapError((cause) => errorFor("environment", cause))),
+        (value) => fs.remove(value, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
       const envPath = path.join(directory, "environment");
       yield* fs
         .writeFileString(
@@ -511,8 +736,7 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
-      const hostAlias =
-        options.engine === "docker" ? yield* hostAliasTarget(image, spec) : undefined;
+      const hostAlias = yield* hostAliasTarget(image, spec);
       const testRunLabel = yield* testRunLabelArgs;
       const createArgs = (target: string | undefined) => [
         "create",
@@ -543,6 +767,12 @@ export const makeContainerRuntime = (options: {
         "--label",
         `com.docker.compose.service=${composeService}`,
         ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
+        ...(spec.user === undefined ? [] : ["--user", spec.user]),
+        // A rootless Podman maps the host uid elsewhere inside the container; keep-id maps it to
+        // itself so files written through a borrowed bind mount stay owned by the caller.
+        ...(spec.user !== undefined && options.target.engine === "podman" && options.target.rootless
+          ? ["--userns=keep-id"]
+          : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -759,40 +989,77 @@ export const makeContainerRuntime = (options: {
                 getWaiter,
               ).pipe(Effect.flatMap((fiber) => Fiber.join(fiber)));
               owned = { ...partial, exitCode };
-              const text = yield* run([
-                "inspect",
-                "--format",
-                "{{json .NetworkSettings.Ports}}",
-                name,
-              ]);
-              const bindings = yield* Schema.decodeEffect(Schema.fromJsonString(PublishedPorts))(
-                text,
-              ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
-              const ports: Record<number, number> = {};
-              for (const port of spec.ports ?? []) {
-                const value = bindings[`${port}/tcp`]?.find(
-                  (binding) => binding.HostIp === "127.0.0.1",
-                )?.HostPort;
-                const actual = Number(value);
-                if (!Number.isInteger(actual) || actual < 1 || actual > 65535)
-                  return yield* errorFor("inspect", `No loopback publication for ${port}`);
-                ports[port] = actual;
-              }
+              const requestedPorts = spec.ports ?? [];
+              const inspectPublished = Effect.gen(function* () {
+                const text = yield* run([
+                  "inspect",
+                  "--format",
+                  '{"Ports":{{json .NetworkSettings.Ports}},"Status":{{json .State.Status}},"ExitCode":{{.State.ExitCode}}}',
+                  name,
+                ]);
+                const state = yield* Schema.decodeEffect(Schema.fromJsonString(PublicationState))(
+                  text,
+                ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
+                const bindings = state.Ports ?? {};
+                const published: Record<number, number> = {};
+                const pending: Array<number> = [];
+                for (const port of requestedPorts) {
+                  const value = bindings[`${port}/tcp`]?.find(
+                    (binding) => binding.HostIp === "127.0.0.1",
+                  )?.HostPort;
+                  const actual = Number(value);
+                  if (Number.isInteger(actual) && actual >= 1 && actual <= 65535)
+                    published[port] = actual;
+                  else pending.push(port);
+                }
+                if (pending.length > 0 && state.Status !== "running")
+                  return yield* errorFor(
+                    "inspect",
+                    `Container ${state.Status} (exit code ${state.ExitCode}) before publishing ${pending.join(", ")}`,
+                  );
+                return { published, pending };
+              });
+              // The engine can report a container started before its loopback publish lands,
+              // so poll for it instead of trusting a single inspect under load.
+              const awaitPublishedPorts = Effect.fn("Container.awaitPublishedPorts")(function* () {
+                const observed = yield* Ref.make<{
+                  readonly published: Record<number, number>;
+                  readonly pending: ReadonlyArray<number>;
+                }>({ published: {}, pending: requestedPorts });
+                yield* withAttemptCount(
+                  inspectPublished.pipe(Effect.tap((result) => Ref.set(observed, result))),
+                  (counted) =>
+                    counted.pipe(
+                      Effect.repeat({
+                        schedule: Schedule.spaced("250 millis"),
+                        while: (result) => result.pending.length > 0,
+                      }),
+                    ),
+                ).pipe(
+                  Effect.timeout(PORT_PUBLISH_TIMEOUT),
+                  Effect.catchTag("TimeoutError", () =>
+                    Ref.get(observed).pipe(
+                      Effect.flatMap(({ pending }) =>
+                        errorFor(
+                          "inspect",
+                          `No loopback publication for ${pending.join(", ")} after ${PORT_PUBLISH_TIMEOUT}`,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+                return (yield* Ref.get(observed)).published;
+              });
+              const ports = yield* awaitPublishedPorts();
               const logProcess =
                 attached ??
                 (yield* Effect.gen(function* () {
                   // Released on exit, since a release left for service stop can hit a reused pid.
                   const followerScope = yield* Scope.fork(owner);
-                  const follower = yield* spawner
-                    .spawn(
-                      ChildProcess.make(options.engine, ["logs", "--follow", name], {
-                        stdin: "ignore",
-                      }),
-                    )
-                    .pipe(
-                      Scope.provide(followerScope),
-                      Effect.mapError((cause) => errorFor("logs", cause)),
-                    );
+                  const follower = yield* spawner.spawn(command(["logs", "--follow", name])).pipe(
+                    Scope.provide(followerScope),
+                    Effect.mapError((cause) => errorFor("logs", cause)),
+                  );
                   yield* Effect.forkIn(
                     Effect.exit(follower.exitCode).pipe(
                       Effect.andThen(Scope.close(followerScope, Exit.void)),
@@ -822,102 +1089,120 @@ export const makeContainerRuntime = (options: {
     };
   });
 
-export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
-  (options: {
-    readonly engine: "docker" | "podman";
-    readonly stackId: string;
-    readonly root: string;
-  }) =>
+/**
+ * Removes a container by its exact id, succeeding when it is already absent, through the same
+ * pinned {@link EngineTarget} it was discovered through, so a context switch in between can never
+ * split the two.
+ */
+const removeContainerById = Effect.fn("Container.removeContainerById")(
+  (options: { readonly target: EngineTarget; readonly id: string }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const stackRoot = options.root;
-      const run = Effect.fn("Container.runCleanupCommand")(function* (args: ReadonlyArray<string>) {
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const child = yield* spawner.spawn(
-              ChildProcess.make(options.engine, args, {
-                stdin: "ignore",
-                stdout: "pipe",
-                stderr: "pipe",
-              }),
-            );
-            const [stdout, stderr, code] = yield* Effect.all(
-              [
-                child.stdout.pipe(Stream.decodeText, Stream.mkString),
-                child.stderr.pipe(Stream.decodeText, Stream.mkString),
-                child.exitCode,
-              ],
-              { concurrency: "unbounded" },
-            );
-            if (Number(code) !== 0)
-              return yield* errorFor(
-                args[0] ?? "cleanup",
-                stderr.trim() || `Engine exited with ${code}`,
-              );
-            return stdout.trim();
-          }),
-        ).pipe(
-          Effect.timeout("30 seconds"),
-          Effect.mapError((cause) =>
-            cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
-          ),
-        );
-      });
-      const filters = [
-        "--filter",
-        `label=com.supabase.stack=${options.stackId}`,
-        "--filter",
-        `label=com.supabase.stack-root=${stackRoot}`,
-      ];
-      const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
-      // Only the initial listing can show the engine itself is unreachable; a later `rm` or
-      // leftover check failing is a per-container cleanup problem instead.
-      const ids = (yield* list().pipe(
-        Effect.mapError((cause) =>
-          engineUnreachable(cause)
-            ? new ContainerError({
-                operation: cause.operation,
-                message: cause.message,
-                cause: cause.cause,
-                reason: "engine-unavailable",
-              })
-            : cause,
-        ),
-      ))
-        .split("\n")
-        .filter((id) => id.length > 0);
-      yield* Effect.forEach(
-        ids,
-        (id) =>
-          run(["rm", "--force", id]).pipe(
-            Effect.catchTag("ContainerError", (failure) =>
-              run(["ps", "--all", "--quiet", "--no-trunc", "--filter", `id=${id}`]).pipe(
-                Effect.flatMap((present) =>
-                  present.length === 0 ? Effect.void : Effect.fail(failure),
-                ),
-              ),
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(
+              options.target.engine,
+              [...options.target.argv, "rm", "--force", options.id],
+              { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
             ),
-          ),
-        { concurrency: 1, discard: true },
+          );
+          const [stderr, code] = yield* Effect.all(
+            [child.stderr.pipe(Stream.decodeText, Stream.mkString), child.exitCode],
+            { concurrency: "unbounded" },
+          );
+          // Docker reports this exact phrasing for an id that no longer exists.
+          if (Number(code) !== 0 && !/no such container/iu.test(stderr))
+            return yield* errorFor("cleanup", stderr.trim() || `Engine exited with ${code}`);
+        }),
+      ).pipe(
+        Effect.timeout("30 seconds"),
+        Effect.mapError((cause) =>
+          cause instanceof ContainerError ? cause : errorFor("cleanup", cause),
+        ),
       );
-      const remaining = yield* list();
-      if (remaining.length > 0)
-        return yield* errorFor("cleanup", `Stack containers remain: ${remaining}`);
     }),
 );
 
-/** Shell command that removes the same containers as `removeStackContainers`, succeeding when none remain. */
-export const removeStackContainersCommand = (options: {
-  readonly engine: "docker" | "podman";
+/**
+ * Lists every container carrying this stack's identity and data-root labels, through the pinned
+ * engine: service containers and every storage helper alike (per-instance and shared),
+ * independent of any in-memory registry's own bookkeeping. The data-root label is required
+ * alongside the stack id label because a stack id alone does not identify a stack: two owners can
+ * share one id while rooted at different data directories.
+ */
+const listStackContainers = Effect.fn("Container.listStackContainers")(function* (options: {
+  readonly target: EngineTarget;
   readonly stackId: string;
-  readonly root: string;
-}): string => {
-  const filters = [
+  readonly stackRoot: string;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = yield* runRaw(spawner, options.target.engine, [
+    ...options.target.argv,
+    "ps",
+    "--all",
+    "--quiet",
+    "--no-trunc",
+    "--filter",
     `label=com.supabase.stack=${options.stackId}`,
-    `label=com.supabase.stack-root=${options.root}`,
-  ]
-    .map((filter) => `--filter ${shellQuote(filter)}`)
-    .join(" ");
-  // `sh -c` keeps POSIX word splitting of `$ids` when pasted into shells like zsh that skip it.
-  return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
-};
+    "--filter",
+    `label=com.supabase.stack-root=${options.stackRoot}`,
+  ]);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+});
+
+/**
+ * Removes every container carrying this stack's identity and data-root labels and reports how
+ * many remain (normally 0): the registration-independent confirming sweep destroy and stop use
+ * instead of depending on any helper registry's own bookkeeping. A container that disappears
+ * between listing and removal is not an error, matching {@link removeContainerById}.
+ */
+export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
+  function* (options: {
+    readonly target: EngineTarget;
+    readonly stackId: string;
+    readonly stackRoot: string;
+  }) {
+    const ids = yield* listStackContainers(options);
+    yield* Effect.forEach(ids, (id) => removeContainerById({ target: options.target, id }), {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    const remaining = yield* listStackContainers(options);
+    return remaining;
+  },
+);
+
+const decodeStackLabels = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
+);
+
+/**
+ * Lists the stack id and data-root labels of every stack-labelled container on the pinned
+ * engine, for finding stacks that no registration accounts for. A line that is not a label pair
+ * is skipped.
+ */
+export const listStackLabels = Effect.fn("Container.listStackLabels")(function* (
+  target: EngineTarget,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = yield* runRaw(spawner, target.engine, [
+    ...target.argv,
+    "ps",
+    "--all",
+    "--filter",
+    "label=com.supabase.stack",
+    "--format",
+    '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
+  ]);
+  const labels = yield* Effect.forEach(
+    output.split("\n").filter((line) => line.length > 0),
+    (line) => decodeStackLabels(line).pipe(Effect.option),
+  );
+  const containers = labels.flatMap(Option.toArray).map(([stackId, root]) => ({ stackId, root }));
+  yield* Effect.annotateCurrentSpan("container.count", containers.length);
+  return containers;
+});

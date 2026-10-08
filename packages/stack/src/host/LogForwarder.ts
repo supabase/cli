@@ -20,11 +20,10 @@ import {
 } from "effect";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
 import type { CompositionConfig } from "../Orchestrator.ts";
-import type { ServiceObservation } from "../Service.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
 import type { CatalogError, ServiceEndpoint } from "../services/Recipe.ts";
 import { errorCode } from "../internal/sharing-violation.ts";
-import { reapStaleWrites, writeFileAtomically } from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
 import {
   isShippedService,
   logflareEvent,
@@ -32,6 +31,7 @@ import {
   type LogflareEvent,
   type ShippedService,
 } from "./LogflareEvents.ts";
+import type { gatewayLog } from "./GatewayLog.ts";
 import { LogPosition, type LogRecord } from "./LogRecord.ts";
 import type * as LogStore from "./LogStore.ts";
 
@@ -41,7 +41,17 @@ export interface ForwardedInstance {
   readonly endpoint: (name: string) => Effect.Effect<ServiceEndpoint, CatalogError>;
   /** The current saved creation; Analytics' API key is read from it per body. */
   readonly creation: Effect.Effect<ServiceCreation>;
-  readonly observation: Stream.Stream<ServiceObservation<unknown>>;
+  /** Whether the instance is running and healthy, and which launch it is serving. */
+  readonly serving: Stream.Stream<{
+    readonly serving: boolean;
+    readonly launchId: number | undefined;
+  }>;
+}
+
+/** An owner log stream without a service instance; it ships while the owner runs. */
+export interface ForwardedStream {
+  readonly id: string;
+  readonly service: typeof gatewayLog.service;
 }
 
 export class StoredEventsError extends Schema.TaggedError<StoredEventsError>()(
@@ -59,8 +69,11 @@ export interface StoredEvents {
 }
 
 interface Interface {
-  /** Ships a shipped service's persisted logs, or tracks an Analytics instance as the target. */
-  readonly attach: (instance: ForwardedInstance) => Effect.Effect<void>;
+  /**
+   * Ships the persisted logs of a shipped service or an owner stream, or tracks an Analytics
+   * instance as the target.
+   */
+  readonly attach: (instance: ForwardedInstance | ForwardedStream) => Effect.Effect<void>;
   /** Stops following an instance; returns once no cursor write of it can still land. */
   readonly detach: (instanceId: string) => Effect.Effect<void>;
   /** Re-selects the shipping target after the composition changes. */
@@ -374,15 +387,10 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   }).pipe(Semaphore.withPermits(rebinding, 1));
 
   const trackTarget = (instance: ForwardedInstance) =>
-    instance.observation.pipe(
-      Stream.takeUntil((observation) => !observation.registered),
-      Stream.runForEach((observation) =>
+    instance.serving.pipe(
+      Stream.runForEach(({ serving, launchId }) =>
         Ref.update(candidates, (current) =>
-          new Map(current).set(instance.id, {
-            instance,
-            serving: observation.lifecycle === "running" && observation.health === "healthy",
-            launchId: observation.launchId,
-          }),
+          new Map(current).set(instance.id, { instance, serving, launchId }),
         ).pipe(Effect.andThen(rebind)),
       ),
       Effect.ensuring(
@@ -439,7 +447,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     const target = path.join(directory, cursorFile);
     if (cursor === undefined) return yield* fs.remove(target, { force: true });
     const content = yield* encodeCursor(cursor);
-    yield* writeFileAtomically(fs, path, { directory, target, content });
+    yield* StackNamespace.publish(fs, path, { target, content });
   });
 
   /** Saves progress before acting on it, so the in-memory position never passes the file. */
@@ -491,9 +499,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     const remaining = deadline - (yield* Clock.currentTimeMillis);
     yield* client
       .execute(
-        HttpClientRequest.post(
-          `http://${endpoint.host ?? "127.0.0.1"}:${endpoint.port}/api/logs`,
-        ).pipe(
+        HttpClientRequest.post(`http://127.0.0.1:${endpoint.port}/api/logs`).pipe(
           HttpClientRequest.setUrlParam("source_name", source),
           HttpClientRequest.setHeader("x-api-key", apiKey),
           HttpClientRequest.bodyText(body, "application/json"),
@@ -844,13 +850,6 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       }),
     ).pipe(current.users.withPermits(1));
 
-  const unregistered = (instance: ForwardedInstance) =>
-    instance.observation.pipe(
-      Stream.filter((observation) => !observation.registered),
-      Stream.take(1),
-      Stream.runDrain,
-    );
-
   /** Waits until the instance joins the composition, or leaves it. */
   const membership = (instanceId: string, member: boolean) =>
     SubscriptionRef.changes(memberIds).pipe(
@@ -859,21 +858,25 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       Stream.runDrain,
     );
 
-  /** Ships until the instance unregisters or the store detaches its logs, which ends a session. */
-  const forward = (instance: ForwardedInstance, service: ShippedService) =>
+  /**
+   * Ships until the instance is detached or the store detaches its logs, which ends a session. A
+   * service instance ships only while it is a composition member; the gateway stream belongs to
+   * the owner.
+   */
+  const forward = (id: string, service: ShippedService, composed: boolean) =>
     Effect.gen(function* () {
       while (true) {
-        yield* membership(instance.id, true);
+        if (composed) yield* membership(id, true);
         const current = yield* serving;
         const failing = yield* Ref.make(false);
         const posting = yield* Semaphore.make(1);
         // A stopped or refused target pauses shipping until it changes; a failed log read resumes
         // from the cursor after a backoff.
-        const detached = yield* session(instance.id, service, current, failing, posting).pipe(
+        const detached = yield* session(id, service, current, failing, posting).pipe(
           Effect.tapError((error) =>
             error._tag === "StaleTarget"
               ? Effect.void
-              : warnOnce(failing, `Reading ${instance.id} logs to ship failed; retrying`, error),
+              : warnOnce(failing, `Reading ${id} logs to ship failed; retrying`, error),
           ),
           Effect.retry({
             schedule: retrySchedule,
@@ -884,28 +887,28 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           // A retarget or leaving the composition lets a started post finish, so its answer decides
           // the pending body.
           Effect.raceFirst(
-            Effect.raceFirst(retargeted(current), membership(instance.id, false)).pipe(
-              Effect.andThen(posting.take(1)),
-              Effect.as(false),
-            ),
+            Effect.raceFirst(
+              retargeted(current),
+              composed ? membership(id, false) : Effect.never,
+            ).pipe(Effect.andThen(posting.take(1)), Effect.as(false)),
           ),
         );
-        if (detached)
-          return yield* Effect.logDebug(`Log shipping of ${instance.id} stopped with its logs`);
+        if (detached) return yield* Effect.logDebug(`Log shipping of ${id} stopped with its logs`);
       }
-    }).pipe(Effect.raceFirst(unregistered(instance)));
+    });
 
   const followers = yield* FiberMap.make<string>();
-  const attach = Effect.fn("LogForwarder.attach")(function* (instance: ForwardedInstance) {
+  const attach = Effect.fn("LogForwarder.attach")(function* (
+    instance: ForwardedInstance | ForwardedStream,
+  ) {
     if (instance.service === "analytics")
       yield* FiberMap.run(followers, instance.id, trackTarget(instance));
     else if (isShippedService(instance.service)) {
-      // A cursor write cut short by a crash leaves its temporary directory behind.
-      yield* options.logs.directory(instance.id).pipe(
-        Effect.flatMap((directory) => reapStaleWrites(fs, path, directory)),
-        Effect.ignore,
+      yield* FiberMap.run(
+        followers,
+        instance.id,
+        forward(instance.id, instance.service, "serving" in instance),
       );
-      yield* FiberMap.run(followers, instance.id, forward(instance, instance.service));
     }
   });
 

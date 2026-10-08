@@ -14,6 +14,7 @@ import {
 } from "effect";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import {
   alwaysReadyHttpClientLayer,
   defaultLocalResetRoute,
@@ -130,14 +131,10 @@ function syncStackApi(workdir: string, port: number) {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port }],
       lifecycle: "running",
       health: "healthy",
-      registered: true,
       wakeEnabled: true,
-      intentRevision: 0,
       currentOperation: undefined,
-      launchId: undefined,
       exit: undefined,
       error: undefined,
-      cleanupError: undefined,
     }),
   };
   const composition = {
@@ -167,6 +164,7 @@ function syncStackApi(workdir: string, port: number) {
     startupEndpointChanges: unusedSync,
     stop: unusedSync,
     destroy: unusedSync,
+    gateway: unusedGateway,
     commands: { run: unusedSyncFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
@@ -184,11 +182,11 @@ function syncStackApi(workdir: string, port: number) {
             instances: [],
             composition,
             lifetime: "detached" as const,
-            ports: [],
           },
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

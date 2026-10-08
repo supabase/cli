@@ -26,6 +26,7 @@ import {
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -91,12 +92,8 @@ const observation = (
   health: "healthy",
   currentOperation: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
-  launchId: 1,
-  intentRevision: 1,
   wakeEnabled: false,
-  registered: true,
   ...overrides,
 });
 
@@ -288,6 +285,7 @@ const fixture = (
       startupEndpointChanges: Effect.die("unused"),
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
+      gateway: unusedGateway,
       commands: { run: () => Effect.die("unused") },
     } satisfies Stack;
     const identity = { projectRoot: "/project", branchContext: "main", stackName: "default" };
@@ -305,11 +303,11 @@ const fixture = (
               instances: [],
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
-              ports: [],
             },
             host: undefined,
           }),
         ),
+      findDeleted: () => Effect.die("unused"),
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
     const layer = Layer.mergeAll(
