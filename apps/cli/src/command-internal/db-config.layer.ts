@@ -386,12 +386,10 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     resolveVaultSecrets,
   );
   if (Option.isNone(poolerConn)) {
-    return yield* Effect.fail(
-      new Errors.DbConfigIpv6Error({
-        message: "IPv6 is not supported on your current network",
-        suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
-      }),
-    );
+    return yield* new Errors.DbConfigIpv6Error({
+      message: "IPv6 is not supported on your current network",
+      suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+    });
   }
   return poolerConn.value;
 });
@@ -516,13 +514,11 @@ export const dbConfigResolverLayer = Layer.effect(
             Effect.provideService(Path.Path, path),
           );
           if (conn === undefined) {
-            return yield* Effect.fail(
-              new Errors.DbConfigParseUrlError({
-                // Redact the password component before echoing the URL back
-                // (CWE-209): a malformed `--db-url` often still carries a secret.
-                message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
-              }),
-            );
+            return yield* new Errors.DbConfigParseUrlError({
+              // Redact the password component before echoing the URL back
+              // (CWE-209): a malformed `--db-url` often still carries a secret.
+              message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
+            });
           }
           // A multi-host URL stays remote: local disables TLS for every fallback host as well.
           const singleHost = conn.fallbacks === undefined;
