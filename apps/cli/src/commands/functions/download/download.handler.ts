@@ -4,7 +4,6 @@ import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/function
 import { Output } from "../../../shared/output/output.service.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
-import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -15,13 +14,6 @@ import type { FunctionsDownloadFlags } from "./download.command.ts";
 export const functionsDownload = Effect.fn("functions.download")(function* (
   flags: FunctionsDownloadFlags,
 ) {
-  if (Option.isSome(flags.legacyBundle)) {
-    const slug = Option.getOrElse(flags.functionName, () => "<slug>");
-    return yield* removedFlag(
-      "--legacy-bundle",
-      `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
-    );
-  }
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;

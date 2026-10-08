@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "@effect/vitest";
@@ -11,6 +11,7 @@ import { functionsDownloadCommand } from "../../commands/functions/download/down
 import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
 import { genCommand } from "../../commands/gen/gen.command.ts";
 import { initCommand } from "../../commands/init/init.command.ts";
+import { issueCommand } from "../../commands/issue/issue.command.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { startCommand } from "../../commands/start/start.command.ts";
@@ -61,6 +62,7 @@ const testRoot = Command.make("supabase").pipe(
     projectsCommand,
     branchesCommand,
     dbCommand,
+    issueCommand,
   ]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
@@ -292,5 +294,60 @@ describe("hidden subcommands", () => {
       if (!Exit.isFailure(unknownExit)) return;
       expect(Cause.hasFails(unknownExit.cause)).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("removed global flags", () => {
+  it.effect("hides --create-ticket from GLOBAL FLAGS help", () =>
+    Effect.gen(function* () {
+      const args = ["issue", "bug", "--help"];
+      let globalFlagNames: ReadonlyArray<string> = [];
+      const capturingFormatter: CliOutput.Formatter = {
+        ...silentCliOutputFormatter,
+        formatHelpDoc: (doc) => {
+          globalFlagNames = doc.globalFlags?.map((flag) => flag.name) ?? [];
+          return "";
+        },
+      };
+
+      yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(testRootLayer(capturingFormatter, args)),
+      );
+
+      expect(globalFlagNames).toContain("debug");
+      expect(globalFlagNames).not.toContain("create-ticket");
+    }),
+  );
+
+  it.effect(
+    "fails a command passed --create-ticket with the removal error, not a parse error",
+    () =>
+      Effect.gen(function* () {
+        const args = ["issue", "bug", "--no-browser", "--create-ticket"];
+        const analytics = mockAnalytics();
+
+        const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              testRootLayer(textCliOutputFormatter(), args),
+              analytics.layer,
+              Stdio.layerTest({ args: Effect.succeed(args) }),
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(RemovedSurfaceError);
+        if (!(error instanceof RemovedSurfaceError)) return;
+        expect(error.kind).toBe("flag");
+        expect(error.message).toBe("--create-ticket was removed.");
+        expect(analytics.captured.map((event) => event.event)).toEqual(["cli_command_executed"]);
+        expect(analytics.captured[0]?.properties).toMatchObject({
+          error_fingerprint: "tag:RemovedSurfaceError:removed_flag",
+        });
+      }),
   );
 });

@@ -86,4 +86,16 @@ describe("TelemetryState flush", () => {
       Effect.provide(telemetry.layer),
     );
   });
+
+  it.effect("fails a removedFlag for a command that provides no TelemetryState", () =>
+    removedFlag("--create-ticket", "Report CLI problems with `supabase issue bug`.").pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(RemovedSurfaceError);
+          expect(error.message).toBe("--create-ticket was removed.");
+        }),
+      ),
+    ),
+  );
 });

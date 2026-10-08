@@ -129,7 +129,8 @@ Same envelope as `json` above (including on the Docker-unbundle path).
 ### `--legacy-bundle` is removed
 
 The flag is removed: passing it (with any value, including `--legacy-bundle=false`) fails
-with a removal error before any download, Docker, or API work runs. `<slug>` is the requested
+with a removal error before credentials are resolved or any download, Docker, or API work
+runs, so it needs no login or `SUPABASE_ACCESS_TOKEN`. `<slug>` is the requested
 Function name (the literal `<slug>` when none was given). The suggestion reads:
 
 ```
@@ -139,9 +140,10 @@ Retry with `supabase functions download --use-api <slug>` to unbundle server-sid
 It is checked before `--use-api`/`--use-docker` mutual-exclusivity validation, so combining
 it with either still hits the removal error first.
 
-The flag definition itself stays in `download.command.ts` (hidden from `--help`) only so
+The flag definition and its rejection live in `download.command.ts` (hidden from `--help`) so
 misuse produces this actionable error, with `error_fingerprint` ending in `:removed_flag`
-(`RemovedSurfaceError`), instead of an unknown-flag parse error with no telemetry at all.
+(`RemovedSurfaceError`), instead of an unknown-flag parse error with no telemetry at all or a
+login error.
 
 ### Docker-extraction failure suggestion
 

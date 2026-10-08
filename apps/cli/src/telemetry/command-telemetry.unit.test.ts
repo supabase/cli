@@ -5,6 +5,7 @@ import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import {
   AgentFlag,
+  CreateTicketFlag,
   DebugFlag,
   DnsResolverFlag,
   OutputFlag,
@@ -26,6 +27,7 @@ import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
+import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
@@ -33,6 +35,7 @@ import {
   QUERY_OUTPUT_FORMATS,
   InvalidOutputFormatError,
 } from "../command-internal/go-output-flag.ts";
+import { mockTelemetryStateTracked } from "../../tests/helpers/command-mocks.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -1604,4 +1607,68 @@ describe("withCommandTelemetry", () => {
       );
     },
   );
+
+  describe("removed --create-ticket global flag", () => {
+    const runWith = (args: ReadonlyArray<string>, telemetryState = mockTelemetryStateTracked()) => {
+      const analytics = mockContextualAnalytics();
+      let ran = false;
+      const run = Effect.sync(() => {
+        ran = true;
+      }).pipe(
+        withCommandTelemetry(),
+        Effect.provide(Layer.succeed(CreateTicketFlag, true)),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(args) })),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+        Effect.provide(telemetryState.layer),
+        Effect.exit,
+      );
+      return { run, analytics, telemetryState, didRun: () => ran };
+    };
+
+    for (const flag of ["--create-ticket", "--create-ticket=false"]) {
+      it.live(`fails with the removal error and records the event for ${flag}`, () => {
+        const { run, analytics, telemetryState, didRun } = runWith(["backups", "list", flag]);
+
+        return Effect.gen(function* () {
+          const exit = yield* run;
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(RemovedSurfaceError);
+          if (!(error instanceof RemovedSurfaceError)) return;
+          expect(error.kind).toBe("flag");
+          expect(error.message).toBe("--create-ticket was removed.");
+          expect(error.suggestion).toBe("Report CLI problems with `supabase issue bug`.");
+          expect(didRun()).toBe(false);
+          expect(telemetryState.flushCount).toBe(1);
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.event).toBe("cli_command_executed");
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            command: "backups list",
+            exit_code: 1,
+            error_fingerprint: "tag:RemovedSurfaceError:removed_flag",
+            flags: { "create-ticket": true },
+          });
+        });
+      });
+    }
+
+    it.live("ignores --create-ticket after the -- operand terminator", () => {
+      const { run, analytics, didRun } = runWith(["backups", "list", "--", "--create-ticket"]);
+
+      return Effect.gen(function* () {
+        const exit = yield* run;
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(didRun()).toBe(true);
+        expect(analytics.captured[0]?.properties.exit_code).toBe(0);
+      });
+    });
+  });
 });

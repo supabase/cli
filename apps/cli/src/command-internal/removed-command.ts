@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Data, Effect, Option } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -54,13 +54,15 @@ export const removedCommand = (suggestion: string) =>
 /**
  * Fails with a `RemovedSurfaceError` for a removed flag on an otherwise-native command. The host
  * command already wraps its whole handler in `withCommandTelemetry`, so this is a bare effect.
- * Flushes `TelemetryState` itself (`Effect.ensuring`): call sites check this before their own
- * handler reaches its own finalizer wiring further down.
+ * Flushes `TelemetryState` itself (`Effect.ensuring`) when the command provides one: call sites
+ * check this before their own handler reaches its own finalizer wiring further down.
  */
 export const removedFlag = (flag: string, suggestion: string) =>
   Effect.gen(function* () {
-    const telemetryState = yield* TelemetryState;
+    const telemetryState = yield* Effect.serviceOption(TelemetryState);
     return yield* Effect.fail(
       new RemovedSurfaceError({ message: `${flag} was removed.`, suggestion, kind: "flag" }),
-    ).pipe(Effect.ensuring(telemetryState.flush));
+    ).pipe(
+      Effect.ensuring(Option.isSome(telemetryState) ? telemetryState.value.flush : Effect.void),
+    );
   });

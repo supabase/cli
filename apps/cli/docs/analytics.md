@@ -49,6 +49,12 @@ installs the command span plus the per-invocation analytics context:
 That same context is then inherited by milestone events captured inside the command handler, which
 lets one CLI invocation share a single `command_run_id`.
 
+The wrapper also rejects the removed global `--create-ticket` flag (with any value) before the
+handler runs. The rejection happens inside the instrumented region, so it still emits
+`cli_command_executed` with an `error_fingerprint` ending in `:removed_flag`. A command that fails
+earlier, such as on a missing credential in its runtime layer, or that shows help, reports that
+instead.
+
 ## Event Model
 
 The primary analytics event is:

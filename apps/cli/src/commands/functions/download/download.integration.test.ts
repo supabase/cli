@@ -13,7 +13,6 @@ import {
   Option,
   Path,
   PlatformError,
-  Runtime,
   Sink,
   Stdio,
   Stream,
@@ -38,7 +37,6 @@ import {
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
-import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
 import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -1864,100 +1862,6 @@ describe("functions download", () => {
       expect(error.message).toBe(
         "if any flags in the group [use-api use-docker] are set none of the others can be; [use-api use-docker] were all set",
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live(
-    "rejects --legacy-bundle with a removal error before any download, Docker, or API work",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi();
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        }),
-        Stdio.layerTest({
-          args: Effect.succeed(["functions", "download", "hello-world", "--legacy-bundle"]),
-        }),
-      );
-
-      return Effect.gen(function* () {
-        const error = yield* functionsDownload({
-          ...baseFlags,
-          legacyBundle: Option.some(true),
-        }).pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(RemovedSurfaceError);
-        if (!(error instanceof RemovedSurfaceError)) {
-          throw new Error(`unexpected error: ${String(error)}`);
-        }
-        expect(error.kind).toBe("flag");
-        expect(error.suggestion).toBe(
-          "Retry with `supabase functions download --use-api hello-world` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
-        );
-        expect(Runtime.getErrorExitCode(error)).toBe(1);
-        expect(api.requests).toEqual([]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live("rejects --legacy-bundle=false the same as an explicit true value", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi();
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      }),
-      Stdio.layerTest({
-        args: Effect.succeed(["functions", "download", "hello-world", "--legacy-bundle=false"]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const error = yield* functionsDownload({
-        ...baseFlags,
-        legacyBundle: Option.some(false),
-      }).pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      if (!(error instanceof RemovedSurfaceError)) {
-        throw new Error(`unexpected error: ${String(error)}`);
-      }
-      expect(error.kind).toBe("flag");
-      expect(api.requests).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("keeps the <slug> placeholder in the --legacy-bundle hint when no name was given", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi();
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      }),
-      Stdio.layerTest({
-        args: Effect.succeed(["functions", "download", "--legacy-bundle"]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const error = yield* functionsDownload({
-        ...baseFlags,
-        functionName: Option.none(),
-        legacyBundle: Option.some(true),
-      }).pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      if (!(error instanceof RemovedSurfaceError)) {
-        throw new Error(`unexpected error: ${String(error)}`);
-      }
-      expect(error.suggestion).toContain("`supabase functions download --use-api <slug>`");
     }).pipe(Effect.provide(layer));
   });
 
