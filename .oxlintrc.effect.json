@@ -26,6 +26,7 @@
     "!apps/cli/src/command-internal/db-*.ts",
     "!apps/cli/src/command-internal/dotenv.*",
     "!apps/cli/src/command-internal/experimental-feature.ts",
+    "!apps/cli/src/command-internal/experimental-gate.*",
     "!apps/cli/src/command-internal/local-project-context.*",
     "!apps/cli/src/command-internal/pgpass.*",
     "!apps/cli/src/command-internal/pgservicefile.*",
@@ -41,6 +42,7 @@
     "!apps/cli/src/command-internal/stack-shadow.ts",
     "!apps/cli/src/command-internal/stack-storage.ts",
     "!apps/cli/src/command-internal/vault-decrypt.*",
-    "!apps/cli/src/command-internal/vault.*"
+    "!apps/cli/src/command-internal/vault.*",
+    "!apps/cli/src/command-internal/viper-env.*"
   ]
 }

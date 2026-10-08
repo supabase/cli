@@ -12,7 +12,7 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { secretsUnset } from "./unset.handler.ts";
 
@@ -187,9 +187,8 @@ describe("secrets unset integration", () => {
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
     const { layer, out, api } = setup();
     // Inner provide so the layer builds inside the pinned-env sandbox.
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
         expect(out.stderrText).toContain(

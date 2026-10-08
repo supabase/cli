@@ -18,8 +18,12 @@ describe("streamPgDump", () => {
         return Effect.succeed({ exitCode: 0, stderr: "" });
       },
     });
-    const configProvider = ConfigProvider.make(() =>
-      Effect.fail(new ConfigProvider.SourceError({ message: "injected registry config failure" })),
+    const configProvider = ConfigProvider.make((path) =>
+      path[0] === "SUPABASE_INTERNAL_IMAGE_REGISTRY"
+        ? Effect.fail(
+            new ConfigProvider.SourceError({ message: "injected registry config failure" }),
+          )
+        : Effect.succeed(undefined),
     );
 
     const error = await Effect.runPromise(

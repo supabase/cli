@@ -1780,7 +1780,7 @@ describe("functions deploy", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
-          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+          withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body),
         );
       },
     );
@@ -1826,7 +1826,7 @@ describe("functions deploy", () => {
           expect(runCommand?.args).toContain("flag-network");
           expect(runCommand?.args).not.toContain("env-network");
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot), (body) =>
-          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+          withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body),
         );
       },
     );

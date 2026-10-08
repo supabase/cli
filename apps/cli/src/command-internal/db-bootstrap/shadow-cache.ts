@@ -688,7 +688,10 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {})
+      !(yield* viperEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      ))
     ) {
       return { state: "uncachable" } as const;
     }
@@ -868,9 +871,13 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
-        whenUnset: true,
-      })
+      !(yield* viperEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+        {
+          whenUnset: true,
+        },
+      ))
     ) {
       yield* annotateCacheState("disabled");
       return yield* uncachedShadow(spawner, input);

@@ -35,6 +35,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
   withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
@@ -2572,7 +2573,7 @@ content_path = "./supabase/templates/custom_notice.html"
             yield* start(flags({ exclude: ["edge-runtime"] }));
             expect(http.vectorListCalls).toBe(1);
             expect(http.deletedVectorBuckets).toHaveLength(0);
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), withEmptyConfigEnv),
         );
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2596,7 +2597,7 @@ content_path = "./supabase/templates/custom_notice.html"
             Effect.gen(function* () {
               yield* start(flags({ exclude: ["edge-runtime"] }));
               expect(out.stderrText).not.toContain("Do you want to overwrite its properties?");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2623,7 +2624,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(http.deletedVectorBuckets).toHaveLength(0);
               expect(out.stderrText).not.toContain("Do you want to prune it?");
               expect(out.stderrText).toContain("Keeping vector bucket");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2637,9 +2638,8 @@ content_path = "./supabase/templates/custom_notice.html"
           route: freshVolumeRoute(defaultRoute()),
           httpClientLayer: http.layer,
         });
-        return yield* withEnvVar(
-          "SUPABASE_YES",
-          "1",
+        return yield* withConfigEnv(
+          { SUPABASE_YES: "1" },
           Effect.gen(function* () {
             yield* start(flags({ exclude: ["edge-runtime"] }));
             expect(http.deletedVectorBuckets).toHaveLength(1);
@@ -3513,7 +3513,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(out.stderrText).toContain("Keeping vector bucket");
               expect(out.stderrText).toContain("stale-vec");
               expect(out.stderrText).not.toContain("Do you want to prune it?");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
@@ -3672,9 +3672,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
     it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
       // See `start.handler.ts`'s doc comment on this resolution for the full precedence.
-      withEnvVar(
-        "SUPABASE_NETWORK_ID",
-        "env-net",
+      withConfigEnv(
+        { SUPABASE_NETWORK_ID: "env-net" },
         Effect.gen(function* () {
           const { layer, child } = yield* setup();
 

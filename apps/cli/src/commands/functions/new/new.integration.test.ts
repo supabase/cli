@@ -6,7 +6,7 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -229,7 +229,7 @@ describe("functions new integration", () => {
       yield* functionsNew({ functionName: "with-env-yes", auth: "apikey" });
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
       expect(yield* fs.exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
-    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {

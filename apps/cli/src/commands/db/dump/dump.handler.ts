@@ -209,7 +209,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const envNetworkId = yield* viperEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnv,
+    );
     const dumpUsesHostNetwork =
       backend.kind === "stack"
         ? toolContainerUsesHostNetwork(networkId)

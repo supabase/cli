@@ -2021,7 +2021,10 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
       envOverride:
         resolved.projectEnvValues === undefined
           ? undefined
-          : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
+          : yield* viperEnvStringWithProjectFallback(
+              "SUPABASE_NETWORK_ID",
+              resolved.projectEnvValues,
+            ),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);

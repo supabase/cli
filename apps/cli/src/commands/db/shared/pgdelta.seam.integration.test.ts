@@ -9,7 +9,7 @@ import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
@@ -116,8 +116,6 @@ function fakeShadowSetupDocker() {
   return { layer };
 }
 
-useShadowCacheDisabled();
-
 const tmp = useTempWorkdir("pgdelta-seam-");
 
 function setup(
@@ -180,6 +178,7 @@ function setup(
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     seam,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 

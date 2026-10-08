@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -167,7 +167,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         expect(api).toEqual([]);
       }).pipe(
         Effect.scoped,
-        (body) => withEnvVar("SUPABASE_SHADOW_CACHE", "1", body),
+        (body) => withConfigEnv({ SUPABASE_SHADOW_CACHE: "1" }, body),
         Effect.provide(BunServices.layer),
       ),
     180_000,

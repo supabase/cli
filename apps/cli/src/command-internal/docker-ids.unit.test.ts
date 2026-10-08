@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect } from "effect";
 
 import {
   CLI_PROJECT_LABEL,
@@ -77,53 +78,91 @@ describe("cliProjectFilterValue", () => {
 describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallback (start/db start call shape)", () => {
   const KEY = "SUPABASE_NETWORK_ID";
 
-  afterEach(() => {
-    delete process.env[KEY];
-  });
+  const withShellEnv = (env: Readonly<Record<string, string>>) =>
+    Effect.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+    );
 
   function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
-    return resolveDockerNetworkMode({
-      explicit: flagValue,
-      envOverride: viperEnvStringWithProjectFallback(KEY, projectEnv),
-      projectId: "my-app",
+    return Effect.gen(function* () {
+      return resolveDockerNetworkMode({
+        explicit: flagValue,
+        envOverride: yield* viperEnvStringWithProjectFallback(KEY, projectEnv),
+        projectId: "my-app",
+      });
     });
   }
 
-  it("prefers an explicit --network-id flag over everything else", () => {
-    process.env[KEY] = "env-network";
-    expect(resolve("flag-network", { [KEY]: "toml-network" })).toBe("flag-network");
-  });
+  it.effect("prefers an explicit --network-id flag over everything else", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolve("flag-network", { [KEY]: "toml-network" }).pipe(
+          withShellEnv({ [KEY]: "env-network" }),
+        ),
+      ).toBe("flag-network");
+    }),
+  );
 
-  it("falls back to SUPABASE_NETWORK_ID (shell) when the flag is absent", () => {
-    process.env[KEY] = "shell-network";
-    expect(resolve(undefined, {})).toBe("shell-network");
-  });
+  it.effect("falls back to SUPABASE_NETWORK_ID (shell) when the flag is absent", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve(undefined, {}).pipe(withShellEnv({ [KEY]: "shell-network" }))).toBe(
+        "shell-network",
+      );
+    }),
+  );
 
-  it("falls back to SUPABASE_NETWORK_ID (project .env) when both the flag and shell are absent", () => {
-    delete process.env[KEY];
-    expect(resolve(undefined, { [KEY]: "project-network" })).toBe("project-network");
-  });
+  it.effect(
+    "falls back to SUPABASE_NETWORK_ID (project .env) when both the flag and shell are absent",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* resolve(undefined, { [KEY]: "project-network" }).pipe(withShellEnv({}))).toBe(
+          "project-network",
+        );
+      }),
+  );
 
-  it("prefers the shell value over the project .env value (presence wins, matching godotenv.Load)", () => {
-    process.env[KEY] = "shell-network";
-    expect(resolve(undefined, { [KEY]: "project-network" })).toBe("shell-network");
-  });
+  it.effect(
+    "prefers the shell value over the project .env value (presence wins, matching godotenv.Load)",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* resolve(undefined, { [KEY]: "project-network" }).pipe(
+            withShellEnv({ [KEY]: "shell-network" }),
+          ),
+        ).toBe("shell-network");
+      }),
+  );
 
-  it("falls back to the generated network name when the flag and env are all absent/empty", () => {
-    delete process.env[KEY];
-    expect(resolve(undefined, {})).toBe(localNetworkId("my-app"));
-    expect(resolve("", {})).toBe(localNetworkId("my-app"));
-  });
+  it.effect(
+    "falls back to the generated network name when the flag and env are all absent/empty",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* resolve(undefined, {}).pipe(withShellEnv({}))).toBe(localNetworkId("my-app"));
+        expect(yield* resolve("", {}).pipe(withShellEnv({}))).toBe(localNetworkId("my-app"));
+      }),
+  );
 
-  it("an explicit-but-empty --network-id= skips the env var entirely (viper: a Changed pflag resolves before AutomaticEnv)", () => {
-    process.env[KEY] = "env-network";
-    expect(resolve("", { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
-  });
+  it.effect(
+    "an explicit-but-empty --network-id= skips the env var entirely (viper: a Changed pflag resolves before AutomaticEnv)",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* resolve("", { [KEY]: "project-network" }).pipe(
+            withShellEnv({ [KEY]: "env-network" }),
+          ),
+        ).toBe(localNetworkId("my-app"));
+      }),
+  );
 
-  it("treats an empty shell value as present (blocks the project value) and falls to generated", () => {
-    process.env[KEY] = "";
-    expect(resolve(undefined, { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
-  });
+  it.effect(
+    "treats an empty shell value as present (blocks the project value) and falls to generated",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* resolve(undefined, { [KEY]: "project-network" }).pipe(withShellEnv({ [KEY]: "" })),
+        ).toBe(localNetworkId("my-app"));
+      }),
+  );
 });
 
 describe("sanitizeProjectId", () => {

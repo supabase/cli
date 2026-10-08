@@ -4201,7 +4201,7 @@ describe("functions serve integration", () => {
             (call) => call.command === "docker" && call.args[0] === "create",
           );
           expect(dockerRun?.args).toContain("env-network");
-        }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
+        }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
       },
     );
 
@@ -4242,7 +4242,7 @@ describe("functions serve integration", () => {
         );
         expect(dockerRun?.args).toContain("flag-network");
         expect(dockerRun?.args).not.toContain("env-network");
-      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
+      }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
     });
   });
 

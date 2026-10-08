@@ -10,7 +10,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -324,7 +324,7 @@ describe("migration repair", () => {
       yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.live(
