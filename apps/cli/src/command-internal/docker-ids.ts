@@ -6,6 +6,8 @@
 
 import { basename } from "node:path";
 
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
+
 /**
  * Resolves the local project id used to derive Docker resource names.
  *
@@ -22,26 +24,6 @@ export function resolveLocalProjectId(
   if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
   if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
   return basename(workdir);
-}
-
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
-
-function truncateText(text: string, maxLength: number) {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
-/**
- * Sanitizes a project id for use in container/network names: replaces invalid character runs
- * with `_`, strips leading `_.-`, and caps the result at 40 characters.
- *
- * Exported separately from {@link serviceContainerName} because a Docker label filter built
- * from a project id must be sanitized the same way, or a `project_id` like `"my app"` won't
- * match the label `start` wrote (see {@link cliProjectFilterValue}).
- */
-export function sanitizeProjectId(src: string) {
-  const sanitized = src.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return truncateText(sanitized, MAX_PROJECT_ID_LENGTH);
 }
 
 /** `supabase_<suffix>_<sanitizedProjectId>` — the naming scheme for local Docker resources. */

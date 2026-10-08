@@ -32,7 +32,7 @@ import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-key
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { tempPaths } from "../../shared/config/temp-paths.ts";
 import {
   LinkApiKeysNetworkError,
   LinkAuthTokenError,

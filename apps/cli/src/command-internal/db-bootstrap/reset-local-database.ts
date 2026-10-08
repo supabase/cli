@@ -29,7 +29,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnvValues, readDbToml } from "../db-config.toml-read.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
@@ -107,7 +107,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const workdir = cliSettings.workdir;
   // Load the project env first so a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is
   // honored by the experimental gate below.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 

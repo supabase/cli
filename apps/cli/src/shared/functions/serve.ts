@@ -50,7 +50,7 @@ import {
 } from "../../command-internal/container-cli.ts";
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
-import { parseDotEnv } from "../../command-internal/dotenv.ts";
+import { parseDotEnv } from "../config/dotenv.ts";
 import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
   resolveRemoteJwks,
@@ -2019,7 +2019,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
     // (`undefined` for library callers).
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
-      envOverride:
+      envNetworkId:
         resolved.projectEnvValues === undefined
           ? undefined
           : yield* viperEnvStringWithProjectFallback(

@@ -9,7 +9,10 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  checkDbToml,
+  loadProjectEnvValues,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -40,7 +43,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   // The project `.env` is applied before the history prompt, so a
   // `SUPABASE_YES` set only in `supabase/.env` auto-confirms. Resolve `yes`
   // with that project env, as `db pull` does.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 

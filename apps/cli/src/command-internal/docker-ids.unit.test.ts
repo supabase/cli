@@ -7,11 +7,11 @@ import {
   CLI_PROJECT_LABEL,
   cliProjectFilterValue,
   resolveLocalProjectId,
-  sanitizeProjectId,
   serviceContainerIds,
   localDbContainerId,
   localNetworkId,
 } from "./docker-ids.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 
@@ -88,8 +88,8 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
     return Effect.runSync(
       withConfigEnv(
         shell === undefined ? {} : { [KEY]: shell },
-        Effect.map(viperEnvStringWithProjectFallback(KEY, projectEnv), (envOverride) =>
-          resolveDockerNetworkMode({ explicit: flagValue, envOverride, projectId: "my-app" }),
+        Effect.map(viperEnvStringWithProjectFallback(KEY, projectEnv), (envNetworkId) =>
+          resolveDockerNetworkMode({ explicit: flagValue, envNetworkId, projectId: "my-app" }),
         ),
       ),
     );

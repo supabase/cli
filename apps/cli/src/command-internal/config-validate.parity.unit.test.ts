@@ -71,9 +71,7 @@ function failsWithL(
   document?: Readonly<Record<string, unknown>>,
 ) {
   const config = baseConfig(overrides);
-  expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document)).toThrow(
-    message,
-  );
+  expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(message);
 }
 
 interface ParityScenario {

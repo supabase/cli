@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
 
 import type { CliConfig } from "@supabase/config";
 import {
@@ -30,7 +29,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
-import { sanitizeProjectId } from "./docker-ids.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import {
   apiTlsCertReadErrorMessage,
   apiTlsKeyReadErrorMessage,
@@ -46,7 +45,6 @@ import {
   type HookInput,
   type LocalSmtpInput,
   type MfaFactorInput,
-  parseGoBool,
   type PasskeyInput,
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
@@ -58,6 +56,7 @@ import {
   type ThirdPartyInput,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { parseGoBool } from "../shared/config/config-bool.ts";
 import { DEFAULT_SIGNING_KEY, generateAsymmetricGoJwt, generateGoJwt, type Jwk } from "./go-jwt.ts";
 
 /**
@@ -143,46 +142,6 @@ export class InvalidJwtSecretError extends Error {
 /** Minimum `auth.jwt_secret` length. */
 const MIN_JWT_SECRET_LENGTH = 16;
 
-/** @deprecated Replaced by `CliConfigValueError`; kept until the legacy readers are removed. */
-export class InvalidPortEnvOverrideError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "InvalidPortEnvOverrideError";
-  constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
-    this.name = "InvalidPortEnvOverrideError";
-  }
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/** @deprecated Replaced by `CliConfigValueError`; kept until the legacy readers are removed. */
-export class InvalidBoolEnvOverrideError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "InvalidBoolEnvOverrideError";
-  constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
-    this.name = "InvalidBoolEnvOverrideError";
-  }
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/** @deprecated Replaced by `CliConfigValueError`; kept until the legacy readers are removed. */
-export class InvalidAnalyticsBackendEnvOverrideError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "InvalidAnalyticsBackendEnvOverrideError";
-  constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
-    );
-    this.name = "InvalidAnalyticsBackendEnvOverrideError";
-  }
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-type LegacyEnv = Readonly<Record<string, string>> | undefined;
-
 /** Narrows a configured string to one of `allowed`, failing with the codec wording otherwise. */
 export const narrowConfigEnum = <const T extends string>(
   path: string,
@@ -202,11 +161,6 @@ export const narrowConfigEnum = <const T extends string>(
   return match;
 };
 
-/** @deprecated Inert: the snapshot decrypts secrets, so `value` is already plain. */
-export function decryptAuthSecret(value: string | undefined, _env: LegacyEnv): string | undefined {
-  return value;
-}
-
 /** Narrows an unknown value to a plain object. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -224,8 +178,6 @@ const asString = (value: unknown): string | undefined =>
  */
 export function resolveAuthEmailSmtp(
   authDocument: Readonly<Record<string, unknown>> | undefined,
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): (SmtpInput & { readonly senderName: string | undefined }) | undefined {
   const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
   if (smtpDoc === undefined) return undefined;
@@ -245,10 +197,7 @@ export function resolveAuthEmailSmtp(
  * callers that need presence read the document; this only reshapes the effective value.
  */
 export function resolveAuthCaptcha(
-  _authDocument: Readonly<Record<string, unknown>> | undefined,
   captcha: CliConfig["auth"]["captcha"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): CaptchaInput | undefined {
   return captcha
     ? { enabled: captcha.enabled ?? false, provider: captcha.provider, secret: captcha.secret }
@@ -342,8 +291,6 @@ function readSigningKeysFile(workdir: string, signingKeysPath: string): Readonly
 export function resolveConfiguredSigningKeys(
   config: CliConfig,
   workdir: string,
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): ReadonlyArray<Jwk> | undefined {
   const signingKeysPath = config.auth.signing_keys_path;
   return config.auth.enabled && signingKeysPath !== undefined && signingKeysPath.length > 0
@@ -412,8 +359,6 @@ export type ResolvedAuthEmail = Omit<CliConfig["auth"]["email"], "template" | "n
 export function resolveAuthEmail(
   email: CliConfig["auth"]["email"],
   authDocument: Record<string, unknown> | undefined,
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): ResolvedAuthEmail {
   const emailDoc = asRecord(authDocument?.["email"]);
   const templateDoc = asRecord(emailDoc?.["template"]);
@@ -486,8 +431,6 @@ function readAuthEmailTemplateContent(email: ResolvedAuthEmail, workdir: string)
 /** The effective `db.settings`, never `undefined` so callers can read fields directly. */
 export function resolveDbSettingsEnvOverrides(
   settings: CliConfig["db"]["settings"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): NonNullable<CliConfig["db"]["settings"]> {
   return settings ?? {};
 }
@@ -495,8 +438,6 @@ export function resolveDbSettingsEnvOverrides(
 /** Resolves `auth.external_url`, which the schema doesn't model, from the effective document. */
 export function resolveAuthExternalUrl(
   document: Readonly<Record<string, unknown>> | undefined,
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): string | undefined {
   return asString(asRecord(document?.["auth"])?.["external_url"]);
 }
@@ -532,12 +473,7 @@ export type ResolvedAuthHooks = {
 };
 
 /** Reshapes the effective `auth.hook.<type>` entries, with absent `uri`/`secrets` as `""`. */
-export function resolveAuthHooks(
-  _authDocument: Readonly<Record<string, unknown>> | undefined,
-  hook: CliConfig["auth"]["hook"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
-): ResolvedAuthHooks {
+export function resolveAuthHooks(hook: CliConfig["auth"]["hook"]): ResolvedAuthHooks {
   const result = {} as Record<string, ResolvedAuthHook>;
   for (const hookType of HOOK_TYPE_ORDER) {
     const h = hook[hookType];
@@ -551,18 +487,13 @@ export function resolveAuthHooks(
 }
 
 /** The effective `auth.mfa`. */
-export function resolveAuthMfa(
-  mfa: CliConfig["auth"]["mfa"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
-): CliConfig["auth"]["mfa"] {
+export function resolveAuthMfa(mfa: CliConfig["auth"]["mfa"]): CliConfig["auth"]["mfa"] {
   return mfa;
 }
 
 /** The effective `auth.rate_limit`. */
 export function resolveGotrueRateLimit(
   rateLimit: CliConfig["auth"]["rate_limit"],
-  _env?: LegacyEnv,
 ): CliConfig["auth"]["rate_limit"] {
   return rateLimit;
 }
@@ -570,7 +501,6 @@ export function resolveGotrueRateLimit(
 /** The effective `auth.sessions`. */
 export function resolveGotrueSessions(
   sessions: CliConfig["auth"]["sessions"],
-  _env?: LegacyEnv,
 ): CliConfig["auth"]["sessions"] {
   return sessions;
 }
@@ -581,7 +511,6 @@ export function resolveGotrueSessions(
  */
 export function resolveGotruePasskeyWebauthn(
   document: Readonly<Record<string, unknown>> | undefined,
-  _env?: LegacyEnv,
 ): {
   readonly passkeyEnabled: boolean | undefined;
   readonly webauthn:
@@ -617,17 +546,13 @@ function rawOrigins(raw: unknown): Array<string> | undefined {
 }
 
 /** The effective `auth.web3`. */
-export function resolveGotrueWeb3(
-  web3: CliConfig["auth"]["web3"],
-  _env?: LegacyEnv,
-): CliConfig["auth"]["web3"] {
+export function resolveGotrueWeb3(web3: CliConfig["auth"]["web3"]): CliConfig["auth"]["web3"] {
   return web3;
 }
 
 /** The effective `auth.oauth_server`. */
 export function resolveGotrueOAuthServer(
   oauthServer: CliConfig["auth"]["oauth_server"],
-  _env?: LegacyEnv,
 ): CliConfig["auth"]["oauth_server"] {
   return oauthServer;
 }
@@ -635,8 +560,6 @@ export function resolveGotrueOAuthServer(
 /** Lists enabled `auth.third_party.<provider>` entries in a fixed order, with their required fields. */
 export function resolveThirdPartyProviders(
   thirdParty: CliConfig["auth"]["third_party"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): ReadonlyArray<ThirdPartyInput> {
   const resolved: Array<ThirdPartyInput> = [];
   if (thirdParty.firebase.enabled) {
@@ -665,12 +588,7 @@ export function resolveThirdPartyProviders(
  * The effective `auth.sms`. Phone signup is never enabled when no provider is configured to
  * deliver an OTP, and twilio's two required ids default to `""`.
  */
-export function resolveAuthSms(
-  _authDocument: Readonly<Record<string, unknown>> | undefined,
-  sms: CliConfig["auth"]["sms"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
-): CliConfig["auth"]["sms"] {
+export function resolveAuthSms(sms: CliConfig["auth"]["sms"]): CliConfig["auth"]["sms"] {
   const anyProviderEnabled =
     sms.twilio.enabled ||
     sms.twilio_verify.enabled ||
@@ -782,8 +700,6 @@ function strToArr(value: string): Array<string> {
 export function resolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: CliConfig["auth"]["external"],
-  _env?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ): Record<string, ResolvedAuthExternalProvider> {
   const externalDoc = asRecord(authDocument?.["external"]);
 
@@ -864,16 +780,13 @@ export function resolveLocalConfigValues(
   config: CliConfig,
   hostname: string,
   workdir: string,
-  _projectEnvValues?: LegacyEnv,
   /**
    * The effective document `config` was decoded from, for checks that hinge on section presence
    * (not the always-defaulted decoded value). `undefined` callers skip those checks.
    */
   document?: Readonly<Record<string, unknown>>,
-  _remoteOverrideKeys?: ReadonlySet<string>,
-  _projectIdFallback?: string,
 ): LocalConfigValues {
-  const resolvedProjectId = config.project_id ?? sanitizeProjectId(basename(workdir));
+  const resolvedProjectId = config.project_id ?? "";
 
   const apiTlsEnabled = config.api.tls.enabled;
   const apiEnabled = config.api.enabled;
@@ -918,7 +831,7 @@ export function resolveLocalConfigValues(
   const authEnabled = config.auth.enabled;
   const siteUrl = config.auth.site_url;
   const authDocument = asRecord(document?.["auth"]);
-  const captchaInput = resolveAuthCaptcha(authDocument, config.auth.captcha);
+  const captchaInput = resolveAuthCaptcha(config.auth.captcha);
   // A disabled-auth config with a configured path must still sign asymmetrically with the
   // default key, not fall back to symmetric HS256.
   const signingKey =
@@ -940,7 +853,7 @@ export function resolveLocalConfigValues(
       ? { webauthnPresent: webauthnDoc !== undefined, rpId, rpOrigins }
       : undefined;
 
-    const resolvedHooks = resolveAuthHooks(authDocument, config.auth.hook);
+    const resolvedHooks = resolveAuthHooks(config.auth.hook);
     const hooks: Array<HookInput> = HOOK_TYPE_ORDER.filter(
       (hookType) => resolvedHooks[HOOK_TYPE_TO_CAMEL[hookType]].enabled,
     ).map((hookType) => {
@@ -1056,7 +969,7 @@ export function resolveLocalConfigValues(
   };
   validateResolvedConfig(input);
   if (authEnabled) {
-    validateAuthSmsProviders(resolveAuthSms(authDocument, config.auth.sms));
+    validateAuthSmsProviders(resolveAuthSms(config.auth.sms));
     validateAuthExternalProviders(authDocument, config.auth.external);
   }
 
@@ -1116,8 +1029,6 @@ export const resolveLocalJwks = Effect.fnUntraced(function* (
   config: CliConfig,
   workdir: string,
   jwtSecret: string,
-  _projectEnvValues?: LegacyEnv,
-  _remoteOverrideKeys?: ReadonlySet<string>,
 ) {
   const { issuerUrl, signingKeys, signingKeysPath } = yield* Effect.try({
     try: () => {

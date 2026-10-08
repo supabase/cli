@@ -7,7 +7,7 @@ import type {
 import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
-import type { ProjectRefReadError } from "../command-internal/temp-paths.ts";
+import type { ProjectRefReadError } from "../shared/config/temp-paths.ts";
 import type { CliConfigLoadError } from "../shared/config/cli-config.errors.ts";
 import type { CliConfigFamilyId } from "./cli-config-key-annotations.ts";
 import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";

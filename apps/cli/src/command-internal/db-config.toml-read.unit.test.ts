@@ -7,12 +7,12 @@ import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref } fr
 
 import {
   checkDbToml,
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
-  resolveSeedSqlPath,
   type DbTomlValues,
 } from "./db-config.toml-read.ts";
+import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
 import type { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import {
@@ -60,7 +60,7 @@ const loadEnv = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* loadProjectEnv(fs, path, workdir);
+    return yield* loadProjectEnvValues(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
 
 const loadEnvWithConfig = (workdir: string, values: Readonly<Record<string, string>>) =>
@@ -2498,24 +2498,27 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("loadProjectEnv surfaces SUPABASE_DB_PASSWORD from .env (linked-path source)", () => {
-    // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
-    // defined only in supabase/.env must be visible (Go's loadNestedEnv parity).
-    delete process.env["SUPABASE_DB_PASSWORD"];
-    const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
-    mkdirSync(join(dir, "supabase"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
-    return loadEnv(dir).pipe(
-      Effect.tap((env) =>
-        Effect.sync(() => {
-          expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "loadProjectEnvValues surfaces SUPABASE_DB_PASSWORD from .env (linked-path source)",
+    () => {
+      // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
+      // defined only in supabase/.env must be visible (Go's loadNestedEnv parity).
+      delete process.env["SUPABASE_DB_PASSWORD"];
+      const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
+      return loadEnv(dir).pipe(
+        Effect.tap((env) =>
+          Effect.sync(() => {
+            expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
-  it.effect("loadProjectEnv is pure: returns every key and never touches process.env", () => {
+  it.effect("loadProjectEnvValues is pure: returns every key and never touches process.env", () => {
     // A mere load for SUPABASE_YES has no global side effect.
     const saved: Record<string, string | undefined> = {};
     for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
@@ -3229,7 +3232,6 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
         Effect.sync(() => {
           expect(v.appliedRemote).toBe("prod");
           expect(Option.getOrNull(v.projectId)).toBe("local");
-          expect(v.remoteOverrideKeys.size).toBe(0);
         }),
       ),
       Effect.ensuring(

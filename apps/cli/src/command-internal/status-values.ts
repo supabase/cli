@@ -250,9 +250,7 @@ export function resolveStatusLocalState(
    */
   precomputedLocal?: LocalConfigValues,
 ): StatusLocalState {
-  const local =
-    precomputedLocal ??
-    resolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
+  const local = precomputedLocal ?? resolveLocalConfigValues(config, hostname, workdir, document);
 
   const apiEnabled = config.api.enabled;
   const studioSectionEnabled = config.studio.enabled;

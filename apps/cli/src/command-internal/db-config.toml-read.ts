@@ -1,9 +1,10 @@
-import { Config, Effect, FileSystem, Match, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import type { CliConfigFlagDeclaration } from "../config/cli-config-flags.ts";
 import type { CliConfigKey } from "../config/cli-config-key.ts";
 import { CliConfigKeys, cliConfigRegistry } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigValueError } from "../config/cli-config.errors.ts";
+import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import {
   type AnalyticsInput,
   type AuthInput,
@@ -24,11 +25,8 @@ import {
 } from "./config-validate.ts";
 import { DbConfigLoadError } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
-import { parseDotEnv } from "./dotenv.ts";
 import { ramInBytes } from "./size-units.ts";
-import { decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
-
-export { resolveSeedSqlPath } from "./seed-path.ts";
+import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
 type EnvLookup = (name: string) => string | undefined;
@@ -40,12 +38,6 @@ type EnvLookup = (name: string) => string | undefined;
  */
 export interface DbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
-  /**
-   * Resolves a `SUPABASE_*` env var: shell env (non-empty) wins, then the
-   * loaded project `.env*` files (non-empty), else `undefined`. Handlers must
-   * call this rather than reading `process.env` directly.
-   */
-  readonly envLookup: (name: string) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
@@ -113,13 +105,6 @@ export interface DbTomlValues {
    * (`Loading config override: [remotes.<name>]` line), else `undefined`.
    */
   readonly appliedRemote: string | undefined;
-  /**
-   * The config keys the matched remote block contributed at override tier —
-   * see {@link RemoteOverride.remoteOverrideKeys}. Exposed so a separate config
-   * read for the same linked ref can apply the identical remote-over-env
-   * precedence without re-deriving this set. Empty when no remote matched.
-   */
-  readonly remoteOverrideKeys: ReadonlySet<string>;
 }
 
 /** `[db.seed]` config surfaced for `migration down`'s seed step. */
@@ -213,72 +198,17 @@ function expandEnv(value: string, lookup: (name: string) => string | undefined):
   return envRefValue(value, lookup(name));
 }
 
-/** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
-const DEFAULT_SUPABASE_ENV = "development";
-
-const configEnvOption = Effect.fnUntraced(function* (name: string) {
-  return yield* Config.option(Config.string(name)).pipe(
-    Effect.mapError(
-      () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
-    ),
-  );
-});
-
 /**
- * Loads the project's nested `.env` files into a sparse lookup map without mutating
- * `process.env` (first writer wins; the ambient environment always wins over any file).
+ * The project `.env*` values the shell does not already set, for handlers that resolve global
+ * flags such as `--yes` against them.
  */
-export const loadProjectEnv = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-) {
-  const configuredEnv = yield* configEnvOption("SUPABASE_ENV");
-  const env = Option.getOrElse(
-    configuredEnv.pipe(Option.filter((value) => value.length > 0)),
-    () => DEFAULT_SUPABASE_ENV,
+export const loadProjectEnvValues = (fs: FileSystem.FileSystem, path: Path.Path, workdir: string) =>
+  loadCliProjectEnvFiles(workdir).pipe(
+    Effect.map((loaded) => ({ ...loaded.values })),
+    Effect.mapError((cause) => new DbConfigLoadError({ message: cause.message })),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
   );
-  const filenames = [`.env.${env}.local`];
-  if (env !== "test") filenames.push(".env.local");
-  filenames.push(`.env.${env}`, ".env");
-  // `supabase/` is searched before the repo root; first writer wins.
-  const dirs = [path.join(workdir, "supabase"), workdir];
-  const loaded: Record<string, string> = {};
-  for (const dir of dirs) {
-    for (const name of filenames) {
-      // A missing file is skipped; any other read error aborts rather than silently
-      // running with a broken env file.
-      const content = yield* fs.readFileString(path.join(dir, name)).pipe(
-        Effect.map(Option.some<string>),
-        Effect.catchTag("PlatformError", (error) =>
-          Match.value(error.reason).pipe(
-            Match.tag("NotFound", () => Effect.succeed(Option.none<string>())),
-            Match.orElse(() =>
-              Effect.fail(
-                new DbConfigLoadError({
-                  message: `failed to read environment file: ${name}`,
-                }),
-              ),
-            ),
-          ),
-        ),
-      );
-      if (Option.isNone(content)) continue;
-      const parsed = yield* Effect.try({
-        try: () => parseDotEnv(content.value),
-        catch: () =>
-          new DbConfigLoadError({ message: `failed to parse environment file: ${name}` }),
-      });
-      for (const [key, value] of Object.entries(parsed)) {
-        // The shell env and earlier files win; never overrides an already-set key.
-        if (loaded[key] !== undefined) continue;
-        const ambientValue = yield* configEnvOption(key);
-        if (Option.isNone(ambientValue)) loaded[key] = value;
-      }
-    }
-  }
-  return loaded;
-});
 
 function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
@@ -475,7 +405,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   resolveVaultSecrets = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const snapshot = yield* loadDbTomlSnapshot(workdir, ref, ignoreConfigFile);
   const { config } = snapshot.materialized;
   const { sources } = snapshot;
@@ -815,7 +745,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const values: DbTomlValues = {
     projectEnv,
-    envLookup: lookup,
     apiSchemas: config.api.schemas,
     port,
     shadowPort,
@@ -844,7 +773,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote: Option.getOrUndefined(snapshot.appliedRemote),
-    remoteOverrideKeys: new Set(),
   };
   return values;
 });

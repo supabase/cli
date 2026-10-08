@@ -11,7 +11,8 @@ import {
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
-import { resolveLocalProjectId, localDbContainerId, sanitizeProjectId } from "../docker-ids.ts";
+import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
 import { DebugLogger } from "../debug-logger.service.ts";

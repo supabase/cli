@@ -31,7 +31,6 @@
       "SUPABASE_DB_SEED_ENABLED": "false"
     },
     "projectId": "golden-base",
-    "remoteOverrideKeys": [],
     "schemaPathPatterns": [
       "./schemas/*.sql"
     ],

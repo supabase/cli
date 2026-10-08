@@ -236,7 +236,7 @@ export const resolveYes = Effect.gen(function* () {
  * project env before prompting (`migration down`, `migration repair --all`). Shell env
  * *presence* (any value) suppresses the file value entirely (see
  * {@link viperEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
- * the loaded map from `loadProjectEnv`.
+ * the loaded map from `loadProjectEnvValues`.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -318,7 +318,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
 
 /**
  * `--debug` resolved with an env fallback, and the project `.env` consulted too, for debug-gated
- * behavior downstream of a command that already loaded the nested project env. `loadProjectEnv`
+ * behavior downstream of a command that already loaded the nested project env. `loadProjectEnvValues`
  * is pure, so callers pass the loaded map through explicitly — same shape as
  * {@link resolveYesWithProjectEnv}. Shell env *presence* suppresses the file value; an explicit
  * `--debug` wins over both.

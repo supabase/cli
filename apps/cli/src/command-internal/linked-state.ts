@@ -5,7 +5,7 @@ import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { findBranchName } from "./branch-target.ts";
 import { type CachedLinkedProject, parseCachedLinkedProject } from "./parent-project-ref.ts";
 import { formatNamedRef, sanitizeInlineName } from "./http-errors.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
 
 /**
  * Discriminated linked-state result.

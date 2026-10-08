@@ -26,7 +26,6 @@
     "port": 55001,
     "projectEnv": {},
     "projectId": "shell-project-id",
-    "remoteOverrideKeys": [],
     "schemaPathPatterns": [
       "./schemas/*.sql"
     ],

@@ -10,7 +10,7 @@ import {
   rejectPasswordWithDirectTarget,
   type DbConnType,
 } from "../../../command-internal/db-target-flags.ts";
-import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -98,7 +98,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.

@@ -4,8 +4,8 @@ import { Option, Result, type Path } from "effect";
 import type { Flag } from "effect/unstable/cli";
 import { TomlDate } from "smol-toml";
 
-import { parseGoBool } from "../command-internal/config-validate.ts";
-import { decryptSecret, isEncryptedSecret } from "../command-internal/vault-decrypt.ts";
+import { parseGoBool } from "../shared/config/config-bool.ts";
+import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
 import {
   makeCliConfigKeyFlag,
   type CliConfigFlagDeclaration,

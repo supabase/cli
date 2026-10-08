@@ -20,11 +20,10 @@ import {
   rootFlagTokens,
 } from "../shared/cli/run.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
-import { readShellEnvironment } from "../shared/config/cli-config-env.ts";
+import { candidateDotenvFilenames, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { bold, yellow } from "./colors.ts";
-import { parseDotEnv } from "./dotenv.ts";
-import { candidateDotenvFilenames } from "./project-environment.ts";
+import { parseDotEnv } from "../shared/config/dotenv.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
@@ -171,7 +170,7 @@ function resolveNoticeBaseDir(
 /**
  * The project dotenv chain as a merged map: `<base>/supabase` then `<base>`,
  * first file to define a key wins, shell env always beats a chain value —
- * same precedence as `resolveProjectEnvironmentValues`. Read for every real
+ * same precedence as `loadCliProjectEnvFiles`. Read for every real
  * command since this hook can't tell whether the command loads config; the
  * only effect is a suppressed notice or extra debug diagnostic either way.
  */

@@ -8,7 +8,7 @@ import type {
   ProjectRefNotLinkedError,
 } from "../config/project-ref.errors.ts";
 import type { ProfileLoadError } from "./profile-load.ts";
-import type { ProjectRefReadError } from "./temp-paths.ts";
+import type { ProjectRefReadError } from "../shared/config/temp-paths.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {

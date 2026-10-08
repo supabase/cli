@@ -9,7 +9,7 @@ import { mockOutput, processEnvLayer } from "../../tests/helpers/mocks.ts";
 import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { sanitizeProjectId } from "./docker-ids.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { loadLocalProjectContext } from "./local-project-context.ts";
 
 /** Stands in for the whole Docker-client env-key set, which a project dotenv file never reaches. */

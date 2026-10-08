@@ -28,13 +28,13 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import { checkDbToml, loadProjectEnv } from "../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnvValues } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { tempPaths } from "../../shared/config/temp-paths.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
-import { parseDotEnv } from "../../command-internal/dotenv.ts";
+import { parseDotEnv } from "../../shared/config/dotenv.ts";
 import { resolveExperimentalFeature } from "../../command-internal/experimental-feature.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
@@ -222,7 +222,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
     // rather than after side effects start.
     const { pushYes, toml } = yield* Effect.gen(function* () {
-      const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+      const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
       return {
         pushYes: yield* resolveYesWithProjectEnv(projectEnv),
         toml: yield* checkDbToml(fs, path, workdir, projectRef),

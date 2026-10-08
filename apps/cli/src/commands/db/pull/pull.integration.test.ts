@@ -1072,9 +1072,8 @@ describe("db pull", () => {
   it.effect(
     "a linked [remotes.<ref>]'s project_id outranks a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // `readDbToml` gates `toml.projectId` behind `remoteOverrideKeys` for the matched
-      // remote, but `resolveLocalProjectId` tries the raw ambient env first — an ambient
-      // `SUPABASE_PROJECT_ID` for an unrelated project must not win back over it.
+      // An ambient `SUPABASE_PROJECT_ID` for an unrelated project must not replace the linked
+      // remote's ref as the engine's project id.
       const s = setup(tmp.current, {
         files: {
           "supabase/config.toml": [
@@ -1962,7 +1961,7 @@ describe("db pull", () => {
 
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // A project .env must select pg-delta even when the shell env doesn't set it.
-    // The handler reads it via toml.envLookup, not process.env.
+    // The handler reads it through the config snapshot, not process.env.
     const s = setup(tmp.current, {
       migrations: ["20240101000000"],
       files: {

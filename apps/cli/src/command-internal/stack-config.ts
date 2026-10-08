@@ -28,7 +28,6 @@ import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
 import {
-  decryptAuthSecret,
   resolveJwtSecret,
   resolveConfiguredSigningKeys,
   resolveAuthExternalProviders,
@@ -251,11 +250,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
 
       const externalProviders = yield* Effect.try({
         try: () =>
-          resolveAuthExternalProviders(
-            section(document, "auth"),
-            validatedConfig.auth.external,
-            projectEnvValues,
-          ),
+          resolveAuthExternalProviders(section(document, "auth"), validatedConfig.auth.external),
         catch: (cause) =>
           new StackConfigError({
             message: cause instanceof Error ? cause.message : "invalid auth provider config",
@@ -295,18 +290,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const localKeys = Effect.try({
         try: () => {
           const configured = (value: string | undefined) =>
-            value === undefined || value === ""
-              ? undefined
-              : decryptAuthSecret(value, projectEnvValues);
+            value === undefined || value === "" ? undefined : value;
           const publishableKey = configured(auth.publishable_key);
           const secretKey = configured(auth.secret_key);
           const configuredAnonKey = configured(auth.anon_key);
           const configuredServiceRoleKey = configured(auth.service_role_key);
-          const configuredSigningKeys = resolveConfiguredSigningKeys(
-            validatedConfig,
-            projectRoot,
-            projectEnvValues,
-          );
+          const configuredSigningKeys = resolveConfiguredSigningKeys(validatedConfig, projectRoot);
           const signingKeys =
             configuredSigningKeys ??
             (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
@@ -424,7 +413,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           Object.fromEntries(
             Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
               key,
-              decryptAuthSecret(value, projectEnvValues) ?? "",
+              value ?? "",
             ]),
           ),
         catch: (cause) => new StackConfigError({ message: String(cause) }),

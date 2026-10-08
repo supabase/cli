@@ -36,7 +36,7 @@ import {
  * Resolves the Docker label filter `stop` searches on: `--all` bypasses config with an empty
  * filter; a non-empty `--project-id` (an empty string falls through like an absent flag)
  * overrides the resolved id directly, unsanitized; otherwise it resolves via config (env → toml
- * → workdir basename, see `resolveProjectEnvironmentValues`), sanitized with `sanitizeProjectId`
+ * → workdir basename, see `loadCliProjectEnvFiles`), sanitized with `sanitizeProjectId`
  * to match the string the Docker label `start` writes.
  */
 const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilter")(function* (
@@ -68,7 +68,6 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
         context.config,
         context.hostname,
         cliSettings.workdir,
-        context.projectEnvValues,
         context.loaded?.document,
       ),
     catch: (cause) =>

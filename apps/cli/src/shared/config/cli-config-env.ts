@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
-import { parseDotEnv } from "../../command-internal/dotenv.ts";
+import { parseDotEnv } from "./dotenv.ts";
 import { CliConfigLoadError } from "./cli-config.errors.ts";
 
 const DEFAULT_SUPABASE_ENV = "development";
@@ -78,6 +78,14 @@ export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function
   } satisfies CliShellEnvironment;
 });
 
+/** The dotenv filenames for a `SUPABASE_ENV` value, highest precedence first. */
+export const candidateDotenvFilenames = (env: string): ReadonlyArray<string> => [
+  `.env.${env}.local`,
+  ...(env === "test" ? [] : [".env.local"]),
+  `.env.${env}`,
+  ".env",
+];
+
 interface CliProjectEnvFiles {
   readonly values: Readonly<Record<string, string>>;
   /** The absolute path of the file each value came from. */
@@ -103,9 +111,7 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
     (value) => value.length > 0,
   );
   const env = Option.getOrElse(selected, () => DEFAULT_SUPABASE_ENV);
-  const filenames = [`.env.${env}.local`];
-  if (env !== "test") filenames.push(".env.local");
-  filenames.push(`.env.${env}`, ".env");
+  const filenames = candidateDotenvFilenames(env);
 
   const values: Record<string, string> = {};
   const files: Record<string, string> = {};

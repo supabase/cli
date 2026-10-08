@@ -53,21 +53,21 @@ export function edgeRuntimeCacheVolume(projectId: string) {
 
 /**
  * Resolves the Docker network mode. `explicit` is tri-state: `undefined`
- * (never set) falls through to `envOverride`; `""` (explicitly cleared) and
- * any non-empty value both skip `envOverride` and resolve immediately.
+ * (never set) falls through to `envNetworkId`; `""` (explicitly cleared) and
+ * any non-empty value both skip `envNetworkId` and resolve immediately.
  * Callers must pass a flag reader that preserves this distinction — see
  * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
-  readonly envOverride: string | undefined;
+  readonly envNetworkId: string | undefined;
   readonly projectId: string;
 }): string {
   if (input.explicit !== undefined) {
     return input.explicit.length > 0 ? input.explicit : localDockerId("network", input.projectId);
   }
-  if (input.envOverride !== undefined && input.envOverride.length > 0) {
-    return input.envOverride;
+  if (input.envNetworkId !== undefined && input.envNetworkId.length > 0) {
+    return input.envNetworkId;
   }
   return localDockerId("network", input.projectId);
 }

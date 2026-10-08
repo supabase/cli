@@ -410,11 +410,9 @@ export function mockCommandSettings(opts: {
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
   readonly supabaseHome?: string;
-  readonly dbPassword?: Option.Option<Redacted.Redacted<string>>;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
-    dbPassword: opts.dbPassword ?? Option.none(),
     githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
     profileEnvValue: opts.profileEnvValue ?? Option.none(),

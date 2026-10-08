@@ -14,7 +14,7 @@ import {
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
 import { generateGoJwt } from "./go-jwt.ts";
 import { getHostname } from "./hostname.ts";
-import { decryptAuthSecret, resolveJwtSecret } from "./local-config-values.ts";
+import { resolveJwtSecret } from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {
@@ -125,7 +125,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ),
   );
-  const apiKey = yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
+  const apiKey = yield* resolveLocalServiceRoleKey(config.auth);
 
   // Validate the cert/key pairing only when the API and TLS are both enabled;
   // inject a CA whenever the resolved URL is https.
@@ -147,8 +147,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 });
 
 /**
- * Converts a thrown config-load validation error (from `decryptAuthSecret`,
- * `resolveJwtSecret`, `validateApi*`) into a tagged
+ * Converts a thrown config-load validation error (from `resolveJwtSecret`, `validateApi*`) into a tagged
  * `StorageConfigError`, preserving the original message.
  */
 const toStorageConfigError = (cause: unknown) =>
@@ -180,18 +179,12 @@ const resolveLocalApiConfig = (api: StorageConfigView["api"]) =>
  *
  * An explicit `service_role_key = ""` is treated as unset and regenerated.
  */
-const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
-  auth: StorageConfigView["auth"],
-  projectEnvValues: Readonly<Record<string, string>>,
-) {
+const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: StorageConfigView["auth"]) {
   const jwtSecret = yield* Effect.try({
-    try: () => resolveJwtSecret(decryptAuthSecret(auth.jwt_secret, projectEnvValues)),
+    try: () => resolveJwtSecret(auth.jwt_secret),
     catch: toStorageConfigError,
   });
-  const configuredKey = yield* Effect.try({
-    try: () => decryptAuthSecret(auth.service_role_key, projectEnvValues),
-    catch: toStorageConfigError,
-  });
+  const configuredKey = auth.service_role_key;
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
     : generateGoJwt(jwtSecret, "service_role");
@@ -203,9 +196,9 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
  */
 export const validateLocalStorageConfig = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
-  const { config, projectEnvValues } = yield* loadLocalStorageConfig(cliSettings.workdir);
+  const { config } = yield* loadLocalStorageConfig(cliSettings.workdir);
   const api = yield* resolveLocalApiConfig(config.api);
-  yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
+  yield* resolveLocalServiceRoleKey(config.auth);
   if (api.enabled && api.tls.enabled) {
     yield* Effect.try({
       try: () => validateApiTlsPresence(api.tls.cert_path, api.tls.key_path),

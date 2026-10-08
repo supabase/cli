@@ -3,8 +3,8 @@ import {
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
 
-import { sanitizeProjectId } from "../command-internal/docker-ids.ts";
-import { resolveSeedSqlPath } from "../command-internal/seed-path.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
+import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
 import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import {
   binaryCodec,

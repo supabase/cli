@@ -1,7 +1,8 @@
 import { Effect, Option } from "effect";
 
 import { envValue } from "../shared/config/env-option.ts";
-import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
+import { resolveLocalProjectId } from "./docker-ids.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 
 /**
  * Ambient inputs shared by the pg-delta and migra diff workflows: the project id

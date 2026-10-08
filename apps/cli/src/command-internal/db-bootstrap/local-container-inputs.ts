@@ -82,7 +82,6 @@ export const buildLocalDbContainerInputs = (
   // so the shadow's container-spec fields reflect the matching `[remotes.<ref>]` override.
   // `db start`/`db reset` never pass this.
   projectRef?: string,
-  _remoteOverrideKeys?: ReadonlySet<string>,
   // `db start`'s handler already loads a {@link LocalProjectContext} before calling this
   // function (to validate config ahead of its own "already running" short-circuit). When
   // provided, this function skips its own reload — `@supabase/config`'s `loadCliConfig` prints
@@ -113,7 +112,7 @@ export const buildLocalDbContainerInputs = (
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
     const values = yield* Effect.try({
-      try: () => resolveLocalConfigValues(config, hostname, workdir, undefined, loaded.document),
+      try: () => resolveLocalConfigValues(config, hostname, workdir, loaded.document),
       catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
     });
 
@@ -127,7 +126,7 @@ export const buildLocalDbContainerInputs = (
     // See {@link resolveDockerNetworkMode} for the full flag/env/fallback precedence.
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: yield* viperEnvStringWithProjectFallback(
+      envNetworkId: yield* viperEnvStringWithProjectFallback(
         "SUPABASE_NETWORK_ID",
         projectEnvValues,
       ),

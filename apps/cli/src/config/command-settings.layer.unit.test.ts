@@ -158,10 +158,9 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ env: {}, cwd: tempRoot }))),
   );
 
-  it.effect("captures GITHUB_TOKEN as a redacted option and leaves the db password to config", () =>
+  it.effect("captures GITHUB_TOKEN as a redacted option", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
-      expect(Option.isNone(config.dbPassword)).toBe(true);
       expect(Option.isSome(config.githubToken)).toBe(true);
       if (Option.isSome(config.githubToken)) {
         expect(Redacted.value(config.githubToken.value)).toBe("gh-tok");

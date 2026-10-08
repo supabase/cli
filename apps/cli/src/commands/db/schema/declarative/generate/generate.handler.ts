@@ -10,9 +10,9 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { bold } from "../../../../../command-internal/colors.ts";
-import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
+import { readProjectRefFile } from "../../../../../shared/config/temp-paths.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
@@ -63,7 +63,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   const dnsResolver = yield* DnsResolverFlag;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);

@@ -26,7 +26,6 @@ import type { DbTomlValues } from "../../../command-internal/db-config.toml-read
 
 const toml = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
   port: 54321,
   shadowPort: 54320,
@@ -55,7 +54,6 @@ const toml = {
   seed: { enabled: false, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set<string>(),
 } satisfies DbTomlValues;
 
 const fakeDocker = Layer.succeed(DockerRun, {

@@ -33,7 +33,7 @@ import {
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
@@ -517,7 +517,6 @@ const runSquash = Effect.fnUntraced(function* (
       runtimeInfo.platform,
       debug,
       connType === "linked" ? linkedRef : undefined,
-      toml.remoteOverrideKeys,
     );
 
     // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for
@@ -538,7 +537,7 @@ const runSquash = Effect.fnUntraced(function* (
     // Loads after the flag-group check above, so a flag conflict surfaces before any
     // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
     // remote-baseline prompt.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
     // Runs after DB-config resolution, so an invalid target surfaces first.

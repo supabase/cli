@@ -156,20 +156,6 @@ describe("resolveLocalConfigValues", () => {
     );
   });
 
-  it("does not reject an absent project_id when the workdir basename sanitizes to a non-empty value", () => {
-    const config = Schema.decodeUnknownSync(CliConfigSchema)({});
-    expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-  });
-
-  it("rejects an absent project_id when the workdir basename sanitizes to empty", () => {
-    // The workdir-basename default still applies with no `project_id` key present, so a workdir
-    // whose basename sanitizes to empty (e.g. `!!!`) still fails validation.
-    const config = Schema.decodeUnknownSync(CliConfigSchema)({});
-    expect(() => resolveLocalConfigValues(config, "127.0.0.1", "/tmp/!!!")).toThrow(
-      "Missing required field in config: project_id",
-    );
-  });
-
   it("hardcodes the local S3 credentials", () => {
     const config = baseConfig();
     const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -253,16 +239,14 @@ describe("resolveLocalConfigValues", () => {
     it("uses a configured string root_key verbatim", () => {
       const config = baseConfig();
       const document = { db: { root_key: "custom-root-key" } };
-      const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document);
+      const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document);
       expect(values.rootKey).toBe("custom-root-key");
     });
 
     it("rejects a non-string root_key (e.g. a bare TOML integer)", () => {
       const config = baseConfig();
       const document = { db: { root_key: 12345 } };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow(
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
         "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
       );
     });
@@ -282,7 +266,7 @@ describe("resolveLocalConfigValues", () => {
 
   describe("resolveAuthCaptcha", () => {
     it("returns undefined when captcha is not configured", () => {
-      expect(resolveAuthCaptcha(undefined, undefined, undefined)).toBeUndefined();
+      expect(resolveAuthCaptcha(undefined)).toBeUndefined();
     });
   });
 
@@ -292,7 +276,7 @@ describe("resolveLocalConfigValues", () => {
         auth: { email: { template: { confirmation: { subject: "", content_path: "x" } } } },
       });
       const authDocument = { email: { template: { confirmation: { subject: "" } } } };
-      const resolved = resolveAuthEmail(config.auth.email, authDocument, undefined);
+      const resolved = resolveAuthEmail(config.auth.email, authDocument);
       expect(resolved.template["confirmation"]?.subject).toBe("");
     });
 
@@ -301,7 +285,7 @@ describe("resolveLocalConfigValues", () => {
         auth: { email: { template: { confirmation: { content_path: "x" } } } },
       });
       const authDocument = { email: { template: { confirmation: { content_path: "x" } } } };
-      const resolved = resolveAuthEmail(config.auth.email, authDocument, undefined);
+      const resolved = resolveAuthEmail(config.auth.email, authDocument);
       expect(resolved.template["confirmation"]?.subject).toBeUndefined();
     });
   });
@@ -318,7 +302,7 @@ describe("resolveLocalConfigValues", () => {
     };
 
     it("leaves every hook disabled when nothing is configured or overridden", () => {
-      const resolved = resolveAuthHooks(undefined, allHooks, undefined);
+      const resolved = resolveAuthHooks(allHooks);
       expect(resolved.customAccessToken.enabled).toBe(false);
       expect(resolved.mfaVerificationAttempt.enabled).toBe(false);
     });
@@ -336,11 +320,7 @@ describe("resolveLocalConfigValues", () => {
           },
         },
       };
-      const resolved = resolveAuthExternalProviders(
-        authDocument,
-        baseConfig().auth.external,
-        undefined,
-      );
+      const resolved = resolveAuthExternalProviders(authDocument, baseConfig().auth.external);
       expect(resolved["my_custom"]?.enabled).toBe(true);
       expect(resolved["my_custom"]?.skipNonceCheck).toBe(false);
       expect(resolved["my_custom"]?.emailOptional).toBe(true);
@@ -350,20 +330,16 @@ describe("resolveLocalConfigValues", () => {
       const authDocument = {
         external: { my_custom: { enabled: "not-a-bool", client_id: "custom-client-id" } },
       };
-      expect(() =>
-        resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      expect(() => resolveAuthExternalProviders(authDocument, baseConfig().auth.external)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
     });
 
     it("leaves an absent custom-provider boolean field at its schema default without throwing", () => {
       const authDocument = {
         external: { my_custom: { client_id: "custom-client-id" } },
       };
-      const resolved = resolveAuthExternalProviders(
-        authDocument,
-        baseConfig().auth.external,
-        undefined,
-      );
+      const resolved = resolveAuthExternalProviders(authDocument, baseConfig().auth.external);
       expect(resolved["my_custom"]?.enabled).toBe(false);
     });
 
@@ -371,11 +347,7 @@ describe("resolveLocalConfigValues", () => {
       const authDocument = {
         external: { my_custom: { enabled: 1, client_id: "custom-client-id" } },
       };
-      const resolved = resolveAuthExternalProviders(
-        authDocument,
-        baseConfig().auth.external,
-        undefined,
-      );
+      const resolved = resolveAuthExternalProviders(authDocument, baseConfig().auth.external);
       expect(resolved["my_custom"]?.enabled).toBe(true);
     });
 
@@ -383,9 +355,9 @@ describe("resolveLocalConfigValues", () => {
       const authDocument = {
         external: { my_custom: { enabled: [1, 2], client_id: "custom-client-id" } },
       };
-      expect(() =>
-        resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "1,2" as a bool');
+      expect(() => resolveAuthExternalProviders(authDocument, baseConfig().auth.external)).toThrow(
+        'cannot parse "1,2" as a bool',
+      );
     });
   });
 
@@ -428,15 +400,15 @@ describe("resolveLocalConfigValues", () => {
   describe("resolveDbSettingsEnvOverrides", () => {
     it("returns the configured settings unchanged when nothing is overridden", () => {
       const settings = { shared_buffers: "128MB", max_connections: 100 };
-      expect(resolveDbSettingsEnvOverrides(settings, undefined)).toEqual(settings);
+      expect(resolveDbSettingsEnvOverrides(settings)).toEqual(settings);
     });
 
     it("leaves an unconfigured field undefined when nothing is overridden", () => {
-      expect(resolveDbSettingsEnvOverrides({}, undefined).effective_cache_size).toBeUndefined();
+      expect(resolveDbSettingsEnvOverrides({}).effective_cache_size).toBeUndefined();
     });
 
     it("leaves session_replication_role undefined when neither configured nor overridden", () => {
-      expect(resolveDbSettingsEnvOverrides({}, undefined).session_replication_role).toBeUndefined();
+      expect(resolveDbSettingsEnvOverrides({}).session_replication_role).toBeUndefined();
     });
   });
 
@@ -562,9 +534,9 @@ describe("resolveLocalConfigValues", () => {
     it("throws on an unparsable raw auth.passkey.enabled string instead of silently disabling it", () => {
       const config = baseConfig();
       const document = { auth: { passkey: { enabled: "not-a-bool" } } };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
+        'cannot parse "not-a-bool" as a bool',
+      );
     });
   });
 
@@ -687,7 +659,7 @@ describe("resolveLocalConfigValues", () => {
         },
       });
       expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current, undefined, {
+        resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current, {
           auth: { email: { template: { invite: { content: "<html>Hi</html>" } } } },
         }),
       ).toThrow(
@@ -705,9 +677,9 @@ describe("resolveLocalConfigValues", () => {
     it("rejects an enabled unmodeled external provider missing client_id", () => {
       const config = baseConfig();
       const document = { auth: { external: { custom: { enabled: true } } } };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow("Missing required field in config: auth.external.custom.client_id");
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
+        "Missing required field in config: auth.external.custom.client_id",
+      );
     });
 
     it("rejects an enabled unmodeled external provider missing secret", () => {
@@ -715,9 +687,9 @@ describe("resolveLocalConfigValues", () => {
       const document = {
         auth: { external: { custom: { enabled: true, client_id: "abc" } } },
       };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow("Missing required field in config: auth.external.custom.secret");
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
+        "Missing required field in config: auth.external.custom.secret",
+      );
     });
 
     it("does not require a secret for apple/google providers", () => {
@@ -725,25 +697,19 @@ describe("resolveLocalConfigValues", () => {
       const document = {
         auth: { external: { apple: { enabled: true, client_id: "abc" } } },
       };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).not.toThrow();
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).not.toThrow();
     });
 
     it("skips deprecated linkedin/slack providers", () => {
       const config = baseConfig();
       const document = { auth: { external: { slack: { enabled: true } } } };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).not.toThrow();
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).not.toThrow();
     });
 
     it("does not validate a disabled unmodeled external provider", () => {
       const config = baseConfig();
       const document = { auth: { external: { custom: { enabled: false } } } };
-      expect(() =>
-        resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).not.toThrow();
+      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).not.toThrow();
     });
 
     it("skips the check entirely when no document is threaded through", () => {
@@ -760,7 +726,7 @@ describe("resolveLocalConfigValues", () => {
         max_frequency: "5s",
         twilio: { ...baseConfig().auth.sms.twilio, enabled: true },
       };
-      const resolved = resolveAuthSms(undefined, configured, undefined);
+      const resolved = resolveAuthSms(configured);
       expect(resolved.enable_signup).toBe(true);
       expect(resolved.max_frequency).toBe("5s");
     });
@@ -769,7 +735,7 @@ describe("resolveLocalConfigValues", () => {
   describe("resolveAuthSms (disables phone login with no provider enabled)", () => {
     it("downgrades enable_signup to false when configured true with no provider enabled", () => {
       const configured = { ...baseConfig().auth.sms, enable_signup: true };
-      const resolved = resolveAuthSms(undefined, configured, undefined);
+      const resolved = resolveAuthSms(configured);
       expect(resolved.enable_signup).toBe(false);
     });
 
@@ -779,12 +745,12 @@ describe("resolveLocalConfigValues", () => {
         enable_signup: true,
         vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
       };
-      const resolved = resolveAuthSms(undefined, configured, undefined);
+      const resolved = resolveAuthSms(configured);
       expect(resolved.enable_signup).toBe(true);
     });
 
     it("leaves enable_signup at false when already false with no provider enabled", () => {
-      const resolved = resolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      const resolved = resolveAuthSms(baseConfig().auth.sms);
       expect(resolved.enable_signup).toBe(false);
     });
   });

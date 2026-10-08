@@ -2605,7 +2605,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
         // callers.
         const networkMode = resolveDockerNetworkMode({
           explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride:
+          envNetworkId:
             context.projectEnvValues === undefined
               ? undefined
               : yield* viperEnvStringWithProjectFallback(

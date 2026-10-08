@@ -21,7 +21,7 @@ import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -168,7 +168,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
   // the native initial-migra history repair too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   // `EXPERIMENTAL` resolves from either the global `--experimental` flag or
   // `SUPABASE_EXPERIMENTAL`, reusing `resolveExperimentalWithProjectEnv`'s flag-over-env
@@ -291,9 +291,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
             // override, same as `toml` above.
             connType === "linked" ? linkedRef : undefined,
-            // `toml`'s remote-override-key tracking (same matched block), so a remote-set
-            // bootstrap field isn't re-overridden by a conflicting `SUPABASE_*` env var here.
-            toml.remoteOverrideKeys,
           ),
         );
 

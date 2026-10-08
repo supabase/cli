@@ -30,7 +30,7 @@ import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { tempPaths } from "../../../command-internal/temp-paths.ts";
+import { tempPaths } from "../../../shared/config/temp-paths.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,

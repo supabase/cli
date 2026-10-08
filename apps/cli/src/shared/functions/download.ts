@@ -982,7 +982,7 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   // like `projectEnvValues` (`undefined` for library callers).
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-    envOverride:
+    envNetworkId:
       projectEnvValues === undefined
         ? undefined
         : yield* viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),

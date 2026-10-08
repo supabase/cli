@@ -27,7 +27,6 @@ export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
             context.config,
             context.hostname,
             projectRoot,
-            undefined,
             context.loaded.document,
           ),
         catch: toError,

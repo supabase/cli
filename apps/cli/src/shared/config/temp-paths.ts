@@ -3,7 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../shared/telemetry/error-actionability.ts";
+} from "../telemetry/error-actionability.ts";
 
 /**
  * A real failure reading `<workdir>/supabase/.temp/project-ref` (e.g. the

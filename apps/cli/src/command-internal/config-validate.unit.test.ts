@@ -21,10 +21,10 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
-  parseGoBool,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { parseGoBool } from "../shared/config/config-bool.ts";
 
 describe("parseGoBool", () => {
   it("accepts Go's strconv.ParseBool true forms", () => {

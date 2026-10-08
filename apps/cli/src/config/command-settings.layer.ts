@@ -183,7 +183,6 @@ export const commandSettingsLayer = Layer.unwrap(
           poolerHost,
           dashboardUrl,
           accessToken,
-          dbPassword: Option.none(),
           githubToken,
           projectId,
           workdir,

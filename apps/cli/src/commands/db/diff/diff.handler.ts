@@ -430,9 +430,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
       // as `cfg` above (`readDbToml(..., linkedRef)`).
       connType === "linked" ? linkedRef : undefined,
-      // `cfg`'s own remote-override-key tracking (same matched block), so a remote-set
-      // bootstrap field isn't re-overridden by a conflicting `SUPABASE_*` env var.
-      cfg.remoteOverrideKeys,
     );
 
     const resolved = yield* resolver.resolve({

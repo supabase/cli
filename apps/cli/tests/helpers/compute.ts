@@ -356,7 +356,6 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         profile: "supabase",
         profileEnvValue: Option.none(),
         supabaseHome: path.join(workdir, ".supabase"),
-        dbPassword: Option.none(),
         githubToken: Option.none(),
         apiUrl: "https://api.supabase.com",
         projectHost: "supabase.co",

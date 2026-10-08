@@ -20,8 +20,8 @@ import {
 } from "effect";
 
 import type { LoadedCliConfig } from "@supabase/config";
-import { readProjectRefFile } from "../command-internal/temp-paths.ts";
-import { collectDotenvPrivateKeys } from "../command-internal/vault-decrypt.ts";
+import { readProjectRefFile } from "../shared/config/temp-paths.ts";
+import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config.errors.ts";
 import { Output } from "../shared/output/output.service.ts";

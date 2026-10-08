@@ -8,7 +8,7 @@ import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { bold } from "./colors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues } from "./db-config.toml-read.ts";
 import { type DbTargetSelection } from "./db-target-flags.ts";
 import { readMigrationTable } from "./migration-history.ts";
 import { LinkedProjectCache } from "../telemetry/linked-project-cache.service.ts";
@@ -87,7 +87,7 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
   // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
   // surfaces before any .env read. Resolve --yes against the project env here, not
   // just process.env. Same ordering as `migration down`/`repair`.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
   // Linked fetch caches the project ref on success. The ref is

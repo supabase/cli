@@ -1,6 +1,6 @@
 import { Option } from "effect";
 
-import { PROJECT_REF_PATTERN } from "../command-internal/config-validate.ts";
+import { PROJECT_REF_PATTERN } from "./project-ref.service.ts";
 import { isDocumentRecord } from "./cli-config-document.ts";
 import { cliRemoteProjectIdEnvName } from "./cli-config-keys.ts";
 import { expandCliConfigEnvReference } from "./cli-config-key.ts";

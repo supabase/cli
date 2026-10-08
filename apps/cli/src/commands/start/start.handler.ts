@@ -45,11 +45,7 @@ import {
   resolveStorageCredentials,
   storageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
-import {
-  collectDotenvPrivateKeys,
-  decryptSecret,
-  isEncryptedSecret,
-} from "../../command-internal/vault-decrypt.ts";
+import { decryptSecret, isEncryptedSecret } from "../../shared/config/vault-decrypt.ts";
 import { parseGoDuration } from "../../command-internal/go-duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
@@ -176,7 +172,6 @@ import { buildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
 import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
-import { ambientEnvironment } from "../../shared/config/cli-config-provider.layer.ts";
 
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
@@ -233,14 +228,14 @@ function resolveGotrueEnvInput(params: {
 }): Omit<BuildGotrueEnvInput, "dbHost" | "dbPassword"> {
   const { context, values, workdir, kongContainerName, mailpitContainerName, resolvedEmail } =
     params;
-  const { config, projectEnvValues, document } = context;
+  const { config, document } = context;
 
   const inbucketEnabled = config.local_smtp.enabled;
   // Reading the schema-decoded `config.auth.email.smtp` here would always see `enabled: false`
   // when the key is merely absent from the TOML table, silently falling back to Mailpit even when
   // a real SMTP server is configured. `resolveAuthEmailSmtp` resolves this correctly off the raw
   // document.
-  const resolvedSmtp = resolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
+  const resolvedSmtp = resolveAuthEmailSmtp(asRecord(document?.["auth"]));
   const smtp =
     resolvedSmtp?.enabled === true
       ? {
@@ -263,13 +258,12 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
+  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
   const externalProviders = resolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
-    projectEnvValues,
   );
-  const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
+  const authExternalUrl = resolveAuthExternalUrl(document);
 
   return {
     apiUrl: values.apiUrl,
@@ -290,22 +284,18 @@ function resolveGotrueEnvInput(params: {
     kongContainerName,
     smtp,
     mailpit,
-    sms: resolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
-    sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
-    mfa: resolveAuthMfa(config.auth.mfa, projectEnvValues),
-    rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
-    hooks: resolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
-    captcha: resolveAuthCaptcha(
-      asRecord(document?.["auth"]),
-      config.auth.captcha,
-      projectEnvValues,
-    ),
+    sms: resolveAuthSms(config.auth.sms),
+    sessions: resolveGotrueSessions(config.auth.sessions),
+    mfa: resolveAuthMfa(config.auth.mfa),
+    rateLimit: resolveGotrueRateLimit(config.auth.rate_limit),
+    web3: resolveGotrueWeb3(config.auth.web3),
+    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server),
+    hooks: resolveAuthHooks(config.auth.hook),
+    captcha: resolveAuthCaptcha(config.auth.captcha),
     passkeyEnabled,
     webauthn,
     externalProviders,
-    signingKeys: resolveConfiguredSigningKeys(config, workdir, projectEnvValues),
+    signingKeys: resolveConfiguredSigningKeys(config, workdir),
   };
 }
 
@@ -441,7 +431,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           context.config,
           context.hostname,
           cliSettings.workdir,
-          context.projectEnvValues,
           context.document,
         ),
       catch: (cause) =>
@@ -456,8 +445,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link resolveAuthEmail}'s doc comment.
     const resolvedEmail = yield* Effect.try({
-      try: () =>
-        resolveAuthEmail(config.auth.email, asRecord(context.document?.["auth"]), projectEnvValues),
+      try: () => resolveAuthEmail(config.auth.email, asRecord(context.document?.["auth"])),
       catch: (cause) =>
         new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
@@ -475,18 +463,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
     // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
     // value must be validated eagerly here or it would be silently accepted.
-    const gotrueSessionsForValidation = resolveGotrueSessions(
-      config.auth.sessions,
-      projectEnvValues,
-    );
+    const gotrueSessionsForValidation = resolveGotrueSessions(config.auth.sessions);
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
       parseGoDuration(resolvedEmail.max_frequency),
     );
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
     const smsForValidation = yield* Effect.try({
-      try: () =>
-        resolveAuthSms(asRecord(context.document?.["auth"]), config.auth.sms, projectEnvValues),
+      try: () => resolveAuthSms(config.auth.sms),
       catch: (cause) =>
         new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
@@ -518,37 +502,29 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+      parseGoDuration(resolveAuthMfa(config.auth.mfa).phone.max_frequency),
     );
     // These GoTrue overrides must validate unconditionally too, regardless of
     // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
     // override, so calling each once here is simpler than re-deriving every field individually.
     yield* wrapConfigOverride("auth.rate_limit", () =>
-      resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
+      resolveGotrueRateLimit(config.auth.rate_limit),
     );
-    yield* wrapConfigOverride("auth.web3", () =>
-      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    );
+    yield* wrapConfigOverride("auth.web3", () => resolveGotrueWeb3(config.auth.web3));
     yield* wrapConfigOverride("auth.oauth_server", () =>
-      resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+      resolveGotrueOAuthServer(config.auth.oauth_server),
     );
     // Same gap for the raw (unmodeled by `@supabase/config`) `auth.passkey`/`auth.webauthn`/
     // `auth.external.<name>` booleans, which are otherwise only reached once auth is enabled and
     // gotrue isn't excluded.
-    yield* wrapConfigOverride("auth.passkey", () =>
-      resolveGotruePasskeyWebauthn(context.document, projectEnvValues),
-    );
+    yield* wrapConfigOverride("auth.passkey", () => resolveGotruePasskeyWebauthn(context.document));
     yield* wrapConfigOverride("auth.external", () =>
-      resolveAuthExternalProviders(
-        asRecord(context.document?.["auth"]),
-        config.auth.external,
-        projectEnvValues,
-      ),
+      resolveAuthExternalProviders(asRecord(context.document?.["auth"]), config.auth.external),
     );
     // Same gap for `auth.third_party.<provider>.*` — `resolveThirdPartyProviders` is otherwise
     // never called by this handler at all, so a malformed override would never fail the command.
     yield* wrapConfigOverride("auth.third_party", () =>
-      resolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
+      resolveThirdPartyProviders(config.auth.third_party),
     );
     // `[functions.<slug>.env]` has no supported meaning for `start`, so any key here must be
     // rejected before any Docker work. `@supabase/config`'s schema still models this table for
@@ -694,12 +670,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.
-    const jwks = yield* resolveLocalJwks(
-      config,
-      cliSettings.workdir,
-      values.jwtSecret,
-      projectEnvValues,
-    ).pipe(Effect.mapError((cause) => new StartInvalidConfigError({ message: cause.message })));
+    const jwks = yield* resolveLocalJwks(config, cliSettings.workdir, values.jwtSecret).pipe(
+      Effect.mapError((cause) => new StartInvalidConfigError({ message: cause.message })),
+    );
 
     // The `edge_runtime.deno_version` -> image switch is start-only (no `db start` equivalent),
     // so it's resolved here rather than inside the shared bootstrap-config derivation below.
@@ -801,7 +774,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: yield* viperEnvStringWithProjectFallback(
+      envNetworkId: yield* viperEnvStringWithProjectFallback(
         "SUPABASE_NETWORK_ID",
         projectEnvValues,
       ),
@@ -1208,7 +1181,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             // `postgresExtraEnv` reads this and its sibling S3 fields for its
             // `POSTGRES_INITDB_ARGS` branch.
             orioledb_version: orioledbVersion,
-            settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+            settings: resolveDbSettingsEnvOverrides(config.db.settings),
           },
           experimental: {
             ...config.experimental,
@@ -1264,7 +1237,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // long-running Realtime/GoTrue/PostgREST containers too), so it's reused, not re-resolved.
           jwks: Effect.succeed(jwks),
           apiUrl: values.apiUrl,
-          authExternalUrl: resolveAuthExternalUrl(context.document, projectEnvValues),
+          authExternalUrl: resolveAuthExternalUrl(context.document),
           siteUrl: values.authSiteUrl,
           anonKey: values.anonKey,
           serviceRoleKey: values.serviceRoleKey,
@@ -1329,10 +1302,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // `checkDbToml` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
-          const dotenvPrivateKeys = collectDotenvPrivateKeys({
-            ...projectEnvValues,
-            ...ambientEnvironment(),
-          });
+          const { dotenvPrivateKeys } = context.snapshot.sources;
           const edgeRuntimeSecrets: Record<string, string> = {};
           for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
             if (!isEncryptedSecret(secretValue)) {

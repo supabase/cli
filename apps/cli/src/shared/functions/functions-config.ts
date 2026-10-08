@@ -1,9 +1,9 @@
-import { Crypto, Effect, type FileSystem, Path } from "effect";
+import { Crypto, Effect, type FileSystem, Option, type Path } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/effect";
-import type { CliConfigValues } from "../../config/cli-config-values.service.ts";
-import { normalizeProjectId } from "./functions-docker.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
 
@@ -58,17 +58,19 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
     "config.go_compat": input.goConfigCompat !== undefined,
   });
   if (input.goConfigCompat === undefined) {
-    const path = yield* Path.Path;
     const loaded = yield* loadCliConfig(
       input.projectRoot,
       input.projectRef === undefined ? {} : { projectRef: input.projectRef },
     );
+    const values = yield* CliConfigValues;
+    const snapshot = yield* values.load({
+      workdir: input.projectRoot,
+      projectRef: Option.fromNullishOr(input.projectRef),
+    });
     return {
       loaded,
       projectEnvValues: undefined,
-      // Sanitized because it also feeds Docker label/resource names, where an
-      // unsanitized value breaks cleanup filters.
-      projectId: normalizeProjectId(loaded?.config.project_id ?? path.basename(input.projectRoot)),
+      projectId: (yield* snapshot.get(CliConfigKeys.projectId)).value,
       denoVersion: loaded?.config.edge_runtime.deno_version,
     } satisfies FunctionsCliConfigContext;
   }

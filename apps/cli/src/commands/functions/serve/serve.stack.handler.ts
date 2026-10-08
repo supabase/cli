@@ -137,7 +137,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     composition.members.some((member) => member.id === id),
   );
   const existing = members.find((instance) => instance.service === "functions");
-  const envOverride = Option.isSome(flags.envFile)
+  const envFileOverride = Option.isSome(flags.envFile)
     ? yield* readStackFunctionsEnv(path.resolve(runtime.cwd, flags.envFile.value), false)
     : undefined;
   const cleanupWarning = (message: string, error: { readonly message: string }) =>
@@ -152,7 +152,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     const saved = before.config.config;
     const desired = {
       ...saved,
-      ...(envOverride === undefined ? {} : { env: { ...saved.env, ...envOverride } }),
+      ...(envFileOverride === undefined ? {} : { env: { ...saved.env, ...envFileOverride } }),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     };
     const changed = !Equal.equals(saved, desired);
@@ -249,7 +249,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
   const env =
-    envOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));
+    envFileOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));
   const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
@@ -258,7 +258,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       jwks,
       apiUrl,
       databaseUrl,
-      env: { ...env, ...source.config.env, ...envOverride },
+      env: { ...env, ...source.config.env, ...envFileOverride },
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     },
     endpoints: { ...source.endpoints, http: { port } },

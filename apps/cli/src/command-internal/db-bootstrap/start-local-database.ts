@@ -177,13 +177,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // re-resolves the real values.
   yield* Effect.try({
     try: () =>
-      resolveLocalConfigValues(
-        config,
-        hostnameForValidation,
-        cliSettings.workdir,
-        undefined,
-        loaded.document,
-      ),
+      resolveLocalConfigValues(config, hostnameForValidation, cliSettings.workdir, loaded.document),
     catch: (cause) =>
       new DbConfigLoadError({
         message: cause instanceof Error ? cause.message : String(cause),
@@ -224,7 +218,6 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     networkIdFlag,
     runtimeInfo.platform,
     debug,
-    undefined,
     undefined,
     context,
   );

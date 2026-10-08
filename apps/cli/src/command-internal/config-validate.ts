@@ -45,22 +45,6 @@ export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Accepted boolean string forms, matching Go's `strconv.ParseBool`; any other value is a
-// parse error.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
-
-/**
- * Parses a config bool value: accepts the same string forms as `strconv.ParseBool`, returns
- * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
- * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
- */
-export function parseGoBool(value: string): boolean | undefined {
-  if (GO_BOOL_TRUE.has(value)) return true;
-  if (GO_BOOL_FALSE.has(value)) return false;
-  return undefined;
-}
-
 /**
  * Thrown by {@link validateResolvedConfig}. Does not override `.name` — it stays the inherited
  * `"Error"` — so `instanceof Error` and `.name` checks can't distinguish it from a plain

@@ -9,11 +9,8 @@ import {
   runSupabaseEffect,
   runDockerEffect,
 } from "../../../tests/helpers/cli.ts";
-import {
-  sanitizeProjectId,
-  serviceContainerName,
-  localDbContainerId,
-} from "../../command-internal/docker-ids.ts";
+import { serviceContainerName, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { getRegistryImageUrl } from "../../command-internal/docker-registry.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";

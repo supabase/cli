@@ -199,7 +199,6 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           runtimeInfo.platform,
           debug,
           request.projectRef,
-          request.toml.remoteOverrideKeys,
         );
         const image =
           (yield* currentStackBackend).kind === "stack"

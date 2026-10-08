@@ -19,14 +19,13 @@ import {
   readServiceVersionOverrides,
 } from "../service-version-overrides.ts";
 import { ramInBytes } from "../size-units.ts";
-import { tempPaths } from "../temp-paths.ts";
+import { tempPaths } from "../../shared/config/temp-paths.ts";
 
 export interface DbBootstrapConfigInput {
   /** The effective config: every override is already applied. */
   readonly config: CliConfig;
   readonly projectEnvValues?: Readonly<Record<string, string>> | undefined;
   readonly workdir: string;
-  readonly remoteOverrideKeys?: ReadonlySet<string>;
 }
 
 export interface DbBootstrapConfig {

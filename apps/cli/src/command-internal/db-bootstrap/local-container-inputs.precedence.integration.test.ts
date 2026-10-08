@@ -11,7 +11,6 @@ import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { goldenJson, useShellEnvPin } from "../../../tests/helpers/config-goldens.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../global-flags.ts";
-import { readDbToml } from "../db-config.toml-read.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
@@ -171,7 +170,6 @@ describe("local container inputs precedence goldens", () => {
         );
 
         const inputs = yield* Effect.gen(function* () {
-          const dbToml = yield* readDbToml(fs, path, workdir, TARGET_REF);
           return yield* buildLocalDbContainerInputs(
             spawner,
             workdir,
@@ -179,7 +177,6 @@ describe("local container inputs precedence goldens", () => {
             "linux",
             false,
             TARGET_REF,
-            dbToml.remoteOverrideKeys,
           );
         }).pipe(Effect.provide(layer));
 

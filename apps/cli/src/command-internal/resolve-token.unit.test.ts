@@ -20,7 +20,6 @@ const settings = (accessToken: Option.Option<Redacted.Redacted<string>>) =>
     workdir: "/tmp/supabase-cli-resolve-token",
     explicitWorkdir: false,
     workdirEnvValue: Option.none(),
-    dbPassword: Option.none(),
     githubToken: Option.none(),
     userAgent: "SupabaseCLI/test",
   });

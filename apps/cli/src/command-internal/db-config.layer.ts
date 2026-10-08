@@ -36,7 +36,7 @@ import {
   redactConnectionString,
 } from "./db-config.parse.ts";
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
-import { loadProjectEnv, readDbToml } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { rejectPasswordWithDirectTarget } from "./db-target-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
@@ -543,9 +543,9 @@ export const dbConfigResolverLayer = Layer.effect(
             resolveVaultSecrets,
           });
           // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
-          // read. Layer the project env under the shell env (`loadProjectEnv` already excludes
+          // read. Layer the project env under the shell env (`loadProjectEnvValues` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
-          const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+          const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
           const conn = parseConnectionString(flags.dbUrl.value, layeredParseEnv(projectEnv));
           if (conn === undefined) {
             return yield* Effect.fail(

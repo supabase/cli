@@ -2,11 +2,6 @@ import { Effect, Option, Path, Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  InvalidAnalyticsBackendEnvOverrideError,
-  InvalidBoolEnvOverrideError,
-  InvalidPortEnvOverrideError,
-} from "../command-internal/local-config-values.ts";
-import {
   binaryCodec,
   commaListCodec,
   goBoolCodec,
@@ -353,7 +348,7 @@ describe("pickCliConfigKey attributes", () => {
   });
 });
 
-describe("pickCliConfigKey failure text matches the legacy readers", () => {
+describe("pickCliConfigKey failure text", () => {
   const legacyUintMessage = (path: string, value: string) =>
     `Failed reading config: Invalid ${path}: ${value}.`;
 
@@ -361,7 +356,7 @@ describe("pickCliConfigKey failure text matches the legacy readers", () => {
     const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "maybe" } });
 
     expect(failure.message).toBe(
-      new InvalidBoolEnvOverrideError("db.seed.enabled", "maybe").message,
+      'Invalid config for db.seed.enabled: cannot parse "maybe" as a bool',
     );
   });
 
@@ -375,7 +370,7 @@ describe("pickCliConfigKey failure text matches the legacy readers", () => {
 
     const failure = failureOf(port, { shell: { SUPABASE_API_PORT: "70000" } });
 
-    expect(failure.message).toBe(new InvalidPortEnvOverrideError("api.port", "70000").message);
+    expect(failure.message).toBe('Invalid config for api.port: cannot parse "70000" as a port');
   });
 
   it("reproduces the uint message and the Go base-zero grammar", () => {
@@ -405,7 +400,7 @@ describe("pickCliConfigKey failure text matches the legacy readers", () => {
     const failure = failureOf(backend, { shell: { SUPABASE_ANALYTICS_BACKEND: "sqlite" } });
 
     expect(failure.message).toBe(
-      new InvalidAnalyticsBackendEnvOverrideError("analytics.backend", "sqlite").message,
+      'Invalid config for analytics.backend: cannot parse "sqlite" as one of "postgres", "bigquery"',
     );
   });
 

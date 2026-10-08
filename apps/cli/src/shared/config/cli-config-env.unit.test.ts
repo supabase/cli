@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
-import { loadProjectEnv } from "../../command-internal/db-config.toml-read.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "./cli-config-env.ts";
 
 const withShell = (shell: Record<string, string>) =>
@@ -152,6 +151,7 @@ describe("project env loader", () => {
     readonly name: string;
     readonly files: Readonly<Record<string, string>>;
     readonly shell: Readonly<Record<string, string>>;
+    readonly expected: Readonly<Record<string, string>>;
   }> = [
     {
       name: "first writer wins across the env-specific, local and plain files",
@@ -162,53 +162,57 @@ describe("project env loader", () => {
         "supabase/.env.development.local": "A=dev-local",
       },
       shell: {},
+      expected: { A: "dev-local", B: "local", C: "plain" },
     },
     {
       name: "supabase/ is read before the project root",
       files: { "supabase/.env": "A=nested", ".env": "A=root\nB=root" },
       shell: {},
+      expected: { A: "nested", B: "root" },
     },
     {
       name: "SUPABASE_ENV selects the env-specific files",
       files: { "supabase/.env.staging": "A=staging", "supabase/.env.development": "A=dev" },
       shell: { SUPABASE_ENV: "staging" },
+      expected: { A: "staging" },
     },
     {
       name: "the test env skips .env.local",
       files: { "supabase/.env.local": "A=local", "supabase/.env.test": "A=test" },
       shell: { SUPABASE_ENV: "test" },
+      expected: { A: "test" },
     },
     {
       name: "an empty SUPABASE_ENV falls back to development",
       files: { "supabase/.env.development": "A=dev" },
       shell: { SUPABASE_ENV: "" },
+      expected: { A: "dev" },
     },
     {
       name: "a shell variable shadows the files even when it is empty",
       files: { "supabase/.env": "A=file\nB=file\nC=file" },
       shell: { A: "shell", B: "" },
+      expected: { C: "file" },
     },
     {
       name: "godotenv quoting and variable expansion",
       files: { "supabase/.env": 'BASE=one\nQUOTED="two words"\nCOMBINED="${BASE}-x"\nexport E=1' },
       shell: {},
+      expected: { BASE: "one", QUOTED: "two words", COMBINED: "one-x", E: "1" },
     },
   ];
 
   for (const fixture of fixtures) {
-    it.effect(`matches the legacy loader: ${fixture.name}`, () =>
+    it.effect(`loads ${fixture.name}`, () =>
       Effect.gen(function* () {
         for (const [relative, contents] of Object.entries(fixture.files)) {
           yield* write(relative, contents);
         }
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
 
         const loaded = yield* loadCliProjectEnvFiles(workdir.current);
-        const legacy = yield* loadProjectEnv(fs, path, workdir.current);
 
-        expect(loaded.values).toEqual(legacy);
-        expect(Object.keys(loaded.files).sort()).toEqual(Object.keys(legacy).sort());
+        expect(loaded.values).toEqual(fixture.expected);
+        expect(Object.keys(loaded.files).sort()).toEqual(Object.keys(fixture.expected).sort());
       }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell(fixture.shell)))),
     );
   }
@@ -251,30 +255,23 @@ describe("project env loader", () => {
     ),
   );
 
-  it.effect("fails with the legacy text when a file is unreadable or malformed", () =>
+  it.effect("fails with the file name when a file is unreadable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir.current, "supabase", ".env"), { recursive: true });
       const unreadable = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
       expect(unreadable.message).toBe("failed to read environment file: .env");
-
-      const legacyUnreadable = yield* Effect.flip(loadProjectEnv(fs, path, workdir.current));
-      expect(unreadable.message).toBe(legacyUnreadable.message);
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
   );
 
-  it.effect("fails with the legacy text on a malformed line", () =>
+  it.effect("fails with the file name on a malformed line", () =>
     Effect.gen(function* () {
       yield* write("supabase/.env.local", "not a valid line\n");
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
 
       const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
-      const legacy = yield* Effect.flip(loadProjectEnv(fs, path, workdir.current));
 
       expect(failure.message).toBe("failed to parse environment file: .env.local");
-      expect(failure.message).toBe(legacy.message);
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
   );
 });
