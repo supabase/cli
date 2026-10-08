@@ -190,7 +190,7 @@ Before decoding, most string values matching `env(NAME)` are substituted automat
 resolved `CliProjectEnvironment` — this is required so numeric and boolean fields don't crash the
 strict decoder when their TOML/JSON value is still a string. Substitution also coerces the
 resulting string to the field's declared type: a numeric field is parsed as a number, a boolean
-field accepts Go's `TRUE`/`FALSE`/`1`/`0`/`t`/`f`/… spellings, and a string-array field is split on
+field accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and `0`/`f`/`F`/`FALSE`/`false`/`False`, and a string-array field is split on
 `,`. A missing or empty-string env var leaves the literal `env(NAME)` untouched rather than
 substituting an empty value.
 

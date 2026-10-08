@@ -15,20 +15,19 @@ Compose, and it does not go through `@supabase/stack/effect`'s orchestration mod
 (see the CLI-1323 plan's "Critical architectural finding" for why: that runtime is a
 deliberately different local-dev product — no Kong gateway, native-binary-first,
 auto-allocated ports, opaque API keys — that would break the compatibility contract
-this port exists to provide).
+of this command).
 
 ## Scope
 
 Edge Runtime bring-up, the fresh-volume DB schema/migration/seed setup pipeline, and
-fresh-volume storage-bucket seeding are all now natively implemented (see below) — this
-section previously listed them as out-of-scope follow-ups.
+fresh-volume storage-bucket seeding are all natively implemented (see below).
 
-One piece of the old Go CLI's `start` remains explicitly **out of scope**:
+One piece remains explicitly **out of scope**:
 
 1. **Linked-project version-check suggestion** — a best-effort Management API call, made
    only when a project happens to be linked _and_ the user is logged in, purely to print
-   an "update available" hint. Omitted entirely — this port has zero Management API
-   dependency for `start`, by design. The runtime layer does compose the lazy
+   an "update available" hint. Omitted entirely — `start` has zero Management API
+   dependency, by design. The runtime layer does compose the lazy
    Management-API factory — a static requirement of the shared storage-credentials
    resolver whose hosted branch `start` never reaches — so building the layer loads the
    credential subsystem: the keyring module import (skipped under `SUPABASE_NO_KEYRING=1`
@@ -188,7 +187,7 @@ mounts and require a daemon that can see the project directory.
 
 Local-only: the Storage bucket-seeding step (fresh volume + Storage enabled) talks to the
 LOCAL Storage service through Kong, never the Management API. See "Scope" above for the
-one Go behavior (`CheckVersions`) that _would_ call the Management API and is deliberately
+linked-project version-check suggestion that _would_ call the Management API and is deliberately
 not implemented.
 
 ## Environment Variables
@@ -226,7 +225,7 @@ code is surfaced on failure.
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
-| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from the old Go CLI's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                        |
+| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (see the CLI-1987 note under "Notes")                                                                                                                                                                           |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                                                                                       |
 | `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                                                                  |
 | `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                      |
@@ -288,8 +287,7 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
   `<container> container logs:` header and that container's `docker logs` output, then one
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
   throughout, rather than the id `docker create` returns.
-- stderr (conditional, `exec format error` in those logs) — **TS-port-only, beyond the old
-  Go CLI's own behavior**: a recovery `suggestion` printed after the reasons, naming each affected
+- stderr (conditional, `exec format error` in those logs): a recovery `suggestion` printed after the reasons, naming each affected
   container **with** its image (they can be named after different things —
   `supabase_inbucket_*` runs `mailpit`), then a `supabase stop` / `<runtime> image rm -f` /
   `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
@@ -299,7 +297,7 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
   the reader to run it from the project directory or with the same `--workdir`, rather than
   embedding the resolved path, which would need shell quoting that differs per platform. Being a
   `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
-  Nothing is ever removed automatically, and the old Go CLI printed no such guidance.
+  Nothing is ever removed automatically.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
@@ -339,30 +337,19 @@ prose, not structured data.
   healthy, buckets are seeded anyway — a failure in THAT seed step still rolls back and
   fails the command despite the flag (see "Storage bucket seeding" and the `Exit Codes`
   table).
-- **Intentional divergence from the old Go CLI — image-pull/daemon failure under
-  `--ignore-health-check` (CLI-1987, ruled 2026-07-30):** the old Go CLI's unhealthy-error
-  classifier treated ANY joined error as "unhealthy", which accidentally also matched the
-  image pre-pull step's joined pull errors. So in the old Go CLI, with `--ignore-health-check`
-  set, a total image-pull failure — every registry candidate exhausted, or the Docker daemon
-  becoming unreachable during the pre-pull — was swallowed: it printed the error, skipped
-  rollback, printed `Started supabase local development setup.` + the status table + the
-  security notice, and exited 0 even though no container ever started. That was an
-  unintended quirk of a shape-based check, and it is deliberately NOT reproduced here —
-  enforced by control flow, not by a classifier: unlike a single outer check on the whole
-  run result, this port consults `isUnhealthyStartError` (`start.rollback.ts`) only
-  inside its two health-wait failure branches, and the image pre-pull runs before
-  bring-up, so its failure propagates out without ever reaching a downgrade branch. The
-  same scenario exits 1 with no success banner and no status table, flag or no flag.
-  `--ignore-health-check` downgrades health-check timeouts only. Rollback is NOT part of
-  the divergence — the pre-pull runs before any container/network is created, so there
-  is nothing to roll back either way; the observable delta is exit code + success
-  banner + status table + security notice (the old Go CLI printed all three of the latter
-  unconditionally at the end of its run; this port's failure exits before
-  any of them). Note the flag's own help text ("Ignore unhealthy services and exit 0")
-  over-promises in this scenario — a pre-pull failure is not an
-  "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
-- `--preview` is a hidden, parsed-but-inert flag, inherited from the old Go CLI (never
-  read by its own `start.Run`).
+- **Image-pull/daemon failure under `--ignore-health-check` (CLI-1987):** a total image-pull
+  failure — every registry candidate exhausted, or the Docker daemon becoming unreachable
+  during the pre-pull — is never swallowed by the flag: the run exits 1 with no
+  `Started supabase local development setup.` line, no status table, and no security notice,
+  flag or no flag. This is enforced by control flow, not by a classifier: `start` consults
+  `isUnhealthyStartError` (`start.rollback.ts`) only inside its two health-wait failure
+  branches, and the image pre-pull runs before bring-up, so its failure propagates out
+  without ever reaching a downgrade branch. `--ignore-health-check` downgrades health-check
+  timeouts only. Rollback is not involved — the pre-pull runs before any container/network
+  is created, so there is nothing to roll back. Note the flag's own help text ("Ignore
+  unhealthy services and exit 0") over-promises in this scenario — a pre-pull failure is not
+  an "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
+- `--preview` is a hidden, parsed-but-inert flag, never read by the handler.
 - The already-running check uses `docker container inspect` on the Postgres container,
   not a health check. For a verified
   stopped container outside Bitbucket Pipelines, `start` removes all current-project
@@ -381,12 +368,10 @@ prose, not structured data.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.
-- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
-  2026-08-12):** Edge Runtime bind mounts are computed by the same functions import scanner
+- **Spec-strict import-map key matching (CLI-2179):** Edge Runtime bind mounts are computed by the same functions import scanner
   as `functions deploy`/`functions serve` (`walkImportPaths`/`substituteImportMapValue`,
   shared code), which now matches import-map keys per the import-maps spec Deno/edge-runtime
-  implement (exact match, or prefix match only for a `/`-suffixed key) instead of Go's
-  any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs
-  the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target
-  (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`, matching the same
-  divergence documented on the `functions deploy`/`functions serve` SIDE_EFFECTS.md.
+  implement (exact match, or prefix match only for a `/`-suffixed key) rather than any-key
+  prefix matching, so maps that relied on bare-key prefix matching get fewer bind mounts; an unwalkable target
+  (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`, consistent with what is
+  documented on the `functions deploy`/`functions serve` SIDE_EFFECTS.md.

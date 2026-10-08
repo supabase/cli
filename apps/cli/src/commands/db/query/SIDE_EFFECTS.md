@@ -1,6 +1,6 @@
 # `supabase db query`
 
-Native TypeScript port (`query.handler.ts`). Executes SQL against the local
+Implemented in `query.handler.ts`. Executes SQL against the local
 database (direct connection) or the linked project (Management API), then renders
 the result as a table or JSON.
 
@@ -41,7 +41,7 @@ the result as a table or JSON.
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                             |
 | `1`  | conflicting `--db-url`/`--linked`/`--local`; no SQL provided; empty stdin; unreadable `--file`; `--linked` without login; query exec failure; non-201 linked status |
-| `1`  | `--project-ref` set without `--linked` (see Notes / Divergences)                                                                                                    |
+| `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                                  |
 
 ## Output
 
@@ -62,9 +62,9 @@ payload). Diagnostics (`Connecting to {local|remote} database...`) go to
 `--agent yes|no|auto` (global). `yes`/`no` force it; `auto` detects an AI tool
 from the environment. Agent mode defaults the format to JSON (table for humans).
 
-## Notes / Divergences
+## Notes
 
-- **`-o` / `--output`.** The old Go CLI registered a command-local `--output`/`-o`
+- **`-o` / `--output`.** The command declares a local `--output`/`-o`
   (`json|table|csv`) that shadows the global flag. The Effect CLI extracts global
   flags from the whole token stream before the leaf parse and builds one tree-wide
   registry, so a second command-scoped `output` global is impossible
@@ -79,11 +79,10 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   - Values outside the `json|table|csv` enum (`pretty|yaml|toml|env`) are rejected
     before the handler runs with the fixed diagnostic text — `invalid argument "yaml" for
 "-o, --output" flag: must be one of [ json | table | csv ]` — and exit 1,
-    matching the old CLI's per-command enum validation. See `go-output-flag.ts`.
+    See `go-output-flag.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution used for the connection and
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and
   the linked-project cache (flag > `SUPABASE_PROJECT_ID` >
   `.temp/project-ref`). It never implies `--linked`: passing it without
   `--linked` (i.e. targeting local or `--db-url`) is a hard error rather than a

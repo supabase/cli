@@ -57,11 +57,11 @@ Raw `response.saml.metadata_xml` (or empty string) followed by a single newline.
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled property/value markdown table plus optional `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
+Styled property/value markdown table plus optional `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
+Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
 
 ### `--output env`
 

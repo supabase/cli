@@ -17,7 +17,7 @@
 > ever stores the profile-scoped access token in the keyring (never a per-ref
 > entry), so the delete always targets a non-existent entry — a no-op. The
 > "Keyring is not supported on WSL" stderr line (system keyring unavailable,
-> e.g. headless CI) is keyring-backend noise normalized away in the parity
+> e.g. headless CI) is keyring-backend noise normalized away in the cli-e2e
 > harness.
 
 ## API Routes

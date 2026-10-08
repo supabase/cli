@@ -50,8 +50,7 @@ None beyond `--workdir` / `SUPABASE_WORKDIR` resolution.
 
 Emits a structured success (`{ project_ref }`) and suppresses the human `Finished` line.
 
-## Known divergence
+## Notes
 
-The `Finished supabase unlink.` line is emitted as **plain text**; the old Go CLI rendered
-`supabase unlink` in ANSI cyan. This matches the established port convention (color
-helpers are rendered plain); ANSI-stripping scripts are unaffected.
+The `Finished supabase unlink.` line is emitted as **plain text**, with no ANSI color on
+`supabase unlink` (color helpers are rendered plain); ANSI-stripping scripts are unaffected.

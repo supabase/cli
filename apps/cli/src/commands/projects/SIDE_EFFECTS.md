@@ -23,7 +23,7 @@ subcommand's own `SIDE_EFFECTS.md`.
 > — a no-op. The only observable output there is a keyring-backend
 > _availability_ error (`Keyring is not supported on WSL`, emitted when the
 > system keyring is down, e.g. on headless CI); that environment noise is
-> normalized away in the cli-e2e parity harness.
+> normalized away in the cli-e2e harness.
 
 ## API Routes
 
@@ -69,17 +69,15 @@ subcommand's own `SIDE_EFFECTS.md`.
 `--output {pretty|json|yaml|toml|env}` takes priority when set; otherwise
 `--output-format {text|json|stream-json}` applies.
 
-- **list** — pretty/text: Glamour table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
+- **list** — pretty/text: table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
 - **create** — stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
 - **delete** — text: confirmation prompt (default No, honours `--yes`) then stdout `Deleted project: <name>`; `--output-format json/stream-json` `success("Deleted project", {name})`.
-- **api-keys** — pretty/text: Glamour table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
+- **api-keys** — pretty/text: table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
 
 ## Notes
 
-- **Terminal color:** the old Go CLI wrapped refs / project names / dashboard URLs
-  in ANSI; this port emits plain text. The old renderer disabled color when
-  stdout/stderr was not a TTY, so piped / CI output matches byte-for-byte; only
-  the interactive-terminal appearance differs.
+- **Terminal color:** refs / project names / dashboard URLs are emitted as plain
+  text, with no ANSI color, whether or not stdout/stderr is a TTY.
 - **`create` linked cache:** the new project ref is cached on success;
   `delete` also caches the resolved ref, even though the project is gone — the
   cache is a telemetry-group record, separate from the `supabase/.temp` link

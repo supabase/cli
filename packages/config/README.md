@@ -316,8 +316,7 @@ The four package-owned classes are plain Effect `Data.TaggedError` classes; `Pla
 Effect's own error class rather than one of this package's — but all five are classes, so a catch
 block can distinguish any of them with `instanceof`. What each carries:
 
-- `DuplicateRemoteProjectIdError` and `InvalidRemoteProjectIdError` set a real `error.message`
-  (verbatim the Go CLI's wording for the same failures).
+- `DuplicateRemoteProjectIdError` and `InvalidRemoteProjectIdError` set a real `error.message`.
 - `PlatformError` sets `error.message` too, describing the failing filesystem operation, alongside
   `.module`/`.method`/`.description`.
 - `CliConfigParseError` and `CliProjectEnvParseError` carry structured fields instead of prose —
