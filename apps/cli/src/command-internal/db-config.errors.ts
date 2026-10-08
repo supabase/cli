@@ -16,6 +16,15 @@ export class DbConfigParseUrlError extends Data.TaggedError("DbConfigParseUrlErr
   }
 }
 
+/** `--password` combined with `--db-url` or `--local`, where it can never apply. */
+export class DbPasswordFlagsError extends Data.TaggedError("DbPasswordFlagsError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /**
  * `supabase/config.toml` exists but could not be read or parsed: the read/decode
  * error aborts the load, rather than silently running against the default local database.

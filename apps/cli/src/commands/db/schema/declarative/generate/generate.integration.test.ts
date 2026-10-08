@@ -628,6 +628,23 @@ describe("db schema declarative generate integration", () => {
     },
   );
 
+  for (const [label, target] of [
+    ["--local", { local: Option.some(true) }],
+    ["--db-url", { dbUrl: Option.some("postgresql://x") }],
+  ] as const) {
+    it.effect(`rejects --password combined with ${label}`, () => {
+      const s = setup(tmp.current, { experimental: true });
+      return Effect.gen(function* () {
+        const exit = yield* dbSchemaDeclarativeGenerate(
+          flags({ ...target, password: Option.some("pw") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({ _tag: "DbPasswordFlagsError" });
+        expect(s.localPostgresImageChecks).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
+  }
+
   it.effect("--output-dir protects a non-empty destination without --overwrite", () => {
     const s = setup(tmp.current, {
       experimental: true,

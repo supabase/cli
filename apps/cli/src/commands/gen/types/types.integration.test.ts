@@ -2280,7 +2280,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("uses sanitized local docker ids and env-backed local db passwords", () =>
+    it.live("uses sanitized local docker ids and the config.toml local db password", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-local-sanitized-");
         yield* writeConfig(
@@ -2293,6 +2293,7 @@ describe("gen types", () => {
             "",
             "[db]",
             "port = 54321",
+            'password = "config-password"',
           ].join("\n"),
         );
         const { layer, child, generator } = yield* setup({ workdir });
@@ -2300,7 +2301,7 @@ describe("gen types", () => {
           Effect.provide(layer),
           Effect.provideService(
             ConfigProvider.ConfigProvider,
-            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "secret-password" }),
+            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "ignored-env-password" }),
           ),
         );
 
@@ -2309,8 +2310,36 @@ describe("gen types", () => {
           "inspect",
           "supabase_db_demo_project_with_spaces",
         ]);
-        expect(generator.calls[0]?.conn.password).toBe("secret-password");
+        expect(generator.calls[0]?.conn.password).toBe("config-password");
         expect(generator.calls[0]?.conn.host).toBe("127.0.0.1");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("falls back to the default local db password and ignores SUPABASE_DB_PASSWORD", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-local-default-password-");
+        yield* writeConfig(
+          workdir,
+          [
+            'project_id = "demo"',
+            "",
+            "[api]",
+            'schemas = ["public"]',
+            "",
+            "[db]",
+            "port = 54321",
+          ].join("\n"),
+        );
+        const { layer, generator } = yield* setup({ workdir });
+        yield* genTypes(defaultFlags({ local: true })).pipe(
+          Effect.provide(layer),
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "ignored-env-password" }),
+          ),
+        );
+
+        expect(generator.calls[0]?.conn.password).toBe("postgres");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

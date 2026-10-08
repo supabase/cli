@@ -67,7 +67,6 @@ import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-fa
 import {
   defaultSchemas,
   localDbContainerId,
-  localDbPassword,
   parseQueryTimeoutMillis,
   rootCaBundle,
 } from "./types.shared.ts";
@@ -648,7 +647,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           host: yield* getHostname(projectEnvValues),
           port: config.port,
           user: "postgres",
-          password: yield* localDbPassword(),
+          password: config.password,
           database: "postgres",
         },
         isLocal: true,

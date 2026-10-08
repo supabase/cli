@@ -16,6 +16,7 @@ import {
   readDbToml,
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
+import { rejectPasswordWithDirectTarget } from "../../../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
@@ -94,6 +95,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
       });
     }
+
+    yield* rejectPasswordWithDirectTarget(
+      Option.isSome(flags.dbUrl) ? "db-url" : Option.isSome(flags.local) ? "local" : "linked",
+      flags.password,
+    );
 
     // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
     // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's

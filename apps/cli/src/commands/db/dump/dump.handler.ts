@@ -6,7 +6,10 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  type DbConnType,
+} from "../../../command-internal/db-target-flags.ts";
 import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
@@ -151,6 +154,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       : useLocal
         ? "local"
         : "linked";
+    yield* rejectPasswordWithDirectTarget(connType, flags.password);
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* new DbDumpMutuallyExclusiveFlagsError({

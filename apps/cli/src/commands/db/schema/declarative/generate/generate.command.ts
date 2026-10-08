@@ -2,6 +2,8 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -56,11 +58,11 @@ const config = {
     Flag.withDescription("Generates declarative schema from the local database."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description: "Password to your remote Postgres database.",
+  }),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -121,4 +123,5 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     }),
   ),
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
+  withCliConfigFlags(config),
 );

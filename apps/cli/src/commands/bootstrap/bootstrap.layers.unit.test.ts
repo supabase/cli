@@ -25,6 +25,7 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 
+import { CliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -59,6 +60,7 @@ function ambientStubs() {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliConfigFlagInputs, new Map()),
   );
 
   // These stubs exist only so the Effect type system sees CommandPlatformApi,

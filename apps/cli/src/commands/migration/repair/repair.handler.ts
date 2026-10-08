@@ -14,7 +14,10 @@ import { aqua } from "../../../command-internal/colors.ts";
 import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  resolveDbTargetFlags,
+} from "../../../command-internal/db-target-flags.ts";
 import {
   DELETE_MIGRATION_VERSION,
   type MigrationFile,
@@ -31,7 +34,6 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   MigrationFileNotFoundError,
   MigrationInvalidVersionError,
-  MigrationPasswordFlagsError,
   MigrationTargetFlagsError,
   OperationCanceledError,
 } from "../migration.errors.ts";
@@ -124,12 +126,7 @@ const runRepair = Effect.fnUntraced(function* (
       message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
     });
   }
-  if (Option.isSome(input.dbUrl) && Option.isSome(input.password)) {
-    return yield* new MigrationPasswordFlagsError({
-      message:
-        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-    });
-  }
+  yield* rejectPasswordWithDirectTarget(target.connType ?? "linked", input.password);
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;

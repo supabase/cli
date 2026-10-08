@@ -38,6 +38,8 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
+import { CliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 import type { BootstrapFlags } from "./bootstrap.command.ts";
@@ -220,6 +222,23 @@ describe("bootstrap linked-project cache location", () => {
           flagsLayer,
           debugLogger,
           successTrailerLayer,
+          cliConfigValuesLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                BunServices.layer,
+                out.layer,
+                Layer.succeed(
+                  CliConfigFlagInputs,
+                  new Map([
+                    [
+                      "linkedDb.password",
+                      { path: "linkedDb.password", flag: "password", value: "s3cret" },
+                    ],
+                  ]),
+                ),
+              ),
+            ),
+          ),
         );
 
         const flags: BootstrapFlags = {

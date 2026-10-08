@@ -1,7 +1,9 @@
 import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -13,11 +15,11 @@ const config = {
     Argument.withDescription("Name of the starter template to bootstrap from."),
     Argument.optional,
   ),
-  password: Flag.string("password").pipe(
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.withAlias("p"),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description: "Password to your remote Postgres database.",
+  }),
 } as const;
 
 export type BootstrapFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -30,4 +32,5 @@ export const bootstrapCommand = Command.make("bootstrap", config).pipe(
     bootstrap(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(bootstrapRuntimeLayer.pipe(Layer.provideMerge(cliConfigProviderLayer))),
+  withCliConfigFlags(config),
 );

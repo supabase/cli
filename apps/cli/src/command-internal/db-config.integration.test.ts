@@ -41,6 +41,7 @@ import {
   ProfileFlag,
   WorkdirFlag,
 } from "./global-flags.ts";
+import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
@@ -71,9 +72,21 @@ function buildResolver(
     readonly dbConnection?: Layer.Layer<DbConnection>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
+    readonly flagPassword?: string;
   } = {},
 ) {
   const deps = Layer.mergeAll(
+    Layer.succeed(
+      CliConfigFlagInputs,
+      opts.flagPassword === undefined
+        ? new Map()
+        : new Map([
+            [
+              "linkedDb.password",
+              { path: "linkedDb.password", flag: "password", value: opts.flagPassword },
+            ],
+          ]),
+    ),
     mockCommandSettings({
       workdir,
       projectHost: opts.projectHost ?? "supabase.co",
@@ -418,6 +431,39 @@ describe("dbConfigResolver (local + db-url)", () => {
       );
     },
   );
+});
+
+describe("dbConfigResolver --password rejection", () => {
+  const failureTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
+    Exit.isFailure(exit) ? JSON.stringify(exit.cause) : "";
+
+  const targets: ReadonlyArray<readonly [string, DbConfigFlags]> = [
+    ["--db-url", dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres")],
+    ["--local", localFlags],
+    ["the default local target", { ...localFlags, connType: undefined }],
+  ];
+  for (const [label, flags] of targets) {
+    it.effect(`rejects --password with ${label}`, () => {
+      const dir = withWorkdir();
+      return resolve(dir, { ...flags, password: Option.some("pw") }).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(failureTag(exit)).toContain("DbPasswordFlagsError");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+  }
+
+  it.effect("accepts an absent --password with --db-url", () => {
+    const dir = withWorkdir();
+    return resolve(dir, {
+      ...dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres"),
+      password: Option.none(),
+    }).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
 });
 
 describe("dbConfigResolver (db-url under the stack backend)", () => {
@@ -1126,7 +1172,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const dbConnection = Layer.succeed(DbConnection, {
         connect: () =>
-          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+          Effect.die("unexpected connect() — the explicit password path never verify-connects"),
       });
       const fetchMock = Object.assign(
         async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -1285,7 +1331,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
           ...linkedFlags,
           linkedProjectRef: Option.some(targetRef),
         },
-        { projectHost: "invalid", dbConnection },
+        { projectHost: "invalid", dbConnection, flagPassword: "flag-password" },
       ).pipe(
         Effect.tap((r) =>
           Effect.sync(() => {
@@ -1293,7 +1339,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               host: "aws-0-us-east-1.pooler.supabase.com",
               port: 5432,
               user: `postgres.${targetRef}`,
-              password: "ambient-password",
+              password: "flag-password",
               database: "postgres",
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",

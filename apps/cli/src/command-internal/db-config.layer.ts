@@ -1,9 +1,14 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Context, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
+import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { type CliConfigKeyOrigin } from "../config/cli-config-key.ts";
+import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
+import { CliConfigValues, type CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
@@ -35,6 +40,7 @@ import {
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
 import { loadProjectEnv, readDbToml } from "./db-config.toml-read.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
+import { rejectPasswordWithDirectTarget } from "./db-target-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
@@ -201,26 +207,73 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
   return Option.none();
 });
 
-// Resolve the DB password with this precedence: `--password` flag → `SUPABASE_DB_PASSWORD`
-// shell env → project `.env*` value. `loadProjectEnv` already excludes shell-set keys, so the
-// shell value still wins over the file. `workdir` is an explicit parameter (never
-// `CommandSettings.workdir`) so callers whose real workdir has diverged from that cwd-walked
-// value (e.g. `bootstrap`, after its own `process.chdir`) still resolve against the correct
-// directory.
-const resolveDbPassword = Effect.fnUntraced(function* (
-  passwordFlag: Option.Option<string>,
+const noticedWithheldPassword = new WeakSet<CliConfigSnapshot>();
+
+const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
+  switch (origin.tier) {
+    case "flag":
+      return `--${origin.flag}`;
+    case "shell":
+      return `${origin.envName} (environment)`;
+    case "projectEnv":
+      return origin.file === undefined ? origin.envName : `${origin.envName} (${origin.file})`;
+    default:
+      return origin.tier;
+  }
+};
+
+const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
+  error: E,
+) =>
+  error._tag === "ProjectRefReadError"
+    ? (error as Extract<E, { readonly _tag: "ProjectRefReadError" }>)
+    : new Errors.DbConfigLoadError({ message: error.message });
+
+/**
+ * Resolves the database password through `CliConfigValues` (`--password` > shell env > project
+ * `.env*`). `workdir` is an explicit parameter (never `CommandSettings.workdir`) so callers whose
+ * real workdir has diverged from that cwd-walked value (e.g. `bootstrap`, after its own
+ * `process.chdir`) resolve against the correct directory. `explicit` is a password the caller
+ * already holds, such as the one `bootstrap` just set on a new project. An empty result means "mint
+ * a temporary login role".
+ */
+export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")(function* (
+  ref: string,
   workdir: string,
+  explicit: Option.Option<string>,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const ambientPassword = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
-  return (
-    Option.getOrUndefined(passwordFlag) ??
-    Option.getOrUndefined(ambientPassword) ??
-    projectEnv["SUPABASE_DB_PASSWORD"] ??
-    ""
+  const debug = yield* DebugLogger;
+  if (Option.isSome(explicit)) {
+    yield* debug.debug("Using the database password supplied by the caller...");
+    return explicit.value;
+  }
+  const output = yield* Output;
+  const snapshot = yield* (yield* CliConfigValues)
+    .load({ workdir, projectRef: Option.some(ref) })
+    .pipe(Effect.mapError(loadFailureToDbConfigError));
+  const resolved = yield* snapshot
+    .get(CliConfigKeys.linkedDb.password)
+    .pipe(Effect.mapError(loadFailureToDbConfigError));
+  const withheld = snapshot.sources.withheldEnv.find(
+    (entry) => entry.path === CliConfigKeys.linkedDb.password.path,
   );
+  if (
+    withheld !== undefined &&
+    resolved.origin.tier !== "flag" &&
+    !noticedWithheldPassword.has(snapshot)
+  ) {
+    noticedWithheldPassword.add(snapshot);
+    yield* output.raw(
+      `WARN: ignoring ${withheld.envName} because this directory is linked to project ${withheld.linkedRef}, not ${withheld.targetRef}. Pass --password to use a database password for ${withheld.targetRef}.\n`,
+      "stderr",
+    );
+  }
+  if (Option.isNone(resolved.value)) {
+    yield* debug.debug("No database password found; using a temporary login role...");
+    return "";
+  }
+  yield* debug.debug(`Using database password from ${describePasswordOrigin(resolved.origin)}...`);
+  return resolved.value.value;
 });
 
 /**
@@ -228,7 +281,7 @@ const resolveDbPassword = Effect.fnUntraced(function* (
  * configured or it fails validation, so the caller can keep the original error. With a password,
  * uses it directly; without one, mints a temp login role and verify-connects through the pooler.
  *
- * `workdir`/`poolerHost` are explicit parameters (see {@link resolveDbPassword}).
+ * `workdir`/`poolerHost` are explicit parameters (see {@link resolveLinkedPassword}).
  */
 const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ref: string,
@@ -248,7 +301,6 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const debug = yield* DebugLogger;
   // Linked-path read: merge the `[remotes.<ref>]` override, so this matches the ref-aware read
   // on the main linked branch rather than validating base config. For an ad-hoc `--project-id`
   // ref, skip the saved workdir pooler URL because it belongs to the linked project, not
@@ -286,10 +338,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   }
   if (Option.isNone(pooler)) return Option.none<PgConnInput>();
   const poolerConn = pooler.value;
-  if (password.length > 0) {
-    yield* debug.debug("Using database password from env var...");
-    return Option.some({ ...poolerConn, password });
-  }
+  if (password.length > 0) return Option.some({ ...poolerConn, password });
   // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
   const originalUser = poolerConn.user;
   const withRole = yield* initLoginRole(ref, poolerConn);
@@ -318,13 +367,13 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   projectHost: string,
   poolerHost: string,
   dnsResolver: "native" | "https",
-  passwordFlag: Option.Option<string>,
+  explicitPassword: Option.Option<string>,
   options: {
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /**
      * Requests the Management API pooler-config fetch on an IPv4-only network
-     * independent of `adHocProjectRef`'s credential/saved-URL semantics — see
+     * independent of `adHocProjectRef`'s saved-URL semantics — see
      * `DbConfigFlags.linkedProjectRef`'s doc comment. Set when the caller
      * supplied an explicit ref (`--project-ref`/`--project-id`) rather than
      * falling back to `.temp/project-ref`, so an unlinked or mismatched-tenant
@@ -339,15 +388,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     resolveVaultSecrets = true,
     fetchPoolerFromApi = false,
   } = options;
-  const debug = yield* DebugLogger;
-  // Read lazily (per invocation) rather than at layer build, so tests and
-  // env-substitution see the current value. For an ad-hoc `--project-id` ref,
-  // honor only an explicit `--password` flag and ignore the ambient
-  // `SUPABASE_DB_PASSWORD` (which belongs to the current workdir, not this ref),
-  // so we always mint a temporary login role instead of leaking it.
-  const dbPassword = adHocProjectRef
-    ? (Option.getOrUndefined(passwordFlag) ?? "")
-    : yield* resolveDbPassword(passwordFlag, workdir);
+  const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword);
   const host = `db.${ref}.${projectHost}`;
   const base: PgConnInput = {
     host,
@@ -360,10 +401,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   const reachable = yield* tcpReachable(host, DIRECT_PORT);
   yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
-    if (base.password.length > 0) {
-      yield* debug.debug("Using database password from env var...");
-      return base;
-    }
+    if (base.password.length > 0) return base;
     return yield* initLoginRole(ref, base);
   }
 
@@ -409,6 +447,29 @@ export const dbConfigResolverLayer = Layer.effect(
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
+    // Commands without a bound flag never provide `CliConfigFlagInputs`; they have nothing to bind.
+    const providedValues = yield* Effect.serviceOption(CliConfigValues);
+    const flagInputs = yield* Effect.serviceOption(CliConfigFlagInputs);
+    const configValues = Option.isSome(providedValues)
+      ? providedValues.value
+      : Context.get(
+          yield* Layer.build(
+            cliConfigValuesLayer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(
+                    CliConfigFlagInputs,
+                    Option.getOrElse(flagInputs, () => new Map()),
+                  ),
+                  Layer.succeed(FileSystem.FileSystem, fs),
+                  Layer.succeed(Path.Path, path),
+                  Layer.succeed(Output, output),
+                ),
+              ),
+            ),
+          ),
+          CliConfigValues,
+        );
     // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
     // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
     // directly from its own ambient context). Calling them from here would otherwise leak those
@@ -421,6 +482,7 @@ export const dbConfigResolverLayer = Layer.effect(
       Layer.succeed(DebugLogger, debug),
       Layer.succeed(Output, output),
       Layer.succeed(DbConnection, dbConn),
+      Layer.succeed(CliConfigValues, configValues),
     );
 
     // Profile context for the connect-failure suggestion. Snapshot it once and attach it to
@@ -483,6 +545,7 @@ export const dbConfigResolverLayer = Layer.effect(
 
     const resolve = (flags: DbConfigFlags) =>
       Effect.gen(function* () {
+        yield* rejectPasswordWithDirectTarget(flags.connType, flags.password);
         const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
         // Config is read per branch, not unconditionally up front: the linked branch resolves
         // the ref first and reads the `[remotes.<ref>]`-merged config (below). A base read here
@@ -578,13 +641,13 @@ export const dbConfigResolverLayer = Layer.effect(
               cliSettings.projectHost,
               cliSettings.poolerHost,
               flags.dnsResolver,
-              flags.password ?? Option.none(),
+              Option.none(),
               {
                 adHocProjectRef: flags.adHocProjectRef ?? false,
                 resolveVaultSecrets,
                 // An explicit ref (the eight `db` commands' `--project-ref`, or
                 // `gen types --project-id`) independently unlocks the Management API
-                // pooler fetch, regardless of `adHocProjectRef`'s credential semantics
+                // pooler fetch, regardless of `adHocProjectRef`'s saved-URL semantics
                 // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
                 fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
               },
@@ -643,9 +706,7 @@ export const dbConfigResolverLayer = Layer.effect(
           const ref = refOpt.value;
           if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<PgConnInput>();
           const adHocProjectRef = flags.adHocProjectRef ?? false;
-          const password = adHocProjectRef
-            ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
-            : yield* resolveDbPassword(flags.password ?? Option.none(), cliSettings.workdir);
+          const password = yield* resolveLinkedPassword(ref, cliSettings.workdir, Option.none());
           // Container-fallback: fetch the primary pooler config from the Management API when
           // no `.temp/pooler-url` is saved.
           return yield* resolvePoolerConn(
