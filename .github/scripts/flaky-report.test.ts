@@ -147,7 +147,9 @@ describe("aggregate", () => {
         run(
           "unit",
           1,
-          { "packages__api--unit.xml": junit([{ name: "@supabase/api &gt; breaks", failures: 1 }]) },
+          {
+            "packages__api--unit.xml": junit([{ name: "@supabase/api &gt; breaks", failures: 1 }]),
+          },
           1,
           1,
         ),
