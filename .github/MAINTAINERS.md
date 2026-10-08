@@ -132,8 +132,9 @@ Full procedures live in the
 [ADR 0028](../docs/adr/0028-release-branches-and-maintenance-lines.md).
 
 **Resolving a sync PR.** When `Sync branches` cannot merge cleanly it opens
-`sync/<source>-into-<target>` (for example `sync/develop-into-next`). Further
-syncs for that pair skip while it is open. Merge the target into the sync
+`sync/<source>-into-<target>` (for example `sync/develop-into-next`); CODEOWNERS
+requests the CLI team, and for `main-into-develop` the release Slack channel is
+also told. Further syncs for that pair skip while it is open. Merge the target into the sync
 branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
 target and deletes the branch. Never use the merge button. If the target or the
 source moved, the bot merges the latest target and source into the approved head and lands

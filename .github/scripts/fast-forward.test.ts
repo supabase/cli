@@ -410,6 +410,7 @@ interface Scenario {
   checkout: string;
   head: string;
   comments: string[];
+  lookups: string[];
   io: FastForwardIo;
   pullRequest: PullRequest;
 }
@@ -419,17 +420,26 @@ function scenarioIo(
   checkout: string,
   pullRequest: PullRequest,
   checks: CheckRun[],
-): { io: FastForwardIo; comments: string[] } {
+  openSyncPullRequest?: number | Error,
+): { io: FastForwardIo; comments: string[]; lookups: string[] } {
   const comments: string[] = [];
+  const lookups: string[] = [];
   const io: FastForwardIo = {
     git: makeGit(checkout),
     getPullRequest: async () => pullRequest,
     listCheckRuns: async () => checks,
+    findOpenPullRequest: async (base, head) => {
+      lookups.push(`${base}<-${head}`);
+      if (openSyncPullRequest instanceof Error) {
+        throw openSyncPullRequest;
+      }
+      return openSyncPullRequest;
+    },
     comment: async (body) => {
       comments.push(body);
     },
   };
-  return { io, comments };
+  return { io, comments, lookups };
 }
 
 function publish(repo: TestRepo, number: number): void {
@@ -437,7 +447,12 @@ function publish(repo: TestRepo, number: number): void {
 }
 
 function deployScenario(
-  options: { headMessage?: string; labels?: string[]; checks?: CheckRun[] } = {},
+  options: {
+    headMessage?: string;
+    labels?: string[];
+    checks?: CheckRun[];
+    openSyncPullRequest?: number | Error;
+  } = {},
 ): Scenario {
   const repo = setup();
   tagMain(repo, "v1.0.0");
@@ -456,8 +471,14 @@ function deployScenario(
     base: { ref: "main" },
     labels: (options.labels ?? []).map((name) => ({ name })),
   };
-  const { io, comments } = scenarioIo(repo, checkout, pullRequest, options.checks ?? greenChecks);
-  return { repo, checkout, head, comments, io, pullRequest };
+  const { io, comments, lookups } = scenarioIo(
+    repo,
+    checkout,
+    pullRequest,
+    options.checks ?? greenChecks,
+    options.openSyncPullRequest,
+  );
+  return { repo, checkout, head, comments, lookups, io, pullRequest };
 }
 
 describe("runFastForward deploy", () => {
@@ -518,7 +539,7 @@ describe("runFastForward deploy", () => {
     expect(repo.remoteTip("main")).toBe(head);
   });
 
-  test("refuses when main moved after the head was cut", async () => {
+  test("refuses when main moved after the head was cut and points at the sync workflow", async () => {
     const { repo, head, io, comments } = deployScenario();
     git(repo.seed, "switch", "main");
     const movedMain = repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
@@ -528,6 +549,34 @@ describe("runFastForward deploy", () => {
 
     expect(outcome.status).toBe("refused");
     expect(repo.remoteTip("main")).toBe(movedMain);
+    expect(comments[0]).toContain("moved since approval");
+    expect(comments[0]).toContain("pair=main-into-develop");
+  });
+
+  test("names the open back-merge pull request when main has a hotfix develop lacks", async () => {
+    const { repo, head, io, comments, lookups } = deployScenario({ openSyncPullRequest: 42 });
+    git(repo.seed, "switch", "main");
+    repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+    git(repo.seed, "push", "origin", "main");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head });
+
+    expect(outcome.status).toBe("refused");
+    expect(lookups).toEqual(["develop<-sync/main-into-develop"]);
+    expect(comments[0]).toContain("waiting in #42");
+  });
+
+  test("still comments when the sync pull request lookup fails", async () => {
+    const { repo, head, io, comments } = deployScenario({
+      openSyncPullRequest: new Error("api down"),
+    });
+    git(repo.seed, "switch", "main");
+    repo.commit(repo.seed, "hotfix.txt", "fix\n", "fix(cli): hotfix");
+    git(repo.seed, "push", "origin", "main");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head });
+
+    expect(outcome.status).toBe("refused");
     expect(comments[0]).toContain("moved since approval");
   });
 
