@@ -5,6 +5,7 @@ import { getDomain } from "tldts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import { pgpassPassword } from "./pgpass.ts";
 import { pgServiceSettings } from "./pgservicefile.ts";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /** The default direct Postgres port. */
 const DIRECT_PORT = 5432;
@@ -12,12 +13,12 @@ const DIRECT_PORT = 5432;
 /**
  * Environment lookup used for libpq `PG*` fallbacks. Injected so the resolver can layer the
  * project `.env*` files under the shell environment before reading
- * `PGHOST`/`PGPASSWORD`/`PGSSLMODE`/…. Defaults to `process.env` so the pure call sites (and the
+ * `PGHOST`/`PGPASSWORD`/`PGSSLMODE`/…. Defaults to the ambient environment so the pure call sites (and the
  * pooler path, whose connection string is fully specified) keep their existing behavior.
  */
 export type ParseEnv = (name: string) => string | undefined;
 
-const processEnv: ParseEnv = (name) => process.env[name];
+const processEnv: ParseEnv = (name) => ambientEnvironment()[name];
 
 /**
  * The `sslmode` values libpq accepts; any other value is a parse error
@@ -364,7 +365,7 @@ export function parseConnectionString(
 
 /** Layers a project `.env*` lookup under the shell environment: shell presence wins over the project file. */
 export function layeredParseEnv(projectEnv: Readonly<Record<string, string>>): ParseEnv {
-  return (name) => process.env[name] ?? projectEnv[name];
+  return (name) => ambientEnvironment()[name] ?? projectEnv[name];
 }
 
 export type PoolerConfigResult =

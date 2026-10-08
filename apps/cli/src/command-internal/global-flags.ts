@@ -228,7 +228,7 @@ export const resolveYes = Effect.gen(function* () {
   if (yesFlagExplicitlyFalse(cliArgs.args)) {
     return false;
   }
-  return flag || viperEnvBool("SUPABASE_YES");
+  return flag || (yield* viperEnvBool("SUPABASE_YES"));
 });
 
 /**
@@ -245,7 +245,7 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     if (yesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
+    return flag || (yield* viperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
 
 /**
@@ -279,7 +279,7 @@ export const resolveExperimental = Effect.gen(function* () {
   if (explicit !== undefined) {
     return explicit;
   }
-  return flag || viperEnvBool("SUPABASE_EXPERIMENTAL");
+  return flag || (yield* viperEnvBool("SUPABASE_EXPERIMENTAL"));
 });
 
 /**
@@ -294,7 +294,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     if (explicit !== undefined) {
       return explicit;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+    return flag || (yield* viperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv));
   });
 
 /**
@@ -330,5 +330,5 @@ export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =
     if (debugFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+    return flag || (yield* viperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv));
   });

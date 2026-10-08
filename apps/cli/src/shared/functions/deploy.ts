@@ -70,6 +70,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
+import { ambientEnvironment } from "../config/cli-config-provider.layer.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DEPLOY_RATE_LIMIT_MAX_RETRIES = 8;
@@ -381,7 +382,7 @@ export function pruneRedundantDockerBinds(
   return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
 }
 
-function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
+function dockerNpmEnv(env: NodeJS.ProcessEnv = ambientEnvironment()): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];
     return value === undefined || value === "" ? [] : [name];
@@ -2607,7 +2608,10 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           envOverride:
             context.projectEnvValues === undefined
               ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
+              : yield* viperEnvStringWithProjectFallback(
+                  "SUPABASE_NETWORK_ID",
+                  context.projectEnvValues,
+                ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

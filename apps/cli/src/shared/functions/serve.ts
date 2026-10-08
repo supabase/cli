@@ -98,6 +98,7 @@ import {
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "./serve.errors.ts";
+import { ambientEnvironment } from "../config/cli-config-provider.layer.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultCliConfig = decodeCliConfig({});
 
@@ -1110,7 +1111,7 @@ function sanitizeDotEnvParseError(path: string, cause: unknown) {
 
 function ambientProjectEnv() {
   return Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) =>
+    Object.entries(ambientEnvironment()).flatMap(([key, value]) =>
       value === undefined ? [] : [[key, value]],
     ),
   );
@@ -2021,7 +2022,10 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
       envOverride:
         resolved.projectEnvValues === undefined
           ? undefined
-          : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
+          : yield* viperEnvStringWithProjectFallback(
+              "SUPABASE_NETWORK_ID",
+              resolved.projectEnvValues,
+            ),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);

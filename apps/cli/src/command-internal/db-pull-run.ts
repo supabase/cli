@@ -502,7 +502,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               fileOpen: true,
             });
           const stackBackend = (yield* currentStackBackend).kind === "stack";
-          const seedNetwork = dumpNetworkMode(
+          const seedNetwork = yield* dumpNetworkMode(
             Option.getOrUndefined(networkIdFlag),
             stackBackend,
             projectEnv,

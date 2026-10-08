@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, FileSystem, Path } from "effect";
+import { Data, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
@@ -11,6 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import type { DbBatchStatement, DbSession } from "./db-connection.service.ts";
 import {
@@ -1227,7 +1228,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1268,7 +1269,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1346,7 +1347,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1389,7 +1390,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1432,7 +1433,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1468,7 +1469,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1511,7 +1512,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1547,7 +1548,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );
@@ -1626,7 +1627,7 @@ describe("applySchemaFiles", () => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)),
       );
     },
   );

@@ -756,7 +756,8 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
  * restoring whatever was there before — including a surrounding
- * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in.
+ * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in. A set value is
+ * also pinned for the `Config` reads inside `body` (see {@link withConfigEnv}).
  */
 export const withEnvVar = <A, E, R>(
   name: string,
@@ -770,7 +771,7 @@ export const withEnvVar = <A, E, R>(
       else process.env[name] = value;
       return previous;
     }),
-    () => body,
+    () => (value === undefined ? body : withConfigEnv({ [name]: value }, body)),
     (previous) =>
       Effect.sync(() => {
         if (previous === undefined) delete process.env[name];

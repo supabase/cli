@@ -20,7 +20,8 @@ import {
   rootFlagTokens,
 } from "../shared/cli/run.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
-import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
+import { readShellEnvironment } from "../shared/config/cli-config-env.ts";
+import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { bold, yellow } from "./colors.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { candidateDotenvFilenames } from "./project-environment.ts";
@@ -313,10 +314,12 @@ export async function runUpgradeNotice(
   return { cache: cachePathIsSafe ? (inProject ? "project" : "user") : "disabled", cacheFresh };
 }
 
-async function fetchLatestReleaseTag(): Promise<string> {
+async function fetchLatestReleaseTag(
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string> {
   // Authenticates when GITHUB_TOKEN is set, for the higher rate limit on
   // shared-egress CI runners.
-  const token = process.env["GITHUB_TOKEN"];
+  const token = env["GITHUB_TOKEN"];
   const response = await fetch(LATEST_RELEASE_URL, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
@@ -342,25 +345,32 @@ export const upgradeNoticeHook = (
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
-  fetchLatestTag: () => Promise<string> = fetchLatestReleaseTag,
+  fetchLatestTag: (
+    env: Readonly<Record<string, string | undefined>>,
+  ) => Promise<string> = fetchLatestReleaseTag,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const context = yield* Effect.context();
+    const shell = yield* readShellEnvironment().pipe(
+      Effect.map((environment) => Object.fromEntries(environment.entries())),
+      Effect.orElseSucceed((): Record<string, string> => ({})),
+    );
+    const supabaseHome = yield* readSupabaseHome({ join }, homedir());
     const outcome = yield* Effect.promise(() =>
       runUpgradeNotice({
-        env: process.env,
+        env: shell,
         args,
         cleanShowHelp: info.cleanShowHelp,
         isValueTakingFlagToken: info.isValueTakingFlagToken,
         cwd: process.cwd(),
         resolvedCwd: info.workingDirectory,
         currentVersion: CLI_VERSION,
-        supabaseHome: resolveSupabaseHome({ join }, process.env, homedir()),
+        supabaseHome,
         now: Date.now,
         // Runs under the check span's context so the fetch is its child span.
         fetchLatestTag: () =>
           Effect.runPromiseWith(context)(
-            Effect.tryPromise({ try: fetchLatestTag, catch: (error) => error }).pipe(
+            Effect.tryPromise({ try: () => fetchLatestTag(shell), catch: (error) => error }).pipe(
               Effect.withSpan("UpgradeNotice.fetch"),
             ),
           ),
