@@ -8,8 +8,8 @@
     "baseline": {
       "apiAutoExposeNewTables": null,
       "authEnabled": true,
-      "realtimeEnabled": true,
-      "storageEnabled": true,
+      "realtimeEnabled": false,
+      "storageEnabled": false,
       "vaultNames": []
     },
     "denoVersion": 2,

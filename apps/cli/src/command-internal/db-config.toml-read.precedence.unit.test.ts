@@ -94,38 +94,38 @@ interface Fixture {
 const FIXTURES: ReadonlyArray<Fixture> = [
   {
     golden: "a-base-only",
-    name: "base config with no env and no remote resolves its own values (pre-refactor)",
+    name: "base config with no env and no remote resolves its own values",
     config: BASE_CONFIG,
     ref: TARGET_REF,
   },
   {
     golden: "b-matched-remote",
-    name: "matched remote overrides migrations, auth and pgdelta and forces seeding off (pre-refactor)",
+    name: "matched remote overrides migrations, auth and pgdelta and defaults seeding off",
     config: BASE_CONFIG + remoteBlock(TARGET_REF),
     ref: TARGET_REF,
   },
   {
     golden: "b2-remote-block-without-ref",
-    name: "a remote block is ignored when no target ref is supplied (pre-refactor)",
+    name: "a remote block is ignored when no target ref is supplied",
     config: BASE_CONFIG + remoteBlock(TARGET_REF),
   },
   {
     golden: "c-shell-env",
-    name: "shell env overrides base config for migrations, port, api schemas and seed (pre-refactor)",
+    name: "shell env overrides base config for migrations, port, api schemas and seed",
     config: BASE_CONFIG,
     shellEnv: SHELL_OVERRIDES,
     ref: TARGET_REF,
   },
   {
     golden: "d-project-dotenv",
-    name: "supabase/.env overrides base config for migrations, port, api schemas and seed (pre-refactor)",
+    name: "supabase/.env overrides base config for migrations, port, api schemas and seed",
     config: BASE_CONFIG,
     dotenv: DOTENV_OVERRIDES,
     ref: TARGET_REF,
   },
   {
     golden: "d2-shell-beats-dotenv",
-    name: "shell env beats supabase/.env for the same key (pre-refactor)",
+    name: "shell env beats supabase/.env for the same key",
     config: BASE_CONFIG,
     shellEnv: SHELL_OVERRIDES,
     dotenv: DOTENV_OVERRIDES,
@@ -133,28 +133,28 @@ const FIXTURES: ReadonlyArray<Fixture> = [
   },
   {
     golden: "e-remote-beats-shell",
-    name: "matched remote beats shell env for db.migrations.enabled, auth.enabled, pgdelta path and seed (pre-refactor)",
+    name: "shell env beats a matched remote for db.migrations.enabled, auth.enabled, pgdelta path and seed",
     config: BASE_CONFIG + remoteBlock(TARGET_REF),
     shellEnv: CONFLICTING_SHELL,
     ref: TARGET_REF,
   },
   {
     golden: "e2-remote-beats-dotenv",
-    name: "matched remote beats supabase/.env for db.migrations.enabled and seed while unset keys follow .env (pre-refactor)",
+    name: "supabase/.env beats a matched remote for db.migrations.enabled and seed",
     config: BASE_CONFIG + remoteBlock(TARGET_REF),
     dotenv: DOTENV_OVERRIDES,
     ref: TARGET_REF,
   },
   {
     golden: "f-remote-matched-by-env-project-id",
-    name: "SUPABASE_REMOTES_PROD_PROJECT_ID selects the remote block for the target ref (pre-refactor)",
+    name: "SUPABASE_REMOTES_PROD_PROJECT_ID selects the remote block for the target ref",
     config: BASE_CONFIG + remoteBlock(OTHER_REF),
     shellEnv: { SUPABASE_REMOTES_PROD_PROJECT_ID: TARGET_REF },
     ref: TARGET_REF,
   },
   {
     golden: "f2-remote-env-match-project-id-is-block-literal",
-    name: "remote matched via SUPABASE_REMOTES_PROD_PROJECT_ID yields projectId equal to the block's TOML literal, not the target ref (pre-refactor)",
+    name: "remote matched via SUPABASE_REMOTES_PROD_PROJECT_ID yields projectId equal to the block's TOML literal, not the target ref",
     config: BASE_CONFIG + remoteBlock(OTHER_REF),
     shellEnv: { SUPABASE_REMOTES_PROD_PROJECT_ID: TARGET_REF },
     ref: TARGET_REF,
@@ -162,7 +162,7 @@ const FIXTURES: ReadonlyArray<Fixture> = [
   },
   {
     golden: "g-captcha-secret-from-env-only",
-    name: "captcha enabled in TOML with the secret only in SUPABASE_AUTH_CAPTCHA_SECRET (pre-refactor)",
+    name: "captcha enabled in TOML passes validation with the secret only in SUPABASE_AUTH_CAPTCHA_SECRET",
     config: `${BASE_CONFIG}
 [auth.captcha]
 enabled = true
@@ -173,21 +173,21 @@ provider = "hcaptcha"
   },
   {
     golden: "h-storage-realtime-env-disable",
-    name: "SUPABASE_STORAGE_ENABLED and SUPABASE_REALTIME_ENABLED are ignored by the db reader (pre-refactor)",
+    name: "SUPABASE_STORAGE_ENABLED and SUPABASE_REALTIME_ENABLED disable the baseline storage and realtime flags",
     config: BASE_CONFIG,
     shellEnv: { SUPABASE_STORAGE_ENABLED: "false", SUPABASE_REALTIME_ENABLED: "false" },
     ref: TARGET_REF,
   },
   {
     golden: "i-project-id-env-with-matched-remote",
-    name: "matched remote project_id beats SUPABASE_PROJECT_ID (pre-refactor)",
+    name: "SUPABASE_PROJECT_ID beats a matched remote project_id",
     config: BASE_CONFIG + remoteBlock(TARGET_REF),
     shellEnv: { SUPABASE_PROJECT_ID: "shell-project-id" },
     ref: TARGET_REF,
   },
   {
     golden: "i2-project-id-env-without-remote",
-    name: "SUPABASE_PROJECT_ID overrides the base project_id when no remote matches (pre-refactor)",
+    name: "SUPABASE_PROJECT_ID overrides the base project_id when no remote matches",
     config: BASE_CONFIG,
     shellEnv: { SUPABASE_PROJECT_ID: "shell-project-id" },
     ref: TARGET_REF,
