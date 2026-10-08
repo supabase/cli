@@ -4,7 +4,6 @@
  */
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -87,9 +86,9 @@ import {
 import {
   describeConfigSnapshotFailure,
   loadLocalSnapshotContext,
+  resolveSnapshotSubtree,
   type LocalSnapshotContext,
 } from "../../command-internal/config-snapshot-context.ts";
-import { envReferenceNames } from "../../config/cli-config-document.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
@@ -731,13 +730,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // is enabled.
     //
     // `config.functions.<slug>.env.<VAR>` is schema-marked deferred and only gets its literal
-    // interpolated by `resolveCliConfigSubtree` — without this, a configured `env` entry reaches
+    // interpolated by `resolveSnapshotSubtree` — without this, a configured `env` entry reaches
     // Edge Runtime as the literal string `"env(API_KEY)"` instead of the real secret.
-    const resolvedFunctions = yield* resolveCliConfigSubtree(
+    const resolvedFunctions = yield* resolveSnapshotSubtree(
+      context.snapshot,
       config.functions,
-      { values: yield* context.snapshot.envValues(envReferenceNames(config.functions)) },
       "functions",
-      { goViperCompat: true },
     );
     const configDeclaredFunctions = toPlainFunctionRecord(resolvedFunctions);
     const configFunctions = yield* inferFunctionsManifest({
@@ -1286,14 +1284,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
           // `config.edge_runtime.secrets` is still schema-decoded plain strings here —
           // `toPlainEdgeRuntimeConfig` only emits entries whose values are `Redacted`, which a
-          // value only becomes after `resolveCliConfigSubtree`'s env-interpolation and
+          // value only becomes after `resolveSnapshotSubtree`'s env-interpolation and
           // secret-path-redaction pass. Without this step every configured secret is silently
           // dropped.
-          const resolvedEdgeRuntime = yield* resolveCliConfigSubtree(
+          const resolvedEdgeRuntime = yield* resolveSnapshotSubtree(
+            context.snapshot,
             config.edge_runtime,
-            { values: yield* context.snapshot.envValues(envReferenceNames(config.edge_runtime)) },
             "edge_runtime",
-            { goViperCompat: true },
           );
           // Every `config.Secret`-typed field must be decrypted unconditionally so the Edge
           // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates

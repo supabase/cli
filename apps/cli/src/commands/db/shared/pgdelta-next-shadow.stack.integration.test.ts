@@ -31,7 +31,7 @@ const toml = {
   shadowPort: 54320,
   password: "postgres",
   poolerConnectionString: Option.none(),
-  projectId: Option.some("test"),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,

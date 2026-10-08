@@ -1,7 +1,9 @@
 import type { CliConfig } from "@supabase/config";
+import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect, Option } from "effect";
 
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import { envReferenceNames } from "../config/cli-config-document.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
@@ -80,3 +82,11 @@ export const describeConfigSnapshotFailure = (cause: unknown): string =>
   typeof cause.message === "string"
     ? cause.message
     : `failed to read config: ${String(cause)}`;
+
+/** Resolves `env()` references and wraps secret leaves in `Redacted` for a subtree the registry does not model. */
+export const resolveSnapshotSubtree = Effect.fn("ConfigSnapshotContext.resolveSubtree")(function* <
+  T,
+>(snapshot: CliConfigSnapshot, tree: T, path: string) {
+  const values = yield* snapshot.envValues(envReferenceNames(tree));
+  return yield* resolveCliConfigSubtree(tree, { values }, path, { goViperCompat: true });
+});

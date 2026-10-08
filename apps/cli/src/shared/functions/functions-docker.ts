@@ -17,23 +17,14 @@ import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
+import { sanitizeProjectId } from "../config/project-id.ts";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
 }
 
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
 export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
+  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
 }
 
 /**

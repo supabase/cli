@@ -1,5 +1,4 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
   DEFAULT_LOCAL_S3_REGION,
@@ -10,7 +9,6 @@ import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stac
 import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
-import { envReferenceNames } from "../config/cli-config-document.ts";
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
 import type {
   CliConfigMaterialized,
@@ -22,6 +20,7 @@ import {
   describeConfigSnapshotFailure,
   loadConfigSnapshotContext,
   resolveSnapshotPasskeyWebauthn,
+  resolveSnapshotSubtree,
 } from "./config-snapshot-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
@@ -351,13 +350,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
-          snapshot.envValues(envReferenceNames(config.env)).pipe(
+          resolveSnapshotSubtree(snapshot, config.env, `functions.${name}.env`).pipe(
             Effect.mapError((error) => new StackConfigError({ message: error.message })),
-            Effect.flatMap((values) =>
-              resolveCliConfigSubtree(config.env, { values }, `functions.${name}.env`, {
-                goViperCompat: true,
-              }),
-            ),
             Effect.map(
               (env) =>
                 [

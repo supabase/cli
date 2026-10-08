@@ -6,35 +6,12 @@ import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import {
   CLI_PROJECT_LABEL,
   cliProjectFilterValue,
-  resolveLocalProjectId,
   serviceContainerIds,
-  localDbContainerId,
   localNetworkId,
 } from "./docker-ids.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
-
-describe("resolveLocalProjectId", () => {
-  it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
-    expect(resolveLocalProjectId("env-id", "toml-id", "/work/proj")).toBe("env-id");
-  });
-
-  it("falls back to config.toml project_id when the env var is unset/empty", () => {
-    expect(resolveLocalProjectId(undefined, "toml-id", "/work/proj")).toBe("toml-id");
-    expect(resolveLocalProjectId("", "toml-id", "/work/proj")).toBe("toml-id");
-  });
-
-  it("falls back to the workdir basename when both env and config.toml are absent", () => {
-    expect(resolveLocalProjectId(undefined, undefined, "/work/my-app")).toBe("my-app");
-    expect(resolveLocalProjectId(undefined, "", "/work/my-app")).toBe("my-app");
-  });
-
-  it("feeds the resolved id into the local db container name", () => {
-    const id = resolveLocalProjectId("env-id", undefined, "/work/proj");
-    expect(localDbContainerId(id)).toBe("supabase_db_env-id");
-  });
-});
 
 describe("serviceContainerIds", () => {
   it("returns the 13 service container ids in Go's GetDockerIds() order", () => {

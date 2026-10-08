@@ -16,7 +16,9 @@ validating those CSVs.
 | `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                     |
 
 A **missing** `config.toml` is fine (defaults apply); a
-**malformed** file aborts the command.
+**malformed** file, an invalid value (including a non-string rule field) or an unknown rule key aborts
+the command. Rules and `env(VAR)` expansion come from the shared config snapshot
+(flag > shell > project `.env*` > config).
 
 ## Files Written
 

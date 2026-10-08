@@ -75,8 +75,6 @@ export interface CliConfigSnapshot {
   readonly familyNames: (family: CliConfigFamilyId) => ReadonlyArray<string>;
   /** Whether the merged document holds a value or table at the dotted path. */
   readonly declares: (path: string) => boolean;
-  /** The merged document's raw value at the dotted path, before `env()` resolution. */
-  readonly declaredAt: (path: string) => unknown;
   /** Env variables held for the linked project that this target's resolution ignored. */
   readonly withheldEnv: ReadonlyArray<CliConfigWithheldEnv>;
   readonly dotenvPrivateKeys: ReadonlyArray<string>;

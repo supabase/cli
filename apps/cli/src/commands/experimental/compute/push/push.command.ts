@@ -1,5 +1,7 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
@@ -84,4 +86,6 @@ export const computePushCommand = Command.make("push", config).pipe(
     computePush(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "push"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

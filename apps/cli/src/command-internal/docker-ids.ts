@@ -4,27 +4,7 @@
  * the local stack is running.
  */
 
-import { basename } from "node:path";
-
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
-
-/**
- * Resolves the local project id used to derive Docker resource names.
- *
- * Precedence: `SUPABASE_PROJECT_ID` env var, then config.toml's `project_id`, then
- * `--project-ref` (when the command accepts one), then the working directory's basename.
- */
-export function resolveLocalProjectId(
-  envProjectId: string | undefined,
-  tomlProjectId: string | undefined,
-  workdir: string,
-  projectRefDefault?: string,
-): string {
-  if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
-  if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
-  if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
-  return basename(workdir);
-}
 
 /** `supabase_<suffix>_<sanitizedProjectId>` — the naming scheme for local Docker resources. */
 export function serviceContainerName(suffix: string, projectId: string): string {

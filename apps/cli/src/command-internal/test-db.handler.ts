@@ -38,7 +38,6 @@ const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Compose pin: the config schema has no `[images]` override. Stack prove uses
 // catalog `pg_prove` instead. Re-verify `NO_TESTS_VERDICT` when bumping this tag.
 const PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
-const MAX_PROJECT_ID_LENGTH = 40;
 /**
  * `pg_prove` exits 0 even when it finds nothing to run, so a typo'd path or a
  * misresolved bind can silently report success on zero tests. Detecting
@@ -109,13 +108,6 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     });
   return { stack, database, connection, major } satisfies ManagedStack;
 });
-
-function sanitizeProjectId(src: string): string {
-  return src
-    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
-    .replace(/^[_.-]+/, "")
-    .slice(0, MAX_PROJECT_ID_LENGTH);
-}
 
 export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const output = yield* Output;
@@ -220,13 +212,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         : isLocal && backend.kind !== "stack"
           ? yield* Effect.gen(function* () {
               const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-              // The project id is sanitized unconditionally before deriving the
-              // network name, so a configured `project_id` like "my project" joins
-              // the same sanitized network the local stack created.
-              const projectId = sanitizeProjectId(
-                Option.getOrElse(toml.projectId, () => nodePath.basename(cliSettings.workdir)),
-              );
-              return { _tag: "named" as const, name: `supabase_network_${projectId}` };
+              return { _tag: "named" as const, name: `supabase_network_${toml.projectId}` };
             })
           : { _tag: "host" as const };
 

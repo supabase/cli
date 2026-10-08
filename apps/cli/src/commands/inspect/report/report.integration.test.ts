@@ -19,7 +19,7 @@ import {
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
@@ -163,7 +163,7 @@ function setupReport(opts: SetupOpts = {}) {
       : mockRuntimeInfo({ cwd: opts.cwd }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
-    cliConfigProviderLayer,
+    configValuesLayer(),
   );
   return { layer, out, resolver, connection, telemetry };
 }

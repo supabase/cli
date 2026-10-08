@@ -28,10 +28,7 @@ import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cach
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
 import { pgDeltaTempPath } from "../../../../../command-internal/pgdelta.paths.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
 import {
   resolveLocalTargetEndpoint,
@@ -143,11 +140,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     const tempDir = pgDeltaTempPath(path, cliSettings.workdir);
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
-        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
-        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
-        // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,

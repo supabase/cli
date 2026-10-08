@@ -496,7 +496,6 @@ function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimer
       debug,
       networkId,
       projectIdOverride: cliSettings.projectId,
-      goViperCompat: true,
       goConfigCompat: functionsGoConfigCompat,
       timers,
     }).pipe(Effect.ensuring(telemetryState.flush));
@@ -721,7 +720,6 @@ describe("functions serve integration", () => {
   it.live.each([
     ["per-function", "supabase/functions/hello/.env"],
     ["default", "supabase/functions/.env"],
-    ["project", ".env.development"],
   ] as const)(
     "rejects a BOM-prefixed %s env file without starting the runtime",
     ([, relativePath]) =>
@@ -1198,14 +1196,10 @@ describe("functions serve integration", () => {
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
-        expect(error.message).toContain("failed to parse environment file:");
-        expect(error.message).toContain(".env.development");
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
+        expect(error.message).toBe("failed to parse environment file: .env.development");
       }
       expect(deployMockState.runCalls).toHaveLength(0);
-    });
+    }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
   });
 
   it.live("skips missing unused import map targets during serve startup", () => {
@@ -3841,6 +3835,50 @@ describe("functions serve integration", () => {
       }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
     },
   );
+
+  it.live("publishes SUPABASE_API_PORT as the runtime's API port, ahead of config.toml", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[api]", "port = 54321", ""].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+      yield* writeFunctionFile("hello", "deno.json", '{"imports":{}}\n');
+
+      const { layer } = setupServe({
+        childSpawner: mockDockerLogSpawner([{ exitCode: 1, stderr: "api port env logs failed" }]),
+      });
+      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "create",
+      );
+      if (dockerRun === undefined) {
+        throw new Error("expected docker create call");
+      }
+      expect(yield* extractDockerEnvEntries(dockerRun)).toContain(
+        "SUPABASE_INTERNAL_HOST_PORT=5599",
+      );
+    }).pipe((body) => withEnvVar("SUPABASE_API_PORT", "5599", body));
+  });
 
   it.live(
     "does not publish default jwks fallbacks when signing_keys_path is configured but empty",

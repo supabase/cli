@@ -254,13 +254,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const debug = yield* DebugFlag;
 
   // Error if the local db container is down.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
+  const running = yield* isLocalDbRunning(spawner, fs, path, workdir);
   if (!running) {
     return yield* notRunning();
   }

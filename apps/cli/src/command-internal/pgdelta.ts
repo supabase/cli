@@ -1,8 +1,6 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 
 import { envValue } from "../shared/config/env-option.ts";
-import { resolveLocalProjectId } from "./docker-ids.ts";
-import { sanitizeProjectId } from "../shared/config/project-id.ts";
 
 /**
  * Ambient inputs shared by the pg-delta and migra diff workflows: the project id
@@ -20,24 +18,6 @@ export interface PgDeltaContext {
   readonly denoVersion: number;
   /** The project's parsed `supabase/.env` (`readDbToml`'s `projectEnv`). */
   readonly projectEnv: Readonly<Record<string, string>>;
-}
-
-/**
- * Resolves the project id for callers that only hold a parsed `DbTomlValues`; `SUPABASE_PROJECT_ID`
- * beats the config's `project_id`, matched remote included.
- */
-export function resolvePgDeltaProjectId(
-  cliProjectId: Option.Option<string>,
-  toml: { readonly projectId: Option.Option<string> },
-  workdir: string,
-): string {
-  return sanitizeProjectId(
-    resolveLocalProjectId(
-      Option.getOrUndefined(cliProjectId),
-      Option.getOrUndefined(toml.projectId),
-      workdir,
-    ),
-  );
 }
 
 export function isPostgresURL(ref: string): boolean {

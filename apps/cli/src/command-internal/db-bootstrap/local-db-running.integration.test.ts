@@ -399,8 +399,8 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
 describe("isLocalDbRunning", () => {
   const probe = (
     spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
-    options: { readonly toml?: string; readonly configuredProjectId?: string | undefined } = {
-      configuredProjectId: "engine-probe",
+    options: { readonly toml?: string; readonly env?: Readonly<Record<string, string>> } = {
+      toml: 'project_id = "engine-probe"\n',
     },
   ) =>
     Effect.gen(function* () {
@@ -412,11 +412,11 @@ describe("isLocalDbRunning", () => {
         yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
         yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), options.toml);
       }
-      return yield* isLocalDbRunning(spawner, fs, path, workdir, options.configuredProjectId).pipe(
+      return yield* isLocalDbRunning(spawner, fs, path, workdir).pipe(
         Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
       );
     }).pipe(
-      Effect.provide(configValuesLayer({ output: mockOutput().layer })),
+      Effect.provide(configValuesLayer({ output: mockOutput().layer, env: options.env })),
       Effect.provide(spawnerLayer),
       Effect.provide(BunServices.layer),
     );
@@ -424,10 +424,7 @@ describe("isLocalDbRunning", () => {
   it.live("probes the container named by config.toml's project_id", () => {
     const asked: Array<string> = [];
     const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
-    return probe(mock.layer, {
-      toml: 'project_id = "tomlproj"\n',
-      configuredProjectId: undefined,
-    }).pipe(
+    return probe(mock.layer, { toml: 'project_id = "tomlproj"\n' }).pipe(
       Effect.provideService(LocalDockerEngine, {
         containerExists: (containerId) =>
           Effect.sync(() => {
@@ -436,6 +433,25 @@ describe("isLocalDbRunning", () => {
       }),
       Effect.map(() => {
         expect(asked).toEqual(["supabase_db_tomlproj"]);
+      }),
+    );
+  });
+
+  it.live("probes the container named by SUPABASE_PROJECT_ID over config.toml's project_id", () => {
+    const asked: Array<string> = [];
+    const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
+    return probe(mock.layer, {
+      toml: 'project_id = "tomlproj"\n',
+      env: { SUPABASE_PROJECT_ID: "envproj" },
+    }).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        containerExists: (containerId) =>
+          Effect.sync(() => {
+            asked.push(containerId);
+          }).pipe(Effect.as(Option.some(true))),
+      }),
+      Effect.map(() => {
+        expect(asked).toEqual(["supabase_db_envproj"]);
       }),
     );
   });

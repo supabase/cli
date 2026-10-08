@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -187,13 +187,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    cliSettings.workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
+  const running = yield* isLocalDbRunning(spawner, fs, path, cliSettings.workdir);
   yield* Effect.annotateCurrentSpan("db.already_running", running);
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;

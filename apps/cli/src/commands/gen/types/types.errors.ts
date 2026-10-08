@@ -61,7 +61,7 @@ export class GenTypesWorkdirError extends Data.TaggedError("GenTypesWorkdirError
 }
 
 /**
- * `loadCliConfig` failed to parse the config, or found two `[remotes.*]` blocks with the same
+ * The config failed to parse, or has two `[remotes.*]` blocks with the same
  * `project_id`. Reports a clean parse failure instead of the raw `CliConfigParseError`/
  * `DuplicateRemoteProjectIdError` tag leaking through as the message.
  */

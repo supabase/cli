@@ -76,6 +76,7 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Creates a new Edge Function scaffold locally.
 - Requires exactly one argument: the function name.
 - `--auth` selects the auth-mode template (`none` | `apikey` | `user`, default: `apikey`).
+- The example `curl` URL port and publishable key come from the shared config snapshot, so `SUPABASE_API_PORT` and the other `SUPABASE_*` config overrides apply; a config that fails to load falls back to the defaults.
 - Best-effort config parsing is intentionally non-fatal here: malformed `config.toml` does not block scaffolding or config append.
 - The `[functions.<name>]` config section is **appended** (`O_APPEND` semantics, `flag: "a"`), never rewritten, so the existing file is left byte-for-byte untouched and a partial write cannot truncate it.
 - Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. This is a deliberate design choice: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
