@@ -1,0 +1,614 @@
+{
+  "appliedRemote": null,
+  "bootstrapConfig": {
+    "authEnabledForSetup": true,
+    "dbHealthTimeoutSeconds": 120,
+    "majorVersion": 17,
+    "orioledbVersion": null,
+    "postgresConfigImage": "supabase/postgres:17.11.0.004",
+    "postgresImage": "supabase/postgres:17.11.0.004",
+    "realtimeEnabledForSetup": false,
+    "realtimeIpVersion": "IPv4",
+    "realtimeMaxHeaderLength": 4096,
+    "s3AccessKey": null,
+    "s3Host": null,
+    "s3Region": null,
+    "s3SecretKey": null,
+    "serviceVersionOverrides": {},
+    "storageEnabledForSetup": false,
+    "storageFileSizeLimit": "50MiB",
+    "storageTargetMigration": ""
+  },
+  "containerOpts": {
+    "extraHosts": [
+      "host.docker.internal:host-gateway"
+    ],
+    "isBitbucketPipeline": false,
+    "projectId": "golden-shadow",
+    "workdir": "<WORKDIR>"
+  },
+  "dbContainerId": "supabase_db_golden-shadow",
+  "dbHealthTimeoutSeconds": 120,
+  "experimental": false,
+  "networkId": "supabase_network_golden-shadow",
+  "postgresSpecBase": {
+    "configImage": "supabase/postgres:17.11.0.004",
+    "db": {
+      "health_timeout": "2m",
+      "major_version": 17,
+      "migrations": {
+        "enabled": true,
+        "schema_paths": []
+      },
+      "network_restrictions": {
+        "allowed_cidrs": [
+          "0.0.0.0/0"
+        ],
+        "allowed_cidrs_v6": [
+          "::/0"
+        ],
+        "enabled": false
+      },
+      "orioledb_version": null,
+      "pooler": {
+        "default_pool_size": 20,
+        "enabled": false,
+        "max_client_conn": 100,
+        "pool_mode": "transaction",
+        "port": 54329
+      },
+      "port": 56322,
+      "seed": {
+        "enabled": true,
+        "sql_paths": [
+          "./seed.sql"
+        ]
+      },
+      "settings": {
+        "effective_cache_size": null,
+        "logical_decoding_work_mem": null,
+        "maintenance_work_mem": null,
+        "max_connections": null,
+        "max_locks_per_transaction": null,
+        "max_parallel_maintenance_workers": null,
+        "max_parallel_workers": null,
+        "max_parallel_workers_per_gather": null,
+        "max_replication_slots": null,
+        "max_slot_wal_keep_size": null,
+        "max_standby_archive_delay": null,
+        "max_standby_streaming_delay": null,
+        "max_wal_senders": null,
+        "max_wal_size": null,
+        "max_worker_processes": null,
+        "session_replication_role": null,
+        "shared_buffers": null,
+        "statement_timeout": null,
+        "track_activity_query_size": null,
+        "track_commit_timestamp": null,
+        "wal_keep_size": null,
+        "wal_sender_timeout": null,
+        "work_mem": null
+      },
+      "shadow_port": 54320,
+      "ssl_enforcement": {
+        "enabled": false
+      }
+    },
+    "experimental": {
+      "inspect": {
+        "rules": []
+      },
+      "pgdelta": {
+        "enabled": false
+      },
+      "s3_access_key": null,
+      "s3_host": null,
+      "s3_region": null,
+      "s3_secret_key": null,
+      "webhooks": {
+        "enabled": false
+      }
+    },
+    "jwtExpiry": 3600,
+    "jwtSecret": "super-secret-jwt-token-with-at-least-32-characters-long",
+    "networkId": "supabase_network_golden-shadow",
+    "projectId": "golden-shadow",
+    "rootKey": "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275"
+  },
+  "projectEnvValues": {
+    "SUPABASE_API_SCHEMAS": "public,shell_api",
+    "SUPABASE_AUTH_ENABLE_SIGNUP": "false",
+    "SUPABASE_AUTH_SITE_URL": "http://shell.example.com",
+    "SUPABASE_DB_PORT": "56322",
+    "SUPABASE_REALTIME_ENABLED": "false",
+    "SUPABASE_STORAGE_ENABLED": "false"
+  },
+  "projectId": "golden-shadow",
+  "resolvePostgresImage": {
+    "~effect/Effect/args": {}
+  },
+  "setup": {
+    "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
+    "apiUrl": "http://127.0.0.1:55321",
+    "authEnabledForSetup": true,
+    "authExternalUrl": null,
+    "config": {
+      "analytics": {
+        "backend": "postgres",
+        "enabled": true,
+        "port": 54327
+      },
+      "api": {
+        "enabled": true,
+        "extra_search_path": [
+          "public",
+          "extensions"
+        ],
+        "max_rows": 1000,
+        "port": 55321,
+        "schemas": [
+          "public",
+          "base_api"
+        ],
+        "tls": {
+          "enabled": false
+        }
+      },
+      "auth": {
+        "additional_redirect_urls": [
+          "https://127.0.0.1:3000"
+        ],
+        "captcha": {
+          "enabled": false
+        },
+        "email": {
+          "double_confirm_changes": true,
+          "enable_confirmations": false,
+          "enable_signup": true,
+          "max_frequency": "1s",
+          "notification": {},
+          "otp_expiry": 3600,
+          "otp_length": 6,
+          "secure_password_change": false,
+          "smtp": {
+            "enabled": false
+          },
+          "template": {}
+        },
+        "enable_anonymous_sign_ins": false,
+        "enable_manual_linking": false,
+        "enable_refresh_token_rotation": true,
+        "enable_signup": true,
+        "enabled": true,
+        "external": {
+          "apple": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "azure": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "bitbucket": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "discord": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "facebook": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "figma": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "github": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "gitlab": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": "https://gitlab.com"
+          },
+          "google": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "kakao": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "keycloak": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "linkedin_oidc": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "notion": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "slack_oidc": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "spotify": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "twitch": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "twitter": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "workos": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "x": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          },
+          "zoom": {
+            "client_id": "",
+            "email_optional": false,
+            "enabled": false,
+            "redirect_uri": "",
+            "skip_nonce_check": false,
+            "url": ""
+          }
+        },
+        "hook": {
+          "before_user_created": {
+            "enabled": false
+          },
+          "custom_access_token": {
+            "enabled": false
+          },
+          "mfa_verification_attempt": {
+            "enabled": false
+          },
+          "password_verification_attempt": {
+            "enabled": false
+          },
+          "send_email": {
+            "enabled": false
+          },
+          "send_sms": {
+            "enabled": false
+          }
+        },
+        "jwt_expiry": 3600,
+        "mfa": {
+          "max_enrolled_factors": 10,
+          "phone": {
+            "enroll_enabled": false,
+            "max_frequency": "5s",
+            "otp_length": 6,
+            "template": "Your code is {{ .Code }}",
+            "verify_enabled": false
+          },
+          "totp": {
+            "enroll_enabled": false,
+            "verify_enabled": false
+          },
+          "web_authn": {
+            "enroll_enabled": false,
+            "verify_enabled": false
+          }
+        },
+        "minimum_password_length": 6,
+        "oauth_server": {
+          "allow_dynamic_registration": false,
+          "authorization_url_path": "/oauth/consent",
+          "enabled": false
+        },
+        "password_requirements": "",
+        "rate_limit": {
+          "anonymous_users": 30,
+          "email_sent": 2,
+          "sign_in_sign_ups": 30,
+          "sms_sent": 30,
+          "token_refresh": 150,
+          "token_verifications": 30,
+          "web3": 30
+        },
+        "refresh_token_reuse_interval": 10,
+        "sessions": {},
+        "site_url": "http://base.example.com",
+        "sms": {
+          "enable_confirmations": false,
+          "enable_signup": false,
+          "max_frequency": "5s",
+          "messagebird": {
+            "enabled": false
+          },
+          "otp_expiry": 60,
+          "otp_length": 6,
+          "template": "Your code is {{ .Code }}",
+          "textlocal": {
+            "enabled": false
+          },
+          "twilio": {
+            "account_sid": "",
+            "enabled": false,
+            "message_service_sid": ""
+          },
+          "twilio_verify": {
+            "enabled": false
+          },
+          "vonage": {
+            "enabled": false
+          }
+        },
+        "third_party": {
+          "auth0": {
+            "enabled": false
+          },
+          "aws_cognito": {
+            "enabled": false
+          },
+          "clerk": {
+            "enabled": false
+          },
+          "firebase": {
+            "enabled": false
+          },
+          "workos": {
+            "enabled": false
+          }
+        },
+        "web3": {
+          "ethereum": {
+            "enabled": false
+          },
+          "solana": {
+            "enabled": false
+          }
+        }
+      },
+      "compute": {},
+      "db": {
+        "health_timeout": "2m",
+        "major_version": 17,
+        "migrations": {
+          "enabled": true,
+          "schema_paths": []
+        },
+        "network_restrictions": {
+          "allowed_cidrs": [
+            "0.0.0.0/0"
+          ],
+          "allowed_cidrs_v6": [
+            "::/0"
+          ],
+          "enabled": false
+        },
+        "pooler": {
+          "default_pool_size": 20,
+          "enabled": false,
+          "max_client_conn": 100,
+          "pool_mode": "transaction",
+          "port": 54329
+        },
+        "port": 55322,
+        "seed": {
+          "enabled": true,
+          "sql_paths": [
+            "./seed.sql"
+          ]
+        },
+        "settings": {},
+        "shadow_port": 54320,
+        "ssl_enforcement": {
+          "enabled": false
+        }
+      },
+      "edge_runtime": {
+        "deno_version": 2,
+        "enabled": true,
+        "inspector_port": 8083,
+        "policy": "per_worker"
+      },
+      "experimental": {
+        "inspect": {
+          "rules": []
+        },
+        "pgdelta": {
+          "enabled": false
+        },
+        "webhooks": {
+          "enabled": false
+        }
+      },
+      "functions": {},
+      "local_smtp": {
+        "enabled": true,
+        "port": 54324
+      },
+      "project_id": "golden-shadow",
+      "realtime": {
+        "enabled": false,
+        "ip_version": "IPv4",
+        "max_header_length": 4096
+      },
+      "remotes": {},
+      "storage": {
+        "analytics": {
+          "buckets": {},
+          "enabled": false,
+          "max_catalogs": 2,
+          "max_namespaces": 5,
+          "max_tables": 10
+        },
+        "enabled": false,
+        "file_size_limit": "50MiB",
+        "image_transformation": {
+          "enabled": false
+        },
+        "s3_protocol": {
+          "enabled": true
+        },
+        "vector": {
+          "buckets": {},
+          "enabled": true,
+          "max_buckets": 10,
+          "max_indexes": 5
+        }
+      },
+      "studio": {
+        "api_url": "http://127.0.0.1",
+        "enabled": true,
+        "port": 54323
+      }
+    },
+    "dbUrl": "postgresql://postgres:postgres@127.0.0.1:56322/postgres",
+    "debug": false,
+    "experimental": false,
+    "jwks": null,
+    "jwtSecret": "super-secret-jwt-token-with-at-least-32-characters-long",
+    "majorVersion": 17,
+    "projectEnvValues": {
+      "SUPABASE_API_SCHEMAS": "public,shell_api",
+      "SUPABASE_AUTH_ENABLE_SIGNUP": "false",
+      "SUPABASE_AUTH_SITE_URL": "http://shell.example.com",
+      "SUPABASE_DB_PORT": "56322",
+      "SUPABASE_REALTIME_ENABLED": "false",
+      "SUPABASE_STORAGE_ENABLED": "false"
+    },
+    "realtimeEnabledForSetup": false,
+    "serviceRoleKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+    "serviceVersionOverrides": {},
+    "siteUrl": "http://shell.example.com",
+    "storageEnabledForSetup": false,
+    "storageTargetMigration": ""
+  },
+  "values": {
+    "analyticsBackend": "postgres",
+    "analyticsEnabled": true,
+    "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
+    "apiPort": 55321,
+    "apiUrl": "http://127.0.0.1:55321",
+    "authAdditionalRedirectUrls": [
+      "https://127.0.0.1:3000"
+    ],
+    "authEnableAnonymousSignIns": false,
+    "authEnableManualLinking": false,
+    "authEnableRefreshTokenRotation": true,
+    "authEnableSignup": false,
+    "authJwtExpiry": 3600,
+    "authJwtIssuer": null,
+    "authMinimumPasswordLength": 6,
+    "authPasswordRequirements": "",
+    "authRefreshTokenReuseInterval": 10,
+    "authSiteUrl": "http://shell.example.com",
+    "dbPort": 56322,
+    "dbUrl": "postgresql://postgres:postgres@127.0.0.1:56322/postgres",
+    "edgeRuntimeDenoVersion": 2,
+    "functionsUrl": "http://127.0.0.1:55321/functions/v1",
+    "gcpJwtPath": "",
+    "gcpProjectId": "",
+    "gcpProjectNumber": "",
+    "graphqlUrl": "http://127.0.0.1:55321/graphql/v1",
+    "jwtSecret": "super-secret-jwt-token-with-at-least-32-characters-long",
+    "mailpitUrl": "http://127.0.0.1:54324",
+    "mcpUrl": "http://127.0.0.1:55321/mcp",
+    "openaiApiKey": null,
+    "projectId": "golden-shadow",
+    "publishableKey": "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH",
+    "restUrl": "http://127.0.0.1:55321/rest/v1",
+    "rootKey": "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+    "secretKey": "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz",
+    "serviceRoleKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+    "storageS3AccessKeyId": "625729a08b95bf1b7ff351a663f3a23c",
+    "storageS3Region": "local",
+    "storageS3SecretAccessKey": "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+    "storageS3Url": "http://127.0.0.1:55321/storage/v1/s3",
+    "studioPort": 54323,
+    "studioUrl": "http://127.0.0.1:54323"
+  }
+}
