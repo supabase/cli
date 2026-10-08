@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { Effect, FileSystem, Option } from "effect";
 
 /**
  * PostgreSQL service file (`pg_service.conf`) support: when a connection's `service` is set
@@ -45,23 +45,20 @@ export function parseServicefile(contents: string): Map<string, Map<string, stri
  * falling through to defaults. The returned map may be empty (a section with no keys), which
  * is distinct from `undefined`.
  */
-export function pgServiceSettings(
+export const pgServiceSettings = Effect.fnUntraced(function* (
   serviceName: string,
   servicefilePath: string,
-): Map<string, string> | undefined {
-  let contents: string;
-  try {
-    contents = readFileSync(servicefilePath, "utf8");
-  } catch {
+): Effect.fn.Return<Map<string, string> | undefined, never, FileSystem.FileSystem> {
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* fs.readFileString(servicefilePath).pipe(Effect.option);
+  if (Option.isNone(contents)) {
     return undefined;
   }
-  let services: Map<string, Map<string, string>>;
-  try {
-    services = parseServicefile(contents);
-  } catch {
+  const services = yield* Effect.try(() => parseServicefile(contents.value)).pipe(Effect.option);
+  if (Option.isNone(services)) {
     return undefined;
   }
-  const service = services.get(serviceName);
+  const service = services.value.get(serviceName);
   if (service === undefined) {
     return undefined;
   }
@@ -70,4 +67,4 @@ export function pgServiceSettings(
     settings.set(key === "dbname" ? "database" : key, value);
   }
   return settings;
-}
+});

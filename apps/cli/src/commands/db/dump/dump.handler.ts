@@ -286,7 +286,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedDumpConn =
       managedProject === undefined
         ? undefined
-        : parseConnectionString(
+        : yield* parseConnectionString(
             yield* managedProject.database.credentials({ from: "runtime" }).pipe(
               Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
               Effect.map((credentials) => credentials.databaseUrl ?? ""),

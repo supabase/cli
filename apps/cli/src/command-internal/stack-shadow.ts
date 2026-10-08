@@ -201,7 +201,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   const credentials = yield* database.credentials({ from: "host" });
   const credentialUrl = credentials.databaseUrl;
   const credentialsConn =
-    credentialUrl === undefined ? undefined : parseConnectionString(credentialUrl);
+    credentialUrl === undefined ? undefined : yield* parseConnectionString(credentialUrl);
   if (credentialsConn === undefined || credentialUrl === undefined)
     return yield* new ShadowDbError({
       message: "Shadow database URL is unavailable",
@@ -258,7 +258,7 @@ export const stackMigrateShadow = Effect.fn("StackShadow.migrate")(function* (
   const pending = yield* listLocalMigrationPaths(input.fs, input.path, migrationsDir).pipe(
     Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" })),
   );
-  const conn = parseConnectionString(handle.url);
+  const conn = yield* parseConnectionString(handle.url);
   if (conn === undefined)
     return yield* new ShadowDbError({ message: "Invalid shadow database URL", reason: "connect" });
   const session = yield* connectShadowDatabase(conn);
