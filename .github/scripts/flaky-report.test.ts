@@ -103,7 +103,7 @@ describe("aggregate", () => {
               { name: "sometimes" },
               { name: "never" },
               { name: "always", failures: 1 },
-              { name: "twin" },
+              { name: "twin", skipped: true },
               { name: "twin", failures: 1 },
             ]),
             [stack]: empty,
@@ -141,6 +141,34 @@ describe("aggregate", () => {
     expect(isClean(report)).toBe(false);
   });
 
+  test("flags a suite that ran no tests unless allowed and renders titles without mentions", () => {
+    const report = aggregate(
+      [
+        run(
+          "unit",
+          1,
+          { "packages__api--unit.xml": junit([{ name: "@supabase/api &gt; breaks", failures: 1 }]) },
+          1,
+          1,
+        ),
+        run("integration", 1, { "apps__cli--integration.xml": empty }),
+        run("focused", 1, { "apps__cli--unit.xml": empty }),
+      ],
+      ["flaky-unit-run1", "flaky-integration-run1", "flaky-focused-run1"],
+      ["focused"],
+    );
+
+    const markdown = renderMarkdown(report, {
+      sha: "0123456789abcdef",
+      runUrl: "https://example.test/run",
+    });
+
+    expect(report.runProblems).toEqual([
+      { name: "integration (every run)", problem: "no tests ran; check the filter" },
+    ]);
+    expect(markdown).toContain("| unit | @<!---->supabase/api > breaks |");
+  });
+
   test("a clean report renders the PR comment marker and per-suite totals", () => {
     const report = aggregate(
       [
@@ -160,7 +188,7 @@ describe("aggregate", () => {
       "<!-- flaky-check -->",
       "## Flaky test check: ✅ no flaky tests",
       "",
-      "Commit `0123456789ab` · unit ×2, 1 tests · [workflow run](https://example.test/run)",
+      "Commit `0123456789ab` · unit ×2, 1 test · [workflow run](https://example.test/run)",
     ]);
   });
 });

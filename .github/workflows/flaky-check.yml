@@ -254,8 +254,12 @@ jobs:
             focused)
               if [ "${#filters[@]}" -gt 0 ]; then
                 select=("${filters[@]}")
+              elif base="$(git merge-base HEAD "origin/$BASE_REF")"; then
+                select=(--changed "$base")
               else
-                select=(--changed "$(git merge-base HEAD "origin/$BASE_REF")")
+                echo "::error ::Unable to find the merge base with origin/$BASE_REF."
+                echo "exit-code=1" >> "$GITHUB_OUTPUT"
+                exit 1
               fi
               run_unit --repeats="$REPEATS" "${select[@]}"
               run_integration --repeats="$REPEATS" "${select[@]}"
@@ -445,6 +449,7 @@ jobs:
         env:
           EXPECTED: ${{ needs.plan.outputs.expected }}
           SHA: ${{ needs.plan.outputs.sha }}
+          FILTER: ${{ needs.plan.outputs.filter }}
         run: bun .github/scripts/flaky-report.ts results flaky-report
 
       - name: Upload report
@@ -464,11 +469,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          marker="<!-- flaky-check -->"
+          marker="$(head -n 1 flaky-report/report.md)"
           if ! comment_id="$(
             gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" \
-              | head -n 1
+              | sed -n 1p
           )"; then
             echo "::warning::Unable to list PR comments; the report is in the flaky-check-report artifact."
             exit 0

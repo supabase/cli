@@ -101,7 +101,12 @@ function variantOf(meta: RunMeta): string {
   return meta.name.replace(/-run\d+$/, "");
 }
 
-export function aggregate(results: RunResult[], expected: string[]): Report {
+/** `allowEmpty` names suites where running no tests is legitimate, like `focused` with no affected tests. */
+export function aggregate(
+  results: RunResult[],
+  expected: string[],
+  allowEmpty: string[] = [],
+): Report {
   const verdicts = new Map<string, TestVerdict>();
   const runProblems: RunProblem[] = [];
   const suites = new Map<string, { runs: Set<number>; executions: number; tests: Set<string> }>();
@@ -129,14 +134,14 @@ export function aggregate(results: RunResult[], expected: string[]): Report {
     // Tests sharing a title in one file stay distinct by their order of appearance.
     const occurrences = new Map<string, number>();
     for (const testCase of cases) {
-      if (testCase.skipped) {
-        continue;
-      }
       const file = `${testCase.pkg}/${testCase.file}`;
       const occurrence = (occurrences.get(`${file}\0${testCase.name}`) ?? 0) + 1;
       occurrences.set(`${file}\0${testCase.name}`, occurrence);
+      if (testCase.skipped) {
+        continue;
+      }
       const name = occurrence === 1 ? testCase.name : `${testCase.name} (#${occurrence})`;
-      const key = `${meta.suite}\0${file}\0${name}`;
+      const key = `${meta.suite}\0${file}\0${testCase.name}\0${occurrence}`;
       suite.tests.add(key);
       const verdict = verdicts.get(key) ?? {
         suite: meta.suite,
@@ -182,6 +187,12 @@ export function aggregate(results: RunResult[], expected: string[]): Report {
     }
   }
 
+  for (const [name, { tests }] of suites) {
+    if (tests.size === 0 && !allowEmpty.includes(name)) {
+      runProblems.push({ name: `${name} (every run)`, problem: "no tests ran; check the filter" });
+    }
+  }
+
   const seen = new Set(results.map(({ meta }) => meta.name));
   for (const name of expected) {
     if (!seen.has(name)) {
@@ -220,7 +231,8 @@ export function isClean(report: Report): boolean {
 function cell(value: string): string {
   const flat = value.replace(/\s+/g, " ").trim();
   const short = flat.length > MAX_MESSAGE ? `${flat.slice(0, MAX_MESSAGE)}…` : flat;
-  return short.replaceAll("|", "\\|").replaceAll("<", "&lt;");
+  // The empty comment keeps `@scope/name` in test titles from mentioning GitHub users or teams.
+  return short.replaceAll("|", "\\|").replaceAll("<", "&lt;").replaceAll("@", "@<!---->");
 }
 
 function testTable(title: string, verdicts: TestVerdict[]): string[] {
@@ -250,7 +262,7 @@ export type RenderContext = { sha: string; runUrl: string };
 export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): string {
   const counts = [
     report.flaky.length > 0 ? `${report.flaky.length} flaky` : "",
-    report.failing.length > 0 ? `${report.failing.length} always failing` : "",
+    report.failing.length > 0 ? `${report.failing.length} failed in every run` : "",
     report.runProblems.length > 0 ? `${report.runProblems.length} runs without results` : "",
   ].filter(Boolean);
   const heading = isClean(report) ? "✅ no flaky tests" : `⚠️ ${counts.join(", ")}`;
@@ -258,7 +270,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     .map((s) =>
       s.tests === 0
         ? `${s.suite} ×${s.runs} (no tests ran)`
-        : `${s.suite} ×${s.runs}${s.executions > 1 ? ` (${s.executions} executions each)` : ""}, ${s.tests} tests`,
+        : `${s.suite} ×${s.runs}${s.executions > 1 ? ` (${s.executions} executions each)` : ""}, ${s.tests} test${s.tests === 1 ? "" : "s"}`,
     )
     .join(" · ");
 
@@ -269,7 +281,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     `Commit \`${sha.slice(0, 12)}\` · ${suites || "no runs"} · [workflow run](${runUrl})`,
     "",
     ...testTable("Flaky tests", report.flaky),
-    ...testTable("Always failing", report.failing),
+    ...testTable("Failed in every run", report.failing),
   ];
   if (report.runProblems.length > 0) {
     lines.push(
@@ -307,7 +319,7 @@ if (import.meta.main) {
   const [resultsDir = "results", outDir = "flaky-report"] = process.argv.slice(2);
   const expected = JSON.parse(process.env.EXPECTED ?? "[]") as string[];
   const results = existsSync(resultsDir) ? readResults(resultsDir) : [];
-  const report = aggregate(results, expected);
+  const report = aggregate(results, expected, process.env.FILTER ? [] : ["focused"]);
   const markdown = renderMarkdown(report, {
     sha: process.env.SHA ?? "",
     runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,

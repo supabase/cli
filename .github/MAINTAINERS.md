@@ -87,7 +87,7 @@ from **Issues → Labels** if it is missing.
 
 [`flaky-check.yml`](./workflows/flaky-check.yml) runs one commit on many fresh
 runners with retries off. A test that passes in some runs and fails in others is
-reported as flaky; one that fails in every run is reported as always failing.
+reported as flaky; one that fails in every run is reported separately.
 
 | Trigger                  | Commit          | Suites                                        |
 | ------------------------ | --------------- | --------------------------------------------- |
@@ -108,8 +108,9 @@ The workflow removes the label when it starts, so add it again to re-run. It
 posts or updates one PR comment with the report; the job summary and the
 `flaky-check-report` artifact (`report.md`, `report.json`) hold the same data
 for every trigger. Fork PRs get a read-only token: remove the label by hand
-before re-adding it, and read the report from the summary or artifact. The report job fails when it finds flaky tests, always-failing
-tests, or runs that produced no results.
+before re-adding it, and read the report from the summary or artifact. The
+report job fails when it finds flaky tests, tests that failed in every run, or
+runs that produced no results.
 
 The `run-flaky-check` label must exist as a repository label; create it from
 **Issues → Labels** if it is missing.
