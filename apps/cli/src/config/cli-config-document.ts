@@ -1,3 +1,6 @@
+import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
+import { Redacted } from "effect";
+
 export const isDocumentRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -64,4 +67,67 @@ export const documentLeafPaths = (
   };
   visit(value, prefix);
   return out;
+};
+
+/** Removes the leaves at `paths`, then each table they emptied unless `declared` also holds it. */
+export const pruneDocumentPaths = (
+  document: Record<string, unknown>,
+  paths: Iterable<string>,
+  declared: unknown,
+): void => {
+  for (const path of paths) {
+    const segments = path.split(".");
+    const tables: Array<Record<string, unknown>> = [document];
+    for (const segment of segments.slice(0, -1)) {
+      const next = tables.at(-1)?.[segment];
+      if (!isDocumentRecord(next)) break;
+      tables.push(next);
+    }
+    const leaf = segments.at(-1);
+    const holder = tables.at(-1);
+    if (tables.length !== segments.length || leaf === undefined || holder === undefined) continue;
+    delete holder[leaf];
+    for (let depth = tables.length - 1; depth > 0; depth--) {
+      const table = tables[depth];
+      const parent = tables[depth - 1];
+      const key = segments[depth - 1];
+      if (table === undefined || parent === undefined || key === undefined) break;
+      if (Object.keys(table).length > 0) break;
+      if (getDocumentValue(declared, segments.slice(0, depth).join(".")) !== undefined) break;
+      delete parent[key];
+    }
+  }
+};
+
+/** A copy of `value` without the leaves at `paths`; only the tables along those paths are copied. */
+export const omitDocumentPaths = <T extends Record<string, unknown>>(
+  value: T,
+  paths: Iterable<string>,
+): T => {
+  const omit = (node: unknown, segments: ReadonlyArray<string>): unknown => {
+    const [head, ...rest] = segments;
+    if (head === undefined || !isDocumentRecord(node) || !Object.hasOwn(node, head)) return node;
+    if (rest.length === 0) {
+      const { [head]: _removed, ...remaining } = node;
+      return remaining;
+    }
+    return { ...node, [head]: omit(node[head], rest) };
+  };
+  let result: unknown = value;
+  for (const path of paths) result = omit(result, path.split("."));
+  return result as T;
+};
+
+/** Adds the name of every whole-value `env(NAME)` string in `value`, including inside `Redacted`. */
+export const collectEnvReferences = (value: unknown, out: Set<string>): void => {
+  if (typeof value === "string") {
+    const name = ENV_CAPTURE_REGEX.exec(value)?.[1];
+    if (name !== undefined) out.add(name);
+  } else if (Redacted.isRedacted(value)) {
+    collectEnvReferences(Redacted.value(value), out);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectEnvReferences(item, out);
+  } else if (isDocumentRecord(value)) {
+    for (const item of Object.values(value)) collectEnvReferences(item, out);
+  }
 };

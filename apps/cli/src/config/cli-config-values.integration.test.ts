@@ -940,3 +940,102 @@ major_version = 15
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
+
+describe("CliConfigValues loaded document", () => {
+  const load = (
+    root: string,
+    target: Parameters<CliConfigValues["Service"]["load"]>[0]["projectRef"],
+  ) => CliConfigValues.use((values) => values.load({ workdir: root, projectRef: target }));
+
+  it.live("exposes the declared document without the defaults materialized for consumers", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
+      const { layer } = makeLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const loaded = Option.getOrThrow(snapshot.loaded);
+
+      expect(loaded.document).toEqual({ project_id: "declared", api: { max_rows: 10 } });
+      expect(loaded.config.api.max_rows).toBe(10);
+      expect(snapshot.materialized.config.auth.hook?.send_email?.uri).toBe("");
+      expect(loaded.config.auth.hook?.send_email?.uri).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("applies an env override to the loaded config", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
+      const { layer } = makeLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+
+      expect(Option.getOrThrow(snapshot.loaded).config.api.max_rows).toBe(25);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("is none when the workdir has no config file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-none-" });
+      const { layer } = makeLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+
+      expect(snapshot.loaded).toEqual(Option.none());
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("fails on an unreadable .temp/project-ref unless the load tolerates it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* project('project_id = "declared"\n');
+      yield* fs.makeDirectory(path.join(root, "supabase", ".temp", "project-ref"), {
+        recursive: true,
+      });
+      const { layer } = makeLayer();
+
+      const strict = yield* load(root, Option.some(LINKED)).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      const tolerant = yield* CliConfigValues.use((values) =>
+        values.load({
+          workdir: root,
+          projectRef: Option.some(LINKED),
+          tolerateUnreadableLinkedRef: true,
+        }),
+      ).pipe(Effect.provide(layer));
+
+      expect(Exit.isFailure(strict)).toBe(true);
+      expect(tolerant.sources.withheldEnv).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("carries the merged document and applied remote on an invalid value failure", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "declared"
+[db]
+port = "not-a-port"
+[remotes.staging]
+project_id = "${LINKED}"
+`,
+      );
+      const { layer } = makeLayer();
+
+      const exit = yield* load(root, Option.some(LINKED)).pipe(Effect.provide(layer), Effect.exit);
+
+      const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      expect(failure).toMatchObject({
+        _tag: "CliConfigValueError",
+        appliedRemote: "staging",
+      });
+      expect((failure as { mergedDocument?: unknown } | undefined)?.mergedDocument).toBeDefined();
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});

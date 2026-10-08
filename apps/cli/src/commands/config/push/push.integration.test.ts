@@ -17,6 +17,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   mockAnalytics,
   mockContextualAnalytics,
@@ -400,6 +401,7 @@ function setup(opts: {
     Layer.succeed(YesFlag, opts.yes ?? false),
     workdirFilesLayer(opts.toml, opts.seed),
     cliConfigProviderLayer,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -464,6 +466,7 @@ describe("config push integration", () => {
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       yield* writeWorkdirFile(["supabase", "config.json"], "{not valid json");
@@ -894,6 +897,7 @@ max_rows = 1000
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -1027,6 +1031,7 @@ max_rows = 1000
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -1481,6 +1486,7 @@ function setupService(opts: {
     Layer.succeed(YesFlag, opts.yes ?? false),
     workdirFilesLayer(opts.toml),
     cliConfigProviderLayer,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, apiMock };
 }

@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, type Redacted } from "effect";
 
 import {
   actionability,
@@ -19,6 +19,9 @@ export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")
   readonly flag?: string;
   /** Per-entry decode failures, merged when several keys fail in one load. */
   readonly issues?: ReadonlyArray<string>;
+  /** The merged document the failed load had reached, for callers that salvage part of it. */
+  readonly mergedDocument?: Redacted.Redacted<unknown>;
+  readonly appliedRemote?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

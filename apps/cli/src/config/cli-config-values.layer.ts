@@ -15,20 +15,25 @@ import {
   Layer,
   Option,
   Path,
+  Redacted,
   Result,
 } from "effect";
 
+import type { LoadedCliConfig } from "@supabase/config";
 import { readProjectRefFile } from "../command-internal/temp-paths.ts";
 import { collectDotenvPrivateKeys } from "../command-internal/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config.errors.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
+import { CLI_CONFIG_EMPTY_DEFAULTS, CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import {
   cloneDocument,
+  collectEnvReferences,
   documentLeafPaths,
   getDocumentValue,
   isDocumentRecord,
+  omitDocumentPaths,
+  pruneDocumentPaths,
   sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
@@ -65,6 +70,7 @@ class LoadKey extends Data.Class<{
   readonly workdir: string;
   readonly projectRef: Option.Option<string>;
   readonly ignoreConfigFile: boolean;
+  readonly tolerateUnreadableLinkedRef: boolean;
 }> {}
 
 const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfigDocument => ({
@@ -79,18 +85,25 @@ const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfi
   remoteLeafPaths: [],
 });
 
-const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
-
-const collectEnvReferences = (value: unknown, out: Set<string>): void => {
-  if (typeof value === "string") {
-    const name = ENV_CAPTURE_REGEX.exec(value)?.[1];
-    if (name !== undefined) out.add(name);
-  } else if (Array.isArray(value)) {
-    for (const item of value) collectEnvReferences(item, out);
-  } else if (isDocumentRecord(value)) {
-    for (const item of Object.values(value)) collectEnvReferences(item, out);
-  }
+/** The package's decode without what `materialized` adds: defaults the overlay wrote are not declarations. */
+const declaredOnly = (
+  loaded: LoadedCliConfig,
+  defaultWrites: ReadonlyArray<string>,
+  declared: unknown,
+): LoadedCliConfig => {
+  const copy = loaded.document === undefined ? undefined : cloneDocument(loaded.document);
+  if (isDocumentRecord(copy)) pruneDocumentPaths(copy, defaultWrites, declared);
+  return {
+    ...loaded,
+    config: omitDocumentPaths(
+      loaded.config,
+      defaultWrites.filter((path) => CLI_CONFIG_EMPTY_DEFAULTS.test(path)),
+    ),
+    document: isDocumentRecord(copy) ? copy : loaded.document,
+  };
 };
+
+const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
 
 /** The env names the document makes relevant: `env()` references, remote ids and family entries. */
 const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<string> => {
@@ -165,7 +178,11 @@ export const cliConfigValuesLayer = Layer.effect(
       const targetRef = Option.getOrElse(target.projectRef, () => "");
       const linkedRef = Option.isNone(target.projectRef)
         ? Option.none<string>()
-        : yield* readProjectRefFile(fs, path, target.workdir);
+        : target.tolerateUnreadableLinkedRef
+          ? yield* readProjectRefFile(fs, path, target.workdir).pipe(
+              Effect.orElseSucceed(() => Option.none<string>()),
+            )
+          : yield* readProjectRefFile(fs, path, target.workdir);
       const foreignLinkedRef = Option.filter(linkedRef, (linked) => linked !== targetRef);
       const scopedKeys = cliConfigRegistry.keys.filter((key) => key.envScope === "linkedTarget");
       const scopedNames = new Set(scopedKeys.flatMap((key) => key.env));
@@ -222,6 +239,17 @@ export const cliConfigValuesLayer = Layer.effect(
       });
 
       const document = merged?.document;
+      const withMergedDocument = (failure: CliConfigValueError) =>
+        new CliConfigValueError({
+          path: failure.path,
+          tier: failure.tier,
+          message: failure.message,
+          ...(failure.envName === undefined ? {} : { envName: failure.envName }),
+          ...(failure.flag === undefined ? {} : { flag: failure.flag }),
+          ...(failure.issues === undefined ? {} : { issues: failure.issues }),
+          ...(document === undefined ? {} : { mergedDocument: Redacted.make(document) }),
+          ...(appliedRemote === undefined ? {} : { appliedRemote }),
+        });
       const remoteLeaves = new Set(merged?.remoteLeafPaths.map((leaf) => leaf.join(".")));
       const localLeaves = documentLeafPaths(merged?.rawDocument ?? {});
       const appliedRemote = merged?.appliedRemote;
@@ -292,11 +320,14 @@ export const cliConfigValuesLayer = Layer.effect(
       const draftSource = cloneDocument(document ?? {});
       const draft = isDocumentRecord(draftSource) ? draftSource : {};
       const origins = new Map<string, CliConfigKeyOrigin>();
+      const defaultWrites: Array<string> = [];
       const entryFailures: Array<CliConfigValueError> = [];
       for (const key of enumerated.values()) {
         const picked = pickCliConfigKey(key, sources);
         if (Result.isFailure(picked)) {
-          if (picked.failure.issues === undefined) return yield* picked.failure;
+          if (picked.failure.issues === undefined) {
+            return yield* withMergedDocument(picked.failure);
+          }
           entryFailures.push(picked.failure);
           continue;
         }
@@ -304,17 +335,21 @@ export const cliConfigValuesLayer = Layer.effect(
         origins.set(key.path, origin);
         const written = key.toDocument(value);
         if (!writesToDraft(key, origin, written, sources.config(key.path)?.value)) continue;
-        if (written !== undefined) setDocumentValue(draft, key.path, written);
+        if (written === undefined) continue;
+        setDocumentValue(draft, key.path, written);
+        if (origin.tier === "default") defaultWrites.push(key.path);
       }
       const [firstFailure] = entryFailures;
       if (firstFailure !== undefined) {
         const issues = entryFailures.flatMap((failure) => failure.issues ?? []);
-        return yield* new CliConfigValueError({
-          path: firstFailure.path,
-          tier: "config",
-          message: decodingFailedMessage(issues),
-          issues,
-        });
+        return yield* withMergedDocument(
+          new CliConfigValueError({
+            path: firstFailure.path,
+            tier: "config",
+            message: decodingFailedMessage(issues),
+            issues,
+          }),
+        );
       }
 
       const envValues: Record<string, string> = {};
@@ -396,6 +431,10 @@ export const cliConfigValuesLayer = Layer.effect(
         sources: { ...sources, withheldEnv },
         get,
         materialized,
+        loaded:
+          merged === null
+            ? Option.none()
+            : Option.some(declaredOnly(loaded, defaultWrites, document)),
         familyNames,
         lookupEnv: (name) =>
           isCliConfigEnvName(name)
@@ -417,6 +456,7 @@ export const cliConfigValuesLayer = Layer.effect(
             workdir: target.workdir,
             projectRef: target.projectRef,
             ignoreConfigFile: target.ignoreConfigFile === true,
+            tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
           }),
         ),
       writeThrough: (write) => Effect.ensuring(write, Cache.invalidateAll(cache)),

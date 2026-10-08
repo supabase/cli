@@ -1,4 +1,4 @@
-import type { CliConfig } from "@supabase/config";
+import type { CliConfig, LoadedCliConfig } from "@supabase/config";
 import type {
   decodeMergedCliConfig,
   mergeParsedCliConfig,
@@ -25,6 +25,8 @@ interface CliConfigLoadTarget {
   readonly projectRef: Option.Option<string>;
   /** Resolves env and defaults only, as if the config file were absent. */
   readonly ignoreConfigFile?: true;
+  /** Treats an unreadable `.temp/project-ref` as an unlinked workdir instead of failing the load. */
+  readonly tolerateUnreadableLinkedRef?: true;
 }
 
 /** An env variable that held a value but was withheld because it belongs to the linked project. */
@@ -68,6 +70,8 @@ export interface CliConfigSnapshot {
   ) => Effect.Effect<CliConfigValue<A>, CliConfigValueError>;
   /** Decoded once per load; every key's winning value is already applied. */
   readonly materialized: CliConfigMaterialized;
+  /** The package's loaded document from the same decode as `materialized`; none when there is no config file. */
+  readonly loaded: Option.Option<LoadedCliConfig>;
   /** The entry names of a family: those the registry declares plus those in the merged document. */
   readonly familyNames: (family: CliConfigFamilyId) => ReadonlyArray<string>;
   /**

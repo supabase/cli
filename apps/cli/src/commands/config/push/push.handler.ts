@@ -1,19 +1,11 @@
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
 import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
-import {
-  decodeMergedCliConfig,
-  mergeParsedCliConfig,
-  parseCliConfigDocumentFile,
-} from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { DateTime, Effect, FileSystem, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import {
-  cliConfigRemoteFailure,
-  selectCliConfigRemote,
-} from "../../../config/cli-config-remote.ts";
-import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
+import { lookupCliConfigEnv } from "../../../config/cli-config-key.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -22,10 +14,6 @@ import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import {
-  collectEnvReferences,
-  loadConfigEnvLookup,
-} from "../../../command-internal/config-env-lookup.ts";
 import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
@@ -47,7 +35,6 @@ import {
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decrypt.ts";
 import { configApiScope, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
@@ -146,56 +133,35 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
-const mapPushEnvError = Effect.mapError(
-  (error: { readonly message: string }) =>
-    new ConfigPushLoadConfigError({ message: error.message }),
-);
-
-/**
- * Parses, merges the `[remotes.*]` block whose literal or env `project_id` matches `ref`, and
- * decodes once; a second decode would repeat the load-time deprecation warnings.
- */
+/** Loads the snapshot once per push, so the load-time deprecation warnings print once. */
 const loadPushConfig = Effect.fn("config.push.loadConfig")(
   function* (
     cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
     projectRoot: string,
     ref: string,
   ) {
-    const parsed = yield* parseCliConfigDocumentFile(projectRoot, { search: false });
-    if (parsed === null) {
+    const configValues = yield* CliConfigValues;
+    const snapshot = yield* configValues.load({
+      workdir: projectRoot,
+      projectRef: Option.some(ref),
+      tolerateUnreadableLinkedRef: true,
+    });
+    if (Option.isNone(snapshot.loaded)) {
       return yield* new ConfigPushLoadConfigError({
         message: yield* missingProjectConfigMessageEffect(cliSettings),
       });
     }
-    const remotes = parsed.rawDocument?.["remotes"];
-    const { lookup, shell, projectEnvValues } = yield* loadConfigEnvLookup(
-      projectRoot,
-      [parsed.rawDocument],
-      isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
-    );
-    const remoteFailure = isRecord(remotes) ? cliConfigRemoteFailure(remotes, lookup) : undefined;
-    if (remoteFailure !== undefined) {
-      return yield* new ConfigPushLoadConfigError({ message: remoteFailure });
-    }
-    const merged = yield* mergeParsedCliConfig(parsed, {
-      selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
-    });
-    const referenced = new Set<string>();
-    collectEnvReferences(parsed.rawDocument, referenced);
-    const envValues: Record<string, string> = {};
-    for (const name of referenced) {
-      const value = lookup(name);
-      if (value !== undefined) envValues[name] = value;
-    }
-    const loaded = yield* decodeMergedCliConfig(merged, { envValues, goViperCompat: true });
+    const loaded = snapshot.loaded.value;
     yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
+    const projectYes = snapshot.sources.projectEnv("SUPABASE_YES")?.value;
     return {
       loaded,
-      lookup,
-      dotenvPrivateKeys: collectDotenvPrivateKeys({
-        ...projectEnvValues,
-        ...Object.fromEntries(shell.entries()),
-      }),
+      lookup: (name: string) => lookupCliConfigEnv(snapshot.sources, name),
+      dotenvPrivateKeys: snapshot.sources.dotenvPrivateKeys,
+      projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
+        string,
+        string
+      >,
     };
   },
   (effect, cliSettings) =>
@@ -250,16 +216,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
     );
 
-    // `--yes`/`SUPABASE_YES` resolves against the project env (not just the flag + shell env), so
-    // a `SUPABASE_YES` set only in `supabase/.env` auto-confirms. The project root climbs to find
-    // it only when `--workdir` was defaulted; an explicit `--workdir ../other` pushes that
-    // directory's own config.toml without climbing to another root's linked project.
+    // The project root climbs only when `--workdir` was defaulted; an explicit
+    // `--workdir ../other` pushes that directory's own config.toml without climbing to another
+    // root's linked project.
     const projectRoot =
       (yield* findCliProjectRoot(cliSettings.workdir, {
         search: shouldSearchAncestors(cliSettings),
       })) ?? cliSettings.workdir;
-    const projectEnv = yield* loadConfigEnvLookup(projectRoot, []).pipe(mapPushEnvError);
-    const yes = yield* resolveYesWithProjectEnv({ ...projectEnv.projectEnvValues });
 
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
@@ -292,11 +255,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     //
     // Needs the fully decoded document and value origins, which the tolerant
     // `db-config.toml-read.ts` subtree reader does not produce.
-    const { loaded, lookup, dotenvPrivateKeys } = yield* loadPushConfig(
+    const { loaded, lookup, dotenvPrivateKeys, projectEnv } = yield* loadPushConfig(
       cliSettings,
       projectRoot,
       ref,
     );
+    // `SUPABASE_YES` set only in `supabase/.env` auto-confirms, not just the flag and shell env.
+    const yes = yield* resolveYesWithProjectEnv(projectEnv);
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
