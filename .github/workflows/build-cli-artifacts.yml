@@ -71,10 +71,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Pre-download Go modules
-        working-directory: apps/cli-go
-        run: go mod download -x
-
       - name: Install nfpm
         env:
           NFPM_VERSION: "2.47.0"
@@ -112,12 +108,46 @@ jobs:
 
       - name: Verify build artifacts
         run: |
+          set -euo pipefail
           for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
             echo "Checking packages/$pkg/bin/..."
             ls -la "packages/$pkg/bin/"
           done
           echo "Checking dist/..."
           ls -la dist/
+
+          # Every channel ships a single `supabase` binary; no `supabase-go` companion.
+          shopt -s nullglob
+          for f in packages/*/bin/supabase-go*; do
+            echo "::error::${f} is a supabase-go companion binary"
+            exit 1
+          done
+
+          check_listing() {
+            local artifact="$1"
+            shift
+            local listing
+            if ! listing="$("$@")"; then
+              echo "::error::failed to list the contents of ${artifact}"
+              exit 1
+            fi
+            if grep -q 'supabase-go' <<<"$listing"; then
+              echo "::error::${artifact} contains supabase-go"
+              exit 1
+            fi
+          }
+
+          for a in dist/*.tar.gz dist/*.apk; do check_listing "$a" tar -tzf "$a"; done
+          for a in dist/*.zip; do check_listing "$a" unzip -Z1 "$a"; done
+          for a in dist/*.deb; do check_listing "$a" dpkg-deb -c "$a"; done
+          rpms=(dist/*.rpm)
+          if [[ ${#rpms[@]} -gt 0 ]]; then
+            if command -v rpm >/dev/null; then
+              for a in "${rpms[@]}"; do check_listing "$a" rpm -qlp "$a"; done
+            else
+              echo "::notice::rpm is not installed on this runner; rpm contents were not checked for supabase-go"
+            fi
+          fi
 
       - name: Check existing build artifacts cache
         id: build-artifacts-cache

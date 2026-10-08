@@ -40,7 +40,7 @@ import {
 } from "../cli/cobra-flag-groups.ts";
 import {
   edgeRuntimeImage,
-  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
@@ -735,7 +735,7 @@ function substituteImportMapValue(
       continue;
     }
     // Import-maps spec (implemented by Deno): a key matches exactly, or as a prefix only when it
-    // ends with "/" — see go-cli-divergences.md for why this differs from a naive prefix match.
+    // ends with "/", unlike a naive prefix match.
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing
       // `/` is an invalid mapping — dropped, not concatenated.
@@ -2476,7 +2476,10 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
   if (changedModes.length > 1) {
     return yield* new ConflictingFunctionDeployFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
+      message: cobraMutuallyExclusiveErrorMessage(
+        FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
+        changedModes,
+      ),
     });
   }
 

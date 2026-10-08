@@ -6,7 +6,13 @@ import {
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { GLOBAL_FLAGS, OutputFlag, globalFlagValues } from "../command-internal/global-flags.ts";
+import {
+  CreateTicketFlag,
+  GLOBAL_FLAGS,
+  OutputFlag,
+  globalFlagValues,
+} from "../command-internal/global-flags.ts";
+import { removedFlag, type RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
@@ -213,6 +219,17 @@ function extractChangedFlagNames(
 
   return [...used].sort((left, right) => left.localeCompare(right));
 }
+
+/**
+ * Fails when argv carries the removed global `--create-ticket` (with any value). Runs inside the
+ * recorded region, so the rejection still emits `cli_command_executed`.
+ */
+const rejectRemovedGlobalFlags = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio;
+  const args = yield* stdio.args;
+  if (!extractChangedFlagNames(args).includes(CreateTicketFlag.id)) return;
+  return yield* removedFlag("--create-ticket", "Report CLI problems with `supabase issue bug`.");
+});
 
 function normalizeFlagValue(value: unknown): unknown {
   if (value === undefined) return undefined;
@@ -476,7 +493,7 @@ export function withCommandTelemetry(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
 ) => Effect.Effect<
   A,
-  E | InvalidOutputFormatError,
+  E | InvalidOutputFormatError | RemovedSurfaceError,
   R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
 >;
 export function withCommandTelemetry<Flags extends Record<string, unknown>>(
@@ -485,7 +502,7 @@ export function withCommandTelemetry<Flags extends Record<string, unknown>>(
   self: Effect.Effect<A, E, R>,
 ) => Effect.Effect<
   A,
-  E | InvalidOutputFormatError,
+  E | InvalidOutputFormatError | RemovedSurfaceError,
   R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
 >;
 export function withCommandTelemetry<Flags extends Record<string, unknown>>(
@@ -499,5 +516,8 @@ export function withCommandTelemetry<Flags extends Record<string, unknown>>(
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     // Validate the `-o` enum before instrumentation runs the handler, so a rejected flag fails
     // without emitting a `cli_command_executed` event.
-    Effect.andThen(validateOutputFormat(allowed), instrument(self));
+    Effect.andThen(
+      validateOutputFormat(allowed),
+      instrument(Effect.andThen(rejectRemovedGlobalFlags, self)),
+    );
 }

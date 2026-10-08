@@ -1,11 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
-import {
-  GO_DOCKERFILE_PATH,
-  TS_DOCKERFILE_PATH,
-  renderDockerfile,
-} from "./render-service-dockerfile.ts";
+import { TS_DOCKERFILE_PATH, renderDockerfile } from "./render-service-dockerfile.ts";
 
 // Both against the real, checked-in Dockerfile and the real catalog — no hardcoded version
 // literal, so a catalog bump never makes this drift-detection test itself go stale.
@@ -18,13 +14,6 @@ describe("renderDockerfile against the real catalog and Dockerfile", () => {
 
   test("rendering twice is stable", () => {
     expect(renderDockerfile(currentTsDockerfile)).toBe(renderDockerfile(currentTsDockerfile));
-  });
-
-  // The Go tree still `go:embed`s its own copy for a dependency that hasn't been removed yet;
-  // this is the single place that keeps the two copies in sync until apps/cli-go is deleted.
-  test("the Go tree's embedded Dockerfile is a byte copy of the TS-owned one", () => {
-    const goDockerfile = readFileSync(GO_DOCKERFILE_PATH, "utf8");
-    expect(goDockerfile).toBe(currentTsDockerfile);
   });
 
   test("detects drift when a generated line is hand-edited", () => {

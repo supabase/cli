@@ -99,10 +99,13 @@ export const DnsResolverFlag = GlobalFlag.setting("dns-resolver")({
   ),
 });
 
+// Kept parsed (and hidden) only so passing it fails with the removal error from
+// `withCommandTelemetry` instead of an unknown-flag parse error.
 export const CreateTicketFlag = GlobalFlag.setting("create-ticket")({
   flag: Flag.boolean("create-ticket").pipe(
-    Flag.withDescription("create a support ticket for any CLI error"),
+    Flag.withDescription("Removed: report CLI problems with `supabase issue bug` instead."),
     Flag.withDefault(false),
+    Flag.withHidden,
   ),
 });
 

@@ -14,18 +14,12 @@ This workspace contains:
 This workspace contains the stable, shipped `supabase` CLI. Earlier revisions carried two shells
 (a `legacy/` tree and an experimental `next/` tree); both are gone and `src/` is the single CLI tree.
 
-For current migration/parity status, see:
-
-- [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md) — the residual Go delegation surface
-- [`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md) — TS-only flags and behavioral divergences from the old Go CLI
-
 For the generated command/reference docs, see:
 
-- [`docs/go-cli-reference.md`](./docs/go-cli-reference.md)
 - [`docs/supabase-home.md`](./docs/supabase-home.md)
 - [`../../packages/stack/docs/service-versioning.md`](../../packages/stack/docs/service-versioning.md)
 
-The README is intentionally brief. Command details should live in the generated docs and the parity tracker above.
+The README is intentionally brief. Command details should live in the generated docs above.
 
 ## Run From Source
 
@@ -42,27 +36,12 @@ Examples:
 pnpm dev -- hello
 ```
 
-### CLI and the Go binary
-
-Phase 0 commands in the CLI proxy to the Go CLI binary. To run these commands from source you need `supabase` (the Go CLI) available on your PATH.
+### Running from source
 
 For convenience, create a shell alias instead of using `pnpm dev` directly. For example in `.zshrc`:
 
 ```sh
 alias supabase-dev="bun /absolute/path/to/dx-lab/apps/cli/src/main.ts"
-```
-
-Then Phase 0 commands resolve the Go binary via PATH automatically:
-
-```sh
-supabase-dev orgs list   # proxied to supabase on PATH
-supabase-dev login       # native TypeScript
-```
-
-You can also point `SUPABASE_GO_BINARY` at a specific binary to skip the PATH lookup:
-
-```sh
-export SUPABASE_GO_BINARY=/path/to/supabase
 ```
 
 ## Build
@@ -91,11 +70,10 @@ The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) befor
 Used at release time to produce the compiled binaries that go into the platform-specific npm packages:
 
 ```sh
-# CLI (TS SFE + Go binary for each platform)
 bun scripts/build.ts --version X.Y.Z
 ```
 
-For the CLI, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
+This cross-compiles the CLI binary for each platform and places it in `packages/cli-{platform}/bin/`.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for a full explanation of the packaging model.
 
@@ -165,11 +143,8 @@ Platform-specific packages live under:
 - `packages/cli-linux-*`
 - `packages/cli-windows-*`
 
-Each platform package ships two binaries for the stable channel:
+Each platform package ships a single compiled binary for the stable channel:
 
 - `bin/supabase` — the compiled TypeScript SFE (Bun single-file executable)
-- `bin/supabase-go` — the compiled Go CLI binary, used by Phase 0 proxy commands
-
-The Go binary is compiled from `apps/cli-go/` at release time. Run `pnpm repos:install` after a fresh clone to make that source available.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for the full packaging model.

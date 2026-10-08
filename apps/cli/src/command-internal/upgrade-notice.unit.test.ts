@@ -633,14 +633,8 @@ describe("runUpgradeNotice", () => {
   });
 });
 
-/**
- * `delegatedToGo` is asserted directly rather than via a real proxied
- * command, so this doesn't depend on which commands still delegate to Go —
- * that set only shrinks (`docs/go-cli-porting-status.md`), and a test pinned
- * to one command would break the moment it's ported.
- */
 describe("upgradeNoticeHook", () => {
-  async function runHook(opts: { readonly delegatedToGo?: boolean; readonly cached?: boolean }) {
+  async function runHook(opts: { readonly cached?: boolean }) {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-hook-"));
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
@@ -671,7 +665,6 @@ describe("upgradeNoticeHook", () => {
           ["db", "branch", "list"],
           {
             cleanShowHelp: false,
-            delegatedToGo: opts.delegatedToGo === true,
             workingDirectory: workdir,
             isValueTakingFlagToken: () => false,
           },
@@ -692,10 +685,6 @@ describe("upgradeNoticeHook", () => {
     expect((await runHook({})).stderr).toContain(
       "A new version of Supabase CLI is available: v99.99.99",
     );
-  });
-
-  it("stays silent when the run delegated to Go, which printed its own notice", async () => {
-    expect((await runHook({ delegatedToGo: true })).stderr).toBe("");
   });
 
   it("traces a cache hit on the check span without a fetch span", async () => {
