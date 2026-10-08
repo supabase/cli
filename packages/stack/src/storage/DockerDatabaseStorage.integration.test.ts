@@ -60,7 +60,7 @@ const dockerStoragePublishLoopFixture = fileURLToPath(
 
 const helperMirror = "registry.test/supabase/postgres:17";
 const fakeHelperEngine = (
-  onRun: () => Effect.Effect<void> = () => Effect.void,
+  onCreate: () => Effect.Effect<void> = () => Effect.void,
   { volumePresent = false }: { readonly volumePresent?: boolean } = {},
 ) => {
   const commands: string[][] = [];
@@ -97,16 +97,18 @@ const fakeHelperEngine = (
         return handle(0);
       }
       if (args[0] === "inspect") return handle(1, "", "no such container");
-      if (args[0] === "run") {
+      if (args[0] === "create") {
         const shellIndex = args.indexOf("/bin/sh");
         const image = args[shellIndex - 1];
         if (image === undefined || !local.has(image))
           return handle(1, "", `Unable to find image '${image ?? ""}' locally`);
         // Fires once the create command the claim must precede is observed, so the claim's
         // presence at this exact point is a deterministic fact, not a timing guess.
-        yield* onRun();
-        return handle(0, args.includes("-i") ? "supabase-helper-ready\n" : "abcdef0123456789");
+        yield* onCreate();
+        return handle(0, "abcdef0123456789");
       }
+      if (args[0] === "start") return handle(0, "supabase-helper-ready\n");
+      if (args[0] === "run") return handle(0, "abcdef0123456789");
       if (args[0] === "exec" || args[0] === "rm") return handle(0, "done");
       return handle(1, "", `unexpected engine command: ${args[0] ?? ""}`);
     }),
@@ -321,8 +323,8 @@ describe.runIf(testEngine === "docker")(
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
-              const creating = command.args[0] === "run";
-              if (creating) yield* Deferred.succeed(started, undefined);
+              if (command.args[0] === "create") yield* Deferred.succeed(started, undefined);
+              const attaching = command.args[0] === "start";
               if (command.args[0] === "rm") {
                 yield* Ref.update(removals, (count) => count + 1);
                 yield* Ref.set(present, false);
@@ -333,7 +335,7 @@ describe.runIf(testEngine === "docker")(
                 isRunning: Effect.succeed(false),
                 kill: () => Effect.void,
                 stdin: Sink.drain,
-                stdout: creating
+                stdout: attaching
                   ? Stream.fromEffect(
                       Deferred.await(release).pipe(
                         Effect.andThen(Ref.set(present, true)),
@@ -396,20 +398,20 @@ describe.runIf(testEngine === "docker")(
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
-              const creating = command.args[0] === "run";
+              const attaching = command.args[0] === "start";
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
                 isRunning: Effect.succeed(false),
                 kill: () => Effect.void,
                 stdin: Sink.drain,
-                stdout: creating
+                stdout: attaching
                   ? Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
                       Stream.drain,
                       Stream.concat(Stream.never),
                     )
                   : Stream.empty,
-                stderr: creating
+                stderr: attaching
                   ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
                   : Stream.empty,
                 all: Stream.empty,
@@ -450,6 +452,86 @@ describe.runIf(testEngine === "docker")(
       ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
     );
 
+    it.effect(
+      "creates the helper by name before attaching so a readiness timeout can remove it",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const crypto = yield* Crypto.Crypto;
+            const root = yield* fs.makeTempDirectoryScoped({
+              prefix: "docker-helper-create-first-",
+            });
+            const waiting = yield* Deferred.make<void>();
+            const commands: string[][] = [];
+            const spawner = ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                if (!ChildProcess.isStandardCommand(command))
+                  return yield* Effect.die("Unexpected command");
+                commands.push([...command.args]);
+                const attaching = command.args[0] === "start";
+                return ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(0),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  stdin: Sink.drain,
+                  stdout: attaching
+                    ? Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
+                        Stream.drain,
+                        Stream.concat(Stream.never),
+                      )
+                    : Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                  unref: Effect.succeed(Effect.void),
+                });
+              }),
+            );
+            const storage = yield* makeDockerDatabaseStorage({
+              runtime: "docker",
+              target: dockerTarget,
+              stackId: "helper-create-first",
+              instanceId: "database",
+              instanceRoot: root,
+              root,
+              cacheRoot: path.join(root, "cache"),
+              fs,
+              path,
+              crypto,
+              spawner,
+              container: {
+                prepare: () => Effect.void,
+                prepareImage: (image) => Effect.succeed(image),
+                launch: () => Effect.die("unused"),
+                launchCommand: () => Effect.die("unused"),
+              },
+            });
+            yield* storage.prepare("17");
+            const operation = yield* storage.removeData("17").pipe(Effect.flip, Effect.forkScoped);
+            yield* Deferred.await(waiting);
+            yield* TestClock.adjust("30 seconds");
+            const failure = yield* Fiber.join(operation);
+            expect(failure.message).toBe("Database helper did not become ready within 30 seconds");
+            const create = commands.find((args) => args[0] === "create");
+            const name = create?.[create.indexOf("--name") + 1];
+            expect(name).toMatch(/^supabase-db-helper-/u);
+            expect(create?.slice(0, 3)).toEqual(["create", "--rm", "-i"]);
+            expect(create).not.toContain("--interactive");
+            const start = commands.find((args) => args[0] === "start");
+            expect(start).toEqual(["start", "--attach", "--interactive", name]);
+            // The helper is removed by the name that `create` registered, after the attach.
+            const order = commands.map((args) => args[0]);
+            expect(order.indexOf("create")).toBeLessThan(order.indexOf("start"));
+            expect(order.lastIndexOf("rm")).toBeGreaterThan(order.indexOf("start"));
+            expect(commands.filter((args) => args[0] === "rm")).toEqual([["rm", "-f", name]]);
+          }),
+        ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
+    );
+
     it.live("starts a storage helper with the mirror image selected during preparation", () => {
       const engine = fakeHelperEngine();
       return Effect.scoped(
@@ -486,9 +568,9 @@ describe.runIf(testEngine === "docker")(
           yield* storage.prepare("17");
           yield* storage.removeData("17");
 
-          const run = engine.commands.find((args) => args[0] === "run");
-          const shellIndex = run?.indexOf("/bin/sh") ?? -1;
-          expect(run?.[shellIndex - 1]).toBe(helperMirror);
+          const create = engine.commands.find((args) => args[0] === "create");
+          const shellIndex = create?.indexOf("/bin/sh") ?? -1;
+          expect(create?.[shellIndex - 1]).toBe(helperMirror);
           expect(
             engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
           ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
