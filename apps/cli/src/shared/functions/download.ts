@@ -98,10 +98,10 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsLocalConfigLoader}.
+   * The CLI injects this so this file never imports the command tree directly —
+   * see {@link FunctionsLocalConfigLoader}.
    */
-  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   /**
    * Fallback edge-runtime image tag used when the project config doesn't
    * pin `edge_runtime.deno_version` to `1`. Mirrors `deploy.ts`'s own
@@ -892,7 +892,7 @@ interface EdgeRuntimeImage {
   readonly denoVersion: number | undefined;
   /** Not yet registry-mapped/pull-resolved — see {@link resolveFunctionsDockerImage}. */
   readonly rawImage: string;
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  readonly projectEnvValues: Readonly<Record<string, string>>;
 }
 
 /**
@@ -975,14 +975,10 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   // `--network-id` is a persistent root flag, not registered on `functions
   // download` itself. `lastExplicitLongFlagValue` preserves the "explicitly
   // cleared" vs "never touched" distinction `resolveDockerNetworkMode` needs
-  // — see that function's own doc comment. `SUPABASE_NETWORK_ID` is CLI-only,
-  // like `projectEnvValues` (`undefined` for library callers).
+  // — see that function's own doc comment.
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-    envOverride:
-      projectEnvValues === undefined
-        ? undefined
-        : supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+    envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 

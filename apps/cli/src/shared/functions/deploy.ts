@@ -103,11 +103,10 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
   /**
-   * `undefined` for library callers; the CLI injects
-   * `functionsLocalConfigLoader` so this file never imports the command tree
-   * directly — see {@link FunctionsLocalConfigLoader}.
+   * The CLI injects `functionsLocalConfigLoader` so this file never imports the
+   * command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
@@ -2530,7 +2529,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
     // past `dependencies.projectRoot` for either load, so they can never resolve two
     // different projects.
-    search: dependencies.localConfigLoader === undefined,
+    search: false,
   });
   const configDeclaredFunctions = deployConfig?.functions ?? {};
   const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
@@ -2596,17 +2595,13 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
         // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
         // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
-        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
-        // callers.
+        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only.
         const networkMode = resolveDockerNetworkMode({
           explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride:
-            context.projectEnvValues === undefined
-              ? undefined
-              : supabaseEnvStringWithProjectFallback(
-                  "SUPABASE_NETWORK_ID",
-                  context.projectEnvValues,
-                ),
+          envOverride: supabaseEnvStringWithProjectFallback(
+            "SUPABASE_NETWORK_ID",
+            context.projectEnvValues,
+          ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

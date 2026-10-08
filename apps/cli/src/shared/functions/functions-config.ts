@@ -1,29 +1,24 @@
-import { Crypto, Effect, type FileSystem, Path } from "effect";
+import { Effect, type Crypto, type FileSystem, type Path } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/effect";
-import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
  * Config resolution context shared by the `functions` Docker paths
- * (`deploy`, `download`, `serve`). Callers that inject
- * {@link FunctionsLocalConfigLoader} additionally run the config/dotenv
- * validation pipeline `start`/`stop`/`status` already share; callers that
- * omit it keep the plain `loadCliConfig` behavior.
+ * (`deploy`, `download`, `serve`), produced by the injected
+ * {@link FunctionsLocalConfigLoader}.
  */
 interface FunctionsCliConfigContext {
   readonly loaded: LoadedCliConfig | null;
-  /** Merged env with ambient values winning; `undefined` when the hook is not injected. */
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /** Merged env with ambient values winning. */
+  readonly projectEnvValues: Readonly<Record<string, string>>;
   /** Sanitized project id, resolved after config validation. */
   readonly projectId: string;
   readonly denoVersion: number | undefined;
 }
 
 /**
- * Hook that lets a caller run its own config/dotenv validation pipeline
- * without this shared module importing the command tree's validation
- * machinery directly. `undefined` disables the hook.
+ * Hook that lets the shared `functions` modules run the command tree's config/dotenv
+ * validation pipeline without importing that machinery directly.
  */
 export interface FunctionsLocalConfigLoader {
   readonly load: (input: {
@@ -42,37 +37,14 @@ export interface FunctionsLocalConfigLoader {
 }
 
 /**
- * Loads project config for a `functions` command. Callers that provide
- * `localConfigLoader` run its dotenv/config-validate pipeline before any
- * Docker/API work; callers that don't fall back to `loadCliConfig`.
+ * Loads project config for a `functions` command, running `localConfigLoader`'s
+ * dotenv/config-validate pipeline before any Docker/API work.
  */
 export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function* (input: {
   readonly projectRoot: string;
   readonly projectRef: string | undefined;
-  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
 }) {
-  yield* Effect.annotateCurrentSpan({
-    "config.local_validation": input.localConfigLoader !== undefined,
-  });
-  if (input.localConfigLoader === undefined) {
-    const path = yield* Path.Path;
-    const loaded = yield* loadCliConfig(
-      input.projectRoot,
-      input.projectRef === undefined ? {} : { projectRef: input.projectRef },
-    );
-    return {
-      loaded,
-      projectEnvValues: undefined,
-      // Falls back to `basename` only when `projectRef` is undefined and the
-      // config lacks `project_id`. Sanitized because it also feeds Docker
-      // label/resource names, where an unsanitized value breaks cleanup filters.
-      projectId: normalizeProjectId(
-        loaded?.config.project_id ?? input.projectRef ?? path.basename(input.projectRoot),
-      ),
-      denoVersion: loaded?.config.edge_runtime.deno_version,
-    } satisfies FunctionsCliConfigContext;
-  }
-
   const context = yield* input.localConfigLoader.load({
     projectRoot: input.projectRoot,
     projectRef: input.projectRef,

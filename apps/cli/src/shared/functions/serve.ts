@@ -184,10 +184,10 @@ export interface FunctionsServeDependencies {
   readonly networkId: Option.Option<string>;
   readonly projectIdOverride: Option.Option<string>;
   /**
-   * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsLocalConfigLoader}.
+   * The CLI injects this so this file never imports the command tree directly —
+   * see {@link FunctionsLocalConfigLoader}.
    */
-  readonly localConfigLoader: FunctionsLocalConfigLoader | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   /** Overrides the shutdown-grace and log-retry timers; production leaves this unset. */
   readonly timers?: FunctionsServeTimers;
 }
@@ -225,8 +225,8 @@ interface ServeResolvedConfig {
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly configPath?: string;
-  /** Merged env with ambient values winning; `undefined` for library callers. */
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /** Merged env with ambient values winning. */
+  readonly projectEnvValues: Readonly<Record<string, string>>;
 }
 
 interface ServeFunctionContainerConfig {
@@ -707,16 +707,13 @@ const finalizeAuthArtifacts = Effect.fn("functions.serve.finalizeAuthArtifacts")
 const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
-  localConfigLoader: FunctionsLocalConfigLoader | undefined,
+  localConfigLoader: FunctionsLocalConfigLoader,
 ) {
   const path = yield* Path.Path;
   // Keeps `.env` discovery, config load, and functions-manifest inference
-  // from resolving three different roots: the CLI's `search: false` must
-  // match `loadFunctionsCliConfig`'s own options exactly (see below).
-  const searchAncestors = localConfigLoader === undefined;
-  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot, {
-    search: searchAncestors,
-  });
+  // from resolving three different roots: `search: false` must match
+  // `loadFunctionsCliConfig`'s own options exactly (see below).
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -731,13 +728,12 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   //
   // `search`/`tomlOnly` here must match `loadFunctionsCliConfig`'s own
   // options below exactly, or the two loads can resolve two different files,
-  // silently mixing fields from two different projects. Library callers
-  // (`localConfigLoader === undefined`) keep the package defaults unchanged.
+  // silently mixing fields from two different projects.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
     ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
-    search: searchAncestors,
-    ...(localConfigLoader === undefined ? {} : { tomlOnly: true }),
+    search: false,
+    tomlOnly: true,
   });
   const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
@@ -768,7 +764,7 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   const configFunctions = yield* inferFunctionsManifest({
     cwd: projectRoot,
     config: configForManifest,
-    search: searchAncestors,
+    search: false,
   });
   const configProjectId =
     projectEnv === null
@@ -785,28 +781,22 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   // Known gap: `projectId` only sees ambient-shell `SUPABASE_PROJECT_ID`, not
   // project dotenv, so a project setting it only in `.env` gets a different
   // Docker network than `deploy`/`download`/`start` — a silently broken `serve`.
-  const functionsCliConfig =
-    localConfigLoader === undefined
-      ? undefined
-      : yield* loadFunctionsCliConfig({
-          projectRoot,
-          projectRef,
-          localConfigLoader,
-        });
+  const functionsCliConfig = yield* loadFunctionsCliConfig({
+    projectRoot,
+    projectRef,
+    localConfigLoader,
+  });
 
   return {
     projectId: normalizeProjectId(rawProjectId.length > 0 ? rawProjectId : fallbackProjectId),
     apiPort,
     auth,
-    edgeRuntime:
-      functionsCliConfig === undefined
-        ? edgeRuntime
-        : { ...edgeRuntime, deno_version: functionsCliConfig.denoVersion },
+    edgeRuntime: { ...edgeRuntime, deno_version: functionsCliConfig.denoVersion },
     configDeclaredFunctions,
     configFunctions,
     rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
     configPath: loadedConfig?.path,
-    projectEnvValues: functionsCliConfig?.projectEnvValues,
+    projectEnvValues: functionsCliConfig.projectEnvValues,
   } satisfies ServeResolvedConfig;
 });
 
@@ -1105,10 +1095,10 @@ function ambientProjectEnv() {
 }
 
 const loadServeCliProjectEnvironment = Effect.fn("functions.serve.loadProjectEnvironment")(
-  function* (projectRoot: string, options: { readonly search: boolean }) {
+  function* (projectRoot: string) {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
+    const paths = yield* findCliProjectPaths(projectRoot, { search: false });
     if (paths === null) {
       return null;
     }
@@ -1998,14 +1988,12 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
   let ownsRuntime = false;
   let startedRuntime: StartedRuntime | undefined;
   return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` is CLI-only, like `resolved.projectEnvValues`
-    // (`undefined` for library callers).
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
-      envOverride:
-        resolved.projectEnvValues === undefined
-          ? undefined
-          : supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
+      envOverride: supabaseEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        resolved.projectEnvValues,
+      ),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
