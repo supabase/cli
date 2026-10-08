@@ -68,7 +68,16 @@ jobs:
       - name: Unlock keyring (for cli-go keyring tests)
         uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
+      # The shallow checkout lacks the base commit the test line-cap ratchet diffs against.
+      - name: Fetch line-cap base commit
+        if: github.event.pull_request.base.sha || github.event.merge_group.base_sha
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE"
+
       - name: Check code quality
+        env:
+          TEST_LINE_CAP_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: pnpm run check:all
 
       # Advisory only (base-vs-head diff, no acceptance artifact to gate a
