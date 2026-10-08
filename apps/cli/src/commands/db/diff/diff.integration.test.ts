@@ -700,6 +700,34 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explains ignored declarative files when a default local diff finds no changes", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ file: Option.some("declared") }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(stderr(s.out)).toContain("No schema changes found");
+      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
+      expect(stderr(s.out)).toContain("supabase db schema declarative sync");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("does not explain declarative files on a linked diff without -f", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "alter table x;\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ linked: Option.some(true) }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(stderr(s.out)).not.toContain("are not read");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
     const s = setup(tmp.current, {
       files: {
@@ -734,6 +762,7 @@ describe("db diff", () => {
       });
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
+      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });

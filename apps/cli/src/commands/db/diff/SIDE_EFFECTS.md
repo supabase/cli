@@ -167,8 +167,11 @@ the ordered plan units separately for application through `db reset` or `db push
 Progress strings still go to stderr; stdout carries a single structured envelope
 `{ diff, file, files, schemas, engine, dropStatements, advisories? }` instead of
 the raw SQL. Bundled pg-delta reports the best-effort
-`DeclarativeSchemaNotUsedAsDiffBaseline` advisory for a non-empty `--file` diff
-when declarative files exist.
+`DeclarativeSchemaNotUsedAsDiffBaseline` advisory when declarative files exist and
+the diff either writes a non-empty `--file` migration or targets the local database.
+In text mode the same condition prints a stderr note: the `-f` baseline note for a
+written migration, otherwise a note that the files are not read, pointing to
+`supabase db schema declarative sync` and the `enabled = false` rollback.
 
 In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
 representation as text stdout; the machine envelope does not restore the per-unit

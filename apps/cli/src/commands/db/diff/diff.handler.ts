@@ -105,6 +105,9 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
 const declarativeBaselineNote = (displayPath: string) =>
   `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
+const declarativeFilesIgnoredNote = (displayPath: string) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua("supabase db schema declarative sync")} to generate a migration from them, or set [experimental.pgdelta] enabled = false to diff them with migra.\n`;
+
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
     return yield* removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.");
@@ -685,7 +688,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       "diff.drop_statement_count": drops.length,
     });
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
-    if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
+    const writesMigration =
+      out.length >= 2 && Option.isSome(flags.file) && flags.file.value.length > 0;
+    // A local target is where migra used to read declarative files, so their silent absence
+    // from a pg-delta diff is worth explaining even without `-f` or with an empty diff.
+    if (useDelta && (writesMigration || resolved.isLocal)) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
@@ -701,7 +708,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
-        yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+        yield* output.raw(
+          writesMigration
+            ? declarativeBaselineNote(displayPath)
+            : declarativeFilesIgnoredNote(displayPath),
+          "stderr",
+        );
       }
     }
     if (out.length < 2) {
