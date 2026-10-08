@@ -1,5 +1,6 @@
-import { Option } from "effect";
+import { Effect, Option } from "effect";
 
+import { envValue } from "../shared/config/env-option.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 
 /**
@@ -47,7 +48,10 @@ export function edgeRuntimeId(projectId: string): string {
 }
 
 /** Recognizes `PGDELTA_DEBUG=1`/`true`/`yes` (case-insensitive). */
-export function isPgDeltaDebugEnabled(): boolean {
-  const value = (process.env["PGDELTA_DEBUG"] ?? "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
-}
+export const isPgDeltaDebugEnabled: Effect.Effect<boolean> = Effect.map(
+  envValue("PGDELTA_DEBUG"),
+  (raw) => {
+    const value = (raw ?? "").trim().toLowerCase();
+    return value === "1" || value === "true" || value === "yes";
+  },
+);

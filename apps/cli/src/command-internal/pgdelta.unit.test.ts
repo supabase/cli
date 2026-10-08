@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 
+import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { edgeRuntimeId, isPgDeltaDebugEnabled, isPostgresURL } from "./pgdelta.ts";
 
 describe("isPostgresURL", () => {
@@ -18,23 +20,18 @@ describe("edgeRuntimeId", () => {
 });
 
 describe("isPgDeltaDebugEnabled", () => {
-  const prev = process.env["PGDELTA_DEBUG"];
-  afterEach(() => {
-    if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
-    else process.env["PGDELTA_DEBUG"] = prev;
-  });
+  it.effect("is true for 1/true/yes (case-insensitive, trimmed)", () =>
+    Effect.gen(function* () {
+      for (const value of ["1", "true", "YES", "  True  "]) {
+        const debug = yield* withConfigEnv({ PGDELTA_DEBUG: value }, isPgDeltaDebugEnabled);
+        expect(debug).toBe(true);
+      }
+    }),
+  );
 
-  it("is true for 1/true/yes (case-insensitive, trimmed)", () => {
-    for (const value of ["1", "true", "YES", "  True  "]) {
-      process.env["PGDELTA_DEBUG"] = value;
-      expect(isPgDeltaDebugEnabled()).toBe(true);
-    }
-  });
-
-  it("is false otherwise", () => {
-    process.env["PGDELTA_DEBUG"] = "0";
-    expect(isPgDeltaDebugEnabled()).toBe(false);
-    delete process.env["PGDELTA_DEBUG"];
-    expect(isPgDeltaDebugEnabled()).toBe(false);
-  });
+  it.effect("is false otherwise", () =>
+    Effect.gen(function* () {
+      expect(yield* withConfigEnv({ PGDELTA_DEBUG: "0" }, isPgDeltaDebugEnabled)).toBe(false);
+    }),
+  );
 });

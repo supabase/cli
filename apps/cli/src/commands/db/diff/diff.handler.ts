@@ -334,7 +334,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
-        debug: isPgDeltaDebugEnabled(),
+        debug: yield* isPgDeltaDebugEnabled,
         strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
@@ -623,7 +623,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               },
               schema: flags.schema,
               formatOptions,
-              debug: isPgDeltaDebugEnabled(),
+              debug: yield* isPgDeltaDebugEnabled,
               strictCoverage: flags.strictCoverage,
             });
             return { sql: result.sql, files: result.files, hazards: result.hazards };

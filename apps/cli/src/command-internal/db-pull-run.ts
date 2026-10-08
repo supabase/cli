@@ -377,6 +377,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
     }
     const diffEngine = usePgDeltaDiff ? "pg-delta" : "migra";
+    const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
 
     // Connectivity check, run before dialing.
     return yield* Effect.scoped(
@@ -404,7 +405,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: isPgDeltaDebugEnabled(),
+              debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
@@ -664,7 +665,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     },
                     schema: diffSchema,
                     formatOptions,
-                    debug: isPgDeltaDebugEnabled(),
+                    debug: pgDeltaDebug,
                     strictCoverage: flags.strictCoverage,
                   });
                 }
