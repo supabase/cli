@@ -487,7 +487,7 @@ describe("migration squash", () => {
         const exit = yield* migrationSquash(
           flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("y") }),
         ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationPasswordFlagsError");
+        expect(failureTag(exit)).toBe("DbPasswordFlagsError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(

@@ -435,6 +435,26 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects --password combined with --local", () => {
+    const { layer } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* migrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          local: true,
+          linked: false,
+          password: Option.some("pw"),
+        }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("DbPasswordFlagsError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
     // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
     // the cached ref.

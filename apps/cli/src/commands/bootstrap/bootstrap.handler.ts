@@ -1,7 +1,9 @@
-import { Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
+import { Effect, FileSystem, Option, Path, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
@@ -80,6 +82,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   const workdirFlag = yield* WorkdirFlag;
   const dnsResolver = yield* DnsResolverFlag;
   const yesFlag = yield* resolveYes;
+  const configValues = yield* CliConfigValues;
 
   const isText = output.format === "text";
   const retry = { schedule: retrySchedule, times: BOOTSTRAP_MAX_RETRIES } as const;
@@ -171,27 +174,30 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     if (starter.url.length > 0) {
       if (isText) yield* output.raw(`Downloading: ${starter.url}\n`, "stdout");
-      yield* templateService.download(starter.url, workdir);
+      yield* configValues.writeThrough(templateService.download(starter.url, workdir));
     } else {
-      yield* initProject({
-        cwd: workdir,
-        force: true,
-        interactive: false,
-        yes: yesFlag,
-        useOrioledb: false,
-        withVscodeSettings: false,
-        withIntellijSettings: false,
-        experimentalStack,
-      }).pipe(Effect.withSpan("bootstrap.initProject"));
+      yield* configValues.writeThrough(
+        initProject({
+          cwd: workdir,
+          force: true,
+          interactive: false,
+          yes: yesFlag,
+          useOrioledb: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+          experimentalStack,
+        }).pipe(Effect.withSpan("bootstrap.initProject")),
+      );
     }
 
     yield* ensureLogin({ openBrowser: tty.stdinIsTty });
 
-    const seededPassword = Option.isSome(flags.password)
-      ? flags.password.value
-      : Option.isSome(cliSettings.dbPassword)
-        ? Redacted.value(cliSettings.dbPassword.value)
-        : "";
+    const seededPassword = Option.getOrElse(
+      (yield* (yield* configValues.load({ workdir, projectRef: Option.none() })).get(
+        CliConfigKeys.linkedDb.password,
+      )).value,
+      () => "",
+    );
     const created = yield* projectCreateCore({
       name: path.basename(workdir),
       orgId: "",
@@ -230,15 +236,19 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
-    yield* linkServicesCore({
-      ref: projectRef,
-      serviceKey: anon,
-      skipPooler: false,
-      workdir,
-    });
-    const paths = tempPaths(path, workdir);
-    yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
-    yield* fs.writeFileString(paths.projectRef, projectRef);
+    yield* configValues.writeThrough(
+      Effect.gen(function* () {
+        yield* linkServicesCore({
+          ref: projectRef,
+          serviceKey: anon,
+          skipPooler: false,
+          workdir,
+        });
+        const paths = tempPaths(path, workdir);
+        yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
+        yield* fs.writeFileString(paths.projectRef, projectRef);
+      }),
+    );
 
     const healthNotify = bootstrapRetryNotify();
     yield* Effect.gen(function* () {

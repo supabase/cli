@@ -4,6 +4,7 @@ import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryFromApiLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { commandPlatformApiLayer } from "../../auth/command-platform-api.layer.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { projectRefLayer } from "../../config/project-ref.layer.ts";
 import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
@@ -54,6 +55,7 @@ export const bootstrapRuntimeLayer = Layer.mergeAll(
   ),
   telemetryStateLayer,
   dbConnectionLayer,
+  cliConfigValuesLayer,
   // Exposed bare, not just fed to sibling sub-layers, because `bootstrap.handler.ts` calls
   // `resolveLinkedConn` directly and reads it.
   debugLogger,

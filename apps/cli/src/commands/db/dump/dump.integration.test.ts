@@ -575,6 +575,34 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects --password combined with --db-url", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+      );
+      expect(resolver.calls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --password combined with --local", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ local: Option.some(true), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "if any flags in the group [local password] are set none of the others can be; [local password] were all set",
+      );
+      expect(resolver.calls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

@@ -32,7 +32,7 @@ interface CommandSettingsShape {
   /** Dashboard base URL for the active profile, used by the connect-failure network-restrictions hint. */
   readonly dashboardUrl: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
-  /** `SUPABASE_DB_PASSWORD` captured at settings resolution; empty captures as none. */
+  /** @deprecated Always none; the database password resolves through `CliConfigKeys.linkedDb.password`. */
   readonly dbPassword: Option.Option<Redacted.Redacted<string>>;
   /** Ambient `GITHUB_TOKEN`; raises anonymous GitHub API rate limits. Empty captures as none. */
   readonly githubToken: Option.Option<Redacted.Redacted<string>>;

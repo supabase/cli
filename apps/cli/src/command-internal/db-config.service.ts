@@ -23,6 +23,7 @@ import type {
   DbConfigPoolerLoginError,
   DbConfigUnbanNetworkError,
   DbConfigUnbanStatusError,
+  DbPasswordFlagsError,
 } from "./db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 
@@ -30,6 +31,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 export type DbConfigError =
   | Config.ConfigError
   | DbConfigParseUrlError
+  | DbPasswordFlagsError
   | DbConfigLoadError
   | LocalDbRunningError
   | ProjectRefNotLinkedError

@@ -39,7 +39,10 @@ import {
 } from "../../../command-internal/db-config.toml-read.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  resolveDbTargetFlags,
+} from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -62,7 +65,6 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   MigrationFileNotFoundError,
   MigrationInvalidVersionError,
-  MigrationPasswordFlagsError,
   MigrationTargetFlagsError,
 } from "../migration.errors.ts";
 import { migrationConfirm } from "../migration.prompt.ts";
@@ -478,11 +480,7 @@ const runSquash = Effect.fnUntraced(function* (
         message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
       });
     }
-    if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* new MigrationPasswordFlagsError({
-        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
-      });
-    }
+    yield* rejectPasswordWithDirectTarget(target.connType ?? "local", flags.password);
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const connType = target.connType ?? "local";

@@ -26,9 +26,9 @@ export interface DbConfigFlags {
    */
   readonly resolveVaultSecrets?: boolean;
   /**
-   * The `--password`/`-p` flag value. When `Some`, it takes precedence over the
-   * `SUPABASE_DB_PASSWORD` env var on the linked path. Commands without a `--password` flag
-   * (e.g. `test db`) omit it, and the resolver falls back to env only.
+   * The `--password`/`-p` flag value, passed so the resolver can reject it with `--db-url` or
+   * `--local`. The linked path reads the password itself through `CliConfigValues`, where the
+   * flag beats `SUPABASE_DB_PASSWORD`.
    */
   readonly password?: Option.Option<string>;
   /**
@@ -41,10 +41,9 @@ export interface DbConfigFlags {
   readonly linkedProjectRef?: Option.Option<string>;
   /**
    * Marks `linkedProjectRef` as an ad-hoc remote target (e.g. `gen types --project-id <ref>`)
-   * rather than the current linked workdir, so the resolver must not reuse workdir-scoped
-   * credentials or cached state for it: it ignores the ambient `SUPABASE_DB_PASSWORD` and skips
-   * the saved `.temp/pooler-url`, fetching pooler config from the Management API instead. Absent
-   * for the normal `--linked` path, which may reuse both.
+   * rather than the current linked workdir, so the resolver must not reuse the saved
+   * `.temp/pooler-url`, fetching pooler config from the Management API instead. Absent for the
+   * normal `--linked` path, which may reuse it.
    */
   readonly adHocProjectRef?: boolean;
 }

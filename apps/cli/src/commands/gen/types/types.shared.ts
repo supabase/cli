@@ -1,4 +1,4 @@
-import { Config, Effect, Option, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { InvalidGenTypesDurationError } from "./types.errors.ts";
 import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
@@ -76,11 +76,6 @@ export function parseQueryTimeoutMillis(
     return totalMillis;
   });
 }
-
-export const localDbPassword = Effect.fnUntraced(function* () {
-  const value = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
-  return Option.getOrElse(value, () => "postgres");
-});
 
 export function rootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;

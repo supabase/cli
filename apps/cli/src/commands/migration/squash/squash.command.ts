@@ -1,6 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationSquashRuntimeLayer } from "../migration.layers.ts";
@@ -25,11 +27,11 @@ const config = {
     Flag.withDescription("Squashes the migration history of the local database."),
     Flag.withDefault(true),
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description: "Password to your remote Postgres database.",
+  }),
   // TS-only override of the linked project ref — see push.command.ts (db push).
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
@@ -63,4 +65,5 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
     ),
   ),
   Command.provide(migrationSquashRuntimeLayer),
+  withCliConfigFlags(config),
 );

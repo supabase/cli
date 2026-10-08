@@ -9,7 +9,11 @@
  * skipped during the scan, so e.g. `--schema --linked` does not misdetect `--linked` as changed.
  */
 
+import { Effect, Option } from "effect";
+
 import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../commands/gen/types/types.languages.ts";
+import { cobraMutuallyExclusiveErrorMessage } from "../shared/cli/cobra-flag-groups.ts";
+import { DbPasswordFlagsError } from "./db-config.errors.ts";
 
 export type DbConnType = "db-url" | "linked" | "local";
 
@@ -294,3 +298,23 @@ export function resolveDbTargetFlags(args: ReadonlyArray<string>): DbTargetSelec
 
   return { setFlags, connType };
 }
+
+/**
+ * `--password` only authenticates against a linked project, so it fails when paired with a target
+ * that carries its own credentials (`--db-url`) or reads them from config (`--local`, also the
+ * default when no selector is set).
+ */
+export const rejectPasswordWithDirectTarget = (
+  connType: DbConnType | undefined,
+  password: Option.Option<string> | undefined,
+): Effect.Effect<void, DbPasswordFlagsError> => {
+  if (password === undefined || Option.isNone(password) || connType === "linked") {
+    return Effect.void;
+  }
+  const target = connType ?? "local";
+  return Effect.fail(
+    new DbPasswordFlagsError({
+      message: cobraMutuallyExclusiveErrorMessage([target, "password"], [target, "password"]),
+    }),
+  );
+};
