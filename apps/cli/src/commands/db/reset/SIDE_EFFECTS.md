@@ -292,9 +292,7 @@ to those defaults (the usual outcome for an interactive terminal).
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
   `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled`
   resolves false, which requires an explicit `enabled = false` (the default is true).
-  When the branch is skipped only because pg-delta is enabled and `schema_paths` is
-  non-empty, a stderr `WARNING: [db.migrations].schema_paths is not applied while pg-delta
-is enabled …` line is printed (before the confirmation prompt on the remote path). Taking this branch means timestamped
+  Taking the schema-files branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
   nothing. Faithfully reproduces two undocumented quirks inherited from the old
   Go CLI: (1) the `schema_paths`
@@ -315,6 +313,10 @@ is enabled …` line is printed (before the confirmation prompt on the remote pa
   decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.
+- When a versionless `--experimental` reset skips the schema-files branch only because
+  pg-delta is enabled and `schema_paths` is non-empty, it prints a stderr warning that
+  `schema_paths` is not applied and that `[experimental.pgdelta] enabled = false` restores it
+  (before the confirmation prompt on the remote path).
 - `db schema declarative`/`db schema sync`'s own local-reset paths now call
   `resetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
   (those two commands shelling out to a second `supabase-go` child via the now-removed
