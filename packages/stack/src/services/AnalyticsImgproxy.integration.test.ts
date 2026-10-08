@@ -2,10 +2,12 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-analytics",
@@ -17,7 +19,8 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -29,6 +32,11 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-optional-data-");
+          // Ownership is by location: Imgproxy's served directory is a caller path and must live
+          // outside the stack's data root, not merely outside the service's own instance root.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-optional-data-caller-",
+          });
           const secret = "catalog-optional-data-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -41,9 +49,8 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -58,9 +65,8 @@ describe("service catalog", () => {
               config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const analytics = yield* makeService(analyticsRecipe.definition, {
+          const analytics = yield* makeStandaloneService(analyticsRecipe.definition, {
             id: "analytics",
             config: analyticsRecipe.creation,
           });
@@ -69,19 +75,18 @@ describe("service catalog", () => {
           const analyticsEndpoint = yield* analyticsRecipe.endpoint("http");
           const analyticsResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${analyticsEndpoint.host}:${analyticsEndpoint.port}/health`,
+              `http://${httpHost(analyticsEndpoint)}:${analyticsEndpoint.port}/health`,
             ),
           );
           expect(analyticsResponse.status).toBe(200);
 
-          const imageRoot = `${root}/images`;
+          const imageRoot = `${callerRoot}/images`;
           yield* fs.makeDirectory(imageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: imageRoot } },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const imgproxy = yield* makeService(imgproxyRecipe.definition, {
+          const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
             id: "imgproxy",
             config: imgproxyRecipe.creation,
           });
@@ -90,7 +95,7 @@ describe("service catalog", () => {
           const imgproxyEndpoint = yield* imgproxyRecipe.endpoint("http");
           const imgproxyResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${imgproxyEndpoint.host}:${imgproxyEndpoint.port}/health`,
+              `http://${httpHost(imgproxyEndpoint)}:${imgproxyEndpoint.port}/health`,
             ),
           );
           expect(imgproxyResponse.status).toBe(200);

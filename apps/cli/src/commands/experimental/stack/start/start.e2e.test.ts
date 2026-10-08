@@ -92,7 +92,6 @@ const FollowEventSchema = Schema.Struct({
 
 const VariablesSchema = Schema.Record(Schema.String, Schema.String);
 const StartResultSchema = Schema.Struct({ id: Schema.String });
-const StackListSchema = Schema.Struct({ stacks: Schema.Array(Schema.Unknown) });
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
@@ -186,7 +185,8 @@ describe("stack start (compiled e2e)", () => {
   const cleanup = Effect.gen(function* () {
     let cleanupComplete = stackDestroyed;
     if (!cleanupComplete && home !== undefined) {
-      const candidates = yield* readDirectory(join(home.dir, "stacks")).pipe(
+      const stacksDir = join(home.dir, "stacks");
+      const candidates = yield* readDirectory(stacksDir).pipe(
         Effect.catchIf(
           (cause) =>
             Predicate.isTagged(cause, "PlatformError") &&
@@ -194,7 +194,10 @@ describe("stack start (compiled e2e)", () => {
           () => Effect.succeed([]),
         ),
       );
-      const discovered = candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry));
+      const discovered = yield* Effect.filter(
+        candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry)),
+        (entry) => access(join(stacksDir, entry, "state.json")).pipe(Effect.isSuccess),
+      );
       const ownedId = stackId ?? (discovered.length === 1 ? discovered[0] : undefined);
       if (ownedId !== undefined) {
         yield* destroyStack(home.dir, ownedId);
@@ -577,54 +580,10 @@ describe("stack start (compiled e2e)", () => {
           yield* destroyStack(homeDir.dir, idText);
           stackDestroyed = true;
 
-          const destroyed = yield* Effect.exit(access(join(homeDir.dir, "stacks", idText)));
+          const destroyed = yield* Effect.exit(
+            access(join(homeDir.dir, "stacks", idText, "state.json")),
+          );
           expect(Exit.isFailure(destroyed)).toBe(true);
-        }),
-      ),
-  );
-
-  test(
-    "removes a stack registration that fails to start because Docker is unreachable",
-    { timeout: CLEANUP_TIMEOUT_MS },
-    () =>
-      runNode(
-        Effect.gen(function* () {
-          home = makeTempHome();
-          projectDir = yield* makeTempDirectory("/tmp/supabase-stack-start-docker-down-e2e-");
-          yield* makeDirectory(join(projectDir, "supabase"), { recursive: true });
-          yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
-          // A `docker` first on PATH that reports an unreachable daemon, as the real CLI does.
-          const binDir = join(projectDir, "bin");
-          yield* makeDirectory(binDir);
-          yield* writeText(
-            join(binDir, "docker"),
-            "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
-          );
-          yield* withFs((fs) => fs.chmod(join(binDir, "docker"), 0o755));
-
-          const result = yield* runSupabaseEffect(["stack", "start", "--runtime", "docker"], {
-            cwd: projectDir,
-            home: home.dir,
-            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the CLI subprocess resolves `docker` from PATH.
-            env: { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-          });
-          expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(
-            0,
-          );
-          expect(result.stderr).toContain("Cannot connect to the Docker daemon");
-          expect(result.stderr).not.toContain("Failed to stop stack host");
-
-          const list = yield* runSupabaseEffect(["stack", "list", "--output-format", "json"], {
-            home: home.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-          });
-          expect(list.exitCode, `stdout:\n${list.stdout}\nstderr:\n${list.stderr}`).toBe(0);
-          const listed = yield* Schema.decodeEffect(Schema.fromJsonString(StackListSchema))(
-            list.stdout.trim(),
-          );
-          expect(listed.stacks).toEqual([]);
         }),
       ),
   );

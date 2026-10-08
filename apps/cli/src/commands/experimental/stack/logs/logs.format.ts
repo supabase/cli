@@ -85,8 +85,7 @@ const compareRecords = (left: StackLogRecord, right: StackLogRecord) =>
 
 interface Launch {
   readonly id: number;
-  /** Unknown until its launch record is read; a saved launch may not have written one. */
-  readonly timestamp: string | undefined;
+  readonly timestamp: string;
 }
 
 interface InstanceTail {
@@ -104,21 +103,18 @@ export const isFromLaunch = (record: LogRecord, launchId: number | undefined) =>
 /** Launch ids increase per instance; a gap marker carries none, so its time decides. */
 const fromLaunch = (record: StackLogRecord, launch: Launch) =>
   record.launchId === undefined
-    ? launch.timestamp === undefined || record.timestamp >= launch.timestamp
+    ? record.timestamp >= launch.timestamp
     : isFromLaunch(record, launch.id);
 
 /**
- * Collects each instance's newest `tail` lines and last position. With `startLaunches`, it keeps
- * only the records of each instance's current launch: its saved launch id, or else its highest
- * launch record, which `launches` reports for following.
+ * Collects each instance's newest `tail` lines and last position. With `fromLatestLaunch`, it
+ * keeps only the records of each instance's highest launch record, which `launches` reports for
+ * following.
  */
-export const makeHistoryCollector = (
-  tail: number,
-  startLaunches: ReadonlyMap<string, number> | undefined,
-) => {
+export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) => {
   const instances = new Map<string, InstanceTail>();
   const positions = new Map<string, LogPosition>();
-  const launches = new Map(startLaunches);
+  const launches = new Map<string, number>();
   const push = (record: StackLogRecord) => {
     const position = record.position;
     const last = positions.get(record.instanceId);
@@ -126,24 +122,15 @@ export const makeHistoryCollector = (
       positions.set(record.instanceId, position);
     let state = instances.get(record.instanceId);
     if (state === undefined) {
-      const saved = startLaunches?.get(record.instanceId);
-      state = {
-        records: [],
-        head: 0,
-        lines: 0,
-        total: 0,
-        launch: saved === undefined ? undefined : { id: saved, timestamp: undefined },
-      };
+      state = { records: [], head: 0, lines: 0, total: 0, launch: undefined };
       instances.set(record.instanceId, state);
     }
-    if (startLaunches !== undefined) {
+    if (fromLatestLaunch) {
       const latest = state.launch;
       if (
         record.kind === "launch" &&
         record.launchId !== undefined &&
-        (latest === undefined ||
-          record.launchId > latest.id ||
-          (record.launchId === latest.id && latest.timestamp === undefined))
+        (latest === undefined || record.launchId > latest.id)
       ) {
         const launch = { id: record.launchId, timestamp: record.timestamp };
         state.records = state.records.slice(state.head).filter((kept) => fromLaunch(kept, launch));

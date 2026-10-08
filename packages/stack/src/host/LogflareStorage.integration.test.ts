@@ -3,8 +3,8 @@ import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref, Scope } from "effect";
 import { connect, createServer, type Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { tmpdir } from "node:os";
-import { makeService } from "../Service.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type DatabaseConfig } from "../services/Database.ts";
 import * as LogflareStorage from "./LogflareStorage.ts";
 
@@ -31,12 +31,12 @@ const analyticsDatabase = Effect.gen(function* () {
     stackId: "logflare-storage",
     instanceId: "database",
     root,
-    cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+    cacheRoot: testArtifactCacheRoot,
     runtime: "native",
   });
   // The service runs its operations in its own scope, which must stay open while it is destroyed.
   const serviceScope = yield* Scope.make();
-  const service = yield* makeService(recipe.definition, { id: "database", config }).pipe(
+  const service = yield* makeStandaloneService(recipe.definition, { id: "database", config }).pipe(
     Scope.provide(serviceScope),
   );
   yield* Effect.addFinalizer(() =>
@@ -118,7 +118,6 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
         const stored = yield* storage.storedIds("postgres.logs", [storedId, missingId]);
         const uncreated = yield* storage.storedIds("auth.logs", [storedId]);
         const unknown = yield* storage.storedIds("storage.logs", [storedId]).pipe(Effect.flip);
-
         expect([...stored]).toEqual([storedId]);
         expect([...uncreated]).toEqual([]);
         expect(unknown.message).toBe("Analytics has no storage.logs sources");

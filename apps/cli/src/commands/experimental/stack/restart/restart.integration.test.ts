@@ -1,8 +1,8 @@
-import { tmpdir } from "node:os";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -11,8 +11,38 @@ import {
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(
+  stackApiLayer,
+  Layer.merge(BunServices.layer, FetchHttpClient.layer),
+);
+const MailpitInfo = Schema.Struct({ RuntimeStats: Schema.Struct({ SMTPAccepted: Schema.Finite }) });
+
+// Mailpit counts accepted messages per process, so the count restarts from zero after a relaunch.
+const mailpit = Effect.fn("StackRestartTest.mailpit")(function* (port: number) {
+  const http = yield* HttpClient.HttpClient;
+  const origin = `http://127.0.0.1:${port}`;
+  return {
+    send: http
+      .execute(
+        HttpClientRequest.post(`${origin}/api/v1/send`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            From: { Email: "from@example.com" },
+            To: [{ Email: "to@example.com" }],
+            Subject: "restart",
+            Text: "restart",
+          }),
+        ),
+      )
+      .pipe(Effect.flatMap((response) => response.text)),
+    accepted: http.get(`${origin}/api/v1/info`).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(MailpitInfo)),
+      Effect.map((info) => info.RuntimeStats.SMTPAccepted),
+    ),
+  };
+});
 const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -20,7 +50,7 @@ const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
   const api = yield* StackApi;
   const locations = {
     stateRoot: path.join(root, "stacks"),
-    cacheRoot: path.join(tmpdir(), "supabase-stack-artifacts"),
+    cacheRoot: stackArtifactCacheRoot,
   };
   const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "native" });
   const output = mockOutput();
@@ -71,17 +101,38 @@ describe("stack restart", () => {
               yield* standalone.start;
               yield* standalone.ready;
               const before = yield* member.status;
-              const standaloneBefore = yield* standalone.status;
+              const standaloneHttpPort = (yield* standalone.status).endpoints.find(
+                ({ name }) => name === "http",
+              )?.port;
+              if (standaloneHttpPort === undefined) return yield* Effect.die("Mail port missing");
+              const standaloneMail = yield* mailpit(standaloneHttpPort);
+              yield* standaloneMail.send;
+              expect(yield* standaloneMail.accepted).toBe(1);
+
+              // Both follows are subscribed once their first status arrives, before the restart.
+              const memberFollowing = yield* Deferred.make<void>();
+              const relaunched = yield* member.followStatus.pipe(
+                Stream.tap(() => Deferred.succeed(memberFollowing, undefined)),
+                Stream.dropWhile((value) => value.lifecycle === "running"),
+                Stream.filter(
+                  (value) => value.lifecycle === "running" && value.health === "healthy",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+              yield* Deferred.await(memberFollowing);
+
               const result = yield* stackRestart(f.flags).pipe(Effect.provide(f.layer));
+              yield* Fiber.join(relaunched);
               const after = yield* member.status;
               const standaloneAfter = yield* standalone.status;
               expect(result.map(({ id }) => id)).toEqual([member.id]);
               expect(after.lifecycle).toBe("running");
               expect(after.health).toBe("healthy");
-              expect(after.launchId).not.toBe(before.launchId);
               expect(after.endpoints).toEqual(before.endpoints);
               expect(standaloneAfter.lifecycle).toBe("running");
-              expect(standaloneAfter.launchId).toBe(standaloneBefore.launchId);
+              expect(yield* standaloneMail.accepted).toBe(1);
               expect(f.output.stdoutText).toContain("using its saved configuration");
               expect(f.telemetry.flushed).toBe(true);
               yield* stack.stop;

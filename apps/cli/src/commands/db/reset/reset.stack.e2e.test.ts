@@ -4,10 +4,9 @@ import { Context, Data, Effect, FileSystem, Layer, Path, Redacted } from "effect
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { PgClient } from "@effect/sql-pg";
 import { create as createStack } from "@supabase/stack/effect";
-import { tmpdir } from "node:os";
-
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
@@ -166,13 +165,10 @@ describe("supabase db reset (stack e2e)", () => {
           const home = yield* fs.makeTempDirectoryScoped({ prefix: `db-reset-home-${runtime}-` });
           yield* writeFixture(root, fs, path);
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-          yield* fs.makeDirectory(path.join(tmpdir(), "supabase-stack-artifacts"), {
+          yield* fs.makeDirectory(stackArtifactCacheRoot, {
             recursive: true,
           });
-          yield* fs.symlink(
-            path.join(tmpdir(), "supabase-stack-artifacts"),
-            path.join(home, "cache", "stack"),
-          );
+          yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
 
           const stack = yield* composeStack(root, home, runtime);
 

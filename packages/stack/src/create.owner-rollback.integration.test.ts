@@ -19,7 +19,7 @@ it.live(
       const dockerShim = path.join(binDir, "docker");
       yield* fs.writeFileString(
         dockerShim,
-        "#!/bin/sh\necho 'docker daemon unreachable' >&2\nexit 1\n",
+        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
       );
       yield* fs.chmod(dockerShim, 0o755);
       // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
@@ -43,11 +43,13 @@ it.live(
       const id = yield* deriveStackId(identity);
 
       const launchFailure = yield* Effect.flip(create({ ...options, startOwner: true }));
-      expect(launchFailure.message).toContain("docker daemon unreachable");
+      expect(launchFailure.message).toContain("Cannot connect to the Docker daemon");
 
       expect(yield* discover({ stateRoot: options.stateRoot })).toEqual([]);
-      const stackDirExit = yield* Effect.exit(fs.access(path.join(options.stateRoot, id)));
-      expect(Exit.isFailure(stackDirExit)).toBe(true);
+      const stateFileExit = yield* Effect.exit(
+        fs.access(path.join(options.stateRoot, id, "state.json")),
+      );
+      expect(Exit.isFailure(stateFileExit)).toBe(true);
 
       const retried = yield* create({ ...options, runtime: "native" });
       expect(retried.id).toBe(id);
@@ -60,7 +62,7 @@ it.live("removes a stack it just registered when its owner launch is interrupted
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-create-interrupt-" });
-    // The shim signals through a FIFO once the owner's startup sweep is running, then blocks.
+    // The shim signals through a FIFO once the owner's startup reconcile is running, then blocks.
     const started = path.join(root, "sweep-started");
     yield* Effect.scoped(
       spawner
@@ -70,19 +72,34 @@ it.live("removes a stack it just registered when its owner launch is interrupted
     const binDir = path.join(root, "bin");
     yield* fs.makeDirectory(binDir, { recursive: true });
     const dockerShim = path.join(binDir, "docker");
+    // An orphaned container from a never-fully-registered prior attempt, found by this owner's
+    // startup label sweep before it finishes registering.
+    const orphanId = "interrupt0000000000000000000000001";
     yield* fs.writeFileString(
       dockerShim,
-      `#!/bin/sh\nif [ "$1" = "ps" ]; then echo started > '${started}'; exec sleep 60; fi\nexit 0\n`,
+      // The leading check strips the pinned `--host <endpoint>` prefix every invocation now
+      // carries (fixed below via DOCKER_HOST), so "$1" below still sees the real command.
+      `#!/bin/sh\nif [ "$1" = "--host" ]; then shift 2; fi\nif [ "$1" = "ps" ]; then echo '${orphanId}'; exit 0; fi\nif [ "$1" = "rm" ]; then echo started > '${started}'; exec sleep 60; fi\nif [ "$1" = "info" ]; then echo fake-daemon-id; fi\nexit 0\n`,
     );
     yield* fs.chmod(dockerShim, 0o755);
     // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
     const originalPath = process.env.PATH;
     // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
     process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    // Fixes the pinned endpoint to a dummy socket, so resolving it never needs `context show`/
+    // `context inspect`, which this minimal shim doesn't answer.
+    // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+    const originalDockerHost = process.env.DOCKER_HOST;
+    // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+    process.env.DOCKER_HOST = "unix:///var/run/shimmed-docker.sock";
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
         process.env.PATH = originalPath;
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+        if (originalDockerHost === undefined) delete process.env.DOCKER_HOST;
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+        else process.env.DOCKER_HOST = originalDockerHost;
       }),
     );
 

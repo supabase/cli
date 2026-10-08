@@ -2,7 +2,7 @@ import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.
 import type { ServiceEndpoint } from "../services/Recipe.ts";
 import { apiPath as storageApiPath } from "../services/Storage.ts";
 import type { NetworkEndpoint } from "../Network.ts";
-import { ProxyError, type BackendAddress } from "../Proxy.ts";
+import type { BackendAddress } from "../Proxy.ts";
 import { Data, Effect, Redacted } from "effect";
 
 export class EndpointError extends Data.TaggedError("EndpointError")<{
@@ -47,6 +47,10 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
       return undefined;
   }
 };
+
+/** Whether the service's configured HTTP endpoint is served on the shared API listener. */
+export const sharesApiEndpoint = (creation: EndpointIntents): boolean =>
+  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
 
 type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
 
@@ -96,15 +100,10 @@ export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndp
     : undefined;
 
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
-export const backendAddress = (
-  endpoint: ServiceEndpoint,
-): Effect.Effect<BackendAddress, ProxyError> => {
-  if (endpoint.kind === "unix")
-    return endpoint.path === undefined
-      ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
-      : Effect.succeed({ path: `${endpoint.path}/.s.PGSQL.${endpoint.port}` });
-  return Effect.succeed({ host: endpoint.host ?? "127.0.0.1", port: endpoint.port });
-};
+export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>
+  endpoint.kind === "unix"
+    ? { path: endpoint.path }
+    : { host: endpoint.host ?? "127.0.0.1", port: endpoint.port };
 
 export const publicUrl = (host: string, port: number) => `http://${host}:${port}`;
 

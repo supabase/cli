@@ -6,7 +6,18 @@ import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
-import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Schema,
+  Semaphore,
+  Sink,
+  Stream,
+  Tracer,
+} from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
@@ -16,6 +27,7 @@ import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { DockerRunError } from "../docker-run.errors.ts";
 import {
   DbSetupError,
+  ensureStackWebhookSchema,
   resolveDbSetupPrelude,
   runDatabaseWebhooksSetup,
   startInitCurrentBranch,
@@ -837,6 +849,110 @@ describe("runDatabaseWebhooksSetup", () => {
       }),
     );
   });
+});
+
+describe("ensureStackWebhookSchema", () => {
+  /**
+   * Two sessions on one database without `supabase_functions`, with PostgreSQL's advisory-lock
+   * and duplicate-schema semantics. Each schema check waits until the other session has sent a
+   * statement, so both checks overlap unless something serializes them.
+   */
+  const racingDatabase = Effect.gen(function* () {
+    const lock = yield* Semaphore.make(1);
+    const arrived = { first: yield* Deferred.make<void>(), second: yield* Deferred.make<void>() };
+    const creators: Array<keyof typeof arrived> = [];
+    let schemaExists = false;
+    const session = (name: keyof typeof arrived): DbSession => {
+      const other = name === "first" ? arrived.second : arrived.first;
+      const exec = (sql: string) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(arrived[name], undefined);
+          if (sql.includes("pg_advisory_lock(")) return yield* lock.take(1);
+          if (sql.includes("pg_advisory_unlock(")) return yield* lock.release(1);
+          if (!sql.includes("CREATE SCHEMA supabase_functions")) return;
+          if (schemaExists)
+            return yield* new DbExecError({
+              message:
+                'duplicate key value violates unique constraint "pg_namespace_nspname_index"',
+              code: "23505",
+            });
+          schemaExists = true;
+          creators.push(name);
+        }).pipe(Effect.asVoid);
+      return {
+        exec,
+        execBatch: (statements) =>
+          Effect.forEach(statements, ({ sql }) => exec(sql), { discard: true }),
+        query: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(arrived[name], undefined);
+            const missing = !schemaExists;
+            yield* Deferred.await(other);
+            return [{ missing }];
+          }),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+      };
+    };
+    return { session, creators };
+  });
+
+  it.live("creates the schema once when two starts race on one database", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const database = yield* racingDatabase;
+      const ensure = (name: "first" | "second") =>
+        Effect.gen(function* () {
+          const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: `webhook-schema-${name}-` });
+          yield* ensureStackWebhookSchema(database.session(name), fs, path, tmpDir);
+        });
+      yield* Effect.all([ensure("first"), ensure("second")], { concurrency: "unbounded" });
+      expect(database.creators).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("releases the lock and reports no creation when the template fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "webhook-schema-failure-" });
+      const execSql: Array<string> = [];
+      const session: DbSession = {
+        ...fakeSession().session,
+        exec: (sql) =>
+          Effect.suspend(() => {
+            execSql.push(sql);
+            return sql.includes("CREATE TABLE supabase_functions.hooks")
+              ? Effect.fail(new DbExecError({ message: "disk full", code: "53100" }))
+              : Effect.void;
+          }),
+        query: () => Effect.succeed([{ missing: true }]),
+      };
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      const error = yield* ensureStackWebhookSchema(session, fs, path, tmpDir).pipe(
+        Effect.flip,
+        Effect.withTracer(tracer),
+        Effect.withTracerEnabled(true),
+      );
+
+      expect(error).toBeInstanceOf(DbSetupError);
+      expect(execSql[0]).toContain("pg_advisory_lock(");
+      expect(execSql.at(-1)).toContain("pg_advisory_unlock(");
+      const span = spans.find(({ name }) => name === "DbSetup.ensureStackWebhookSchema");
+      expect(span).toBeDefined();
+      expect(span?.attributes.has("db.webhook_schema.created")).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("startInitCurrentBranch", () => {

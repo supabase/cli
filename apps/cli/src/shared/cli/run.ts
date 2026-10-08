@@ -538,6 +538,8 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
 export interface RunCliOptions<BeforeParseError = never> {
   /** Runs after runtime services are installed and before command parsing. */
   readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
+  /** The selected root's agent default, applied to failures `runCli` renders itself. */
+  readonly agentDefaultOutputFormat: OutputFormat;
   readonly analyticsLayer: Layer.Layer<
     Analytics,
     Config.ConfigError | PlatformError.PlatformError,
@@ -648,7 +650,7 @@ export const runCli = Effect.fnUntraced(function* <
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
-    return resolveAgentOutputFormatFromArgs(args, aiTool.name);
+    return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
   }).pipe(Effect.provide(aiToolLayer));
   const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
 

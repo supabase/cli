@@ -2,8 +2,10 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-mail",
@@ -15,7 +17,8 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 interface MailpitMessages {
@@ -64,9 +67,8 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           dockerOptions(root),
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -74,7 +76,7 @@ describe("service catalog", () => {
         yield* instance.ready;
         const endpoint = yield* recipe.endpoint("http");
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/readyz`),
+          HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
         );
         expect(response.status).toBe(200);
         yield* instance.stop;
@@ -91,18 +93,14 @@ describe("service catalog", () => {
           const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
           const recipeFor = (instanceId: string) =>
-            makeServiceRecipe(
-              { service: "mail", config: {} },
-              { ...options(root), instanceId },
-              Effect.succeed([]),
-            );
+            makeServiceRecipe({ service: "mail", config: {} }, { ...options(root), instanceId });
           const first = yield* recipeFor("mail-a");
           const second = yield* recipeFor("mail-b");
-          const firstInstance = yield* makeService(first.definition, {
+          const firstInstance = yield* makeStandaloneService(first.definition, {
             id: "mail-a",
             config: first.creation,
           });
-          const secondInstance = yield* makeService(second.definition, {
+          const secondInstance = yield* makeStandaloneService(second.definition, {
             id: "mail-b",
             config: second.creation,
           });
@@ -126,12 +124,8 @@ describe("service catalog", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-persistence-" });
-        const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
-          options(root),
-          Effect.succeed([]),
-        );
-        const instance = yield* makeService(recipe.definition, {
+        const recipe = yield* makeServiceRecipe({ service: "mail", config: {} }, options(root));
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -164,9 +158,8 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           dockerOptions(root),
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -195,12 +188,8 @@ describe("service catalog", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-destroy-" });
-        const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
-          options(root),
-          Effect.succeed([]),
-        );
-        const instance = yield* makeService(recipe.definition, {
+        const recipe = yield* makeServiceRecipe({ service: "mail", config: {} }, options(root));
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -223,9 +212,8 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           { ...options(root), instanceId: "../escaped" },
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });

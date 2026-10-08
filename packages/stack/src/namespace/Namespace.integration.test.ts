@@ -1,0 +1,1043 @@
+import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { describe, expect, it } from "@effect/vitest";
+import { TestClock } from "effect/testing";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Ref,
+  Schema,
+  Scheduler,
+  Scope,
+} from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- synchronous existence check between manual scheduler steps.
+import { existsSync } from "node:fs";
+import { create, discover } from "../effect.ts";
+import { destroyTestStack } from "../../tests/stack-cleanup.ts";
+import { errorCode } from "../internal/sharing-violation.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import * as Paths from "./Paths.ts";
+
+const makeTestState = (root: string) =>
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
+  );
+
+const initial: StackNamespace.SavedStack = {
+  id: "stack-main",
+  identity: {
+    projectRoot: "/tmp/project",
+    branchContext: "main",
+    stackName: "local",
+  },
+  runtime: "docker",
+  instances: [],
+  lifetime: "detached",
+  composition: { members: [], dependencies: [] },
+};
+
+const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+
+const stackLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+
+describe("durable registry", () => {
+  it.live("reopens saved state and serializes concurrent read-modify-write operations", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-" });
+        const first = yield* makeTestState(root);
+        const second = yield* makeTestState(root);
+        yield* first.save(initial);
+
+        const add = (store: typeof first, id: string) =>
+          store.withLock(
+            Effect.gen(function* () {
+              const current = yield* store.read(initial.id);
+              if (current === undefined) return yield* Effect.die("state disappeared");
+              yield* store.save({
+                ...current,
+                instances: [
+                  ...current.instances,
+                  { id, creation: { service: "mail", config: {} } },
+                ],
+              });
+            }),
+          );
+        yield* Effect.all([add(first, "db-one"), add(second, "db-two")], {
+          concurrency: "unbounded",
+        });
+
+        const reopened = yield* (yield* makeTestState(root)).read(initial.id);
+        expect(reopened?.instances.map((instance) => instance.id).sort()).toEqual([
+          "db-one",
+          "db-two",
+        ]);
+        expect(yield* fs.stat(path.join(root, "stack-main", "state.json"))).toBeDefined();
+      }),
+    ),
+  );
+
+  it.effect("rejects unsafe paths and malformed documents without changing valid state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-invalid-" });
+        const store = yield* makeTestState(root);
+        yield* store.save(initial);
+        const unsafe = yield* store.read("../outside").pipe(Effect.exit);
+        expect(Exit.isFailure(unsafe)).toBe(true);
+
+        yield* fs.makeDirectory(`${root}/broken`);
+        yield* fs.writeFileString(`${root}/broken/state.json`, '{"id":42}');
+        const malformed = yield* store.read("broken").pipe(Effect.exit);
+        expect(Exit.isFailure(malformed)).toBe(true);
+        if (Exit.isFailure(malformed)) {
+          expect(String(malformed.cause)).toContain("stack broken");
+          expect(String(malformed.cause)).toContain("state.json");
+        }
+        const valid = yield* store.read(initial.id);
+        expect(Schema.is(StackNamespace.SavedStack)(valid)).toBe(true);
+      }),
+    ),
+  );
+
+  const listingWithReadFailures = (options: {
+    readonly root: string;
+    readonly platform: NodeJS.Platform;
+    readonly code: string;
+    readonly failures: number;
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const target = (yield* Path.Path).join(options.root, initial.id, "state.json");
+      const remaining = yield* Ref.make(options.failures);
+      const firstFailure = yield* Deferred.make<void>();
+      const reported = yield* Ref.make<ReadonlyArray<string>>([]);
+      const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+        ...fs,
+        readFileString: (file: string, encoding?: string) =>
+          Effect.gen(function* () {
+            if (file === target && (yield* Ref.get(remaining)) > 0) {
+              yield* Ref.update(remaining, (count) => count - 1);
+              yield* Deferred.succeed(firstFailure, undefined);
+              return yield* PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "readFile",
+                pathOrDescriptor: file,
+                cause: Object.assign(new Error("injected read failure"), { code: options.code }),
+              });
+            }
+            return yield* fs.readFileString(file, encoding);
+          }),
+      });
+      const store = yield* Layer.build(
+        StackNamespace.layer({
+          root: options.root,
+          platform: options.platform,
+          onInvalidState: (id) => Ref.update(reported, (ids) => [...ids, id]),
+        }).pipe(Layer.provide(injectedFs)),
+      ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+      return { store, firstFailure, reported };
+    });
+
+  it.effect("lists a stack after a transient Windows read failure clears", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "namespace-registry-list-retry-",
+        });
+        yield* (yield* makeTestState(root)).save(initial);
+        const { store, firstFailure, reported } = yield* listingWithReadFailures({
+          root,
+          platform: "win32",
+          code: "EBUSY",
+          failures: 1,
+        });
+
+        const listing = yield* store.list.pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("10 millis");
+        expect((yield* Fiber.join(listing)).map(({ id }) => id)).toEqual([initial.id]);
+        expect(yield* Ref.get(reported)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("skips and reports a stack whose state stays unreadable after retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [platform, code] of [
+          ["win32", "EBUSY"],
+          ["linux", "EACCES"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "namespace-registry-list-skip-",
+          });
+          yield* (yield* makeTestState(root)).save(initial);
+          const { store, firstFailure, reported } = yield* listingWithReadFailures({
+            root,
+            platform,
+            code,
+            failures: Number.POSITIVE_INFINITY,
+          });
+
+          const listing = yield* store.list.pipe(Effect.forkScoped);
+          yield* Deferred.await(firstFailure);
+          yield* TestClock.adjust("950 millis");
+          expect(yield* Fiber.join(listing)).toEqual([]);
+          expect(yield* Ref.get(reported)).toEqual([initial.id]);
+        }
+      }),
+    ),
+  );
+
+  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "lists readable stacks past a sibling directory it cannot access",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-eacces-" });
+          const reported: Array<string> = [];
+          const store = yield* Layer.build(
+            StackNamespace.layer({
+              root,
+              onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+            }),
+          ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+          yield* store.save(initial);
+          const locked = path.join(root, "locked");
+          yield* fs.makeDirectory(locked, { mode: 0o700 });
+          yield* fs.writeFileString(path.join(locked, "state.json"), "{}");
+          yield* Effect.acquireRelease(fs.chmod(locked, 0o000), () =>
+            fs.chmod(locked, 0o700).pipe(Effect.orDie),
+          );
+
+          expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+          expect(reported).toEqual(["locked"]);
+        }),
+      ),
+  );
+
+  it.live("skips and reports malformed, mismatched, and non-file entries while listing", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "namespace-registry-list-invalid-",
+        });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          StackNamespace.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        yield* fs.makeDirectory(path.join(root, "malformed"));
+        yield* fs.writeFileString(path.join(root, "malformed", "state.json"), "{broken");
+        yield* fs.makeDirectory(path.join(root, "mismatched"));
+        yield* fs.writeFileString(
+          path.join(root, "mismatched", "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(StackNamespace.SavedStack))(initial),
+        );
+        yield* fs.makeDirectory(path.join(root, "directory", "state.json"), { recursive: true });
+        yield* fs.writeFileString(path.join(root, "stray-file"), "");
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        // Windows resolves a path below a regular file as missing rather than unreadable.
+        expect(reported.toSorted()).toEqual(
+          process.platform === "win32"
+            ? ["directory", "malformed", "mismatched"]
+            : ["directory", "malformed", "mismatched", "stray-file"],
+        );
+      }),
+    ),
+  );
+
+  it.live("decodes saved compositions, creations, and instance ids strictly", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-typed-" });
+        const reported: Array<string> = [];
+        const store = yield* Layer.build(
+          StackNamespace.layer({
+            root,
+            onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+          }),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        const mail = { service: "mail", config: {} };
+        const invalid = {
+          "bad-composition": { composition: { members: "none", dependencies: [] } },
+          "bad-creation": { instances: [{ id: "one", creation: { service: "unknown" } }] },
+          "duplicate-ids": {
+            instances: [
+              { id: "one", creation: mail },
+              { id: "one", creation: mail },
+            ],
+          },
+        };
+        for (const [id, override] of Object.entries(invalid)) {
+          yield* fs.makeDirectory(path.join(root, id));
+          yield* fs.writeFileString(
+            path.join(root, id, "state.json"),
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+              ...initial,
+              id,
+              ...override,
+            }),
+          );
+        }
+
+        expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
+        expect(reported.toSorted()).toEqual(Object.keys(invalid));
+        for (const id of Object.keys(invalid)) {
+          const failure = yield* store.read(id).pipe(Effect.flip);
+          expect(failure.operation).toBe("decode");
+          expect(failure.message).toContain("Unable to decode state");
+          expect(failure.message).toContain(`for stack ${id}`);
+        }
+        const duplicate = yield* store.read("duplicate-ids").pipe(Effect.flip);
+        expect(duplicate.message).toContain("Expected unique instance ids");
+      }),
+    ),
+  );
+
+  it.live("unregisters a stack and empties its data without deleting unowned data", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-remove-" });
+        const store = yield* makeTestState(root);
+        yield* store.save(initial);
+        yield* fs.makeDirectory(path.join(root, initial.id, "data"), { recursive: true });
+        yield* store.remove(initial.id);
+        expect(yield* fs.exists(path.join(root, initial.id, "state.json"))).toBe(false);
+        expect(yield* fs.readDirectory(path.join(root, initial.id, "data"))).toEqual([]);
+
+        yield* store.save(initial);
+        yield* fs.makeDirectory(path.join(root, initial.id, "data"), { recursive: true });
+        yield* fs.writeFileString(path.join(root, initial.id, "data", "owned-by-caller"), "keep");
+        yield* store.remove(initial.id);
+        expect(yield* fs.exists(path.join(root, initial.id, "data", "owned-by-caller"))).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("removes persisted logs with the stack, retrying a Windows sharing violation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-remove-logs-" });
+        const held = yield* Ref.make(2);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (
+                target.endsWith(`${path.sep}logs`) &&
+                (yield* Ref.getAndUpdate(held, (n) => n - 1)) > 0
+              )
+                return yield* PlatformError.systemError({
+                  _tag: "Busy",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                  cause: Object.assign(new Error("open by a reader"), { code: "EBUSY" }),
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        const logs = Paths.stackLogsRoot(path, root, initial.id);
+        const segment = path.join(logs, "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        yield* store.remove(initial.id);
+
+        expect(yield* fs.exists(logs)).toBe(false);
+        expect(yield* store.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("keeps a stack listed when its logs cannot be removed, so a second removal retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-remove-failed-" });
+        const denied = yield* Ref.make(true);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (target.endsWith(`${path.sep}logs`) && (yield* Ref.get(denied)))
+                return yield* PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          StackNamespace.layer({ root }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        const logs = Paths.stackLogsRoot(path, root, initial.id);
+        const segment = path.join(logs, "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        const failed = yield* store.remove(initial.id).pipe(Effect.exit);
+        const listed = (yield* store.list).map(({ id }) => id);
+        const logsKept = yield* fs.exists(segment);
+        yield* Ref.set(denied, false);
+        yield* store.remove(initial.id);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(listed).toEqual([initial.id]);
+        expect(logsKept).toBe(true);
+        expect(yield* store.read(initial.id)).toBeUndefined();
+        expect(yield* fs.exists(logs)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "restricts the state root to its owner while keeping a traverse-only grant",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "namespace-registry-traverse-",
+          });
+          yield* fs.chmod(root, 0o755);
+          yield* makeTestState(root);
+          expect((yield* fs.stat(root)).mode & 0o777).toBe(0o701);
+        }),
+      ),
+  );
+});
+
+describe("registry lock", () => {
+  it.effect("keeps a lock owner protected when a waiting fiber is cancelled", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lock-cancel-" });
+        const first = yield* makeTestState(root);
+        const second = yield* makeTestState(root);
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const owner = yield* Effect.forkScoped(
+          first.withLock(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            }),
+          ),
+        );
+        yield* Deferred.await(entered);
+        const waiter = yield* Effect.forkScoped(second.withLock(second.save(initial)));
+        yield* TestClock.adjust("100 millis");
+        yield* Fiber.interrupt(waiter);
+        expect(yield* second.read(initial.id)).toBeUndefined();
+        const later = yield* Effect.forkScoped(second.withLock(second.save(initial)));
+        yield* TestClock.adjust("100 millis");
+        expect(yield* second.read(initial.id)).toBeUndefined();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(owner);
+        yield* TestClock.adjust("50 millis");
+        yield* Fiber.join(later);
+        expect(yield* second.read(initial.id)).toEqual(initial);
+      }),
+    ),
+  );
+
+  it.effect("times out contention without releasing the holder's lock", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lock-timeout-" });
+        const first = yield* makeTestState(root);
+        const second = yield* makeTestState(root);
+        const entered = yield* Deferred.make<void>();
+        const owner = yield* first
+          .withLock(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const waiter = yield* second
+          .withLock(second.save(initial))
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* TestClock.adjust("6 seconds");
+        const result = yield* Fiber.join(waiter);
+        expect(result.operation).toBe("lock");
+        expect(result.message).toBe("Stack registry is locked by another operation; retry shortly");
+        expect(yield* second.read(initial.id)).toBeUndefined();
+        yield* Fiber.interrupt(owner);
+        yield* second.withLock(second.save(initial));
+        expect(yield* second.read(initial.id)).toEqual(initial);
+      }),
+    ),
+  );
+
+  it.live("releases ownership after failure and defects without replacing the lock file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lock-failure-" });
+        const state = yield* makeTestState(root);
+        const failure = new StackNamespace.NamespaceError({
+          operation: "test",
+          message: "body failed",
+        });
+        expect(yield* state.withLock(Effect.fail(failure)).pipe(Effect.flip)).toBe(failure);
+        const defect = yield* state.withLock(Effect.die("body defect")).pipe(Effect.exit);
+        expect(Exit.hasDies(defect)).toBe(true);
+        yield* state.withLock(state.save(initial));
+        expect(yield* state.read(initial.id)).toEqual(initial);
+        expect((yield* fs.readDirectory(root)).sort()).toEqual([
+          ".registry-lock.sqlite",
+          initial.id,
+        ]);
+        expect((yield* fs.stat(`${root}/.registry-lock.sqlite`)).size).toBe(0n);
+      }),
+    ),
+  );
+
+  it.effect("fails invalid lock files without retrying or changing saved state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lock-invalid-" });
+        const state = yield* makeTestState(root);
+        yield* fs.writeFileString(`${root}/.registry-lock.sqlite`, "not a database");
+        const error = yield* state.withLock(state.save(initial)).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(StackNamespace.NamespaceError);
+        expect(error.operation).toBe("lock");
+        expect(yield* state.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live(
+    "releases the lock when the holder is interrupted right after taking it, before the caller body runs",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lock-interrupt-" });
+          const first = yield* makeTestState(root);
+          const second = yield* makeTestState(root);
+          const lockPath = `${root}/.registry-lock.sqlite`;
+          const started = yield* Deferred.make<void>();
+
+          // Yielding after every single fiber step, and only resuming a step once flushed, gives
+          // deterministic single-step control over the forked fiber below, with no production seam.
+          const tasks: Array<() => void> = [];
+          const dispatcher: Scheduler.SchedulerDispatcher = {
+            scheduleTask: (task) => tasks.push(task),
+            flush: () => {
+              for (const task of tasks.splice(0, tasks.length)) task();
+            },
+          };
+          const stepScheduler: Scheduler.Scheduler = {
+            executionMode: "async",
+            shouldYield: (fiber) => fiber.currentOpCount >= fiber.cache.maxOpsBeforeYield,
+            makeDispatcher: () => dispatcher,
+          };
+
+          const holder = yield* first
+            .withLock(Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)))
+            .pipe(
+              Effect.provideService(Scheduler.Scheduler, stepScheduler),
+              Effect.provideService(Scheduler.MaxOpsBeforeYield, 10),
+              Effect.forkScoped,
+            );
+          // The fork itself is scheduled on the default scheduler; let it actually start (handing
+          // control to `stepScheduler`) before single-stepping it below.
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          // Single-step the acquisition until the lock file exists on disk, then stop: this always
+          // lands in the gap between "lock taken" and "the caller body starts" that the fix closes.
+          for (let step = 0; step < 20_000 && !existsSync(lockPath); step++) dispatcher.flush();
+          expect(existsSync(lockPath)).toBe(true);
+          expect(holder.pollUnsafe()).toBeUndefined();
+          expect(Option.isNone(yield* Deferred.poll(started))).toBe(true);
+
+          // Interrupting and resuming through the same controlled dispatcher keeps the whole
+          // sequence deterministic: no real scheduler or timer is involved on either side.
+          holder.interruptUnsafe();
+          for (let step = 0; step < 20_000 && holder.pollUnsafe() === undefined; step++)
+            dispatcher.flush();
+          expect(holder.pollUnsafe()).not.toBeUndefined();
+
+          // No contention wait: a leaked lock would make this block for up to 5 seconds.
+          yield* second.withLock(second.save(initial)).pipe(Effect.timeout("200 millis"));
+          expect(yield* second.read(initial.id)).toEqual(initial);
+        }),
+      ),
+  );
+});
+
+describe("stack owner lease", () => {
+  it.live("hands the lease of a removed stack to a waiter on a live lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-handoff-" });
+        const holder = yield* makeTestState(root);
+        const contended = yield* Deferred.make<void>();
+        const waiter = Context.get(
+          yield* Layer.build(
+            StackNamespace.layer({
+              root,
+              onLeaseContended: () => Deferred.succeed(contended, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+          StackNamespace.Service,
+        );
+        const observer = yield* makeTestState(root);
+        const holderScope = yield* Scope.make();
+        const holderLease = yield* holder.acquireLease("gone").pipe(Scope.provide(holderScope));
+        expect(holderLease.stackId).toBe("gone");
+
+        const waiterScope = yield* Scope.make();
+        const waiting = yield* waiter
+          .acquireLease("gone")
+          .pipe(Scope.provide(waiterScope), Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(contended);
+        yield* Scope.close(holderScope, Exit.void);
+
+        expect((yield* Fiber.join(waiting)).stackId).toBe("gone");
+        expect(yield* observer.leased("gone"), "the path names the file the waiter locked").toBe(
+          true,
+        );
+        yield* Scope.close(waiterScope, Exit.void);
+        expect(yield* observer.leased("gone")).toBe(false);
+        expect(yield* fs.exists(`${root}/gone`), "the last holder removes the directory").toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  it.live("fails a second owner with a typed error while the first still holds the lease", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-held-" });
+        const holder = yield* makeTestState(root);
+        const contender = yield* makeTestState(root);
+        const holderScope = yield* Scope.make();
+        yield* holder.acquireLease("busy").pipe(Scope.provide(holderScope));
+
+        const rejection = yield* contender.acquireLease("busy").pipe(Effect.scoped, Effect.flip);
+        expect(Schema.is(StackNamespace.LeaseHeldError)(rejection)).toBe(true);
+        if (!Schema.is(StackNamespace.LeaseHeldError)(rejection))
+          return yield* Effect.die(rejection);
+        expect(rejection.stackId).toBe("busy");
+
+        yield* Scope.close(holderScope, Exit.void);
+      }),
+    ),
+  );
+
+  // Windows refuses to delete a stack directory while its lease file is open.
+  it.live.skipIf(process.platform === "win32")(
+    "keeps a successor's lease file when a holder of a removed stack releases",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-successor-" });
+          const state = yield* makeTestState(root);
+          const first = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(first, Exit.void));
+          yield* state.acquireLease("gone").pipe(Scope.provide(first));
+          yield* fs.remove(`${root}/gone`, { recursive: true });
+
+          const successor = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(successor, Exit.void));
+          yield* state.acquireLease("gone").pipe(Scope.provide(successor));
+          yield* Scope.close(first, Exit.void);
+
+          expect(yield* state.leased("gone")).toBe(true);
+        }),
+      ),
+  );
+
+  // Windows refuses to delete a stack directory while its lease file is open.
+  it.live.skipIf(process.platform === "win32")(
+    "keeps a successor's discovery record when the holder of a removed stack retracts its own",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-record-" });
+          const state = yield* makeTestState(root);
+          const record = (pid: number): StackNamespace.LeaseHolder => ({
+            role: "sweeper",
+            pid,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          });
+          const first = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(first, Exit.void));
+          const removed = yield* state.acquireLease("gone").pipe(Scope.provide(first));
+          yield* removed.publishHolder(record(1));
+          yield* fs.remove(`${root}/gone`, { recursive: true });
+
+          const successor = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(successor, Exit.void));
+          const current = yield* state.acquireLease("gone").pipe(Scope.provide(successor));
+          yield* current.publishHolder(record(2));
+          yield* removed.retractHolder;
+
+          expect(yield* state.readHolder("gone")).toEqual(record(2));
+          yield* current.retractHolder;
+          expect(yield* state.readHolder("gone")).toBeUndefined();
+        }),
+      ),
+  );
+
+  it.live("reports a free lease without creating a lease file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-probe-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(initial);
+        expect(yield* state.leased(initial.id)).toBe(false);
+        expect(yield* state.readHolder(initial.id), "a retracted record reads as absent").toBe(
+          undefined,
+        );
+        expect(yield* fs.exists(`${root}/${initial.id}/owner.lock`)).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("retries a transient holder-read failure and then succeeds", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-holder-read-retry-" });
+        const target = path.join(root, initial.id, "owner.json");
+        const firstFailure = yield* Deferred.make<void>();
+        const failed = yield* Ref.make(false);
+        const flakyFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file: string, encoding?: string) =>
+            Effect.gen(function* () {
+              if (file === target && !(yield* Ref.get(failed))) {
+                yield* Ref.set(failed, true);
+                yield* Deferred.succeed(firstFailure, undefined);
+                return yield* PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "readFile",
+                  pathOrDescriptor: file,
+                  cause: Object.assign(new Error("injected transient read failure"), {
+                    code: "EBUSY",
+                  }),
+                });
+              }
+              return yield* fs.readFileString(file, encoding);
+            }),
+        });
+        const state = Context.get(
+          yield* Layer.build(
+            StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(flakyFs)),
+          ),
+          StackNamespace.Service,
+        );
+        yield* state.save(initial);
+        const scope = yield* Scope.make();
+        const lease = yield* state.acquireLease(initial.id).pipe(Scope.provide(scope));
+        const record: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* lease.publishHolder(record);
+
+        const reading = yield* state.readHolder(initial.id).pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFailure);
+        yield* TestClock.adjust("10 millis");
+        expect(yield* Fiber.join(reading)).toEqual(record);
+        yield* Scope.close(scope, Exit.void);
+      }),
+    ),
+  );
+
+  it.live("publishes successfully despite a transient rename failure", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const id = "flaky-cleanup";
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-publish-cleanup-" });
+        const stackDirectory = path.join(root, id);
+        const ownerJson = path.join(stackDirectory, "owner.json");
+        // A single ignored attempt (the pre-fix behavior) only ever makes one call per site;
+        // three consecutive failures need a real retry loop to still converge.
+        const remaining = yield* Ref.make(3);
+        const flakyFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          rename: (oldPath: string, newPath: string) =>
+            Effect.gen(function* () {
+              if (newPath === ownerJson && (yield* Ref.get(remaining)) > 0) {
+                yield* Ref.update(remaining, (count) => count - 1);
+                return yield* PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: newPath,
+                  cause: Object.assign(new Error("injected transient rename failure"), {
+                    code: "EBUSY",
+                  }),
+                });
+              }
+              return yield* fs.rename(oldPath, newPath);
+            }),
+        });
+        const state = Context.get(
+          yield* Layer.build(
+            StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(flakyFs)),
+          ),
+          StackNamespace.Service,
+        );
+        const scope = yield* Scope.make();
+        const lease = yield* state.acquireLease(id).pipe(Scope.provide(scope));
+        const record: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* lease.publishHolder(record);
+
+        expect(yield* Ref.get(remaining), "all injected failures were consumed").toBe(0);
+        expect(yield* state.readHolder(id)).toEqual(record);
+        expect(
+          (yield* fs.readDirectory(stackDirectory)).filter((entry) => entry.endsWith(".tmp")),
+        ).toEqual([]);
+        yield* Scope.close(scope, Exit.void);
+      }),
+    ),
+  );
+
+  it.live("never reports a holder record missing while replacing it with a fresh one", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const id = "atomic-replace";
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-atomic-" });
+        const ownerJson = path.join(root, id, "owner.json");
+        const gate = yield* Deferred.make<void>();
+        const entered = yield* Deferred.make<void>();
+        // Only the second publish (the replacement) is gated; the first establishes R1 normally.
+        let publishCount = 0;
+        const gatedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          rename: (oldPath: string, newPath: string) => {
+            if (newPath !== ownerJson) return fs.rename(oldPath, newPath);
+            publishCount++;
+            return publishCount === 2
+              ? Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                  Effect.andThen(fs.rename(oldPath, newPath)),
+                )
+              : fs.rename(oldPath, newPath);
+          },
+        });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root }).pipe(Layer.provide(gatedFs))),
+          StackNamespace.Service,
+        );
+        const scope = yield* Scope.make();
+        const lease = yield* state.acquireLease(id).pipe(Scope.provide(scope));
+        const r1: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* lease.publishHolder(r1);
+        expect(yield* state.readHolder(id)).toEqual(r1);
+
+        const r2: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid + 1,
+          startedAt: "2026-01-01T00:00:01.000Z",
+        };
+        const publishing = yield* lease.publishHolder(r2).pipe(Effect.forkScoped);
+        // Runs before the publisher's interruption (reverse order), so a failed assertion can't
+        // leave the uninterruptible publish blocked on the gate during teardown.
+        yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
+        yield* Deferred.await(entered);
+
+        // At the publication gate (the rename not yet landed), a reader must still see the prior
+        // record, never a gap: a remove-then-publish sequence would briefly have no file at all.
+        expect(yield* state.readHolder(id)).toEqual(r1);
+
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(publishing);
+        expect(yield* state.readHolder(id)).toEqual(r2);
+        yield* Scope.close(scope, Exit.void);
+      }),
+    ),
+  );
+});
+
+describe("discovery", () => {
+  it.live("lists identical stack identities under two state roots independently", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const base = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-discover-" });
+      const projectRoot = `${base}/project`;
+      yield* fs.makeDirectory(projectRoot, { recursive: true });
+      const locations = (root: string) =>
+        ({
+          projectRoot,
+          stateRoot: `${base}/${root}/state`,
+          cacheRoot: `${base}/${root}/cache`,
+          runtime: "native",
+        }) satisfies Parameters<typeof create>[0];
+      const a = yield* create(locations("a"));
+      const b = yield* create(locations("b"));
+      expect(a.id).toBe(b.id);
+
+      const listedA = yield* discover({ stateRoot: `${base}/a/state` });
+      const listedB = yield* discover({ stateRoot: `${base}/b/state` });
+      expect(listedA.map(({ definition }) => definition.id)).toEqual([a.id]);
+      expect(listedB.map(({ definition }) => definition.id)).toEqual([b.id]);
+
+      yield* destroyTestStack(a);
+      yield* destroyTestStack(b);
+    }).pipe(Effect.scoped, Effect.provide(stackLayer)),
+  );
+});
+
+describe("publication", () => {
+  // Windows has no directory fsync to fail.
+  it.effect.skipIf(process.platform === "win32")(
+    "fails publication when the directory fsync reports EIO",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const eio = (method: string, file: string) =>
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method,
+              pathOrDescriptor: file,
+              cause: Object.assign(new Error("injected directory fsync failure"), { code: "EIO" }),
+            });
+          // Covers both ways opening the directory for its own fsync can report EIO: the `open`
+          // call itself failing, and `open` succeeding but the handle's own `sync` failing. The
+          // second case is backed by a real regular-file handle (scoped like any other), not the
+          // real directory: opening a directory for `sync` hits Windows's own supported `EISDIR`
+          // path instead of ever reaching the injected failure.
+          for (const mode of ["open", "sync"] as const) {
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-fsync-eio-" });
+            const directory = path.join(root, initial.id);
+            const syncProbe = path.join(root, ".sync-probe");
+            yield* fs.writeFileString(syncProbe, "");
+            const failingFs = Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              open: (file: string, options?: Parameters<FileSystem.FileSystem["open"]>[1]) => {
+                if (file !== directory || options?.flag !== "r") return fs.open(file, options);
+                if (mode === "open") return Effect.fail(eio("open", file));
+                return fs
+                  .open(syncProbe, options)
+                  .pipe(
+                    Effect.map((handle) => ({ ...handle, sync: Effect.fail(eio("fsync", file)) })),
+                  );
+              },
+            });
+            const store = yield* Layer.build(
+              StackNamespace.layer({ root }).pipe(Layer.provide(failingFs)),
+            ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+            const failure = yield* store.save(initial).pipe(Effect.flip);
+            expect(failure, mode).toBeInstanceOf(StackNamespace.NamespaceError);
+            expect(failure.operation, mode).toBe("publish");
+            expect(errorCode(failure.cause), mode).toBe("EIO");
+          }
+        }),
+      ),
+  );
+
+  it.effect("leaves no staging file after a partial write fails with ENOSPC", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-publish-enospc-" });
+        const directory = path.join(root, initial.id);
+        const stagingPrefix = path.join(directory, ".state.json.");
+        const failingFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          // A real disk ENOSPC lands after some bytes already reached the file; writing a
+          // truncated prefix for real before failing reproduces that instead of never creating it.
+          writeFileString: (file: string, content: string, options?: { readonly mode?: number }) =>
+            file.startsWith(stagingPrefix)
+              ? fs.writeFileString(file, content.slice(0, 1), options).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "Unknown",
+                        module: "FileSystem",
+                        method: "writeFile",
+                        pathOrDescriptor: file,
+                        cause: Object.assign(new Error("injected partial write failure"), {
+                          code: "ENOSPC",
+                        }),
+                      }),
+                    ),
+                  ),
+                )
+              : fs.writeFileString(file, content, options),
+        });
+        const store = yield* Layer.build(
+          StackNamespace.layer({ root }).pipe(Layer.provide(failingFs)),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        const failure = yield* store.save(initial).pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(StackNamespace.NamespaceError);
+        expect(
+          (yield* fs.readDirectory(directory)).filter((entry) => entry.endsWith(".tmp")),
+        ).toEqual([]);
+      }),
+    ),
+  );
+});

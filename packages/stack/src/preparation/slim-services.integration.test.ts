@@ -668,7 +668,10 @@ describe("slim-services artifact source", () => {
         const fetcher = serving({ "example.test": { archive, manifest: demoManifest } });
         const failed = yield* withFetch(fetcher, store.prepare(request).pipe(Effect.exit));
         expect(Exit.isFailure(failed)).toBe(true);
-        expect(yield* fs.exists(`${root}/demo/v1`)).toBe(false);
+        const entries = yield* fs
+          .readDirectory(`${root}/demo/v1`)
+          .pipe(Effect.orElseSucceed(() => []));
+        expect(entries.filter((name) => /^[0-9a-f]{64}$/u.test(name))).toEqual([]);
         current = demo;
         const prepared = yield* withFetch(fetcher, store.prepare(request));
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
@@ -823,43 +826,40 @@ describe("native artifact catalog", () => {
       ),
   );
 
-  it.live("keys the native cache by release version and ignores a legacy upstream entry", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const resolved = yield* resolveArtifact({ service: "rest" });
-        const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
-        const requested: string[] = [];
-        const seed = (version: string, content: string) =>
-          makeArtifactStore({ cacheRoot, source: fixtureSource(content) }).pipe(
-            Effect.flatMap((store) =>
-              withFetch(
-                serving({}, requested),
+  it.live(
+    "keys the native cache by content: a fixture seeded under the real pinned digest is used, and an unpinned digest is never requested",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolveArtifact({ service: "rest" });
+          const fs = yield* FileSystem.FileSystem;
+          const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
+          const requested: string[] = [];
+          const digest = resolved.natives["linux-amd64"].archive;
+          const seeded = yield* withFetch(
+            serving({}, requested),
+            makeArtifactStore({
+              cacheRoot,
+              source: { ...fixtureSource("pinned"), checksum: () => Effect.succeed(digest) },
+            }).pipe(
+              Effect.flatMap((store) =>
                 store.prepare({
-                  key: `slim-services/postgrest/${version}/linux-amd64`,
+                  key: `slim-services/postgrest/${resolved.releaseVersion}/linux-amd64`,
                   requiredRuntimePaths: resolved.requiredRuntimePaths,
                   executablePath: resolved.executablePath,
                 }),
               ),
             ),
           );
-        const prepare = withFetch(
-          serving({}, requested),
-          prepareNativeArtifact({ service: "rest" }, cacheRoot, linux),
-        );
-
-        yield* seed(resolved.version, "legacy");
-        expect(Exit.isFailure(yield* prepare.pipe(Effect.exit))).toBe(true);
-        expect(requested).not.toEqual([]);
-
-        const seeded = yield* seed(resolved.releaseVersion, "pinned");
-        requested.length = 0;
-        const prepared = yield* prepare;
-        expect(prepared.root).toBe(seeded.path);
-        expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
-        expect(requested).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
+          const prepared = yield* withFetch(
+            serving({}, requested),
+            prepareNativeArtifact({ service: "rest" }, cacheRoot, linux),
+          );
+          expect(prepared.root).toBe(seeded.path);
+          expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
+          expect(requested).toEqual([]);
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
   );
 
   it("catalog has no placeholder pins", () => {

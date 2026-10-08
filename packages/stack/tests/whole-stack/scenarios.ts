@@ -1,6 +1,7 @@
 import { expect } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Ref, Schema } from "effect";
+import { Cause, Config, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { open } from "../../src/effect.ts";
+import { runEngine } from "../docker-fixture.ts";
 import {
   allMembers,
   clearStackOwner,
@@ -27,7 +28,15 @@ import { exerciseAnalytics, queryAnalyticsMarker, stackAnalyticsMarker } from ".
 import { subscribeRealtime } from "./websocket.ts";
 import { watchRecoveryMail } from "./realtime-mail.ts";
 import { assertWorkloadsGone, captureWorkloads } from "./workloads.ts";
+import { captureLoopbackViolations } from "./loopback.ts";
 import { assertOwnerExited, captureOwnerPid } from "../owner.ts";
+import {
+  assertConfinedTo,
+  diffTrees,
+  proveConfinementDetectsViolations,
+  snapshotTree,
+  withSandboxEnvironment,
+} from "./confinement.ts";
 
 const withFixture = <A, E, R>(
   runtime: Runtime,
@@ -50,9 +59,6 @@ const assertDefaultPolicy = (fixture: WholeStack) =>
       if (member === undefined) continue;
       if (name === "database") {
         expect(member.activation).toBe("eager");
-        expect(member.idleMillis).toBeUndefined();
-      } else if (name === "functions") {
-        expect(member.activation).toBe("lazy");
         expect(member.idleMillis).toBeUndefined();
       } else {
         expect(member.activation).toBe("lazy");
@@ -127,7 +133,7 @@ const assertOwnedPathsGone = Effect.fn("WholeStack.assertOwnedPathsGone")((fixtu
     expect(yield* fs.exists(databasePath)).toBe(false);
     expect(yield* fs.exists(functionsPath)).toBe(false);
     expect(yield* fs.exists(statePath)).toBe(false);
-    expect(yield* fs.exists(`${fixture.locations.stateRoot}/${fixture.stack.id}`)).toBe(false);
+    expect((yield* fs.exists(dataRoot)) ? yield* fs.readDirectory(dataRoot) : []).toEqual([]);
   }),
 );
 
@@ -183,7 +189,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
         const email = `whole-${phase}-${fixture.stack.id}@example.test`;
         const password = "whole-stack-password";
         const signup = yield* jsonRequest("POST", `${authUrl}/signup`, { email, password });
-        expect(signup.status).toBe(200);
+        expect(signup.status, signup.body).toBe(200);
         const signupBody = yield* Schema.decodeUnknownEffect(
           Schema.Struct({
             access_token: Schema.String,
@@ -209,12 +215,12 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           { id: rowId, owner_id: signupBody.user.id, value: phase },
           { ...headers, prefer: "return=representation" },
         );
-        expect(insert.status).toBe(201);
+        expect(insert.status, insert.body).toBe(201);
         const read = yield* requestWithHeaders(
           `${restUrl}/whole_stack_items?id=eq.${rowId}`,
           headers,
         );
-        expect(read.status).toBe(200);
+        expect(read.status, read.body).toBe(200);
         const rows = yield* Schema.decodeEffect(
           Schema.fromJsonString(
             Schema.Array(Schema.Struct({ id: Schema.String, value: Schema.String })),
@@ -226,7 +232,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           email: secondEmail,
           password,
         });
-        expect(secondSignup.status).toBe(200);
+        expect(secondSignup.status, secondSignup.body).toBe(200);
         const secondSignupBody = yield* Schema.decodeUnknownEffect(
           Schema.Struct({ access_token: Schema.String }),
         )(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(secondSignup.body));
@@ -234,7 +240,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           authorization: `Bearer ${secondSignupBody.access_token}`,
           apikey: secondSignupBody.access_token,
         });
-        expect(otherRead.status).toBe(200);
+        expect(otherRead.status, otherRead.body).toBe(200);
         expect(
           yield* Schema.decodeEffect(
             Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.String }))),
@@ -255,7 +261,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
               return yield* Effect.die("Mail or Realtime URL missing");
             const watcher = yield* watchRecoveryMail(mailUrl, email);
             const recovery = yield* jsonRequest("POST", `${authUrl}/recover`, { email });
-            expect(recovery.status).toBe(200);
+            expect(recovery.status, recovery.body).toBe(200);
             const mail = yield* watcher.awaitFullMail;
             expect(mail.To.map((recipient) => recipient.Address)).toContain(email);
             const authOrigin = new URL(authUrl).origin;
@@ -280,7 +286,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
               { value: `${phase}-realtime` },
               { ...headers, prefer: "return=representation" },
             );
-            expect(update.status).toBe(200);
+            expect(update.status, update.body).toBe(200);
             const change = yield* realtime.nextChange;
             const event = yield* Schema.decodeUnknownEffect(
               Schema.Struct({ record: Schema.Struct({ id: Schema.String, value: Schema.String }) }),
@@ -466,7 +472,7 @@ export const parallel = (runtime: Runtime) =>
         authorization: `Bearer ${leftLedger.accessToken}`,
         apikey: leftLedger.accessToken,
       });
-      expect(crossStack.status).toBe(401);
+      expect(crossStack.status, crossStack.body).toBe(401);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const rightRealtime = yield* subscribeRealtime(
@@ -518,7 +524,7 @@ export const parallel = (runtime: Runtime) =>
               prefer: "return=representation",
             },
           );
-          expect(update.status).toBe(200);
+          expect(update.status, update.body).toBe(200);
           const change = yield* rightRealtime.nextChange;
           const event = yield* Schema.decodeUnknownEffect(
             Schema.Struct({ record: Schema.Struct({ id: Schema.String, value: Schema.String }) }),
@@ -532,3 +538,155 @@ export const parallel = (runtime: Runtime) =>
       yield* exerciseStack(right, "parallel-right-after");
     }),
   );
+
+/**
+ * The real environment's own docker endpoint, read here (not through the owner's own pinned-target
+ * resolution) purely so {@link writeConfinement} can hand the sandboxed owner a `DOCKER_HOST` that
+ * works without its own `~/.docker` client state.
+ */
+const resolveRealDockerHost = Effect.gen(function* () {
+  // oxlint-disable-next-line effecttsgo/process-env-in-effect -- reads the real environment before it is sandboxed below.
+  const configured = process.env.DOCKER_HOST;
+  if (configured !== undefined && configured.length > 0) return configured;
+  const name = (yield* runEngine(["context", "show"])).output.trim();
+  const host = (yield* runEngine([
+    "context",
+    "inspect",
+    name,
+    "--format",
+    "{{.Endpoints.docker.Host}}",
+  ])).output.trim();
+  if (host.length === 0) return yield* Effect.die(`Context ${name} has no docker endpoint`);
+  return host;
+});
+
+/**
+ * Rootless Podman runs its engine in-process and keeps image and container storage under the XDG
+ * data and config roots, so the sandboxed owner must keep the real ones to find them. Like the
+ * docker CLI's client state, that engine state is outside this test's confinement contract.
+ */
+const resolveRealPodmanState = Effect.gen(function* () {
+  const home = yield* Config.String("HOME");
+  return {
+    XDG_DATA_HOME: yield* Config.String("XDG_DATA_HOME").pipe(
+      Config.withDefault(`${home}/.local/share`),
+    ),
+    XDG_CONFIG_HOME: yield* Config.String("XDG_CONFIG_HOME").pipe(
+      Config.withDefault(`${home}/.config`),
+    ),
+  };
+});
+
+/**
+ * Proves a running stack writes only inside its state root and artifact cache (plus the project
+ * directory it was handed): points HOME, TMPDIR/TMP/TEMP and the XDG roots at fresh, empty
+ * directories for the stack and its detached owner, then diffs those directories before and after
+ * a full start/exercise/stop/destroy cycle. The per-user port reservation registry resolves its
+ * home through the OS passwd database (`getent`/`dscacheutil`), not `$HOME`, so it writes outside
+ * this sandbox entirely and is not expected to appear in either diff.
+ */
+export const writeConfinement = (runtime: Runtime) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const arena = yield* fs.makeTempDirectoryScoped({ prefix: "stack-confinement-arena-" });
+      const home = path.join(arena, "home");
+      const tmp = path.join(arena, "tmp");
+      // Bun's own transpile cache is a test-harness concern, not a stack confinement one: it gets
+      // its own allowed root under `tmp` rather than being allow-listed inside `home`.
+      const bunTranspilerCache = path.join(tmp, "bun-transpiler-cache");
+      yield* fs.makeDirectory(home, { recursive: true });
+      yield* fs.makeDirectory(bunTranspilerCache, { recursive: true });
+      // Resolved against the real environment before HOME below points at the empty sandbox: the
+      // owner's own `DOCKER_HOST`-pinned resolution then skips the engine's context store
+      // entirely, so it never needs `~/.docker` under the sandbox. The docker CLI's own client
+      // state (config, credential helpers) is outside this test's confinement contract; narrowing
+      // the sandboxed owner to a `DOCKER_HOST` pin instead of its real context is an accepted
+      // tradeoff for that, not something this test tries to confine.
+      const dockerHost = runtime === "docker" ? yield* resolveRealDockerHost : undefined;
+      const podmanState = runtime === "podman" ? yield* resolveRealPodmanState : undefined;
+      yield* withSandboxEnvironment(
+        {
+          HOME: home,
+          TMPDIR: tmp,
+          TMP: tmp,
+          TEMP: tmp,
+          XDG_CACHE_HOME: path.join(home, ".cache"),
+          XDG_CONFIG_HOME: podmanState?.XDG_CONFIG_HOME ?? path.join(home, ".config"),
+          XDG_DATA_HOME: podmanState?.XDG_DATA_HOME ?? path.join(home, ".local", "share"),
+          XDG_STATE_HOME: path.join(home, ".local", "state"),
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: bunTranspilerCache,
+          DOCKER_HOST: dockerHost ?? "",
+        },
+        Effect.gen(function* () {
+          const beforeHome = yield* snapshotTree(home);
+          const beforeTmp = yield* snapshotTree(tmp);
+          const fixture = yield* wholeStack(runtime);
+          yield* clearIdleTimers(fixture);
+          yield* fixture.stack.composition.start;
+          yield* exerciseStack(fixture, "confinement");
+          // Podman keeps database files on the host under a subordinate uid the host user cannot
+          // traverse, so that one directory is recorded but not entered; every other path under
+          // the roots is still diffed.
+          const opaque =
+            runtime === "podman"
+              ? [
+                  path.join(
+                    fixture.locations.stateRoot,
+                    fixture.stack.id,
+                    "data",
+                    service(fixture, "database").id,
+                    "data",
+                  ),
+                ]
+              : [];
+          // Allowed roots the named entries below cover; add one line here to extend them.
+          // Podman's own client state: `podman info` asks the host's rpm which package provides each
+          // engine binary (rpm's database), a remote machine connection is SSH, and without
+          // XDG_RUNTIME_DIR (macOS) the client keeps its runtime directory under TMPDIR.
+          const allowedRoots = [
+            fixture.root,
+            fixture.locations.cacheRoot,
+            bunTranspilerCache,
+            ...(runtime === "podman"
+              ? [
+                  path.join(home, ".rpmdb"),
+                  path.join(home, ".ssh"),
+                  path.join(tmp, `storage-run-${process.getuid?.()}`),
+                ]
+              : []),
+          ];
+          // While the stack is still running, after it has been exercised: a before/after-only
+          // check misses anything a service writes and removes again before shutdown.
+          const duringHome = yield* snapshotTree(home);
+          const duringTmp = yield* snapshotTree(tmp, opaque);
+          assertConfinedTo(diffTrees(beforeHome, duringHome), allowedRoots);
+          assertConfinedTo(diffTrees(beforeTmp, duringTmp), allowedRoots);
+          yield* proveConfinementDetectsViolations(home, duringHome, allowedRoots);
+          yield* stopWithDiagnostics(fixture);
+          yield* fixture.stack.destroy;
+          yield* clearStackOwner(fixture);
+          assertConfinedTo(diffTrees(beforeHome, yield* snapshotTree(home)), allowedRoots);
+          assertConfinedTo(diffTrees(beforeTmp, yield* snapshotTree(tmp, opaque)), allowedRoots);
+        }),
+      );
+    }),
+  );
+
+/**
+ * Wakes every service eagerly and drives real traffic through each endpoint, then asserts that no
+ * listening TCP socket owned by a workload's process tree binds outside loopback. Native only:
+ * container workloads publish their ports to loopback through Docker's own mapping, a different
+ * mechanism out of this scenario's scope.
+ */
+export const loopbackOnly = withFixture("native", (fixture) =>
+  Effect.gen(function* () {
+    yield* setActivation(fixture.stack, "eager");
+    yield* fixture.stack.composition.start;
+    yield* assertLifecycle(fixture, "running");
+    yield* exerciseStack(fixture, "loopback");
+    const violations = yield* captureLoopbackViolations(fixture);
+    expect(violations).toEqual([]);
+  }),
+);

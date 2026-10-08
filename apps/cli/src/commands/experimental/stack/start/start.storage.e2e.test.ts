@@ -2,13 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { tmpdir } from "node:os";
-
 import {
   makeTempCliProject,
   makeTempHome,
   runSupabaseEffect,
 } from "../../../../../tests/helpers/cli.ts";
+import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
 
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
@@ -92,7 +91,7 @@ describe("stack start Storage behind the API gateway (compiled e2e)", () => {
           const project = yield* Effect.promise(() =>
             makeTempCliProject(`stack-storage-${runtime}-e2e-`),
           );
-          const artifacts = path.join(tmpdir(), "supabase-stack-artifacts");
+          const artifacts = stackArtifactCacheRoot;
           yield* fs.makeDirectory(path.join(home.dir, "cache"), { recursive: true });
           yield* fs.makeDirectory(artifacts, { recursive: true });
           yield* fs.symlink(artifacts, path.join(home.dir, "cache", "stack"));

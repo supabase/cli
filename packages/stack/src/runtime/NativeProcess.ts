@@ -3,13 +3,23 @@ import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
+import * as Environment from "../namespace/Environment.ts";
 import type { ChildProcessHandle, ExitCode, ProcessId } from "effect/process/ChildProcessSpawner";
 
 export interface NativeProcessSpec {
   readonly executable: string;
   readonly args?: ReadonlyArray<string>;
+  /** Merged over {@link environment}'s confined values; it is rejected if it sets any of them. */
   readonly env?: Readonly<Record<string, string>>;
+  /** The owned HOME/TMPDIR/XDG/Deno directories this workload is confined to. */
+  readonly environment: Environment.NativeEnvironment;
   readonly cwd?: string;
+  /**
+   * The native artifact generation's digest lock file. The launcher takes its own SHARED pin on
+   * this before spawning the workload, and holds it until the workload's process group has
+   * exited, including the forced-kill path.
+   */
+  readonly artifactLockPath?: string;
   readonly stdin?: "ignore" | "pipe";
   /** Numeric identity the workload runs as; omitted keeps the launcher's identity. */
   readonly uid?: number;
@@ -67,7 +77,7 @@ export const defaultNativeProcessLauncher = (): NativeProcessLauncher => ({
   args: [nativeLauncherEntrypointFor(import.meta.url)],
 });
 
-const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
+const encodeSpec = (spec: NativeProcessSpec, env: Readonly<Record<string, string>>): Uint8Array => {
   const timeout =
     spec.gracefulStopSignal === undefined
       ? Option.none<number>()
@@ -80,10 +90,11 @@ const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
     JSON.stringify({
       executable: spec.executable,
       args: spec.args ?? [],
-      env: spec.env,
+      env,
       cwd: spec.cwd,
       uid: spec.uid,
       gid: spec.gid,
+      ...(spec.artifactLockPath === undefined ? {} : { artifactLockPath: spec.artifactLockPath }),
       ...(Option.isSome(timeout)
         ? {
             gracefulStopSignal: spec.gracefulStopSignal,
@@ -119,6 +130,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     "process.executable.name": spec.executable.split(/[\\/]/u).pop() ?? spec.executable,
     "process.arg_count": spec.args?.length ?? 0,
   });
+  const env = yield* Environment.apply(spec.environment, spec.env);
   return yield* Effect.gen(function* () {
     // Shutdown must precede the spawner's finalizer even when the caller closes in parallel.
     const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
@@ -340,7 +352,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
         Effect.orDie,
       ),
     );
-    yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
+    yield* Stream.run(Stream.succeed(encodeSpec(spec, env)), handle.getInputFd(4));
     const groupIdLine = yield* handle
       .getOutputFd(5)
       .pipe(Stream.decodeText, Stream.splitLines, Stream.runHead);

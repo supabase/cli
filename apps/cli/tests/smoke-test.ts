@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "../scripts/release-channels.ts";
 
 const { values } = parseArgs({
   options: {
@@ -11,8 +12,8 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
+if (!isPublishableNpmTag(tag)) {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected ${PUBLISHABLE_NPM_TAGS_HINT}.`);
   process.exit(1);
 }
 const testsDir = import.meta.dir;

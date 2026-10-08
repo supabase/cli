@@ -20,6 +20,11 @@ const decode = (chunks: ReadonlyArray<Uint8Array>): string => {
   return new TextDecoder().decode(bytes);
 };
 
+/** Disables auto-gc/maintenance so Git never forks a detached writer into `.git/` after this
+ *  command returns; test fixtures remove the repository right after these commands finish, and a
+ *  detached `gc --auto`/`maintenance run --auto` would still be touching objects and packs then. */
+const NO_AUTO_MAINTENANCE = ["-c", "gc.auto=0", "-c", "maintenance.auto=false"];
+
 /** Runs Git while draining both output streams, preserving diagnostics on failure. */
 export const runGit = (
   cwd: string,
@@ -28,7 +33,7 @@ export const runGit = (
   Effect.scoped(
     Effect.gen(function* () {
       const command = `git ${args.join(" ")}`;
-      const child = yield* ChildProcess.make("git", [...args], {
+      const child = yield* ChildProcess.make("git", [...NO_AUTO_MAINTENANCE, ...args], {
         cwd,
         stdout: "pipe",
         stderr: "pipe",

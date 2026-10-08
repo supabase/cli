@@ -330,11 +330,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@supabase/pg-delta':
-        specifier: 1.0.0-alpha.56
-        version: 1.0.0-alpha.56(@supabase/pg-topo@1.0.0-alpha.7(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: 1.0.0-alpha.57
+        version: 1.0.0-alpha.57(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)
       '@supabase/pg-topo':
-        specifier: 1.0.0-alpha.7
-        version: 1.0.0-alpha.7(supports-color@7.2.0)
+        specifier: 1.0.0-alpha.8
+        version: 1.0.0-alpha.8(supports-color@7.2.0)
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
@@ -2858,18 +2858,18 @@ packages:
     resolution: {integrity: sha512-DQ0aVH8wSQAccVqNoEkec62qCu2QRNyoGN53RqsVZ1k6F1zq4/v8scrlR6LNT2RJmT97apiTmORijPVhErCS2g==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/pg-delta@1.0.0-alpha.56':
-    resolution: {integrity: sha512-Cerar16vqsLV4dO/IxjDbKBSItB5936JOEE46R/gUjey1hHztkfdcgP0GCoM8i510nxyAT/lUDCdXFraRheizQ==}
+  '@supabase/pg-delta@1.0.0-alpha.57':
+    resolution: {integrity: sha512-RvVdklxDBWgPPrbMzXcREq3YltOykMB0t26Lz5ZV1bQCcLnmqzu851FMcv7h9Hg5rz8DZiARjDq5HPVrawpPYw==}
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
-      '@supabase/pg-topo': ^1.0.0-alpha.7
+      '@supabase/pg-topo': ^1.0.0-alpha.8
     peerDependenciesMeta:
       '@supabase/pg-topo':
         optional: true
 
-  '@supabase/pg-topo@1.0.0-alpha.7':
-    resolution: {integrity: sha512-agvnNRKOSs0A02mW95KW+AKaF0YR/uk0GFBoCfQbGjjdgawk/I2O2wlMWQvbryzsuDr0unWbdPdj3Aah5FexLA==}
+  '@supabase/pg-topo@1.0.0-alpha.8':
+    resolution: {integrity: sha512-YkAaQxscOW4GHrgQufCDYe/a7nouj1VBVlehSysdtvTRPr4BYCwbJnWcoUEMgoBpUkOF8Zm0VFjNNWszO9aYow==}
 
   '@supabase/phoenix@0.4.5':
     resolution: {integrity: sha512-aAn9H9ovVyeApKy11OWOrrOGq8DV68yWeH4ud2lN9fzn4aO8Zb5GLL9m1pUg9nLqIcT+ZDfAcsZe0E/nqdv2lw==}
@@ -8561,7 +8561,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/pg-delta@1.0.0-alpha.56(@supabase/pg-topo@1.0.0-alpha.7(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@supabase/pg-delta@1.0.0-alpha.57(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       '@types/debug': 4.1.13
       '@types/pg': 8.23.1
@@ -8569,12 +8569,12 @@ snapshots:
       pg: 8.23.0
       pg-connection-string: 2.14.0
     optionalDependencies:
-      '@supabase/pg-topo': 1.0.0-alpha.7(supports-color@7.2.0)
+      '@supabase/pg-topo': 1.0.0-alpha.8(supports-color@7.2.0)
     transitivePeerDependencies:
       - pg-native
       - supports-color
 
-  '@supabase/pg-topo@1.0.0-alpha.7(supports-color@7.2.0)':
+  '@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0)':
     dependencies:
       '@pgsql/traverse': 17.2.6(supports-color@7.2.0)
       plpgsql-parser: 0.5.16(supports-color@7.2.0)

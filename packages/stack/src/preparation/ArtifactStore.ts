@@ -7,13 +7,21 @@ import {
   Path,
   PlatformError,
   Predicate,
-  Schema,
+  Scope,
 } from "effect";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
 import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
+import { fsyncDirectory } from "../namespace/drivers/FileSystem.ts";
+import {
+  acquireLock,
+  isMissing,
+  takeExclusiveLock,
+  takeLock,
+} from "../namespace/drivers/Sqlite.ts";
+import * as Pin from "../namespace/Pin.ts";
 
 /** A concrete artifact identity. `key` may contain subdirectories but never an absolute or traversing path. */
 export interface ArtifactRequest {
@@ -56,10 +64,12 @@ export interface ArtifactStoreOptions {
   readonly source: ArtifactSource;
 }
 
-interface PreparedArtifact {
+export interface PreparedArtifact {
   readonly key: string;
-  /** Installed artifact directory. Required runtime paths are relative to this directory. */
+  /** Installed, content-addressed generation directory. Required runtime paths are relative to it. */
   readonly path: string;
+  /** The generation's digest lock file; pinned by `use` for the life of its returned scope. */
+  readonly lockPath: string;
   readonly sha256: string;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath?: string;
@@ -68,14 +78,14 @@ interface PreparedArtifact {
 
 type ArtifactStoreError = PreparationError | ArtifactIntegrityError;
 
-const ARTIFACT_FORMAT = "supabase-stack-artifact-v3";
-const METADATA_NAME = ".artifact.json";
-const EXECUTABLE_MODE = 0o755;
-/**
- * Child of the staging directory that sources materialize into: GNU tar resets its extraction
- * target's mtime from the archive, which must not make a staging directory look like a leftover.
- */
+/** Child of a staging directory that sources materialize into, renamed whole to publish. */
 const STAGING_CONTENT_NAME = "content";
+/** Per-key directory holding every in-progress preparer's and retirer's staging slot. */
+const STAGING_DIR_NAME = ".staging";
+const DIRECTORY_MODE = 0o755;
+/** A generation is eligible for retirement once its digest lock file's mtime is this old. */
+const RETIREMENT_AGE_MILLIS = 30 * 24 * 60 * 60 * 1000;
+const DIGEST_NAME = /^[0-9a-f]{64}$/u;
 
 type ArtifactPathKind = "file" | "directory" | "symlink";
 
@@ -90,19 +100,6 @@ const artifactError = (message: string, fields: Readonly<Record<string, unknown>
 
 const metadataError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
   new ArtifactIntegrityError({ ...fields, message });
-
-const ArtifactMetadataSchema = Schema.Struct({
-  format: Schema.Literal(ARTIFACT_FORMAT),
-  key: Schema.String,
-  sha256: Schema.String,
-  requiredRuntimePaths: Schema.Array(Schema.String),
-  requiredRuntimeKinds: Schema.Record(
-    Schema.String,
-    Schema.Literals(["file", "directory", "symlink"]),
-  ),
-  executablePath: Schema.optional(Schema.String),
-});
-type ArtifactMetadata = Schema.Schema.Type<typeof ArtifactMetadataSchema>;
 
 const mapFs = <A>(
   path: string,
@@ -163,47 +160,11 @@ const validateRequest = (request: ArtifactRequest): Effect.Effect<void, Preparat
     }
   });
 
-const metadataFor = (
-  request: ArtifactRequest,
-  sha256: string,
-  requiredRuntimeKinds: Readonly<Record<string, ArtifactPathKind>>,
-): ArtifactMetadata => ({
-  format: ARTIFACT_FORMAT,
-  key: request.key,
-  sha256,
-  requiredRuntimePaths: [...request.requiredRuntimePaths],
-  requiredRuntimeKinds,
-  ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
-});
-
-const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, PreparationError> =>
-  Schema.encodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(metadata).pipe(
-    Effect.mapError((cause) =>
-      artifactError(`Unable to encode artifact metadata: ${String(cause)}`),
-    ),
-  );
-
-const readMetadata = (
-  fs: FileSystem.FileSystem,
-  metadataPath: string,
-): Effect.Effect<Option.Option<ArtifactMetadata>, ArtifactIntegrityError> =>
-  Effect.matchEffect(fs.readFileString(metadataPath), {
-    onFailure: (cause) =>
-      isNotFound(cause)
-        ? Effect.succeed(Option.none())
-        : Effect.fail(
-            metadataError("Cached artifact metadata is unreadable", {
-              path: metadataPath,
-              cause,
-            }),
-          ),
-    onSuccess: (text) =>
-      Schema.decodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(text).pipe(
-        Effect.map(Option.some),
-        Effect.orElseSucceed(() => Option.none()),
-      ),
-  });
-
+/**
+ * Creates `directory` (and any missing ancestors up to `canonicalRoot`) and restricts every
+ * segment along the way to its owner, preserving a traverse-only grant: every container level
+ * under the cache root, not just the leaf, must stay owner-restricted as the tree grows.
+ */
 const ensureDirectory = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -220,7 +181,14 @@ const ensureDirectory = (
     for (const segment of relative.split(path.sep).filter((value) => value.length > 0)) {
       current = path.join(current, segment);
       const exists = yield* mapFs(current, "inspect artifact directory", fs.exists(current));
-      if (!exists) break;
+      if (!exists)
+        // `recursive: true` tolerates a concurrent preparer that just created this very segment
+        // between the `exists` check above and this call; it is otherwise a single-directory make.
+        yield* mapFs(
+          current,
+          "create artifact directory",
+          fs.makeDirectory(current, { recursive: true, mode: 0o700 }),
+        );
       const real = yield* fs.realPath(current).pipe(
         Effect.mapError((cause) =>
           artifactError(`Unable to resolve artifact directory: ${cause.message}`, {
@@ -233,25 +201,8 @@ const ensureDirectory = (
         return yield* artifactError("Artifact directory contains a symlink", { path: current });
       if (!pathAtOrBelow(root, real, path.sep))
         return yield* artifactError("Artifact directory escapes cache root", { path: current });
+      yield* mapFs(current, "secure artifact directory", restrictDirectoryToOwner(fs, current));
     }
-    yield* mapFs(
-      resolved,
-      "create artifact directory",
-      fs.makeDirectory(resolved, { recursive: true, mode: 0o700 }),
-    );
-    const real = yield* fs.realPath(resolved).pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to resolve artifact directory: ${cause.message}`, {
-          path: resolved,
-          cause,
-        }),
-      ),
-    );
-    if (real !== resolved)
-      return yield* artifactError("Artifact directory contains a symlink", { path: resolved });
-    if (!pathAtOrBelow(root, real, path.sep))
-      return yield* artifactError("Artifact directory escapes cache root", { path: resolved });
-    yield* mapFs(resolved, "secure artifact directory", restrictDirectoryToOwner(fs, resolved));
   });
 
 const ensureSafeRoot = (
@@ -447,12 +398,12 @@ const validateFreshRuntimePaths = (
     return Object.fromEntries(entries);
   });
 
-const ensureSafePaths = (
+/** Shallow containment+kind check for an already-published, trusted generation: no recursion. */
+const inspectRequiredPaths = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   root: string,
   realRoot: string,
-  metadata: ArtifactMetadata,
   relativePaths: ReadonlyArray<string>,
 ): Effect.Effect<Readonly<Record<string, InspectedArtifactPath>>, ArtifactIntegrityError> =>
   Effect.gen(function* () {
@@ -471,27 +422,22 @@ const ensureSafePaths = (
           ),
         );
       if (!exists)
-        return yield* metadataError("Cached artifact is missing a required runtime path", {
-          path: relative,
-        });
+        return yield* metadataError(
+          `Cached artifact is missing ${candidate}; remove ${root} to reinstall it`,
+          { path: relative },
+        );
       const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
-      const expectedKind = metadata.requiredRuntimeKinds[relative];
-      if (expectedKind === undefined || inspected.kind !== expectedKind)
-        return yield* metadataError("Cached artifact runtime path changed basic kind", {
-          path: relative,
-          expected: expectedKind,
-          actual: inspected.kind,
-        });
       entries.push([relative, inspected]);
     }
     return Object.fromEntries(entries);
   });
 
+/** Kind-only executable check, used before a fresh publish normalizes its final mode. */
 const ensureExecutableFile = (
   fs: FileSystem.FileSystem,
   executable: string,
-): Effect.Effect<void, ArtifactIntegrityError> => {
-  return fs.stat(executable).pipe(
+): Effect.Effect<void, ArtifactIntegrityError> =>
+  fs.stat(executable).pipe(
     Effect.mapError((cause) =>
       metadataError("Cached artifact executable cannot be inspected", {
         path: executable,
@@ -509,72 +455,31 @@ const ensureExecutableFile = (
           ),
     ),
   );
-};
 
-const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
-  metadata.key !== request.key || metadata.executablePath !== request.executablePath;
-
-const unrecordedRequiredPaths = (
-  request: ArtifactRequest,
-  metadata: ArtifactMetadata,
-): ReadonlyArray<string> =>
-  request.requiredRuntimePaths.filter(
-    (relative) => metadata.requiredRuntimeKinds[relative] === undefined,
-  );
-
-const sha256Of = (
-  request: ArtifactRequest,
-  metadata: ArtifactMetadata,
-): Effect.Effect<string, ArtifactIntegrityError> =>
-  validateSha256(metadata.sha256).pipe(
+/** A published generation is never chmodded again, so a cache hit must check the bit directly. */
+const ensureExecutableMode = (
+  fs: FileSystem.FileSystem,
+  generation: string,
+  executable: string,
+): Effect.Effect<void, ArtifactIntegrityError> =>
+  fs.stat(executable).pipe(
     Effect.mapError((cause) =>
-      metadataError("Cached artifact metadata contains an invalid SHA-256", {
-        key: request.key,
+      metadataError("Cached artifact executable cannot be inspected", {
+        path: executable,
         cause,
       }),
     ),
+    Effect.flatMap((info) =>
+      (info.mode & 0o100) !== 0
+        ? Effect.void
+        : Effect.fail(
+            metadataError(
+              `Cached artifact executable ${executable} is missing its executable bit; remove ${generation} to reinstall it`,
+              { path: executable },
+            ),
+          ),
+    ),
   );
-
-const writeBytesSync = (
-  fs: FileSystem.FileSystem,
-  path: string,
-  bytes: Uint8Array,
-): Effect.Effect<void, PreparationError> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const file = yield* fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
-        Effect.mapError((cause) =>
-          artifactError(`Unable to create artifact source file: ${cause.message}`, {
-            path,
-            cause,
-          }),
-        ),
-      );
-      yield* file.writeAll(bytes).pipe(
-        Effect.mapError((cause) =>
-          artifactError(`Unable to write artifact source file: ${cause.message}`, {
-            path,
-            cause,
-          }),
-        ),
-      );
-      yield* file.sync.pipe(
-        Effect.mapError((cause) =>
-          artifactError(`Unable to sync artifact source file: ${cause.message}`, { path, cause }),
-        ),
-      );
-    }),
-  );
-
-const writeMetadataSync = (
-  fs: FileSystem.FileSystem,
-  path: string,
-  metadata: ArtifactMetadata,
-): Effect.Effect<void, PreparationError> =>
-  Effect.gen(function* () {
-    const encoded = yield* encodeMetadata(metadata);
-    yield* writeBytesSync(fs, path, new TextEncoder().encode(encoded));
-  });
 
 const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, PreparationError> =>
   fs
@@ -585,85 +490,290 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
       ),
     );
 
-const updateMetadataAtomic = (
+interface ResolvedGeneration {
+  readonly keyRoot: string;
+  readonly stagingRoot: string;
+  readonly expectedSha256: string;
+  readonly generationPath: string;
+  readonly lockPath: string;
+}
+
+const resolveGeneration = Effect.fn("ArtifactStore.resolveGeneration")(function* (
+  path: Path.Path,
+  cacheRoot: string,
+  source: ArtifactSource,
+  request: ArtifactRequest,
+): Effect.fn.Return<ResolvedGeneration, ArtifactStoreError, HttpClient.HttpClient> {
+  const keyRoot = path.resolve(cacheRoot, request.key);
+  if (!pathWithin(cacheRoot, keyRoot, path.sep))
+    return yield* artifactError("Artifact key escapes cache root", { key: request.key });
+  const expectedSha256 = yield* source.checksum(request).pipe(
+    Effect.flatMap((sha256) =>
+      validateSha256(sha256).pipe(
+        Effect.mapError((cause) =>
+          metadataError("Artifact source returned an invalid SHA-256", {
+            key: request.key,
+            cause,
+          }),
+        ),
+      ),
+    ),
+  );
+  return {
+    keyRoot,
+    stagingRoot: path.join(keyRoot, STAGING_DIR_NAME),
+    expectedSha256,
+    generationPath: path.join(keyRoot, expectedSha256),
+    lockPath: path.join(keyRoot, `${expectedSha256}.lock`),
+  };
+});
+
+const stagingDirFor = (path: Path.Path, stagingRoot: string, token: string) =>
+  path.join(stagingRoot, token);
+const stagingLockFor = (path: Path.Path, stagingRoot: string, token: string) =>
+  path.join(stagingRoot, `${token}.lock`);
+
+/** A staging lock's own file, or the rollback journal SQLite leaves while a transaction is open. */
+const STAGING_LOCK_SUFFIX = /\.lock(-journal)?$/u;
+
+/**
+ * Every `.staging` token with a directory. A bare lock file is skipped: its owner creates the
+ * lock before taking it and the directory only afterwards, so reaping it could unlink a lock
+ * about to be taken.
+ */
+const listStagingTokens = (
+  fs: FileSystem.FileSystem,
+  stagingRoot: string,
+): Effect.Effect<ReadonlyArray<string>> =>
+  fs.readDirectory(stagingRoot).pipe(
+    Effect.map((names) => names.filter((name) => !STAGING_LOCK_SUFFIX.test(name))),
+    Effect.orElseSucceed(() => []),
+  );
+
+/**
+ * Removes a `.staging/<token>` directory and its lock file only when the lock can be taken
+ * without blocking: a live preparer or retirer holding it keeps this from ever touching
+ * in-progress work. Best-effort: any failure (including contention) is silently skipped.
+ */
+const reapStagingToken = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  stagingRoot: string,
+  token: string,
+): Effect.Effect<void> => {
+  const lockPath = stagingLockFor(path, stagingRoot, token);
+  const dir = stagingDirFor(path, stagingRoot, token);
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const connection = yield* acquireLock(lockPath, "existing").pipe(
+        Effect.catchIf(isMissing, () => acquireLock(lockPath, "create")),
+      );
+      yield* takeLock(connection);
+      yield* fs.remove(dir, { recursive: true, force: true });
+      yield* fs.remove(lockPath, { force: true });
+      yield* fs.remove(`${lockPath}-journal`, { force: true });
+    }),
+  ).pipe(Effect.ignore);
+};
+
+const reapStaleStaging = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  stagingRoot: string,
+): Effect.Effect<void> =>
+  listStagingTokens(fs, stagingRoot).pipe(
+    Effect.flatMap((tokens) =>
+      Effect.forEach(tokens, (token) => reapStagingToken(fs, path, stagingRoot, token), {
+        discard: true,
+        concurrency: 1,
+      }),
+    ),
+  );
+
+/** A symlink is never a cache entry: the cache neither walks nor writes through one. */
+const isSymlink = (fs: FileSystem.FileSystem, target: string): Effect.Effect<boolean> =>
+  // readLink succeeds only on a symlink.
+  fs.readLink(target).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+
+interface CacheWalk {
+  readonly generations: ReadonlyArray<{ readonly keyRoot: string; readonly digest: string }>;
+  readonly stagingRoots: ReadonlyArray<string>;
+}
+
+/**
+ * Recursively walks the cache root and returns every generation (a digest-named directory) and
+ * every `.staging` root, without ever descending into either: a key embeds its release version
+ * (see `Artifacts.ts`'s `artifactKey`), so a CLI upgrade leaves a previous release's generations
+ * behind a now-unreachable key that only a root-wide walk like this ever revisits. A plain
+ * directory-name listing, never a generation's own (potentially large) published contents, keeps
+ * this cheap.
+ */
+const walkCache = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+): Effect.Effect<CacheWalk, never> =>
+  Effect.gen(function* () {
+    const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
+    const generations: Array<CacheWalk["generations"][number]> = [];
+    const stagingRoots: Array<string> = [];
+    for (const name of names) {
+      if (yield* isSymlink(fs, path.join(root, name))) continue;
+      if (name === STAGING_DIR_NAME) {
+        stagingRoots.push(path.join(root, name));
+        continue;
+      }
+      if (DIGEST_NAME.test(name)) {
+        generations.push({ keyRoot: root, digest: name });
+        continue;
+      }
+      const nested = yield* walkCache(fs, path, path.join(root, name));
+      generations.push(...nested.generations);
+      stagingRoots.push(...nested.stagingRoots);
+    }
+    return { generations, stagingRoots };
+  });
+
+/**
+ * Retires one generation. The digest lock is held only for the age re-check and the rename into
+ * a lock-guarded staging slot, so a concurrent pin is never blocked behind the recursive delete;
+ * the slot lock keeps the delete from being reaped while it runs. A crash after the rename leaves
+ * an unlocked staging directory that the next sweep reaps.
+ */
+const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
-  metadataPath: string,
-  metadata: ArtifactMetadata,
-): Effect.Effect<void, PreparationError> =>
-  Effect.gen(function* () {
-    const token = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to allocate artifact metadata temporary name: ${cause.message}`, {
-          path: metadataPath,
-          cause,
+  keyRoot: string,
+  digest: string,
+): Effect.fn.Return<boolean, never> {
+  const generationPath = path.join(keyRoot, digest);
+  const lockPath = path.join(keyRoot, `${digest}.lock`);
+  const stagingRoot = path.join(keyRoot, STAGING_DIR_NAME);
+  const stagingLockPath = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const slotScope = yield* Scope.Scope;
+      const slot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const connection = yield* acquireLock(lockPath, "existing");
+          yield* takeExclusiveLock(connection);
+          const info = yield* fs.stat(lockPath);
+          const mtime = Option.getOrUndefined(info.mtime);
+          const now = yield* Clock.currentTimeMillis;
+          if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS)
+            return undefined;
+          if (yield* isSymlink(fs, stagingRoot)) return undefined;
+          yield* fs.makeDirectory(stagingRoot, { recursive: true, mode: 0o700 });
+          const token = yield* crypto.randomUUIDv4;
+          const slotLockPath = stagingLockFor(path, stagingRoot, token);
+          const slotDir = stagingDirFor(path, stagingRoot, token);
+          const slotConnection = yield* acquireLock(slotLockPath, "create").pipe(
+            Scope.provide(slotScope),
+          );
+          yield* takeLock(slotConnection);
+          yield* fs.rename(generationPath, slotDir);
+          return { slotDir, slotLockPath };
         }),
-      ),
-    );
-    const temporary = path.join(path.dirname(metadataPath), `${METADATA_NAME}.${token}.tmp`);
-    yield* Effect.gen(function* () {
-      yield* writeMetadataSync(fs, temporary, metadata);
-      yield* mapFs(
-        metadataPath,
-        "update cached artifact metadata",
-        fs.rename(temporary, metadataPath),
       );
-    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
-  });
-
-const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
-
-const leftoverToken = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-
-/** Matches the temporary and quarantine names the store creates beside `targetName`. */
-const isLeftoverOf = (targetName: string, name: string): boolean => {
-  const prefix = `.${targetName}.`;
-  const suffix = [".tmp", ".invalid"].find((candidate) => name.endsWith(candidate));
-  return (
-    suffix !== undefined &&
-    name.startsWith(prefix) &&
-    leftoverToken.test(name.slice(prefix.length, name.length - suffix.length))
-  );
-};
+      if (slot === undefined) return undefined;
+      yield* fs.remove(slot.slotDir, { recursive: true, force: true });
+      return slot.slotLockPath;
+    }),
+  ).pipe(Effect.orElseSucceed(() => undefined));
+  if (stagingLockPath === undefined) return false;
+  yield* fs
+    .remove(stagingLockPath, { force: true })
+    .pipe(Effect.andThen(fs.remove(`${stagingLockPath}-journal`, { force: true })), Effect.ignore);
+  return true;
+});
 
 /**
- * Best-effort removal of one target's temp/quarantine siblings that a hard kill left behind.
- * Only entries older than `orphanMaxAgeMillis` are removed, so a concurrent in-progress download
- * by another process is never touched.
+ * One best-effort sweep over the whole cache root. It reaps every unlocked `.staging` entry under
+ * any key root (a crashed preparer's leftovers), then retires each published generation whose
+ * digest lock is uncontended and whose lock-file mtime, rechecked under that lock, is older than
+ * the retention window. Digest lock files are never deleted (a stable inode); only the generation
+ * directory they guard is. A per-entry failure (including contention from a live pin or another
+ * retirer) is skipped, never propagated: this sweep must never block the `prepare`/`use` call it
+ * runs alongside. A pin held by this process contends with the sweep's lock exactly as a pin held
+ * by another process does.
  */
-const reapLeftoversOf = (
+const sweepCache = Effect.fn("ArtifactStore.sweep")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  target: string,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const parent = path.dirname(target);
-    const targetName = path.basename(target);
-    const names = yield* fs.readDirectory(parent);
-    yield* Effect.forEach(
-      names.filter((name) => isLeftoverOf(targetName, name)),
-      (name) => {
-        const candidate = path.join(parent, name);
-        return fs.stat(candidate).pipe(
-          Effect.flatMap((info) =>
-            Option.match(info.mtime, {
-              onNone: () => Effect.void,
-              onSome: (mtime) =>
-                now - mtime.getTime() > orphanMaxAgeMillis
-                  ? fs.remove(candidate, { recursive: true, force: true })
-                  : Effect.void,
-            }),
-          ),
-          Effect.ignore,
-        );
-      },
-      { discard: true },
-    );
-  }).pipe(Effect.ignore);
+  crypto: Crypto.Crypto,
+  cacheRoot: string,
+): Effect.fn.Return<number, never> {
+  const { generations, stagingRoots } = yield* walkCache(fs, path, cacheRoot);
+  for (const stagingRoot of stagingRoots) yield* reapStaleStaging(fs, path, stagingRoot);
+  let retired = 0;
+  for (const { keyRoot, digest } of generations) {
+    if (yield* retireGeneration(fs, path, crypto, keyRoot, digest)) retired++;
+  }
+  yield* Effect.annotateCurrentSpan({ "artifact.retired_count": retired });
+  return retired;
+});
 
-const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
+/** A cache hit: the generation directory exists, so every listed path is checked, never rehashed. */
+const checkHit = Effect.fn("ArtifactStore.checkHit")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  cacheRoot: string,
+  request: ArtifactRequest,
+  resolved: ResolvedGeneration,
+): Effect.fn.Return<Option.Option<PreparedArtifact>, ArtifactStoreError> {
+  const exists = yield* mapFs(
+    resolved.generationPath,
+    "inspect cached artifact",
+    fs.exists(resolved.generationPath),
+  );
+  if (!exists) return Option.none();
+  const realRoot = yield* ensureSafeRoot(fs, path, resolved.generationPath, cacheRoot).pipe(
+    Effect.catch((error) => (isMissingArtifactRoot(error) ? Effect.void : Effect.fail(error))),
+  );
+  if (realRoot === undefined) return Option.none();
+  const inspected = yield* inspectRequiredPaths(
+    fs,
+    path,
+    resolved.generationPath,
+    realRoot,
+    request.requiredRuntimePaths,
+  );
+  if (request.executablePath !== undefined) {
+    const executable = inspected[request.executablePath];
+    if (executable === undefined)
+      return yield* metadataError("Cached artifact executable path is not recorded", {
+        path: request.executablePath,
+      });
+    yield* ensureExecutableFile(fs, executable.realPath);
+    yield* ensureExecutableMode(fs, resolved.generationPath, executable.realPath);
+  }
+  return Option.some({
+    key: request.key,
+    path: resolved.generationPath,
+    lockPath: resolved.lockPath,
+    sha256: resolved.expectedSha256,
+    requiredRuntimePaths: [...request.requiredRuntimePaths],
+    ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
+    outcome: "cached" as const,
+  });
+});
+
+const isPublishTargetTaken = (cause: unknown): boolean =>
+  cause instanceof PlatformError.PlatformError &&
+  cause.reason instanceof PlatformError.SystemError &&
+  hasErrnoCode(cause.reason.cause) &&
+  ["EEXIST", "ENOTEMPTY"].includes(String(cause.reason.cause.code));
+
+/**
+ * Downloads, validates and publishes a fresh generation. Staged under a lock-guarded
+ * `.staging/<uuid>/content`, published by renaming the completed content to `<key>/<digest>` and
+ * fsyncing the parent. A losing preparer (publish target already taken) accepts the winner's
+ * generation instead of failing, since both staged the same content-addressed digest.
+ */
+const publishGeneration = Effect.fn("ArtifactStore.publish")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
@@ -671,175 +781,46 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
   cacheRoot: string,
   source: ArtifactSource,
   request: ArtifactRequest,
+  resolved: ResolvedGeneration,
   onProgress?: (state: "downloading" | "preparing") => void,
-) {
-  return yield* Effect.gen(function* () {
-    const target = path.resolve(cacheRoot, request.key);
-    const targetParent = path.dirname(target);
-    yield* ensureDirectory(fs, path, targetParent, cacheRoot);
-    yield* reapLeftoversOf(fs, path, target);
-    const metadataPath = path.join(target, METADATA_NAME);
-    const checkCached: Effect.Effect<
-      Option.Option<PreparedArtifact>,
-      ArtifactStoreError
-    > = Effect.gen(function* () {
-      const realRoot = yield* ensureSafeRoot(fs, path, target, cacheRoot).pipe(
-        Effect.map(Option.some),
-        Effect.catch((error) =>
-          isMissingArtifactRoot(error) ? Effect.succeed(Option.none()) : Effect.fail(error),
-        ),
-      );
-      if (Option.isNone(realRoot)) return Option.none();
-      const cachedMetadata = yield* readMetadata(fs, metadataPath);
-      if (Option.isNone(cachedMetadata)) return Option.none();
-      const metadata = cachedMetadata.value;
-      // A key names immutable content and sources unpack whole archives, so only a different key
-      // or executable is a miss; paths beyond the recorded ones are checked in the published tree.
-      if (identityMismatch(request, metadata)) return Option.none();
-      const sha256 = yield* sha256Of(request, metadata);
-      const newPaths = unrecordedRequiredPaths(request, metadata);
-      const newPathSet = new Set(newPaths);
-      const recordedPaths = request.requiredRuntimePaths.filter(
-        (relative) => !newPathSet.has(relative),
-      );
-      // Published content is not rehashed on cache hits: metadata and cheap structural checks
-      // protect the cache boundary; content tampering may execute or fail later when the
-      // workload starts.
-      const recordedSafePaths = yield* ensureSafePaths(
-        fs,
-        path,
-        target,
-        realRoot.value,
-        metadata,
-        recordedPaths,
-      );
-      // A path the recorded metadata has not seen yet gets the same containment and safety
-      // validation a fresh publish applies, before its kind is trusted and recorded.
-      const newSafePaths =
-        newPaths.length > 0
-          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths).pipe(
-              Effect.mapError((cause) =>
-                metadataError(
-                  `Cached artifact ${request.key} cannot serve newly required runtime paths (${cause.message}); remove ${target} to download it again`,
-                  { key: request.key, path: target, cause },
-                ),
-              ),
-            )
-          : {};
-      const safePaths = { ...recordedSafePaths, ...newSafePaths };
-      if (newPaths.length > 0) {
-        const newKinds = Object.fromEntries(
-          Object.entries(newSafePaths).map(([relative, inspected]) => [relative, inspected.kind]),
-        );
-        const appendedPaths = newPaths.filter(
-          (relative) => !metadata.requiredRuntimePaths.includes(relative),
-        );
-        // The paths above are already validated; a failed write only loses the recording, so
-        // it must not fail preparation. A later request re-validates and retries the write.
-        yield* updateMetadataAtomic(fs, path, crypto, metadataPath, {
-          ...metadata,
-          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...appendedPaths],
-          requiredRuntimeKinds: { ...metadata.requiredRuntimeKinds, ...newKinds },
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Unable to record newly validated artifact runtime paths", cause),
-          ),
-        );
-      }
-      if (request.executablePath !== undefined) {
-        const executable = safePaths[request.executablePath];
-        if (executable === undefined)
-          return yield* metadataError("Cached artifact executable path is not recorded", {
-            path: request.executablePath,
-          });
-        yield* ensureExecutableFile(fs, executable.realPath);
-      }
-      return Option.some({
+): Effect.fn.Return<PreparedArtifact, ArtifactStoreError, HttpClient.HttpClient> {
+  yield* mapFs(
+    resolved.stagingRoot,
+    "create artifact staging root",
+    fs.makeDirectory(resolved.stagingRoot, { recursive: true, mode: 0o700 }),
+  );
+  const token = yield* crypto.randomUUIDv4.pipe(
+    Effect.mapError((cause) =>
+      artifactError(`Unable to allocate artifact staging name: ${cause.message}`, {
         key: request.key,
-        path: target,
-        sha256,
-        requiredRuntimePaths: [...request.requiredRuntimePaths],
-        ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
-        outcome: "cached" as const,
-      });
-    });
-    const inspectCache = (): Effect.Effect<Option.Option<PreparedArtifact>, ArtifactStoreError> =>
-      Effect.gen(function* () {
-        const exists = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
-        if (!exists) return Option.none();
-        const cached = yield* checkCached;
-        if (Option.isSome(cached)) return cached;
-        const stillExists = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
-        if (!stillExists) return Option.none();
-        const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) =>
-            artifactError(`Unable to allocate artifact replacement name: ${cause.message}`, {
-              key: request.key,
-              cause,
-            }),
-          ),
-        );
-        const replacement = path.join(targetParent, `.${path.basename(target)}.${token}.invalid`);
-        const moved = yield* Effect.acquireUseRelease(
-          fs.rename(target, replacement).pipe(
-            Effect.as(Option.some(replacement)),
-            Effect.catch((cause) =>
-              isNotFound(cause)
-                ? Effect.succeed(Option.none())
-                : Effect.fail(
-                    artifactError(`Unable to replace invalid cached artifact: ${String(cause)}`, {
-                      path: target,
-                      cause,
-                    }),
-                  ),
-            ),
-          ),
-          (renamed) => Effect.succeed(Option.isSome(renamed)),
-          (renamed) => (Option.isSome(renamed) ? cleanup(fs, renamed.value) : Effect.void),
-        );
-        if (moved) {
-          return Option.none();
-        }
-        const raced = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
-        if (!raced) return Option.none();
-        const concurrent = yield* checkCached;
-        if (Option.isSome(concurrent)) return concurrent;
-        return yield* metadataError("Concurrent cached artifact metadata is invalid", {
-          path: metadataPath,
-        });
-      });
-    const initial = yield* inspectCache();
-    if (Option.isSome(initial)) return initial.value;
-
-    // Artifact keys identify immutable published versions. Once a valid entry exists, its
-    // persisted digest is authoritative; only a cache miss consults the upstream checksum.
-    const expectedSha256 = yield* source.checksum(request).pipe(
-      Effect.flatMap((sha256) =>
-        validateSha256(sha256).pipe(
-          Effect.mapError((cause) =>
-            metadataError("Artifact source returned an invalid SHA-256", {
-              key: request.key,
-              cause,
-            }),
-          ),
+        cause,
+      }),
+    ),
+  );
+  const stagingDir = stagingDirFor(path, resolved.stagingRoot, token);
+  const stagingLockPath = stagingLockFor(path, resolved.stagingRoot, token);
+  const content = path.join(stagingDir, STAGING_CONTENT_NAME);
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const connection = yield* acquireLock(stagingLockPath, "create").pipe(
+        Effect.mapError((cause) =>
+          artifactError(`Unable to lock artifact staging directory: ${cause.message}`, {
+            key: request.key,
+            cause,
+          }),
         ),
-      ),
-    );
-
-    const token = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to allocate artifact temporary name: ${cause.message}`, {
-          key: request.key,
-          cause,
-        }),
-      ),
-    );
-    const staging = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
-    const content = path.join(staging, STAGING_CONTENT_NAME);
-    const published = yield* Effect.gen(function* () {
+      );
+      yield* takeLock(connection).pipe(
+        Effect.mapError((cause) =>
+          artifactError(`Unable to lock artifact staging directory: ${cause.message}`, {
+            key: request.key,
+            cause,
+          }),
+        ),
+      );
       yield* ensureDirectory(fs, path, content, cacheRoot);
       const contentRoot = yield* ensureSafeRoot(fs, path, content, cacheRoot);
-      yield* source.materialize(request, content, expectedSha256, onProgress).pipe(
+      yield* source.materialize(request, content, resolved.expectedSha256, onProgress).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -847,59 +828,107 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
         // already-owned process service captured by its constructor.
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       );
-      const runtimePaths = yield* validateFreshRuntimePaths(
+      const inspected = yield* validateFreshRuntimePaths(
         fs,
         path,
         content,
         contentRoot,
         request.requiredRuntimePaths,
       );
-      const runtimeKinds = Object.fromEntries(
-        Object.entries(runtimePaths).map(([relative, inspected]) => [relative, inspected.kind]),
-      );
-      yield* writeMetadataSync(
-        fs,
-        path.join(content, METADATA_NAME),
-        metadataFor(request, expectedSha256, runtimeKinds),
-      );
       if (request.executablePath !== undefined) {
-        const executable = runtimePaths[request.executablePath];
+        const executable = inspected[request.executablePath];
         if (executable === undefined)
           return yield* metadataError("Fresh artifact executable path is not recorded", {
             path: request.executablePath,
           });
         yield* ensureExecutableFile(fs, executable.realPath);
-        yield* mapFs(
-          executable.realPath,
-          "set executable artifact mode",
-          fs.chmod(executable.realPath, EXECUTABLE_MODE),
-        );
       }
-      const beforePublish = yield* inspectCache();
-      if (Option.isSome(beforePublish)) return beforePublish.value;
-      const rename = mapFs(content, "publish artifact", fs.rename(content, target)).pipe(
-        Effect.as(undefined),
+      yield* mapFs(content, "normalize artifact mode", fs.chmod(content, DIRECTORY_MODE));
+      // Protects the narrow window right after publish: the digest lock file's mtime is touched
+      // here regardless of any pin the caller already holds, so a generation republished after a
+      // past retirement never inherits its lock file's stale, pre-retirement mtime.
+      return yield* Effect.scoped(
+        Pin.pin(resolved.lockPath).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.mapError((cause) =>
+            artifactError(`Unable to pin artifact generation before publishing: ${cause.message}`, {
+              key: request.key,
+              cause,
+            }),
+          ),
+          Effect.andThen(
+            fs.rename(content, resolved.generationPath).pipe(
+              Effect.as(true as const),
+              Effect.catch((cause) =>
+                isPublishTargetTaken(cause)
+                  ? Effect.succeed(false as const)
+                  : Effect.fail(
+                      artifactError(`Unable to publish artifact: ${String(cause)}`, {
+                        path: resolved.generationPath,
+                        cause,
+                      }),
+                    ),
+              ),
+              Effect.flatMap((won) =>
+                won
+                  ? mapFs(
+                      resolved.keyRoot,
+                      "publish artifact",
+                      fsyncDirectory(fs, resolved.keyRoot),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          ),
+        ),
       );
-      const recoverPublish = (): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
-        Effect.gen(function* () {
-          const probe = yield* inspectCache();
-          if (Option.isSome(probe)) return probe.value;
-          return yield* rename;
-        });
-      const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =
-        rename.pipe(Effect.catch(recoverPublish));
-      return yield* recovered;
-    }).pipe(Effect.onExit(() => cleanup(fs, staging)));
-    if (published !== undefined) return published;
-    return {
-      key: request.key,
-      path: target,
-      sha256: expectedSha256,
-      requiredRuntimePaths: [...request.requiredRuntimePaths],
-      ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
-      outcome: "downloaded" as const,
-    };
-  });
+    }),
+  ).pipe(
+    Effect.onExit(() =>
+      // Runs after the staging lock connection above has already closed (`Effect.scoped`'s own
+      // finalizer fires first), so removing its file here is always safe, on every outcome.
+      cleanup(fs, stagingDir).pipe(
+        Effect.andThen(fs.remove(stagingLockPath, { force: true })),
+        Effect.andThen(fs.remove(`${stagingLockPath}-journal`, { force: true })),
+        Effect.ignore,
+      ),
+    ),
+  );
+  const hit = yield* checkHit(fs, path, cacheRoot, request, resolved);
+  if (Option.isNone(hit))
+    return yield* artifactError("Unable to publish artifact: the published generation vanished", {
+      path: resolved.generationPath,
+    });
+  return { ...hit.value, outcome: "downloaded" as const };
+});
+
+const prepareOrResolve = Effect.fn("ArtifactStore.prepareOrResolve")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  cacheRoot: string,
+  source: ArtifactSource,
+  request: ArtifactRequest,
+  resolved: ResolvedGeneration,
+  onProgress?: (state: "downloading" | "preparing") => void,
+): Effect.fn.Return<PreparedArtifact, ArtifactStoreError, HttpClient.HttpClient> {
+  yield* ensureDirectory(fs, path, resolved.keyRoot, cacheRoot);
+  const hit = yield* checkHit(fs, path, cacheRoot, request, resolved);
+  if (Option.isSome(hit)) return hit.value;
+  const published = yield* publishGeneration(
+    fs,
+    path,
+    crypto,
+    childProcessSpawner,
+    cacheRoot,
+    source,
+    request,
+    resolved,
+    onProgress,
+  );
+  yield* sweepCache(fs, path, crypto, cacheRoot);
+  return published;
 });
 
 export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* (
@@ -936,15 +965,72 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
   if (rootInfo.type !== "Directory")
     return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
   yield* mapFs(cacheRoot, "secure artifact cache root", restrictDirectoryToOwner(fs, cacheRoot));
+
   const prepare = Effect.fn("ArtifactStore.prepare")(function* (
     request: ArtifactRequest,
     onProgress?: (state: "downloading" | "preparing") => void,
   ) {
     yield* validateRequest(request);
-    const target = path.resolve(cacheRoot, request.key);
-    if (!pathWithin(cacheRoot, target, path.sep))
-      return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-    const prepared = yield* makeArtifactOperation(
+    const resolved = yield* resolveGeneration(path, cacheRoot, options.source, request);
+    // Ahead-of-time preparation pins nothing for its caller, but a warm generation's own
+    // inspection and a fresh one's publication both still need protection from a concurrent
+    // retirement sweep elsewhere; a SHARED pin held only for this call's own duration, released
+    // before returning, gives that without leaving anything pinned for the caller.
+    yield* ensureDirectory(fs, path, resolved.keyRoot, cacheRoot);
+    const prepared = yield* Effect.scoped(
+      Pin.pin(resolved.lockPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.mapError((cause) =>
+          artifactError(`Unable to pin artifact generation: ${cause.message}`, {
+            key: request.key,
+            cause,
+          }),
+        ),
+        Effect.andThen(
+          prepareOrResolve(
+            fs,
+            path,
+            crypto,
+            childProcessSpawner,
+            cacheRoot,
+            options.source,
+            request,
+            resolved,
+            onProgress,
+          ),
+        ),
+      ),
+    );
+    yield* Effect.annotateCurrentSpan({
+      "artifact.outcome": prepared.outcome,
+      "artifact.digest": resolved.expectedSha256,
+    });
+    return prepared;
+  });
+
+  /**
+   * The one scoped launch-time operation: pins the generation, resolves or prepares it, and
+   * returns its paths. Every consumer must use those paths only inside this scope.
+   */
+  const use = Effect.fn("ArtifactStore.use")(function* (
+    request: ArtifactRequest,
+    onProgress?: (state: "downloading" | "preparing") => void,
+  ) {
+    yield* validateRequest(request);
+    const resolved = yield* resolveGeneration(path, cacheRoot, options.source, request);
+    // The digest lock file's parent must exist before it can be created; `prepareOrResolve` below
+    // ensures it again, idempotently, before resolving or preparing the generation itself.
+    yield* ensureDirectory(fs, path, resolved.keyRoot, cacheRoot);
+    yield* Pin.pin(resolved.lockPath).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.mapError((cause) =>
+        artifactError(`Unable to pin artifact generation: ${cause.message}`, {
+          key: request.key,
+          cause,
+        }),
+      ),
+    );
+    const prepared = yield* prepareOrResolve(
       fs,
       path,
       crypto,
@@ -952,10 +1038,15 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
       cacheRoot,
       options.source,
       request,
+      resolved,
       onProgress,
     );
-    yield* Effect.annotateCurrentSpan({ "artifact.outcome": prepared.outcome });
+    yield* Effect.annotateCurrentSpan({
+      "artifact.outcome": prepared.outcome,
+      "artifact.digest": resolved.expectedSha256,
+    });
     return prepared;
   });
-  return { prepare };
+
+  return { prepare, use };
 });

@@ -2,8 +2,9 @@ import { Context, Effect, Layer } from "effect";
 import { RpcTest } from "effect/rpc";
 import * as Owner from "../src/Owner.ts";
 import { OwnerRpc } from "../src/Rpc.ts";
-import { Service as StateService } from "../src/State.ts";
-import type { Interface as StateInterface, SavedStack } from "../src/State.ts";
+import type { EngineTarget } from "../src/runtime/Container.ts";
+import { Service as StateService } from "../src/StackNamespace.ts";
+import type { Interface as StateInterface, SavedStack } from "../src/StackNamespace.ts";
 
 /** Builds an in-process owner and an RPC client bound to its handlers. */
 export const ownerFor = (options: {
@@ -11,6 +12,7 @@ export const ownerFor = (options: {
   readonly state: StateInterface;
   readonly root: string;
   readonly cacheRoot: string;
+  readonly engineTarget?: EngineTarget;
 }) =>
   Effect.gen(function* () {
     const { state, ...layerOptions } = options;
