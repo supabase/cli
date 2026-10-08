@@ -66,5 +66,7 @@ Same envelope as migration-style `db pull`.
 ## Notes
 
 - Deprecated: use `db pull` instead.
+- pg-delta is the default shadow-diff engine, as for migration-style `db pull`. This
+  command has no engine flag; `[experimental.pgdelta] enabled = false` selects migra.
 - `--schema` / `-s` restricts the commit to specific schemas.
 - `--db-url` and `--linked` are mutually exclusive.

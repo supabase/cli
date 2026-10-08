@@ -5,8 +5,8 @@ import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
 
 /**
  * Whether the declarative (pg-delta) code paths are enabled: the gate is open when either the
- * global `--experimental` flag is set or `[experimental.pgdelta] enabled = true` is present in
- * `config.toml`.
+ * global `--experimental` flag is set or `[experimental.pgdelta] enabled` resolves true (the
+ * default), so it closes only on an explicit `enabled = false`.
  */
 export function isPgDeltaEnabled(experimental: boolean, pgDeltaEnabled: boolean): boolean {
   return experimental || pgDeltaEnabled;
@@ -17,9 +17,9 @@ export function isPgDeltaEnabled(experimental: boolean, pgDeltaEnabled: boolean)
  * `aqua`/`bold` render plain when stderr is not a TTY.
  */
 export function pgDeltaSuggestion(configPath: string): string {
-  return `Either pass ${aqua("--experimental")} or add ${aqua(
+  return `Either pass ${aqua("--experimental")} or set ${aqua("enabled = true")} under ${aqua(
     "[experimental.pgdelta]",
-  )} with ${aqua("enabled = true")} to ${bold(configPath)}`;
+  )} in ${bold(configPath)}`;
 }
 
 /**

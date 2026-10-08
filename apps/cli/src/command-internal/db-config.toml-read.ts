@@ -39,12 +39,6 @@ type EnvLookup = (name: string) => string | undefined;
  */
 export interface DbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
-  /**
-   * Resolves a `SUPABASE_*` env var: shell env (non-empty) wins, then the
-   * loaded project `.env*` files (non-empty), else `undefined`. Handlers must
-   * call this rather than reading `process.env` directly.
-   */
-  readonly envLookup: (name: string) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
@@ -159,7 +153,7 @@ interface BaselineTomlConfig {
 
 /** The `[experimental.pgdelta]` subtree. */
 export interface PgDeltaTomlConfig {
-  /** `[experimental.pgdelta] enabled`, default false. */
+  /** `[experimental.pgdelta] enabled`, default true. */
   readonly enabled: boolean;
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
@@ -1381,7 +1375,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     ? undefined
     : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
   // `"1"` counts as true and a malformed value aborts the load. The env override wins,
-  // then the TOML bool, then an `env(VAR)` string, defaulting to false when absent.
+  // then the TOML bool, then an `env(VAR)` string, defaulting to true when absent.
   let enabled: boolean;
   if (enabledEnv !== undefined) {
     // An `env(VAR)` indirection in the override is expanded before the bool parse.
@@ -1411,7 +1405,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     }
     enabled = parsed;
   } else {
-    enabled = false;
+    enabled = true;
   }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
@@ -2141,7 +2135,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const values: DbTomlValues = {
     projectEnv,
-    envLookup: envOverride,
     apiSchemas,
     port,
     shadowPort,

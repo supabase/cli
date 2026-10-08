@@ -28,7 +28,7 @@ describe("RemovedSurfaceError actionability", () => {
     const classified = classifyCliErrorActionability(
       new RemovedSurfaceError({
         message: "--use-pg-schema was removed.",
-        suggestion: "Use the default migra engine or --use-pg-delta.",
+        suggestion: "Use the default pg-delta engine or --use-migra.",
         kind: "flag",
       }),
     );
@@ -74,7 +74,7 @@ describe("TelemetryState flush", () => {
 
   it.effect("flushes on a removedFlag failure", () => {
     const telemetry = mockTelemetryStateTracked();
-    return removedFlag("--use-pg-schema", "Use the default migra engine or --use-pg-delta.").pipe(
+    return removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.").pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {

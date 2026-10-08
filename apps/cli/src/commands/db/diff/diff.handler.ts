@@ -52,7 +52,6 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  parseBoolEnv,
   resolveDiffEngine,
   schemaPathsTransitionWarning,
   shouldUsePgDelta,
@@ -108,7 +107,7 @@ const declarativeBaselineNote = (displayPath: string) =>
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
-    return yield* removedFlag("--use-pg-schema", "Use the default migra engine or --use-pg-delta.");
+    return yield* removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.");
   }
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -453,14 +452,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
+    // Engine resolution: the pg-delta config/flag gate, read from the
     // (possibly remote-merged) config.
     const pgDeltaDefault =
       (yield* currentStackBackend).kind === "stack" ||
       shouldUsePgDelta({
         configEnabled: cfg.pgDelta.enabled,
         usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-        envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       });
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),

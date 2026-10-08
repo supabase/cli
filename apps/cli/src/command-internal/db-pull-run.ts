@@ -37,7 +37,6 @@ import {
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
 import {
-  parseBoolEnv,
   resolveDeclarativeFromArgs,
   resolvePullDiffEngine,
   schemaPathsTransitionWarning,
@@ -372,7 +371,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         shouldUsePgDelta({
           configEnabled: toml.pgDelta.enabled,
           usePgDeltaFlag: false,
-          envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
         }),
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {

@@ -4,7 +4,8 @@ Reinitialises a database from local migrations (plus seed). Both targets are
 fully native. The **remote** path (`--linked`, or a remote `--db-url`)
 drops all user schemas, upserts vault secrets, then either re-applies migrations
 (the default) or, on a versionless `--experimental`/`SUPABASE_EXPERIMENTAL` reset
-with pg-delta not enabled, applies the declarative `[db.migrations].schema_paths`
+with pg-delta explicitly disabled (`[experimental.pgdelta] enabled = false`; it defaults
+to true), applies the declarative `[db.migrations].schema_paths`
 files instead (the `MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
 seeds. The **local** path (`--local`/default, or a `--db-url` pointing at the local
 stack) is ALSO fully native (CLI-1955 removed the hidden Go `db __db-bootstrap` seam
@@ -114,7 +115,7 @@ child) is fully native as of CLI-1958.
 | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `dropObjectsSql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                            | always, first                                                                                              |
 | `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                                                     |
-| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)                                  |
+| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta disabled (see Notes)                                     |
 | migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`                                    |
 | seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed` (runs after either branch above)                              |
 | `SET SESSION ROLE postgres`                                                                                                                      | stepped-down sessions only: after each role-reverting statement, at end of each file, before ledger writes |
@@ -289,8 +290,8 @@ to those defaults (the usual outcome for an interactive terminal).
 - **`--experimental` schema-files apply** (the `MigrateAndSeed` EXPERIMENTAL
   branch) is taken on
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
-  `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled` is
-  NOT set. Taking this branch means timestamped
+  `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled`
+  resolves false, which requires an explicit `enabled = false` (the default is true). Taking this branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
   nothing. Faithfully reproduces two undocumented quirks inherited from the old
   Go CLI: (1) the `schema_paths`

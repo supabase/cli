@@ -53,7 +53,7 @@ seeds `supabase/roles.sql`: the `Seeding globals from roles.sql...` stderr line 
 prints first, whether or not the file exists — a missing file is silently tolerated (no SQL
 runs), any other read/exec error still fails the run. Finally runs every pending migration +
 seed — UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta]
-enabled` is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
+enabled = false` is set explicitly (it defaults to true), in which case `db.migrations.schema_paths` files are applied INSTEAD of
 `migrations/*.sql`; seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 

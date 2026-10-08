@@ -382,6 +382,17 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+const disablePgDelta = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(workdir, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
+  });
+
 const seedMigration = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -394,9 +405,24 @@ const seedMigration = (workdir: string) =>
 describe("db schema declarative generate integration", () => {
   const tmp = useTempWorkdir();
 
-  it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
+  it.effect("gate is open by default: runs without --experimental or any pgdelta config", () => {
+    const s = setup(tmp.current, { experimental: false });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      expect(
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("gate: fails when config disables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
+      yield* disablePgDelta(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
       );
@@ -425,6 +451,7 @@ describe("db schema declarative generate integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* Effect.exit(
           dbSchemaDeclarativeGenerate(
             flags({ local: Option.some(true), linked: Option.some(true) }),
@@ -470,6 +497,7 @@ describe("db schema declarative generate integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* withEnvVar(
           ENV,
           "1",
@@ -865,6 +893,8 @@ describe("db schema declarative generate integration", () => {
           path.join(tmp.current, "supabase", "config.toml"),
           [
             'project_id = "base"',
+            "[experimental.pgdelta]",
+            "enabled = false",
             "[remotes.prod]",
             `project_id = "${ref}"`,
             "[remotes.prod.experimental.pgdelta]",
