@@ -605,13 +605,12 @@ export const postgresMajor = (version: string): string => version.split(".")[0] 
 export const isOrioledbVersion = (version: string): boolean => version.endsWith(ORIOLEDB_SUFFIX);
 
 /**
- * Release line of a database artifact version: its PostgreSQL major plus engine variant, such as
- * `17` or `17-orioledb`. Initialized data is reusable only within one line.
+ * Release line of a database artifact version: the PostgreSQL major of a stock build (`17`), or the
+ * exact OrioleDB build (`17.11.0.002-orioledb`), since a newer OrioleDB build may refuse older data.
+ * Initialized data is reusable only within one line.
  */
 export const postgresLine = (version: string): string =>
-  isOrioledbVersion(version)
-    ? `${postgresMajor(version)}${ORIOLEDB_SUFFIX}`
-    : postgresMajor(version);
+  isOrioledbVersion(version) ? version : postgresMajor(version);
 
 /** Database artifact version of a `db.orioledb_version` value. */
 export const orioledbPostgresVersion = (orioledbVersion: string): string =>

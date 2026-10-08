@@ -30,14 +30,21 @@ describe("unusableDatabaseData", () => {
       data: { major: "17", line: "17", initialized: false },
       version: orioledb,
       reason:
-        "PostgreSQL data from an unfinished first start belongs to release line 17, but 17-orioledb was requested",
+        "PostgreSQL data from an unfinished first start belongs to release line 17, but 17.11.0.002-orioledb was requested",
     },
     {
       name: "OrioleDB-recorded data for stock",
-      data: { major: "17", line: "17-orioledb", initialized: false },
+      data: { major: "17", line: "17.11.0.002-orioledb", initialized: false },
       version: stock,
       reason:
-        "PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested",
+        "PostgreSQL data from an unfinished first start belongs to release line 17.11.0.002-orioledb, but 17 was requested",
+    },
+    {
+      name: "data from another OrioleDB build",
+      data: { major: "17", line: "17.9.0.028-orioledb", initialized: true },
+      version: orioledb,
+      reason:
+        "Initialized PostgreSQL data belongs to release line 17.9.0.028-orioledb, but 17.11.0.002-orioledb was requested",
     },
   ])("refuses $name", ({ data, version, reason }) => {
     expect(unusableDatabaseData(data, version)).toBe(reason);
@@ -46,7 +53,11 @@ describe("unusableDatabaseData", () => {
   it.each([
     { name: "unrecorded data for stock", line: undefined, version: stock },
     { name: "stock-recorded data for stock", line: "17", version: stock },
-    { name: "OrioleDB-recorded data for OrioleDB", line: "17-orioledb", version: orioledb },
+    {
+      name: "OrioleDB-recorded data for OrioleDB",
+      line: "17.11.0.002-orioledb",
+      version: orioledb,
+    },
   ])("reuses $name", ({ line, version }) => {
     expect(
       unusableDatabaseData({ major: "17", line, initialized: false }, version),

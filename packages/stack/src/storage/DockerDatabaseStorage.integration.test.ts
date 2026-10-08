@@ -1755,7 +1755,7 @@ describe.runIf(testEngine === "docker")(
 
             const oriole = "17.11.0.002-orioledb";
             expect((yield* storage.prepare(oriole).pipe(Effect.flip)).message).toContain(
-              "PostgreSQL data from an unfinished first start belongs to release line 17, but 17-orioledb was requested",
+              "PostgreSQL data from an unfinished first start belongs to release line 17, but 17.11.0.002-orioledb was requested",
             );
             yield* storage.prepare("17");
 
@@ -1763,7 +1763,7 @@ describe.runIf(testEngine === "docker")(
             yield* storage.prepare(oriole);
             yield* writePgVersion;
             expect((yield* storage.prepare("17").pipe(Effect.flip)).message).toContain(
-              "PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested",
+              "PostgreSQL data from an unfinished first start belongs to release line 17.11.0.002-orioledb, but 17 was requested",
             );
             yield* storage.prepare(oriole);
           }),
@@ -1837,7 +1837,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         yield* storage.prepare(oriole);
         yield* writePgVersion;
         expect((yield* storage.prepare("17").pipe(Effect.flip)).message).toContain(
-          "PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested",
+          "PostgreSQL data from an unfinished first start belongs to release line 17.11.0.002-orioledb, but 17 was requested",
         );
         yield* storage.prepare(oriole);
       }),

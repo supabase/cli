@@ -247,7 +247,7 @@ describe("database component", { timeout: 180_000 }, () => {
 
         expect(
           (yield* Effect.flip(prepare({ ...config, version: "17.11.0.002-orioledb" }))).message,
-        ).toContain("belongs to release line 17, but 17-orioledb was requested");
+        ).toContain("belongs to release line 17, but 17.11.0.002-orioledb was requested");
         yield* service.start;
         yield* service.ready;
         expect(yield* fs.exists(path.join(root, "database", ".supabase-database-ready.json"))).toBe(
