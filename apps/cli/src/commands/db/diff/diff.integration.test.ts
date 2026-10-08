@@ -715,20 +715,48 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("omits the migra suggestion when config disables pg-delta", () => {
-    const s = setup(tmp.current, {
-      files: {
-        "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n",
-        "supabase/schemas/public.sql": "create table declared ();\n",
-      },
-      diffSql: "",
+  const ignoredDeclarativeNote = (config: string, file: string) =>
+    Effect.gen(function* () {
+      const s = setup(tmp.current, {
+        files: { "supabase/config.toml": config, [file]: "create table declared ();\n" },
+        diffSql: "",
+      });
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) })).pipe(Effect.provide(s.layer));
+      return stderr(s.out);
     });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
-      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
-      expect(stderr(s.out)).not.toContain("--use-migra");
-    }).pipe(Effect.provide(s.layer));
-  });
+
+  it.effect("suggests --use-migra for supabase/schemas even when config disables pg-delta", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        "[experimental.pgdelta]\nenabled = false\n",
+        "supabase/schemas/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/schemas are not read");
+      expect(err).toContain("or pass --use-migra to diff them with migra");
+    }),
+  );
+
+  it.effect("omits the migra suggestion for a custom dir migra would not read", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        '[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = "./decl"\n',
+        "supabase/decl/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/decl are not read");
+      expect(err).not.toContain("--use-migra");
+    }),
+  );
+
+  it.effect("omits the migra suggestion when schema_paths selects other files", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        '[db.migrations]\nschema_paths = ["other.sql"]\n',
+        "supabase/schemas/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/schemas are not read");
+      expect(err).not.toContain("--use-migra");
+    }),
+  );
 
   it.effect("does not explain declarative files on a linked diff without -f", () => {
     const s = setup(tmp.current, {
@@ -1869,14 +1897,17 @@ describe("db diff", () => {
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
-  it.effect("does not reject --use-migra=false on the stack backend", () => {
+  it.effect("accepts --use-migra=false on the stack backend and reaches the stack shadow", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
-      const error = Exit.isFailure(exit)
-        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
-        : undefined;
-      expect(error).not.toBeInstanceOf(StackNativeEngineError);
+      expect(stderr(s.out)).toContain("Creating shadow database...");
+      // The fixture's StackApi is a placeholder, so the run stops exactly when it asks for the
+      // pg-delta stack shadow; any other failure means the flag was handled differently.
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      expect(Cause.pretty(exit.cause)).toContain("Stack services must not run");
+      expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBeUndefined();
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 

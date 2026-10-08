@@ -710,9 +710,14 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
-        // Migra reads the configured declarative dir only while pg-delta stays enabled in config,
-        // and the stack backend rejects migra outright.
-        const suggestMigra = cfg.pgDelta.enabled && !onStackBackend;
+        // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`): schema_paths
+        // first, then this dir while pg-delta stays enabled in config, then supabase/schemas.
+        // The stack backend rejects migra outright.
+        const migraReadsDeclarativeDir =
+          cfg.schemaPathPatterns.length === 0 &&
+          (cfg.pgDelta.enabled ||
+            path.normalize(declarativeDir) === path.join("supabase", "schemas"));
+        const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
         yield* output.raw(
           writesMigration
             ? declarativeBaselineNote(displayPath)
