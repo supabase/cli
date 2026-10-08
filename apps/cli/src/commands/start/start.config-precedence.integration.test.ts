@@ -19,6 +19,7 @@ import {
   sequentialExecBatch,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { ConfigEnvPins } from "../../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../../tests/helpers/config-goldens.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -297,6 +298,7 @@ describe("start container env precedence goldens", () => {
         const layer = Layer.mergeAll(
           unusedStackServices,
           cliConfigValuesTestLayer,
+          Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           BunServices.layer,
           out.layer,
           mockCommandSettings({ workdir }),

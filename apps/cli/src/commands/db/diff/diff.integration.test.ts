@@ -747,6 +747,20 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("--use-pg-delta=false beats SUPABASE_EXPERIMENTAL_PG_DELTA and config together", () => {
+    const s = setup(tmp.current, {
+      ...writeSchemaPathsConfig(true),
+      usePgDelta: false,
+      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" },
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgDelta: Option.some(false) }));
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(s.edgeCalls).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("SUPABASE_EXPERIMENTAL_PG_DELTA beats [experimental.pgdelta] enabled in config", () => {
     const s = setup(tmp.current, {
       ...writeSchemaPathsConfig(false),

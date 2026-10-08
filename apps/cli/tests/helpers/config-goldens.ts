@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { afterEach, vi } from "vitest";
 import { Option, Redacted } from "effect";
 
-const PINNED_ENV_PREFIXES = ["SUPABASE_", "DOTENV_", "NEXT_PUBLIC_SUPABASE_"] as const;
+import { PINNED_ENV_PREFIXES } from "./config-env-pins.ts";
 
 /**
  * Returns a function that replaces the whole `SUPABASE_*`/`DOTENV_*` slice of `process.env` with

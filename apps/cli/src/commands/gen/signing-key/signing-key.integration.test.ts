@@ -1,18 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import {
-  Cause,
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Schema,
-  Sink,
-  Stream,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -584,11 +572,9 @@ describe("gen signing-key integration", () => {
       yield* fs.writeFileString(path.join(supabaseDir, "from-env-local.json"), "[]\n");
       yield* fs.writeFileString(path.join(supabaseDir, "from-env.json"), "[]\n");
 
-      yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
-        ),
+      yield* withConfigEnv(
+        { SUPABASE_ENV: "test" },
+        genSigningKey({ algorithm: "ES256", append: false }),
       );
 
       expect(out.stderrText).toContain(path.join("supabase", "from-env.json"));
@@ -613,11 +599,9 @@ describe("gen signing-key integration", () => {
           "!=broken\n",
         );
 
-        yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
-          ),
+        yield* withConfigEnv(
+          { SUPABASE_ENV: "test" },
+          genSigningKey({ algorithm: "ES256", append: false }),
         );
 
         expect(yield* readSigningKeys()).toHaveLength(1);

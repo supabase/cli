@@ -513,6 +513,37 @@ schemas = ["public", "remote_schema"]
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("pushes the SUPABASE_API_SCHEMAS env override instead of the config.toml value", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"
+[api]
+enabled = true
+schemas = ["public"]
+`,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            api: { ...(a["api"] as Record<string, unknown>), db_schema: "public" },
+          }),
+        }),
+      },
+    });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public,env_schema",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
+        );
+        expect(update?.body).toMatchObject({ db_schema: "public,env_schema" });
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.live("selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () => {
     const { layer, out, api } = setup({
       toml: `project_id = "test"

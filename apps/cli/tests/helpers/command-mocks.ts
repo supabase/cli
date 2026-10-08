@@ -26,6 +26,7 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
+import { ConfigEnvPins } from "./config-env-pins.ts";
 import { CommandCredentials } from "../../src/auth/command-credentials.service.ts";
 import { DbExecError } from "../../src/command-internal/db-connection.errors.ts";
 import type {
@@ -769,7 +770,10 @@ export const withEnvVar = <A, E, R>(
       else process.env[name] = value;
       return previous;
     }),
-    () => (value === undefined ? body : withConfigEnv({ [name]: value }, body)),
+    () =>
+      value === undefined
+        ? withoutConfigEnvPin(name, body)
+        : withConfigEnv({ [name]: value }, body),
     (previous) =>
       Effect.sync(() => {
         if (previous === undefined) delete process.env[name];
@@ -790,14 +794,26 @@ export const withConfigEnv = <A, E, R>(
   values: Readonly<Record<string, string>>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  body.pipe(
-    Effect.provide(
-      ConfigProvider.layerAdd(
-        ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
-        { asPrimary: true },
+  Effect.flatMap(Effect.service(ConfigEnvPins), (pins) =>
+    body.pipe(
+      Effect.provideService(ConfigEnvPins, { ...pins, ...values }),
+      Effect.provide(
+        ConfigProvider.layerAdd(
+          ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
+          { asPrimary: true },
+        ),
       ),
     ),
   );
+
+const withoutConfigEnvPin = <A, E, R>(
+  name: string,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.flatMap(Effect.service(ConfigEnvPins), (pins) => {
+    const { [name]: _removed, ...rest } = pins;
+    return Effect.provideService(body, ConfigEnvPins, rest);
+  });
 
 /**
  * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so the default-ON cache cannot

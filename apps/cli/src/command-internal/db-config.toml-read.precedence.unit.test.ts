@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Option, Path, Result } from "effect";
 
+import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
@@ -216,6 +217,7 @@ describe("db toml reader precedence goldens", () => {
         const path = yield* Path.Path;
         const outcome = yield* checkDbToml(fs, path, workdir, fixture.ref).pipe(
           Effect.provide(cliConfigValuesTestLayer),
+          Effect.provideService(ConfigEnvPins, shell),
           Effect.provideService(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromEnvRecord(shell, { preserveEmptyStrings: true }),
