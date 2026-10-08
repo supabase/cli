@@ -510,6 +510,43 @@ schemas = ["public", "remote_schema"]
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () => {
+    const { layer, out, api } = setup({
+      toml: `project_id = "test"
+[api]
+enabled = true
+schemas = ["public"]
+
+[remotes.staging]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
+[remotes.staging.api]
+schemas = ["public", "remote_schema"]
+`,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            api: { ...(a["api"] as Record<string, unknown>), db_schema: "public" },
+          }),
+        }),
+      },
+    });
+    return withEnvVar(
+      "SUPABASE_REMOTES_STAGING_PROJECT_ID",
+      REF,
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
+        );
+        expect(update?.body).toMatchObject({ db_schema: "public,remote_schema" });
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.live("aborts when two [remotes.*] blocks share the target project_id", () => {
     const { layer, api } = setup({
       toml: `project_id = "test"\n[remotes.a]\nproject_id = "${REF}"\n[remotes.b]\nproject_id = "${REF}"\n`,

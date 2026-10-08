@@ -1,6 +1,5 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import {
-  ENV_CAPTURE_REGEX,
   mergeParsedCliConfig,
   parseCliConfigDocumentFile,
   resolveCliConfigSubtree,
@@ -10,19 +9,18 @@ import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { lookupCliConfigEnv } from "../../../config/cli-config-key.ts";
 import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
 import { selectCliConfigRemote } from "../../../config/cli-config-remote.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import {
+  collectEnvReferences,
+  loadConfigEnvLookup,
+} from "../../../command-internal/config-env-lookup.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  loadCliProjectEnvFiles,
-  readShellEnvironment,
-} from "../../../shared/config/cli-config-env.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
@@ -99,52 +97,16 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
   return kept;
 }
 
-const collectEnvReferences = (value: unknown, out: Set<string>): void => {
-  if (typeof value === "string") {
-    const name = ENV_CAPTURE_REGEX.exec(value)?.[1];
-    if (name !== undefined) out.add(name);
-  } else if (Redacted.isRedacted(value)) {
-    collectEnvReferences(Redacted.value(value), out);
-  } else if (Array.isArray(value)) {
-    for (const item of value) collectEnvReferences(item, out);
-  } else if (isRecord(value)) {
-    for (const item of Object.values(value)) collectEnvReferences(item, out);
-  }
-};
-
-const envLookupFor = Effect.fnUntraced(function* (
-  workdir: string,
-  trees: ReadonlyArray<unknown>,
-  extraNames: ReadonlyArray<string> = [],
-) {
-  const names = new Set(extraNames);
-  collectEnvReferences(trees, names);
-  const shell = yield* readShellEnvironment().pipe(Effect.orDie);
-  yield* shell.load(names).pipe(Effect.orDie);
-  const files = yield* loadCliProjectEnvFiles(workdir, { shell }).pipe(Effect.orDie);
-  return (name: string) =>
-    lookupCliConfigEnv(
-      {
-        shell: (key) => shell.get(key),
-        projectEnv: (key) => {
-          const value = files.values[key];
-          return value === undefined ? undefined : { value };
-        },
-      },
-      name,
-    );
-});
-
 /** The merged document with the remote for `ref` applied, read without decoding any value. */
 const recoverMergedDocument = Effect.fnUntraced(function* (workdir: string, ref: string) {
   const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false });
   if (parsed === null) return undefined;
   const remotes = parsed.rawDocument?.["remotes"];
-  const lookup = yield* envLookupFor(
+  const { lookup } = yield* loadConfigEnvLookup(
     workdir,
     [remotes],
     isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
-  );
+  ).pipe(Effect.orDie);
   const merged = yield* mergeParsedCliConfig(parsed, {
     selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
   });
@@ -246,7 +208,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         }),
       );
     if (edgeRuntime !== undefined) {
-      const lookup = yield* envLookupFor(cliSettings.workdir, [edgeRuntime]);
+      const { lookup } = yield* loadConfigEnvLookup(cliSettings.workdir, [edgeRuntime]).pipe(
+        Effect.orDie,
+      );
       const names = new Set<string>();
       collectEnvReferences(edgeRuntime, names);
       const values: Record<string, string> = {};
