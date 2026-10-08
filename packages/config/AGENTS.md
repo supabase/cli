@@ -45,8 +45,11 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
   `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
+  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
+  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `parseMergeCliConfig` (discover, parse, and merge the `[remotes.*]` block a caller-supplied
+  `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
+  env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside
   `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
   here can change or vanish in any release.
 - `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a

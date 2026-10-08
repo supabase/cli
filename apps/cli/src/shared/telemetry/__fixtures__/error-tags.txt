@@ -38,7 +38,9 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigLoadError
 CliConfigParseError
+CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
 CliProjectHomeNotDirectoryError

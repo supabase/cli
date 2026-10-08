@@ -1,0 +1,462 @@
+import { Effect, Option, Path, Result } from "effect";
+import { describe, expect, it } from "vitest";
+
+import {
+  InvalidAnalyticsBackendEnvOverrideError,
+  InvalidBoolEnvOverrideError,
+  InvalidPortEnvOverrideError,
+  envOverrideUint,
+} from "../command-internal/local-config-values.ts";
+import {
+  binaryCodec,
+  commaListCodec,
+  goBoolCodec,
+  goUintCodec,
+  literalCodec,
+  optionalCliConfigKey,
+  pickCliConfigKey,
+  pickCliEnvName,
+  portCodec,
+  requiredCliConfigKey,
+  stringCodec,
+  cliEnvName,
+  type CliConfigKey,
+  type CliConfigSources,
+} from "./cli-config-key.ts";
+
+const pathService = Effect.runSync(
+  Effect.gen(function* () {
+    return yield* Path.Path;
+  }).pipe(Effect.provide(Path.layer)),
+);
+
+interface SourceParts {
+  readonly flags?: Readonly<Record<string, unknown>>;
+  readonly shell?: Readonly<Record<string, string>>;
+  readonly projectEnv?: Readonly<Record<string, string>>;
+  readonly config?: Readonly<Record<string, unknown>>;
+  readonly dotenvPrivateKeys?: ReadonlyArray<string>;
+}
+
+const makeSources = (parts: SourceParts = {}): CliConfigSources => {
+  const config = parts.config ?? {};
+  return {
+    flags: (path) =>
+      parts.flags !== undefined && path in parts.flags
+        ? { flag: `--${path}`, value: parts.flags[path] }
+        : undefined,
+    shell: (name) => parts.shell?.[name],
+    projectEnv: (name) => {
+      const value = parts.projectEnv?.[name];
+      return value === undefined ? undefined : { value, file: "/work/supabase/.env" };
+    },
+    config: (path) =>
+      path in config
+        ? { value: config[path], origin: { path: path.split("."), source: "local" } }
+        : undefined,
+    dotenvPrivateKeys: parts.dotenvPrivateKeys ?? [],
+    context: {
+      workdir: "/work/app",
+      projectRef: Option.none(),
+      path: pathService,
+      configAt: (path) => config[path],
+    },
+  };
+};
+
+const seed = requiredCliConfigKey({
+  path: "db.seed.enabled",
+  env: ["SUPABASE_DB_SEED_ENABLED"],
+  codec: goBoolCodec,
+  default: true,
+});
+
+const valueOf = <A, X>(key: CliConfigKey<A, X>, parts?: SourceParts) => {
+  const picked = pickCliConfigKey(key, makeSources(parts));
+  if (Result.isFailure(picked)) throw picked.failure;
+  return picked.success;
+};
+
+const failureOf = <A, X>(key: CliConfigKey<A, X>, parts?: SourceParts) => {
+  const picked = pickCliConfigKey(key, makeSources(parts));
+  if (Result.isSuccess(picked)) throw new Error("expected a failure");
+  return picked.failure;
+};
+
+describe("pickCliConfigKey tiers", () => {
+  const all: SourceParts = {
+    flags: { "db.seed.enabled": false },
+    shell: { SUPABASE_DB_SEED_ENABLED: "true" },
+    projectEnv: { SUPABASE_DB_SEED_ENABLED: "false" },
+    config: { "db.seed.enabled": "true" },
+  };
+
+  it("resolves flag over shell over project env over config over default", () => {
+    const withoutFlag = { ...all, flags: {} };
+    const withoutShell = { ...withoutFlag, shell: {} };
+    const withoutProject = { ...withoutShell, projectEnv: {} };
+    const withoutConfig = { ...withoutProject, config: {} };
+
+    expect(valueOf(seed, all)).toMatchObject({ value: false, origin: { tier: "flag" } });
+    expect(valueOf(seed, withoutFlag)).toMatchObject({
+      value: true,
+      origin: { tier: "shell", envName: "SUPABASE_DB_SEED_ENABLED" },
+    });
+    expect(valueOf(seed, withoutShell)).toMatchObject({
+      value: false,
+      origin: {
+        tier: "projectEnv",
+        envName: "SUPABASE_DB_SEED_ENABLED",
+        file: "/work/supabase/.env",
+      },
+    });
+    expect(valueOf(seed, withoutProject)).toMatchObject({
+      value: true,
+      origin: { tier: "config" },
+    });
+    expect(valueOf(seed, withoutConfig)).toEqual({ value: true, origin: { tier: "default" } });
+  });
+
+  it("lets a set-but-empty shell variable shadow the project env and fall through to config", () => {
+    const picked = valueOf(seed, {
+      shell: { SUPABASE_DB_SEED_ENABLED: "" },
+      projectEnv: { SUPABASE_DB_SEED_ENABLED: "false" },
+      config: { "db.seed.enabled": true },
+    });
+
+    expect(picked).toMatchObject({ value: true, origin: { tier: "config" } });
+  });
+
+  it("treats an empty project env value as absent", () => {
+    const picked = valueOf(seed, {
+      projectEnv: { SUPABASE_DB_SEED_ENABLED: "" },
+      config: { "db.seed.enabled": false },
+    });
+
+    expect(picked).toMatchObject({ value: false, origin: { tier: "config" } });
+  });
+
+  it("wraps an absent optional key as None", () => {
+    const key = optionalCliConfigKey({
+      path: "db.orioledb_version",
+      env: ["SUPABASE_DB_ORIOLEDB_VERSION"],
+      codec: stringCodec,
+    });
+
+    expect(valueOf(key).value).toEqual(Option.none());
+    expect(valueOf(key, { shell: { SUPABASE_DB_ORIOLEDB_VERSION: "15.1" } }).value).toEqual(
+      Option.some("15.1"),
+    );
+  });
+
+  it("evaluates a context default against the loaded document", () => {
+    const smtp = requiredCliConfigKey({
+      path: "auth.email.smtp.enabled",
+      codec: goBoolCodec,
+      defaultFrom: (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
+    });
+
+    expect(valueOf(smtp).value).toBe(false);
+    expect(valueOf(smtp, { config: { "auth.email.smtp": {} } }).value).toBe(true);
+  });
+});
+
+describe("pickCliConfigKey env expansion", () => {
+  it("expands one env() level at the shell tier from the project env", () => {
+    const picked = valueOf(seed, {
+      shell: { SUPABASE_DB_SEED_ENABLED: "env(SEED)" },
+      projectEnv: { SEED: "false" },
+    });
+
+    expect(picked.value).toBe(false);
+  });
+
+  it("expands one env() level at the project env tier from the shell", () => {
+    const picked = valueOf(seed, {
+      projectEnv: { SUPABASE_DB_SEED_ENABLED: "env(SEED)" },
+      shell: { SEED: "false" },
+    });
+
+    expect(picked.value).toBe(false);
+  });
+
+  it("does not expand a second level", () => {
+    const failure = failureOf(seed, {
+      shell: { SUPABASE_DB_SEED_ENABLED: "env(A)", A: "env(B)", B: "true" },
+    });
+
+    expect(failure.message).toContain('cannot parse "env(B)" as a bool');
+  });
+
+  it("keeps an unresolved env() literal and reports it", () => {
+    const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "env(MISSING)" } });
+
+    expect(failure.tier).toBe("shell");
+    expect(failure.message).toContain('cannot parse "env(MISSING)" as a bool');
+  });
+
+  it("resolves a config-tier env() reference with a lowercase name", () => {
+    const picked = valueOf(seed, {
+      config: { "db.seed.enabled": "env(seed_flag)" },
+      projectEnv: { seed_flag: "false" },
+    });
+
+    expect(picked.value).toBe(false);
+  });
+
+  it("keeps the config-tier literal when the referenced variable is set but empty", () => {
+    const failure = failureOf(seed, {
+      config: { "db.seed.enabled": "env(SEED)" },
+      shell: { SEED: "" },
+    });
+
+    expect(failure.tier).toBe("config");
+  });
+});
+
+describe("pickCliConfigKey attributes", () => {
+  const poolMode = requiredCliConfigKey({
+    path: "db.pooler.pool_mode",
+    env: ["SUPABASE_DB_POOLER_POOL_MODE"],
+    codec: literalCodec(["transaction", "session"]),
+    default: "transaction",
+  });
+
+  it("uses a deprecated alias and reports it, with the canonical name winning when both are set", () => {
+    const pgdelta = requiredCliConfigKey({
+      path: "experimental.pgdelta.enabled",
+      env: ["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED", "SUPABASE_EXPERIMENTAL_PG_DELTA"],
+      codec: goBoolCodec,
+      default: false,
+    });
+
+    expect(valueOf(pgdelta, { shell: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" } })).toMatchObject({
+      value: true,
+      deprecatedEnv: {
+        used: "SUPABASE_EXPERIMENTAL_PG_DELTA",
+        canonical: "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
+      },
+    });
+    const both = valueOf(pgdelta, {
+      shell: {
+        SUPABASE_EXPERIMENTAL_PG_DELTA: "true",
+        SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false",
+      },
+    });
+    expect(both.value).toBe(false);
+    expect(both.deprecatedEnv).toBeUndefined();
+  });
+
+  it("applies envRequiresSection only to the env tiers", () => {
+    const webhooks = requiredCliConfigKey({
+      path: "experimental.webhooks.enabled",
+      env: ["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"],
+      codec: goBoolCodec,
+      default: false,
+      envRequiresSection: "experimental.webhooks",
+    });
+    const shell = { SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED: "true" };
+
+    expect(valueOf(webhooks, { shell }).origin.tier).toBe("default");
+    expect(valueOf(webhooks, { shell, config: { "experimental.webhooks": {} } })).toMatchObject({
+      value: true,
+      origin: { tier: "shell" },
+    });
+    expect(
+      valueOf(webhooks, { flags: { "experimental.webhooks.enabled": true } }).origin.tier,
+    ).toBe("flag");
+  });
+
+  it("decrypts the winning secret at every tier", () => {
+    const ciphertext =
+      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+    const dotenvPrivateKeys = ["7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb"];
+    const secret = optionalCliConfigKey({
+      path: "auth.captcha.secret",
+      env: ["SUPABASE_AUTH_CAPTCHA_SECRET"],
+      codec: stringCodec,
+      secret: true,
+    });
+
+    expect(
+      valueOf(secret, { shell: { SUPABASE_AUTH_CAPTCHA_SECRET: ciphertext }, dotenvPrivateKeys })
+        .value,
+    ).toEqual(Option.some("value"));
+    expect(
+      valueOf(secret, { config: { "auth.captcha.secret": ciphertext }, dotenvPrivateKeys }).value,
+    ).toEqual(Option.some("value"));
+  });
+
+  it("fails a secret that cannot be decrypted without echoing the ciphertext", () => {
+    const secret = optionalCliConfigKey({
+      path: "auth.captcha.secret",
+      env: ["SUPABASE_AUTH_CAPTCHA_SECRET"],
+      codec: stringCodec,
+      secret: true,
+    });
+
+    const failure = failureOf(secret, {
+      shell: { SUPABASE_AUTH_CAPTCHA_SECRET: "encrypted:abcd" },
+    });
+
+    expect(failure.message).toBe("failed to parse config: missing private key");
+  });
+
+  it("normalizes the winner and keeps the unnormalized value", () => {
+    const sqlPaths = requiredCliConfigKey({
+      path: "db.seed.sql_paths",
+      env: ["SUPABASE_DB_SEED_SQL_PATHS"],
+      codec: commaListCodec,
+      default: ["./seed.sql"],
+      normalize: (value, ctx) => value.map((entry) => ctx.path.join("supabase", entry)),
+    });
+
+    const picked = valueOf(sqlPaths, { shell: { SUPABASE_DB_SEED_SQL_PATHS: "a.sql,b.sql" } });
+
+    expect(picked.value).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+    expect(picked.unnormalized).toEqual(["a.sql", "b.sql"]);
+  });
+
+  it("splits a comma list without trimming and reads an empty config string as an empty list", () => {
+    const schemas = requiredCliConfigKey({
+      path: "api.schemas",
+      env: ["SUPABASE_API_SCHEMAS"],
+      codec: commaListCodec,
+      default: ["public"],
+    });
+
+    expect(valueOf(schemas, { shell: { SUPABASE_API_SCHEMAS: "a, b" } }).value).toEqual([
+      "a",
+      " b",
+    ]);
+    expect(valueOf(schemas, { config: { "api.schemas": "" } }).value).toEqual([]);
+  });
+
+  it("accepts a flag value of the key's type and rejects another", () => {
+    expect(valueOf(poolMode, { flags: { "db.pooler.pool_mode": "session" } }).value).toBe(
+      "session",
+    );
+    expect(failureOf(poolMode, { flags: { "db.pooler.pool_mode": "other" } }).tier).toBe("flag");
+  });
+
+  it("never consults the document for a key without a document path", () => {
+    const password = optionalCliConfigKey({
+      path: "linkedDb.password",
+      env: ["SUPABASE_DB_PASSWORD"],
+      codec: stringCodec,
+      document: false,
+    });
+
+    expect(valueOf(password, { config: { "linkedDb.password": "from-config" } }).origin.tier).toBe(
+      "default",
+    );
+  });
+});
+
+describe("pickCliConfigKey failure text matches the legacy readers", () => {
+  const legacyUintMessage = (name: string, path: string, value: string) => {
+    try {
+      envOverrideUint(name, path, 1, { [name]: value });
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    return undefined;
+  };
+
+  it("reproduces the bool message", () => {
+    const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "maybe" } });
+
+    expect(failure.message).toBe(
+      new InvalidBoolEnvOverrideError("db.seed.enabled", "maybe").message,
+    );
+  });
+
+  it("reproduces the port message for a value out of range", () => {
+    const port = requiredCliConfigKey({
+      path: "api.port",
+      env: ["SUPABASE_API_PORT"],
+      codec: portCodec,
+      default: 54321,
+    });
+
+    const failure = failureOf(port, { shell: { SUPABASE_API_PORT: "70000" } });
+
+    expect(failure.message).toBe(new InvalidPortEnvOverrideError("api.port", "70000").message);
+  });
+
+  it("reproduces the uint message and the Go base-zero grammar", () => {
+    const jwtExpiry = requiredCliConfigKey({
+      path: "auth.jwt_expiry",
+      env: ["SUPABASE_AUTH_JWT_EXPIRY"],
+      codec: goUintCodec,
+      default: 3600,
+    });
+
+    expect(failureOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "08" } }).message).toBe(
+      legacyUintMessage("SUPABASE_AUTH_JWT_EXPIRY", "auth.jwt_expiry", "08"),
+    );
+    expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "0x10" } }).value).toBe(16);
+    expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "010" } }).value).toBe(8);
+    expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "1_000" } }).value).toBe(1000);
+  });
+
+  it("reproduces the enum message", () => {
+    const backend = requiredCliConfigKey({
+      path: "analytics.backend",
+      env: ["SUPABASE_ANALYTICS_BACKEND"],
+      codec: literalCodec(["postgres", "bigquery"]),
+      default: "postgres",
+    });
+
+    const failure = failureOf(backend, { shell: { SUPABASE_ANALYTICS_BACKEND: "sqlite" } });
+
+    expect(failure.message).toBe(
+      new InvalidAnalyticsBackendEnvOverrideError("analytics.backend", "sqlite").message,
+    );
+  });
+
+  it("names the variable for the strict 0/1 codec", () => {
+    const stack = optionalCliConfigKey({
+      path: "experimental.stack",
+      env: ["SUPABASE_EXPERIMENTAL_STACK"],
+      codec: binaryCodec,
+    });
+
+    const failure = failureOf(stack, { shell: { SUPABASE_EXPERIMENTAL_STACK: "true" } });
+
+    expect(failure.message).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+    expect(valueOf(stack, { shell: { SUPABASE_EXPERIMENTAL_STACK: "1" } }).value).toEqual(
+      Option.some(true),
+    );
+  });
+
+  it("does not echo a secret value", () => {
+    const secretBool = requiredCliConfigKey({
+      path: "x.secret",
+      env: ["SUPABASE_X_SECRET"],
+      codec: goBoolCodec,
+      default: false,
+      secret: true,
+    });
+
+    expect(
+      failureOf(secretBool, { shell: { SUPABASE_X_SECRET: "hunter2" } }).message,
+    ).not.toContain("hunter2");
+  });
+});
+
+describe("pickCliEnvName", () => {
+  const projectId = cliEnvName({ name: "SUPABASE_PROJECT_ID", codec: stringCodec });
+
+  it("reads the shell only and treats empty as unset", () => {
+    expect(Result.getOrThrow(pickCliEnvName(projectId, { shell: () => "abc" }))).toEqual(
+      Option.some("abc"),
+    );
+    expect(Result.getOrThrow(pickCliEnvName(projectId, { shell: () => "" }))).toEqual(
+      Option.none(),
+    );
+    expect(Result.getOrThrow(pickCliEnvName(projectId, { shell: () => undefined }))).toEqual(
+      Option.none(),
+    );
+  });
+});
