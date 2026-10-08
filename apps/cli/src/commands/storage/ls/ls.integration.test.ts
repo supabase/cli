@@ -244,6 +244,28 @@ describe("storage ls", () => {
     });
   });
 
+  it.live("applies the [remotes.*] block selected by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      toml: `project_id = "test"
+[remotes.staging]
+project_id = "env(STAGING_REF)"
+`,
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+    });
+    return withEnvVar(
+      "SUPABASE_REMOTES_STAGING_PROJECT_ID",
+      VALID_REF,
+      Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+      }),
+    );
+  });
+
   it.live("lists the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
     // the gateway host.

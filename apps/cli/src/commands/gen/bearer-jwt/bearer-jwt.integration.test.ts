@@ -12,6 +12,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -81,6 +82,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(CliArgs, { args: [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),

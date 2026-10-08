@@ -203,7 +203,6 @@ function baseInput(
     projectEnvValues: undefined,
     debug: false,
     version: "",
-    seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
   };
 }

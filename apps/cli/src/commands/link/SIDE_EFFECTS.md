@@ -106,7 +106,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a TS-only branch-name lookup (CLI-2167). |
 | `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                        |
-| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (the DB-connection path that would consume it is dead code in Go)                                                                                                   |
+| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                                              |
 
 ## Exit Codes
 
@@ -132,7 +132,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ### `--output-format text`
 
-- stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stderr: `WARN: the --password flag is deprecated and ignored: link does not connect to the database.` when `--password` is passed; `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
 - stderr: `Resolved branch "<name>" of project <parentRef> to project ref <branchRef>.` — via
   `output.raw(..., "stderr")` (NOT `output.info`, which clack renders on stdout with `│`/`◇`
   framing in text mode) — only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value

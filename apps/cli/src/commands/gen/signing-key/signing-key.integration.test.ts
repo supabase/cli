@@ -24,12 +24,14 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -104,6 +106,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(YesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
@@ -340,6 +343,25 @@ describe("gen signing-key integration", () => {
         expect(out.stderrText).toContain("JWT signing key appended to: ");
         expect(out.stderrText).toContain(path.join("supabase", "signing_keys.json"));
       }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "reads signing_keys_path from SUPABASE_AUTH_SIGNING_KEYS_PATH over the config file",
+    () => {
+      const { layer, out } = setup({ stdinIsTty: false });
+      return withConfigEnv(
+        { SUPABASE_AUTH_SIGNING_KEYS_PATH: "./signing_keys.json" },
+        Effect.gen(function* () {
+          yield* writeConfig('[auth]\nsigning_keys_path = "./unused.json"\n');
+          yield* writeSigningKeys("[]\n");
+
+          yield* genSigningKey({ algorithm: "ES256", append: false });
+
+          expect(yield* readSigningKeys()).toHaveLength(1);
+          expect(out.stderrText).toContain("JWT signing key appended to: ");
+        }),
+      ).pipe(Effect.provide(layer));
     },
   );
 

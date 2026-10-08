@@ -1,6 +1,8 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
-import { Config, ConfigProvider, Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
 import * as SmolToml from "smol-toml";
+import { pickCliConfigKey } from "../config/cli-config-key.ts";
+import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../config/command-settings.layer.ts";
 import { rootFlagTokens } from "../shared/cli/run.ts";
 import {
@@ -36,12 +38,17 @@ const firstExplicitLongFlagValue = (
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
+const readEnv = (name: string) =>
+  Config.option(Config.string(name)).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+    Effect.map(Option.getOrUndefined),
+  );
+
 /** Reads one experimental feature, treating unavailable or invalid configuration as unset. */
 export const readExperimentalFeatureConfig = (input: {
   readonly feature: keyof typeof featureSchemas;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<boolean | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -49,7 +56,7 @@ export const readExperimentalFeatureConfig = (input: {
     const explicitWorkdir = firstExplicitLongFlagValue(input.args, "workdir");
     const resolvedWorkdir = yield* resolveWorkdir(
       explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
-      Option.fromNullishOr(input.env["SUPABASE_WORKDIR"]),
+      Option.fromNullishOr(yield* readEnv("SUPABASE_WORKDIR")),
       input.cwd,
       (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
       path,
@@ -71,38 +78,41 @@ export const readExperimentalFeatureConfig = (input: {
     return decoded.experimental?.[input.feature];
   }).pipe(Effect.orElseSucceed(() => undefined));
 
-/**
- * Env record for one experimental feature, read from ConfigProvider.
- */
-export const experimentalFeatureEnv = (
-  feature: string,
-): Effect.Effect<Readonly<Record<string, string | undefined>>> =>
-  Effect.gen(function* () {
-    const envName = `SUPABASE_EXPERIMENTAL_${feature.toUpperCase()}`;
-    const provider = yield* ConfigProvider.ConfigProvider;
-    const override = yield* Config.option(Config.string(envName))
-      .parse(provider)
-      .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-    return { [envName]: Option.getOrUndefined(override) };
-  });
+const featureKeys = {
+  stack: CliConfigKeys.experimental.stack,
+  compute: CliConfigKeys.experimental.compute,
+} as const;
 
-/** Resolves one experimental boolean from its environment override and config fallback. */
+/**
+ * Resolves one experimental boolean: a strict `0`/`1` shell override, else the project
+ * config. Remotes and project `.env*` files do not apply.
+ */
 export const resolveExperimentalFeature = <E, R>(input: {
-  readonly feature: string;
+  readonly feature: keyof typeof featureKeys;
   readonly configValue: Effect.Effect<boolean | undefined, E, R>;
-  readonly env: Readonly<Record<string, string | undefined>>;
-}): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R> => {
-  const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
-  const override = input.env[envName];
-  if (override === undefined || override === "") {
-    return input.configValue.pipe(Effect.map((value) => value === true));
-  }
-  if (override === "1") return Effect.succeed(true);
-  if (override === "0") return Effect.succeed(false);
-  return Effect.fail(
-    new ExperimentalFeatureFlagError({
-      envName,
-      message: `${envName} must be 0 or 1 when set`,
-    }),
-  );
-};
+}): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R | Path.Path> =>
+  Effect.gen(function* () {
+    const key = featureKeys[input.feature];
+    const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
+    const path = yield* Path.Path;
+    const shell = yield* readEnv(envName);
+    const configValue = shell === undefined || shell === "" ? yield* input.configValue : undefined;
+    const picked = pickCliConfigKey(key, {
+      flags: () => undefined,
+      shell: (name) => (name === envName ? shell : undefined),
+      projectEnv: () => undefined,
+      config: (configPath) =>
+        configPath === key.path && configValue !== undefined
+          ? { value: configValue, origin: { path: configPath.split("."), source: "local" } }
+          : undefined,
+      dotenvPrivateKeys: [],
+      context: { workdir: "", projectRef: Option.none(), path, configAt: () => undefined },
+    });
+    if (Result.isFailure(picked)) {
+      return yield* new ExperimentalFeatureFlagError({
+        envName,
+        message: picked.failure.message,
+      });
+    }
+    return Option.getOrElse(picked.success.value, () => false);
+  });

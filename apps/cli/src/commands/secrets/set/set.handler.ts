@@ -1,16 +1,23 @@
+import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import {
-  loadCliProjectEnvironment,
-  CliConfigSchema,
-  type CliConfig,
-  type CliConfigParseError,
-} from "@supabase/config/effect";
-import { loadCliConfig, resolveCliConfigSubtree } from "@supabase/config/internal";
+  mergeParsedCliConfig,
+  parseCliConfigDocumentFile,
+  resolveCliConfigSubtree,
+} from "@supabase/config/internal";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
+import { selectCliConfigRemote } from "../../../config/cli-config-remote.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import {
+  collectEnvReferences,
+  loadConfigEnvLookup,
+} from "../../../command-internal/config-env-lookup.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -50,8 +57,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * otherwise-valid secret. `Schema.decodeUnknownSync` has no such tolerance, so this re-slices
  * `edge_runtime.secrets` out of the pre-decode document and decodes each entry independently.
  */
-function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null {
-  if (cause.document === undefined) {
+function recoverEdgeRuntimeConfig(cause: { readonly document?: unknown }): CliConfig | null {
+  if (!isRecord(cause.document)) {
     return null;
   }
   const edgeRuntime = cause.document.edge_runtime;
@@ -90,6 +97,25 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
   return kept;
 }
 
+/** The merged document with the remote for `ref` applied, read without decoding any value. */
+const recoverMergedDocument = Effect.fnUntraced(
+  function* (workdir: string, ref: string) {
+    const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false });
+    if (parsed === null) return undefined;
+    const remotes = parsed.rawDocument?.["remotes"];
+    const { lookup } = yield* loadConfigEnvLookup(
+      workdir,
+      [remotes],
+      isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
+    ).pipe(Effect.orDie);
+    const merged = yield* mergeParsedCliConfig(parsed, {
+      selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
+    });
+    return { document: merged.document, appliedRemote: merged.appliedRemote };
+  },
+  Effect.orElseSucceed(() => undefined),
+);
+
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
@@ -98,6 +124,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -115,85 +143,96 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     //
     // Passing `ref` merges a matching `[remotes.*]` block over the base config before decode,
     // so a schema-decode error on a remote target recovers that remote's override, not the base
-    // document. `goViperCompat: true` enables the duplicate-project_id/format checks needed for
-    // the `DuplicateRemoteProjectIdError` catch below to ever fire.
-    const loadedConfig = yield* loadCliConfig(runtimeInfo.cwd, {
-      projectRef: ref,
-      goViperCompat: true,
-    }).pipe(
-      Effect.flatMap((loaded) => {
-        if (loaded === null) {
-          return Effect.succeed(null);
-        }
-        // Printed unconditionally as soon as a matching `[remotes.*]` block is found, ahead of
-        // the (possibly failing) decode — other handlers surface this the same way, so this
-        // path must not silently drop it.
-        return (
-          loaded.appliedRemote !== undefined
-            ? output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr")
-            : Effect.void
-        ).pipe(Effect.as(loaded.config));
-      }),
-      Effect.catchTags({
-        CliConfigParseError: (cause) => {
-          // `smol-toml` embeds a source codeblock (which can include real secret values) after a
-          // blank-line separator on a raw parse failure; truncate before it. A schema-decode
-          // error puts the rejected value inline instead, with no such separator, so use a fixed,
-          // content-free message there.
-          const shortMessage =
-            cause.document === undefined
-              ? String(cause.cause).split("\n\n")[0]
-              : "schema validation failed";
-          // Printed here too since a matching `[remotes.*]` block is found before decode runs,
-          // even though decode then failed. Emitted ahead of the debug log below to preserve
-          // that order.
-          return (
-            cause.appliedRemote !== undefined
-              ? output.raw(`Loading config override: [remotes.${cause.appliedRemote}]\n`, "stderr")
-              : Effect.void
-          ).pipe(
-            Effect.andThen(
-              debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+    // document.
+    const reportRemote = (appliedRemote: string | undefined) =>
+      appliedRemote === undefined
+        ? Effect.void
+        : output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
+    const edgeRuntime = yield* configValues
+      .load({ workdir: cliSettings.workdir, projectRef: Option.some(ref) })
+      .pipe(
+        Effect.flatMap((snapshot) =>
+          // Printed unconditionally as soon as a matching `[remotes.*]` block is found, ahead of
+          // the (possibly failing) decode — other handlers surface this the same way, so this
+          // path must not silently drop it.
+          reportRemote(Option.getOrUndefined(snapshot.appliedRemote)).pipe(
+            Effect.as(snapshot.materialized.config.edge_runtime),
+          ),
+        ),
+        Effect.catchTags({
+          CliConfigParseError: (cause) => {
+            // `smol-toml` embeds a source codeblock (which can include real secret values) after a
+            // blank-line separator on a raw parse failure; truncate before it. A schema-decode
+            // error puts the rejected value inline instead, with no such separator, so use a fixed,
+            // content-free message there.
+            const shortMessage =
+              cause.document === undefined
+                ? String(cause.cause).split("\n\n")[0]
+                : "schema validation failed";
+            // Printed here too since a matching `[remotes.*]` block is found before decode runs,
+            // even though decode then failed. Emitted ahead of the debug log below to preserve
+            // that order.
+            return reportRemote(cause.appliedRemote).pipe(
+              Effect.andThen(
+                debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+              ),
+              Effect.as(recoverEdgeRuntimeConfig(cause)?.edge_runtime),
+            );
+          },
+          // An invalid value in an unrelated key fails the snapshot before decode; recover from the
+          // merged document the same way a schema-decode error does.
+          CliConfigValueError: () =>
+            recoverMergedDocument(cliSettings.workdir, ref).pipe(
+              Effect.flatMap((recovered) =>
+                reportRemote(recovered?.appliedRemote).pipe(
+                  Effect.andThen(
+                    debugLogger.debug(
+                      "failed to parse supabase/config.toml: schema validation failed",
+                    ),
+                  ),
+                  Effect.as(
+                    recovered === undefined
+                      ? undefined
+                      : recoverEdgeRuntimeConfig(recovered)?.edge_runtime,
+                  ),
+                ),
+              ),
             ),
-            Effect.as(recoverEdgeRuntimeConfig(cause)),
-          );
-        },
-        // A malformed dotenv line fails with this distinct tag (env resolution runs before
-        // schema decode), so there's no parsed document to recover a subtree from — recover to
-        // `null`, not `recoverEdgeRuntimeConfig`.
-        CliProjectEnvParseError: (cause) =>
-          debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
-        // Two `[remotes.*]` blocks declaring the same `project_id` as `ref`; swallowed
-        // non-fatally like every other load error here.
-        DuplicateRemoteProjectIdError: (cause) =>
-          debugLogger.debug(cause.message).pipe(Effect.as(null)),
-        // A `[remotes.*]` block's `project_id` fails the ref-pattern check; swallowed the same
-        // non-fatal way, so a malformed remote block must not abort an otherwise-valid
-        // `secrets set`.
-        InvalidRemoteProjectIdError: (cause) =>
-          debugLogger.debug(cause.message).pipe(Effect.as(null)),
-      }),
-    );
-    if (loadedConfig !== null) {
-      const projectEnv = yield* loadCliProjectEnvironment({
-        cwd: runtimeInfo.cwd,
-        baseEnv: process.env,
+          // A malformed dotenv file or `[remotes.*]` block (duplicate or malformed `project_id`)
+          // has no parsed document to recover a subtree from — recover to `undefined`, not
+          // `recoverEdgeRuntimeConfig`.
+          CliConfigLoadError: (cause) =>
+            debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
+          DuplicateRemoteProjectIdError: (cause) =>
+            debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
+          InvalidRemoteProjectIdError: (cause) =>
+            debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
+          ProjectRefReadError: (cause) =>
+            debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
+        }),
+      );
+    if (edgeRuntime !== undefined) {
+      const { lookup } = yield* loadConfigEnvLookup(cliSettings.workdir, [edgeRuntime]).pipe(
+        Effect.orDie,
+      );
+      const names = new Set<string>();
+      collectEnvReferences(edgeRuntime, names);
+      const values: Record<string, string> = {};
+      for (const name of names) {
+        const value = lookup(name);
+        if (value !== undefined) values[name] = value;
+      }
+      const resolved = yield* resolveCliConfigSubtree(edgeRuntime, { values }, "edge_runtime", {
+        goViperCompat: true,
       });
-      if (projectEnv !== null) {
-        const resolved = yield* resolveCliConfigSubtree(
-          loadedConfig.edge_runtime,
-          projectEnv,
-          "edge_runtime",
-          { goViperCompat: true },
-        );
-        for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
-          // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an
-          // empty-string overwrite of a remote secret. This applies to config-sourced secrets
-          // only — an explicit `--env-file`/positional `NAME=` below is sent as-is regardless
-          // of value.
-          if (Redacted.isRedacted(value) && Redacted.value(value).length > 0) {
-            merged.set(name, Redacted.value(value));
-          }
+      const secrets = isRecord(resolved) ? resolved["secrets"] : undefined;
+      for (const [name, value] of Object.entries(isRecord(secrets) ? secrets : {})) {
+        // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an
+        // empty-string overwrite of a remote secret. This applies to config-sourced secrets
+        // only — an explicit `--env-file`/positional `NAME=` below is sent as-is regardless
+        // of value.
+        if (Redacted.isRedacted(value) && Redacted.value(value).length > 0) {
+          merged.set(name, Redacted.value(value));
         }
       }
     }

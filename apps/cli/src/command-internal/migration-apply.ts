@@ -1,5 +1,6 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
+import { envValue } from "../shared/config/env-option.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { bold } from "./colors.ts";
 import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
@@ -263,50 +264,50 @@ export const checkScannerBufferSize = <E>(
   content: string,
   mapError: (message: string, phase: "read" | "exec") => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> => {
-  const raw =
-    process.env["SUPABASE_SCANNER_BUFFER_SIZE"] ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
-  if (raw === undefined) return Effect.void;
-  const configuredLimit = parseScannerBufferSize(raw);
-  // Covers both an explicit non-positive size and an unparseable value (see
-  // `GO_DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
-  // to "no limit".
-  const limit =
-    configuredLimit > 0
-      ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
-      : GO_DEFAULT_MAX_SCANNER_CAPACITY;
-  // The reported limit is the raw configured value, even below the `GO_SCANNER_START_BUF_SIZE`
-  // floor (which only affects when the too-long error can fire, not the number reported), or the
-  // hardcoded default once that's been fallen back to.
-  const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
-  let emitted = 0;
-  let lastRaw = "";
-  for (const token of splitSqlTokens(content)) {
-    // A terminated token exactly at `limit` still succeeds (only strictly-over fails, `>`); an
-    // unterminated trailing token at `limit` already fails (`>=`), since there's no delimiter left
-    // to find once the buffer fills without one.
-    const tooLong = token.terminated
-      ? utf8ByteLength(token.raw) > limit
-      : utf8ByteLength(token.raw) >= limit;
-    if (tooLong) {
-      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
-      return Effect.fail(
-        mapError(
-          `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
-          "read",
-        ),
-      );
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    const shell = yield* envValue("SUPABASE_SCANNER_BUFFER_SIZE");
+    const raw = shell ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
+    if (raw === undefined) return;
+    const configuredLimit = parseScannerBufferSize(raw);
+    // Covers both an explicit non-positive size and an unparseable value (see
+    // `GO_DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
+    // to "no limit".
+    const limit =
+      configuredLimit > 0
+        ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
+        : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+    // The reported limit is the raw configured value, even below the `GO_SCANNER_START_BUF_SIZE`
+    // floor (which only affects when the too-long error can fire, not the number reported), or the
+    // hardcoded default once that's been fallen back to.
+    const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+    let emitted = 0;
+    let lastRaw = "";
+    for (const token of splitSqlTokens(content)) {
+      // A terminated token exactly at `limit` still succeeds (only strictly-over fails, `>`); an
+      // unterminated trailing token at `limit` already fails (`>=`), since there's no delimiter left
+      // to find once the buffer fills without one.
+      const tooLong = token.terminated
+        ? utf8ByteLength(token.raw) > limit
+        : utf8ByteLength(token.raw) >= limit;
+      if (tooLong) {
+        const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
+        return yield* Effect.fail(
+          mapError(
+            `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
+            "read",
+          ),
+        );
+      }
+      // `lastRaw` updates on every scanned token, even ones that trim to empty and don't advance
+      // `emitted` — so a lone `;` right before an oversized statement reports it accurately instead
+      // of a blank token.
+      lastRaw = token.raw;
+      if (token.trimmed.length > 0) {
+        emitted += 1;
+      }
     }
-    // `lastRaw` updates on every scanned token, even ones that trim to empty and don't advance
-    // `emitted` — so a lone `;` right before an oversized statement reports it accurately instead
-    // of a blank token.
-    lastRaw = token.raw;
-    if (token.trimmed.length > 0) {
-      emitted += 1;
-    }
-  }
-  return Effect.void;
-};
+  });
 
 /**
  * Renders a `^` caret line under the error position of a failing statement. `pos` is the

@@ -1,6 +1,8 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -63,4 +65,6 @@ export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
     genSigningKey(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(genSigningKeyRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

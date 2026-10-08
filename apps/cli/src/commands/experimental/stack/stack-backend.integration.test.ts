@@ -8,9 +8,14 @@ import {
   StackRoutingError,
   resolveStackBackend,
 } from "../../../command-internal/stack-backend.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 
-const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
-  resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));
+const resolve = ({
+  env,
+  ...input
+}: Parameters<typeof resolveStackBackend>[0] & {
+  readonly env: Readonly<Record<string, string>>;
+}) => withConfigEnv(env, resolveStackBackend(input)).pipe(Effect.provide(BunServices.layer));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
   Effect.gen(function* () {

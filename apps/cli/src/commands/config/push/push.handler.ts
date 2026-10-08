@@ -1,9 +1,19 @@
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
 import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
+import {
+  decodeMergedCliConfig,
+  mergeParsedCliConfig,
+  parseCliConfigDocumentFile,
+} from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
-import { DateTime, Effect, FileSystem, Option, Path } from "effect";
+import { DateTime, Effect, FileSystem, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import {
+  cliConfigRemoteFailure,
+  selectCliConfigRemote,
+} from "../../../config/cli-config-remote.ts";
+import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -13,11 +23,10 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
-  assertDecryptableSecrets,
-  configEnvOption,
-  envRefName,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+  collectEnvReferences,
+  loadConfigEnvLookup,
+} from "../../../command-internal/config-env-lookup.ts";
+import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
@@ -30,13 +39,16 @@ import {
   configTargetErrorsFor,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
-import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
+import {
+  missingProjectConfigMessageEffect,
+  relativeConfigPath,
+  requireExplicitWorkdirProject,
+} from "../../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decrypt.ts";
 import { configApiScope, configScopeLine } from "../config.format.ts";
-import { loadLocalConfig } from "../config.load.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import { loadAuthEmailContent } from "./push.auth-email-content.ts";
@@ -134,25 +146,69 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
-function envRefNames(node: unknown): ReadonlyArray<string> {
-  if (typeof node === "string") {
-    const name = envRefName(node);
-    return name === undefined ? [] : [name];
-  }
-  return typeof node === "object" && node !== null ? Object.values(node).flatMap(envRefNames) : [];
-}
+const mapPushEnvError = Effect.mapError(
+  (error: { readonly message: string }) =>
+    new ConfigPushLoadConfigError({ message: error.message }),
+);
 
-/** `assertDecryptableSecrets` takes a synchronous lookup, so every referenced name resolves up front. */
-const resolveShellEnvRefs = Effect.fnUntraced(function* (nodes: ReadonlyArray<unknown>) {
-  const resolved = new Map<string, string>();
-  for (const name of new Set(nodes.flatMap(envRefNames))) {
-    const value = yield* configEnvOption(name).pipe(
-      Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
+/**
+ * Parses, merges the `[remotes.*]` block whose literal or env `project_id` matches `ref`, and
+ * decodes once; a second decode would repeat the load-time deprecation warnings.
+ */
+const loadPushConfig = Effect.fn("config.push.loadConfig")(
+  function* (
+    cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+    projectRoot: string,
+    ref: string,
+  ) {
+    const parsed = yield* parseCliConfigDocumentFile(projectRoot, { search: false });
+    if (parsed === null) {
+      return yield* new ConfigPushLoadConfigError({
+        message: yield* missingProjectConfigMessageEffect(cliSettings),
+      });
+    }
+    const remotes = parsed.rawDocument?.["remotes"];
+    const { lookup, shell, projectEnvValues } = yield* loadConfigEnvLookup(
+      projectRoot,
+      [parsed.rawDocument],
+      isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
     );
-    if (Option.isSome(value)) resolved.set(name, value.value);
-  }
-  return resolved;
-});
+    const remoteFailure = isRecord(remotes) ? cliConfigRemoteFailure(remotes, lookup) : undefined;
+    if (remoteFailure !== undefined) {
+      return yield* new ConfigPushLoadConfigError({ message: remoteFailure });
+    }
+    const merged = yield* mergeParsedCliConfig(parsed, {
+      selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
+    });
+    const referenced = new Set<string>();
+    collectEnvReferences(parsed.rawDocument, referenced);
+    const envValues: Record<string, string> = {};
+    for (const name of referenced) {
+      const value = lookup(name);
+      if (value !== undefined) envValues[name] = value;
+    }
+    const loaded = yield* decodeMergedCliConfig(merged, { envValues, goViperCompat: true });
+    yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
+    return {
+      loaded,
+      lookup,
+      dotenvPrivateKeys: collectDotenvPrivateKeys({
+        ...projectEnvValues,
+        ...Object.fromEntries(shell.entries()),
+      }),
+    };
+  },
+  (effect, cliSettings) =>
+    Effect.mapError(effect, (cause) =>
+      cause._tag === "CliConfigParseError"
+        ? new ConfigPushLoadConfigError({
+            message: `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
+          })
+        : cause._tag === "ConfigPushLoadConfigError"
+          ? cause
+          : new ConfigPushLoadConfigError({ message: cause.message }),
+    ),
+);
 
 const mapPushBranchResolveError = mapHttpError({
   networkError: ConfigPushBranchResolveNetworkError,
@@ -177,7 +233,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
   // `--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked
   // project. An empty value is treated as absent, mirroring the resolver's own rule.
@@ -189,8 +244,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
   yield* Effect.gen(function* () {
     // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a directory before
-    // anything else touches it: a workdir naming a regular file makes `loadProjectEnv` throw
-    // ENOTDIR with a confusing "failed to read environment file" error instead of this one.
+    // anything else touches it: a workdir naming a regular file makes the project env load fail
+    // with a confusing "failed to read environment file" error instead of this one.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
     );
@@ -203,11 +258,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       (yield* findCliProjectRoot(cliSettings.workdir, {
         search: shouldSearchAncestors(cliSettings),
       })) ?? cliSettings.workdir;
-    const projectEnv = yield* loadProjectEnv(fs, path, projectRoot);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
-    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project env;
-    // `process.env` wins over `supabase/.env`, matching `db-config.toml-read.ts`.
-    const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+    const projectEnv = yield* loadConfigEnvLookup(projectRoot, []).pipe(mapPushEnvError);
+    const yes = yield* resolveYesWithProjectEnv({ ...projectEnv.projectEnvValues });
 
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
@@ -236,15 +288,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     });
 
     // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network
-    // call); a matching `[remotes.<name>]` overlay merges before decode in the same call.
+    // call); the matching `[remotes.<name>]` overlay merges before decode in the same call.
     //
-    // Uses `loadLocalConfig` (needs the fully decoded config) rather than the tolerant
-    // `db-config.toml-read.ts` subtree reader, converting its parse/duplicate-remote/missing-file
-    // failures into this family's own tagged error.
-    const loaded = yield* loadLocalConfig(
+    // Needs the fully decoded document and value origins, which the tolerant
+    // `db-config.toml-read.ts` subtree reader does not produce.
+    const { loaded, lookup, dotenvPrivateKeys } = yield* loadPushConfig(
       cliSettings,
+      projectRoot,
       ref,
-      (message) => new ConfigPushLoadConfigError({ message }),
     );
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
@@ -254,14 +305,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       );
     }
     const config = loaded.config;
-    const shellEnv = yield* resolveShellEnvRefs([
-      loaded.document,
-      loaded.removedDeprecatedExternalProviders,
-    ]);
-    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
-    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
-    const secretEnvLookup = (name: string): string | undefined =>
-      shellEnv.get(name) ?? projectEnv[name];
 
     // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
     // push` never itself pushes — this must run before the cost matrix or any service is touched.
@@ -271,10 +314,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // one of them would skip the check.
     const secretError = yield* Effect.sync(
       () =>
-        assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+        assertDecryptableSecrets(loaded.document, lookup, dotenvPrivateKeys) ??
         assertDecryptableSecrets(
           { auth: { external: loaded.removedDeprecatedExternalProviders } },
-          secretEnvLookup,
+          lookup,
           dotenvPrivateKeys,
         ),
     ).pipe(Effect.withSpan("config.push.verifyDecryptable"));
@@ -282,14 +325,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       return yield* new ConfigPushLoadConfigError({ message: secretError });
     }
 
-    // Config lives at <projectRoot>/supabase/config.{toml,json}.
-    const configProjectRoot = path.dirname(path.dirname(loaded.path));
-
     // 4. Email content validation runs during config load, before any network call, and is
     // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
     // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
     // silently push empty content over a real hosted customization.
-    const authEmailContent = yield* loadAuthEmailContent(configProjectRoot, config.auth.email);
+    const authEmailContent = yield* loadAuthEmailContent(projectRoot, config.auth.email);
 
     // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
     // confirmation before any further network call. A target resolved from an explicit

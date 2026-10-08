@@ -176,6 +176,7 @@ import { buildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
 import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
+import { ambientEnvironment } from "../../shared/config/cli-config-provider.layer.ts";
 
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
@@ -800,7 +801,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: yield* viperEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        projectEnvValues,
+      ),
       projectId,
     });
     // Linux-only `host.docker.internal:host-gateway` extra host; empty on darwin/windows, where
@@ -1327,7 +1331,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
           const dotenvPrivateKeys = collectDotenvPrivateKeys({
             ...projectEnvValues,
-            ...process.env,
+            ...ambientEnvironment(),
           });
           const edgeRuntimeSecrets: Record<string, string> = {};
           for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {

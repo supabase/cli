@@ -1,6 +1,5 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, Option } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { signJwtWithJwk } from "../../../command-internal/go-jwt.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -33,8 +32,6 @@ export const genBearerJwt = Effect.fn("gen.bearer-jwt")(function* (flags: GenBea
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const output = yield* Output;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
   return yield* Effect.gen(function* () {
     if (Option.isNone(flags.role)) {
@@ -66,7 +63,6 @@ export const genBearerJwt = Effect.fn("gen.bearer-jwt")(function* (flags: GenBea
         }),
     });
 
-    yield* loadProjectEnv(fs, path, cliSettings.workdir);
     const jwk = yield* resolveBearerJwtSigningKey(cliSettings.workdir);
 
     const payloadJson = encodeBearerJwtClaims(claims);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
+import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "./global-flags.ts";
 import { ExperimentalRequiredError, requireExperimental } from "./experimental-gate.ts";
@@ -16,11 +17,11 @@ describe("requireExperimental", () => {
 
   it.effect("fails with Go's byte-exact message when neither flag nor env is set", () =>
     Effect.gen(function* () {
-      const saved = process.env[ENV];
-      delete process.env[ENV];
-      const error = yield* requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.flip);
-      if (saved === undefined) delete process.env[ENV];
-      else process.env[ENV] = saved;
+      const error = yield* withEnvVar(
+        ENV,
+        undefined,
+        requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.flip),
+      );
       expect(error).toBeInstanceOf(ExperimentalRequiredError);
       expect(error.message).toBe("must set the --experimental flag to run this command");
     }),
@@ -28,11 +29,11 @@ describe("requireExperimental", () => {
 
   it.effect("passes when SUPABASE_EXPERIMENTAL=1 even without the flag (viper AutomaticEnv)", () =>
     Effect.gen(function* () {
-      const saved = process.env[ENV];
-      process.env[ENV] = "1";
-      const exit = yield* requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.exit);
-      if (saved === undefined) delete process.env[ENV];
-      else process.env[ENV] = saved;
+      const exit = yield* withEnvVar(
+        ENV,
+        "1",
+        requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.exit),
+      );
       expect(exit._tag).toBe("Success");
     }),
   );
@@ -41,14 +42,14 @@ describe("requireExperimental", () => {
     "fails even with SUPABASE_EXPERIMENTAL=1 when --experimental=false is explicit (viper Changed wins)",
     () =>
       Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const error = yield* requireExperimental.pipe(
-          Effect.provide(withFlag(false, ["--experimental=false"])),
-          Effect.flip,
+        const error = yield* withEnvVar(
+          ENV,
+          "1",
+          requireExperimental.pipe(
+            Effect.provide(withFlag(false, ["--experimental=false"])),
+            Effect.flip,
+          ),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
         expect(error).toBeInstanceOf(ExperimentalRequiredError);
       }),
   );
@@ -57,14 +58,14 @@ describe("requireExperimental", () => {
     "passes with SUPABASE_EXPERIMENTAL=1 when --experimental=false is a positional operand after --",
     () =>
       Effect.gen(function* () {
-        const saved = process.env[ENV];
-        process.env[ENV] = "1";
-        const exit = yield* requireExperimental.pipe(
-          Effect.provide(withFlag(false, ["--", "--experimental=false"])),
-          Effect.exit,
+        const exit = yield* withEnvVar(
+          ENV,
+          "1",
+          requireExperimental.pipe(
+            Effect.provide(withFlag(false, ["--", "--experimental=false"])),
+            Effect.exit,
+          ),
         );
-        if (saved === undefined) delete process.env[ENV];
-        else process.env[ENV] = saved;
         expect(exit._tag).toBe("Success");
       }),
   );

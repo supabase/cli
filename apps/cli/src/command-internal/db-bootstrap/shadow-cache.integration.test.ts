@@ -142,7 +142,7 @@ const shadowCacheDir = (path: Path.Path) => shadowBaselineCacheDir(path);
 /** The snapshot tars in the global cache dir, whatever keys they belong to. */
 const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path: Path.Path) {
   const entries = yield* fs
-    .readDirectory(shadowCacheDir(path))
+    .readDirectory(yield* shadowCacheDir(path))
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.filter((entry) => entry.endsWith(".tar"));
 });
@@ -280,7 +280,7 @@ describe("acquireShadowDatabase", () => {
         yield* coldRun(docker, input);
         // A concurrent writer SIGKILLed mid-export: its partial is older than 5 minutes.
         const abandoned = path.join(
-          shadowCacheDir(path),
+          yield* shadowCacheDir(path),
           "shadow-baseline-0011223344556677.tar.4242.partial",
         );
         yield* fs.writeFileString(abandoned, "stale");
@@ -359,7 +359,7 @@ describe("acquireShadowDatabase", () => {
           // A regular file occupies the cache root's path, so its mkdir can never succeed — the
           // same terminal shape as an unwritable or root-squashed `SUPABASE_HOME`. The acquire
           // must degrade to the plain uncached shadow rather than pay a doomed export cycle.
-          const cacheDir = shadowCacheDir(path);
+          const cacheDir = yield* shadowCacheDir(path);
           yield* fs.makeDirectory(path.dirname(cacheDir), { recursive: true });
           yield* fs.writeFileString(cacheDir, "not a directory");
 
@@ -387,7 +387,7 @@ describe("acquireShadowDatabase", () => {
         // Recursive mkdir on an existing directory creates nothing and succeeds regardless of
         // permission, so the acquire's probe must check write access explicitly — otherwise a
         // read-only root selects the doomed cold cycle on every default-ON invocation.
-        const cacheDir = shadowCacheDir(path);
+        const cacheDir = yield* shadowCacheDir(path);
         yield* fs.makeDirectory(cacheDir, { recursive: true });
         chmodSync(cacheDir, 0o500);
         // chmod cannot revoke write access from a privileged user (root ignores permission
@@ -491,13 +491,15 @@ describe("acquireShadowDatabase", () => {
         const tars = yield* soleTarName(fs, path);
         expect(tars).toHaveLength(1);
         expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]{16}\.tar$/u);
-        const published = yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""));
+        const published = yield* fs.readFileString(
+          path.join(yield* shadowCacheDir(path), tars[0] ?? ""),
+        );
         expect(published).toBe(expectedTarFor(tars[0] ?? ""));
         expect(keyOf(tars[0] ?? "")).toBe(handle.snapshotKey);
         // The stamp made it all the way into the artifact — this is the entry the next run's
         // pre-restore scan requires, so a cold export that skipped it would never warm anything.
         expect(published).toContain(PGDATA_BASELINE_MARKER_ENTRY);
-        const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
+        const leftovers = yield* fs.readDirectory(yield* shadowCacheDir(path));
         expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
 
         yield* removeShadowDatabase(docker.spawner, handle.containerId);
@@ -556,7 +558,7 @@ describe("acquireShadowDatabase", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
-        const tempDir = shadowCacheDir(path);
+        const tempDir = yield* shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
         // An adversarially (or crash-) pre-created temp file at this process's own temp path,
         // world-readable. The pre-remove + `wx` exclusive-create guarantees a fresh 0600 inode.
@@ -587,7 +589,7 @@ describe("acquireShadowDatabase", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const tempDir = shadowCacheDir(path);
+        const tempDir = yield* shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
         // A SIGKILLed export leftover (older than 5 minutes) and a live writer's fresh temp file.
         const abandoned = path.join(tempDir, "shadow-baseline-0123456789abcdef.tar.99999.partial");
@@ -628,14 +630,18 @@ describe("acquireShadowDatabase", () => {
         expect(rekeyed.baselinePresent).toBe(false);
 
         // An unrelated file in the cache directory is untouched by retention.
-        const stray = path.join(shadowCacheDir(path), "catalog-abc.json");
+        const stray = path.join(yield* shadowCacheDir(path), "catalog-abc.json");
         yield* fs.writeFileString(stray, "{}");
 
         // mtime is the LRU ordinal, and the rapid-fire publishes below can land within the
         // filesystem's timestamp granularity, making an mtime tie's "oldest" ambiguous. Age the
         // first tar explicitly since this test asserts keep-cap behavior, not tie-breaking.
         const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        yield* fs.utimes(path.join(shadowCacheDir(path), first[0] ?? ""), anHourAgo, anHourAgo);
+        yield* fs.utimes(
+          path.join(yield* shadowCacheDir(path), first[0] ?? ""),
+          anHourAgo,
+          anHourAgo,
+        );
 
         // Fill past keep-cap. The current key is retained, so siblings evict first.
         for (let i = 0; i < SHADOW_BASELINE_KEEP; i++) {
@@ -820,7 +826,7 @@ describe("acquireShadowDatabase", () => {
         // The caller is about to reconnect, so the container is running again regardless.
         expect(docker.containers.get(handle.containerId)?.running).toBe(true);
         // Neither a published tar nor a half-written temp file survives.
-        const entries = yield* fs.readDirectory(shadowCacheDir(path));
+        const entries = yield* fs.readDirectory(yield* shadowCacheDir(path));
         expect(entries).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -858,7 +864,7 @@ describe("acquireShadowDatabase", () => {
           // check that treated "tar exists" as "sibling just published" would leave this
           // garbage in place forever.
           const [tarName = ""] = yield* soleTarName(fs, path);
-          const tarPath = path.join(shadowCacheDir(path), tarName);
+          const tarPath = path.join(yield* shadowCacheDir(path), tarName);
           yield* fs.writeFileString(tarPath, "not-a-real-snapshot");
           yield* fallback.snapshotBaseline;
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
@@ -880,7 +886,7 @@ describe("acquireShadowDatabase", () => {
         const input = shadowInput(fs, path);
         yield* coldRun(docker, input);
         const [tarName = ""] = yield* soleTarName(fs, path);
-        const tarPath = path.join(shadowCacheDir(path), tarName);
+        const tarPath = path.join(yield* shadowCacheDir(path), tarName);
 
         // The published artifact is replaced by a tar that is well-formed but carries no PGDATA:
         // `docker cp -` would extract nothing, the entrypoint would `initdb` a fresh cluster,
@@ -919,7 +925,7 @@ describe("acquireShadowDatabase", () => {
         const input = shadowInput(fs, path);
         yield* coldRun(docker, input);
         const [tarName = ""] = yield* soleTarName(fs, path);
-        const tarPath = path.join(shadowCacheDir(path), tarName);
+        const tarPath = path.join(yield* shadowCacheDir(path), tarName);
 
         // A perfectly restorable PGDATA that never ran the platform baseline — the failure
         // `data/PG_VERSION` alone cannot see: `docker cp -` extracts a genuine cluster, the
@@ -965,8 +971,8 @@ describe("acquireShadowDatabase", () => {
           const keyA = coldA.snapshotKey ?? "";
           const keyB = coldB.snapshotKey ?? "";
           expect(keyA).not.toBe(keyB);
-          const tarPathB = path.join(shadowCacheDir(path), `shadow-baseline-${keyB}.tar`);
-          const tarPathA = path.join(shadowCacheDir(path), `shadow-baseline-${keyA}.tar`);
+          const tarPathB = path.join(yield* shadowCacheDir(path), `shadow-baseline-${keyB}.tar`);
+          const tarPathA = path.join(yield* shadowCacheDir(path), `shadow-baseline-${keyA}.tar`);
 
           // A's snapshot copied over B's cache file — the shape a copied `~/.supabase/cache`
           // directory, a restored backup, or a hand-renamed tar produces. Every entry the
@@ -1085,10 +1091,10 @@ describe("acquireShadowDatabase", () => {
         expect(docker.stepCalls("cp-out")).toHaveLength(1);
         const tars = yield* soleTarName(fs, path);
         expect(tars).toHaveLength(1);
-        expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
-          expectedTarFor(tars[0] ?? ""),
-        );
-        const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
+        expect(
+          yield* fs.readFileString(path.join(yield* shadowCacheDir(path), tars[0] ?? "")),
+        ).toBe(expectedTarFor(tars[0] ?? ""));
+        const leftovers = yield* fs.readDirectory(yield* shadowCacheDir(path));
         expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
 
         expect(docker.containers.get(first.containerId)?.running).toBe(true);

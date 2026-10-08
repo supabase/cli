@@ -1,9 +1,10 @@
-import { loadCliProjectEnvironment } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
-import { Config, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
+import type { CliConfigKey } from "../../config/cli-config-key.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { describeConfigSnapshotFailure } from "../../command-internal/config-snapshot-context.ts";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
 import { goJsonKindName } from "../../command-internal/go-json.ts";
-import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for `gen signing-key` and `gen
@@ -320,58 +321,31 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   onConfigParseError: (message: string) => E,
 ) {
   const path = yield* Path.Path;
-  // Loads the dotenv cascade explicitly before `loadCliConfig` decodes `env(...)` TOML
-  // references — `loadCliConfig`'s own internal env resolution covers only
-  // `supabase/.env[.local]`, not `.env.<SUPABASE_ENV>[.local]` or `<workdir>/.env`.
-  const supabaseEnv = yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
-    Effect.mapError(() =>
-      onConfigParseError("failed to resolve environment variable: SUPABASE_ENV"),
-    ),
-  );
-  const supabaseEnvValue = Option.getOrElse(
-    Option.filter(supabaseEnv, (value) => value.length > 0),
-    () => "development",
-  );
-  const projectEnv = yield* loadCliProjectEnvironment({
-    cwd,
-    baseEnv: process.env,
-    search: false,
-    skipEnvLocal: supabaseEnvValue === "test",
-  }).pipe(
-    Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
-  );
-  const projectEnvValues = yield* Effect.try({
-    try: () => resolveProjectEnvironmentValues(projectEnv, cwd, supabaseEnvValue),
-    catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
-  });
-  const loaded = yield* loadCliConfig(cwd, {
-    cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
-    goViperCompat: true,
-    // `cwd` is already resolved (`CommandSettings.workdir`); `search: false` avoids climbing
-    // again, which would otherwise find an ancestor project's config when `--workdir` points
-    // below another project's root. `tomlOnly: true` because there is no JSON config format.
-    search: false,
-    tomlOnly: true,
-  }).pipe(
-    Effect.catchTag("CliConfigParseError", (cause) =>
-      Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
-    ),
-  );
-  if (loaded === null) {
-    return {
-      configDisplayPath: path.join("supabase", "config.toml"),
-      authEnabled: true,
-      signingKeysPath: Option.none(),
-    } satisfies GenSigningKeysConfigPaths;
-  }
+  const values = yield* CliConfigValues;
+  // `cwd` is already resolved (`CommandSettings.workdir`); the snapshot never climbs to an
+  // ancestor project when `--workdir` points below another project's root.
+  const snapshot = yield* values
+    .load({ workdir: cwd, projectRef: Option.none() })
+    .pipe(
+      Effect.mapError((cause) =>
+        onConfigParseError(
+          cause._tag === "CliConfigParseError"
+            ? `failed to parse ${cause.path}: ${String(cause.cause)}`
+            : describeConfigSnapshotFailure(cause),
+        ),
+      ),
+    );
+  const read = <A, X>(key: CliConfigKey<A, X>) =>
+    snapshot.get(key).pipe(
+      Effect.map((resolved) => resolved.value),
+      Effect.mapError((cause) => onConfigParseError(describeConfigSnapshotFailure(cause))),
+    );
+  const authEnabled = yield* read(CliConfigKeys.auth.enabled);
+  const configuredPath = yield* read(CliConfigKeys.auth.signingKeysPath);
 
-  // Display the config path relative to the project root; `loaded.path` is always absolute.
-  const projectRoot = path.dirname(path.dirname(loaded.path));
-  const configDisplayPath = path.relative(projectRoot, loaded.path);
-  const authEnabled = loaded.config.auth.enabled;
+  const configDisplayPath = path.join("supabase", "config.toml");
 
-  const configuredPath = loaded.config.auth.signing_keys_path;
-  if (configuredPath === undefined || configuredPath.length === 0) {
+  if (Option.isNone(configuredPath) || configuredPath.value.length === 0) {
     return {
       configDisplayPath,
       authEnabled,
@@ -379,12 +353,13 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
     } satisfies GenSigningKeysConfigPaths;
   }
 
-  const resolvedPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.join(path.dirname(loaded.path), configuredPath);
-  const displayPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.relative(projectRoot, resolvedPath);
+  const signingKeysPath = configuredPath.value;
+  const resolvedPath = path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.join(cwd, "supabase", signingKeysPath);
+  const displayPath = path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.relative(cwd, resolvedPath);
   return {
     configDisplayPath,
     authEnabled,

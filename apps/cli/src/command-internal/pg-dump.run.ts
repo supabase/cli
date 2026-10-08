@@ -51,7 +51,7 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   const networkIdFlag = yield* NetworkIdFlag;
 
   // Dump never falls back to generated `supabase_network_*`; host is the default.
-  const network = dumpNetworkMode(
+  const network = yield* dumpNetworkMode(
     Option.getOrUndefined(networkIdFlag),
     params.forceHostNetwork === true,
     params.projectEnvValues ?? {},
@@ -106,25 +106,32 @@ export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number):
     : `error running container: exit ${exitCode}`;
 
 /** Network for a pg_dump tool container; host unless `--network-id` or `SUPABASE_NETWORK_ID` names one. */
-export const dumpNetworkMode = (
+export const dumpNetworkMode = Effect.fnUntraced(function* (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
-): { readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" } => {
-  if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
-  if (forceHostNetwork) return { _tag: "host" };
-  const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues);
-  return envNetworkId.length > 0 ? { _tag: "named", name: envNetworkId } : { _tag: "host" };
-};
+) {
+  if (networkId !== undefined && networkId.length > 0) {
+    return { _tag: "named", name: networkId } as const;
+  }
+  if (forceHostNetwork) return { _tag: "host" } as const;
+  const envNetworkId = yield* viperEnvStringWithProjectFallback(
+    "SUPABASE_NETWORK_ID",
+    projectEnvValues,
+  );
+  return envNetworkId.length > 0
+    ? ({ _tag: "named", name: envNetworkId } as const)
+    : ({ _tag: "host" } as const);
+});
 
-const bundledDumpNetwork = (
+const bundledDumpNetwork = Effect.fnUntraced(function* (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
-): "host" | { readonly name: string } => {
-  const network = dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
-  return network._tag === "host" ? "host" : { name: network.name };
-};
+) {
+  const network = yield* dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
+  return network._tag === "host" ? ("host" as const) : { name: network.name };
+});
 
 const transformDumpLine = (
   line: string,
@@ -333,7 +340,7 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       runtime,
       argv: ["bash", "-c", params.script, "--"],
       env: params.env,
-      network: bundledDumpNetwork(
+      network: yield* bundledDumpNetwork(
         Option.getOrUndefined(networkIdFlag),
         params.forceHostNetwork === true,
         params.projectEnvValues ?? {},

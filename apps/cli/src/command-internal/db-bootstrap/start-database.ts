@@ -212,10 +212,7 @@ export const startDatabase = <E>(
         networkId: input.networkId,
         hostname: input.hostname,
         dbPort: input.dbPort,
-        // Every pending migration, no seed override — `db start` has neither `--no-seed` nor
-        // `--sql-paths`.
         version: "",
-        seedFlags: { noSeed: false, sqlPaths: [] },
         setup: input.setup,
       });
     } else if (fromBackup === undefined) {
