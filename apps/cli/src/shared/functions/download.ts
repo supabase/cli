@@ -15,7 +15,7 @@ import {
 } from "../cli/cobra-flag-groups.ts";
 import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   buildFunctionsDockerRunArgs,
   edgeRuntimeCacheVolume,
@@ -985,7 +985,7 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
     envOverride:
       projectEnvValues === undefined
         ? undefined
-        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+        : supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 

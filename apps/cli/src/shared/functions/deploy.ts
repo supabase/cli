@@ -30,7 +30,7 @@ import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts"
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { bold } from "../../command-internal/colors.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
@@ -2607,7 +2607,10 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           envOverride:
             context.projectEnvValues === undefined
               ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
+              : supabaseEnvStringWithProjectFallback(
+                  "SUPABASE_NETWORK_ID",
+                  context.projectEnvValues,
+                ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

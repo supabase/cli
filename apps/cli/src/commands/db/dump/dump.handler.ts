@@ -49,7 +49,7 @@ import {
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
@@ -209,7 +209,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const envNetworkId = supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
     const dumpUsesHostNetwork =
       backend.kind === "stack"
         ? toolContainerUsesHostNetwork(networkId)

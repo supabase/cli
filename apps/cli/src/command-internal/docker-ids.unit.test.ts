@@ -10,7 +10,7 @@ import {
   localNetworkId,
 } from "./docker-ids.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 
 describe("resolveLocalProjectId", () => {
   it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
@@ -74,7 +74,7 @@ describe("cliProjectFilterValue", () => {
   });
 });
 
-describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallback (start/db start call shape)", () => {
+describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFallback (start/db start call shape)", () => {
   const KEY = "SUPABASE_NETWORK_ID";
 
   afterEach(() => {
@@ -84,7 +84,7 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
   function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
     return resolveDockerNetworkMode({
       explicit: flagValue,
-      envOverride: viperEnvStringWithProjectFallback(KEY, projectEnv),
+      envOverride: supabaseEnvStringWithProjectFallback(KEY, projectEnv),
       projectId: "my-app",
     });
   }

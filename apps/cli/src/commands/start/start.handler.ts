@@ -59,7 +59,7 @@ import {
   localDbContainerId,
 } from "../../command-internal/docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   inspectContainerState,
   listContainersByLabel,
@@ -842,7 +842,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
       projectId,
     });
     // Linux-only `host.docker.internal:host-gateway` extra host; empty on darwin/windows, where

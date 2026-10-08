@@ -51,7 +51,7 @@ import {
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
@@ -2008,7 +2008,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
       envOverride:
         resolved.projectEnvValues === undefined
           ? undefined
-          : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
+          : supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);

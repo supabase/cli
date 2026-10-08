@@ -70,7 +70,7 @@ export function loadProfile(
     }
 
     const ext = goFilepathExt(token);
-    if (!VIPER_SUPPORTED_EXTS.has(ext)) {
+    if (!PROFILE_FILE_EXTS.has(ext)) {
       return yield* failRead(`Unsupported Config Type ${JSON.stringify(ext)}`);
     }
 
@@ -177,7 +177,7 @@ const failDecode = (detail: string) =>
   );
 
 /** Recognized config file extensions, checked case-sensitively. */
-const VIPER_SUPPORTED_EXTS: ReadonlySet<string> = new Set([
+const PROFILE_FILE_EXTS: ReadonlySet<string> = new Set([
   "json",
   "toml",
   "yaml",

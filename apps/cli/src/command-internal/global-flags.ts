@@ -3,7 +3,7 @@ import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { VALUE_CONSUMING_LONG_FLAGS, VALUE_CONSUMING_SHORT_FLAGS } from "./db-target-flags.ts";
-import { viperEnvBool, viperEnvBoolWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvBool, supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
 
 // The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to
 // vary its allowed values; this models it as the union of every command's accepted values, and
@@ -228,14 +228,14 @@ export const resolveYes = Effect.gen(function* () {
   if (yesFlagExplicitlyFalse(cliArgs.args)) {
     return false;
   }
-  return flag || viperEnvBool("SUPABASE_YES");
+  return flag || supabaseEnvBool("SUPABASE_YES");
 });
 
 /**
  * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
  * project env before prompting (`migration down`, `migration repair --all`). Shell env
  * *presence* (any value) suppresses the file value entirely (see
- * {@link viperEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
+ * {@link supabaseEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
  * the loaded map from `loadProjectEnv`.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
@@ -245,7 +245,7 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     if (yesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
   });
 
 /**
@@ -279,12 +279,12 @@ export const resolveExperimental = Effect.gen(function* () {
   if (explicit !== undefined) {
     return explicit;
   }
-  return flag || viperEnvBool("SUPABASE_EXPERIMENTAL");
+  return flag || supabaseEnvBool("SUPABASE_EXPERIMENTAL");
 });
 
 /**
  * `--experimental` with project `.env` fallback. Shell-env presence wins over the file;
- * an explicit flag wins over both. See {@link viperEnvBoolWithProjectFallback}.
+ * an explicit flag wins over both. See {@link supabaseEnvBoolWithProjectFallback}.
  */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -294,7 +294,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     if (explicit !== undefined) {
       return explicit;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
   });
 
 /**
@@ -330,5 +330,5 @@ export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =
     if (debugFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
   });
