@@ -155,7 +155,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     .databaseUrl;
                   if (hostDatabaseUrl === undefined)
                     return yield* Effect.die("host database URL missing");
-                  const host = parseConnectionString(hostDatabaseUrl);
+                  const host = yield* parseConnectionString(hostDatabaseUrl);
                   if (host === undefined) return yield* Effect.die("host database URL unparseable");
                   yield* Effect.scoped(
                     Effect.gen(function* () {

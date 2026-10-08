@@ -195,7 +195,7 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
   poolerHost: string,
 ) {
   const debug = yield* DebugLogger;
-  const result = poolerConfigFromConnectionString(ref, connectionString, poolerHost);
+  const result = yield* poolerConfigFromConnectionString(ref, connectionString, poolerHost);
   if (result._tag === "ok") return Option.some(result.conn);
   yield* debug.debug(result.reason);
   return Option.none();
@@ -478,6 +478,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const stackDatabaseConn = stackLocalDatabaseConn.pipe(
       Effect.provideService(CommandSettings, cliSettings),
       Effect.provideService(StackApi, stackApi),
+      Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
 
@@ -507,7 +508,13 @@ export const dbConfigResolverLayer = Layer.effect(
           // read. Layer the project env under the shell env (`loadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
           const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-          const conn = parseConnectionString(flags.dbUrl.value, layeredParseEnv(projectEnv));
+          const conn = yield* parseConnectionString(
+            flags.dbUrl.value,
+            yield* layeredParseEnv(projectEnv),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
           if (conn === undefined) {
             return yield* Effect.fail(
               new Errors.DbConfigParseUrlError({
