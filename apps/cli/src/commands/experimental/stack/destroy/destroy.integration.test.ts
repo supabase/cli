@@ -264,6 +264,18 @@ describe("stack destroy", () => {
       expect(error.message).toContain("was not found");
       expect(error.suggestion).toContain("Run `supabase stack list`");
       expect(error.detail).toBe(unlisted);
+
+      const ids = [id, "e".repeat(64)];
+      const batch = yield* stackDestroy({ ...f.flags, stackId: ids }).pipe(
+        Effect.provide(Layer.merge(f.layer, api)),
+        Effect.flip,
+      );
+
+      expect(batch.detail).toBe(
+        ids
+          .map((stackId) => `${stackId}: Stack ${stackId} was not found\n  ${unlisted}`)
+          .join("\n"),
+      );
     }).pipe(Effect.provide(live)),
   );
 
@@ -418,19 +430,24 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("destroys nothing when a later --stack-id is not found", () =>
+  it.live("destroys nothing and names every later --stack-id that is not found", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
-      const missing = f.stack.id.startsWith("0") ? "1111" : "0000";
+      const missing = ["0000", "1111", "2222"]
+        .filter((prefix) => !f.stack.id.startsWith(prefix))
+        .slice(0, 2);
 
       const error = yield* runDestroy(f.layer, [
         "--stack-id",
         f.stack.id,
-        "--stack-id",
-        missing,
+        ...missing.flatMap((id) => ["--stack-id", id]),
       ]).pipe(Effect.flip);
 
-      expect(error).toMatchObject({ reason: "flags", message: `Stack ${missing} was not found` });
+      expect(error).toMatchObject({
+        reason: "flags",
+        message: "Failed to resolve 2 --stack-id values.",
+        detail: missing.map((id) => `${id}: Stack ${id} was not found`).join("\n"),
+      });
       expect(f.output.stderrText).toBe("");
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         f.stack.id,

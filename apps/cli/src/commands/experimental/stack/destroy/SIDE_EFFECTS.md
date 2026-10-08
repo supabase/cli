@@ -8,8 +8,9 @@ files remain. The experimental feature flag controls command registration.
 
 Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive; a missing target fails. `--stack-id` repeats
-to select several stacks; every id resolves before confirmation, so a missing one
-fails before anything is destroyed, and ids naming the same stack select it once.
+to select several stacks; every id resolves before confirmation, so ids that are not
+found fail together, each named, before anything is destroyed, and ids naming the
+same stack select it once.
 Explicit legacy `-o/--output` is rejected in favor of `--output-format`.
 
 Interactive text mode asks one question for all selected stacks and states that
