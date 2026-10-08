@@ -12,6 +12,8 @@ import { Schema } from "effect";
 const postgresSettingsAttributes = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  autovacuum_max_workers: Schema.optionalKey(Schema.Unknown),
+  autovacuum_work_mem: Schema.optionalKey(Schema.Unknown),
   log_autovacuum_min_duration: Schema.optionalKey(Schema.Unknown),
   log_checkpoints: Schema.optionalKey(Schema.Unknown),
   log_connections: Schema.optionalKey(Schema.Unknown),
@@ -48,6 +50,8 @@ const postgresSettingsAttributes = Schema.Struct({
   checkpoint_timeout: Schema.optionalKey(Schema.Unknown),
   hot_standby_feedback: Schema.optionalKey(Schema.Unknown),
   cron_log_statement: Schema.optionalKey(Schema.Unknown),
+  pg_net_batch_size: Schema.optionalKey(Schema.Unknown),
+  pg_stat_statements_max: Schema.optionalKey(Schema.Unknown),
 });
 
 // `allowed_cidrs` is mapped (`filterCidrAddresses`, `./registry.ts`); the rest are unmapped.
