@@ -8,6 +8,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { ConfigEnvPins } from "../../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../../tests/helpers/config-goldens.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../global-flags.ts";
@@ -143,6 +144,7 @@ describe("local container inputs precedence goldens", () => {
         const layer = Layer.mergeAll(
           BunServices.layer,
           cliConfigValuesTestLayer,
+          Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           mockRuntimeInfo({ platform: "linux" }),
           Layer.succeed(CliArgs, { args: ["db", "diff"] }),
           Layer.succeed(ExperimentalFlag, false),

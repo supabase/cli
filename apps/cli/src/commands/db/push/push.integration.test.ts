@@ -1196,6 +1196,36 @@ describe("db push", () => {
     });
   });
 
+  it.live(
+    "selects a [remotes.*] block whose project_id is overridden by SUPABASE_REMOTES_<NAME>_PROJECT_ID",
+    () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
+        args: ["db", "push", "--linked"],
+        isLocal: false,
+        projectRef: VALID_REF,
+        env: { SUPABASE_REMOTES_PREVIEW_PROJECT_ID: VALID_REF },
+      });
+      return Effect.gen(function* () {
+        yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
+      });
+    },
+  );
+
+  it.live("leaves a [remotes.*] block unselected when its project_id is not the target", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      projectRef: VALID_REF,
+    });
+    return Effect.gen(function* () {
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Loading config override");
+    });
+  });
+
   it.live("pushes to the linked project and caches the project ref (json)", () => {
     const { layer, out, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

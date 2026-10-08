@@ -1,19 +1,19 @@
 import { BunServices } from "@effect/platform-bun";
-import { ConfigProvider, Effect, Layer } from "effect";
-import type { Output } from "../../src/shared/output/output.service.ts";
+import { Effect, Layer } from "effect";
+
 import { CliConfigFlagInputs } from "../../src/config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../src/config/cli-config-values.layer.ts";
+import { CliConfigValues } from "../../src/config/cli-config-values.service.ts";
+import type { Output } from "../../src/shared/output/output.service.ts";
+import { withHermeticShellTier } from "./config-snapshot-layer.ts";
 
 export const flagInput = (path: string, flag: string, value: unknown) =>
   [path, { path, flag, value }] as const;
 
-const processEnvProvider = Effect.sync(() =>
-  ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
-);
-
 /**
  * A real `CliConfigValues` over the test workdir with flag-tier assignments and shell env pinned.
- * `process.env` as of layer build is read behind the pins, so a surrounding `withEnvVar` is seen.
+ * Only `options.env` and the pins in scope at each load form the shell tier, so ambient
+ * `process.env` never leaks in.
  */
 export const dbCommandConfigValuesLayer = (
   outputLayer: Layer.Layer<Output>,
@@ -22,20 +22,19 @@ export const dbCommandConfigValuesLayer = (
     readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) =>
-  cliConfigValuesLayer.pipe(
+  Layer.effect(
+    CliConfigValues,
+    Effect.map(Effect.service(CliConfigValues), (real) => withHermeticShellTier(real, options.env)),
+  ).pipe(
     Layer.provide(
-      Layer.mergeAll(
-        BunServices.layer,
-        outputLayer,
-        ConfigProvider.layer(
-          Effect.map(processEnvProvider, (ambient) =>
-            ConfigProvider.orElse(
-              ConfigProvider.fromEnvRecord(options.env ?? {}, { preserveEmptyStrings: true }),
-              ambient,
-            ),
+      cliConfigValuesLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            outputLayer,
+            Layer.succeed(CliConfigFlagInputs, new Map(options.flags ?? [])),
           ),
         ),
-        Layer.succeed(CliConfigFlagInputs, new Map(options.flags ?? [])),
       ),
     ),
   );

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref } from "effect";
 
 import {
@@ -14,6 +14,8 @@ import {
   type DbTomlValues,
 } from "./db-config.toml-read.ts";
 import type { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { processEnvPinsLayer } from "../../tests/helpers/config-env-pins.ts";
+import { useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import {
   CommandTelemetryAttributes,
@@ -27,7 +29,11 @@ const servicesLive = Layer.mergeAll(
     Effect.sync(() => ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))),
   ),
   cliConfigValuesTestLayer,
+  processEnvPinsLayer,
 );
+
+const scrubAmbientEnv = useShellEnvPin();
+beforeEach(() => scrubAmbientEnv({}));
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
   const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
