@@ -125,8 +125,8 @@ function isFlagOccurrence(arg: string, name: string): boolean {
  * Inline values the CLI's boolean primitive accepts (lowercase only); any of these serves the
  * flag's action, including `=false`.
  *
- * Distinct from `run.ts`'s `PFLAG_BOOL_TRUE`, which answers ParseBool truthiness for the
- * pflag-modeled upgrade-notice scans — do not merge them.
+ * Distinct from `run.ts`'s `PFLAG_BOOL_TRUE`, which answers boolean truthiness for the
+ * upgrade-notice scans — do not merge them.
  */
 export const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
   "true",

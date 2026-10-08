@@ -147,9 +147,8 @@ export class SsoMutexFlagError extends Data.TaggedError("SsoMutexFlagError")<{
   }
 }
 
-// Emulates pflag's rejection of a bare value-taking flag as the final argv
-// token, a case the Effect parser accepts. Shared by add + update; the
-// message matches pflag's template.
+// Rejects a bare value-taking flag as the final argv
+// token, a case the Effect parser accepts. Shared by add + update.
 export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArgumentError")<{
   readonly message: string;
 }> {
@@ -158,11 +157,10 @@ export class SsoFlagNeedsArgumentError extends Data.TaggedError("SsoFlagNeedsArg
   }
 }
 
-// Emulates pflag's rejection of an invalid flag value in cases the Effect
+// Rejects an invalid flag value in cases the Effect
 // parser accepts: a later occurrence of a repeated flag (the parser resolves
 // repeats first-wins and never validates the rest), or a boolean literal
-// outside pflag's accepted set. Shared by add + update; the message matches
-// pflag's template.
+// outside the accepted set. Shared by add + update.
 export class SsoInvalidFlagValueError extends Data.TaggedError("SsoInvalidFlagValueError")<{
   readonly message: string;
 }> {

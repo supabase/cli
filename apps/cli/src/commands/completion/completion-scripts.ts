@@ -1,5 +1,5 @@
 /**
- * Byte-for-byte reproductions of cobra v1.10.2's static shell completion script templates,
+ * Static shell completion script templates,
  * which shell back out to `supabase`'s hidden `__complete`/`__completeNoDesc` command for live
  * candidates rather than baking in the command tree.
  */
@@ -10,7 +10,7 @@ const SHELL_COMP_REQUEST_CMD = "__complete";
 const SHELL_COMP_NO_DESC_REQUEST_CMD = "__completeNoDesc";
 type CompletionRequestCmd = typeof SHELL_COMP_REQUEST_CMD | typeof SHELL_COMP_NO_DESC_REQUEST_CMD;
 
-/** Bit values for cobra's `ShellCompDirective` protocol. */
+/** Bit values for the `ShellCompDirective` protocol. */
 const SHELL_COMP_DIRECTIVE_ERROR = 1;
 const SHELL_COMP_DIRECTIVE_NO_SPACE = 2;
 const SHELL_COMP_DIRECTIVE_NO_FILE_COMP = 4;
@@ -914,7 +914,7 @@ complete -k -c ${programName} -n '__${programName}_requires_order_preservation &
 }
 
 // Only the `compCmd` token differs between the desc/no-desc variants. Kept as one template
-// literal since TS, unlike Go raw strings, can escape backticks directly.
+// literal since TS can escape backticks directly.
 function genPowerShellCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return `# powershell completion for ${programName.padEnd(36)} -*- shell-script -*-
 
@@ -1191,7 +1191,7 @@ Register-ArgumentCompleter -CommandName '${programName}' -ScriptBlock \${__${pro
 
 export type CompletionShell = "bash" | "zsh" | "fish" | "powershell";
 
-/** Generates the shell completion script for `shell`, matching cobra v1.10.2's output. */
+/** Generates the shell completion script for `shell`. */
 export function generateCompletionScript(
   shell: CompletionShell,
   options: { readonly noDescriptions: boolean },

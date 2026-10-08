@@ -252,7 +252,7 @@ describe("commandCredentialsLayer.getAccessToken", () => {
     );
   });
 
-  it.effect("decodes Go keyring base64 values from the keyring profile account", () => {
+  it.effect("decodes legacy keyring base64 values from the keyring profile account", () => {
     passwords.set("Supabase CLI/supabase", encodeGoKeyringBase64(VALID_TOKEN));
     return Effect.gen(function* () {
       const { getAccessToken } = yield* CommandCredentials;
@@ -261,7 +261,7 @@ describe("commandCredentialsLayer.getAccessToken", () => {
     }).pipe(Effect.provide(makeLayer()));
   });
 
-  it.effect("reads Windows credentials created by Go keyring", () => {
+  it.effect("reads Windows credentials stored in the legacy target format", () => {
     passwords.set(goWindowsKey("supabase"), encodeGoWindowsPassword(VALID_TOKEN));
     return Effect.gen(function* () {
       const { getAccessToken } = yield* CommandCredentials;
@@ -271,7 +271,7 @@ describe("commandCredentialsLayer.getAccessToken", () => {
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 
-  it.effect("does not search Go Windows targets on other platforms", () => {
+  it.effect("does not search legacy Windows targets on other platforms", () => {
     passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
     return Effect.gen(function* () {
       const { getAccessToken } = yield* CommandCredentials;
@@ -436,7 +436,7 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
-  it.effect("writes Windows credentials where Go keyring reads them", () =>
+  it.effect("writes Windows credentials under the legacy target name", () =>
     Effect.gen(function* () {
       const { saveAccessToken } = yield* CommandCredentials;
       yield* saveAccessToken(VALID_TOKEN);
@@ -540,7 +540,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
     },
   );
 
-  it.effect("win32: no Go target credential → NotLoggedInError, nothing fabricated", () => {
+  it.effect("win32: no legacy target credential → NotLoggedInError, nothing fabricated", () => {
     return Effect.gen(function* () {
       const { deleteAccessToken } = yield* CommandCredentials;
       const exit = yield* Effect.exit(deleteAccessToken);
@@ -553,7 +553,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 
-  it.effect("win32: an empty placeholder Go target → NotLoggedInError", () => {
+  it.effect("win32: an empty placeholder legacy target → NotLoggedInError", () => {
     passwords.set(goWindowsKey("supabase"), "");
     return Effect.gen(function* () {
       const { deleteAccessToken } = yield* CommandCredentials;
@@ -648,7 +648,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
     }).pipe(Effect.provide(makeLayer()));
   });
 
-  it.effect("win32: deletes both the plain and the Go Windows target entries", () => {
+  it.effect("win32: deletes both the plain and the legacy Windows target entries", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
     return Effect.gen(function* () {
@@ -660,7 +660,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
   });
 
   it.effect(
-    "win32: deletes a Go target whose blob getPassword/findCredentials can't decode",
+    "win32: deletes a legacy target whose blob getPassword/findCredentials can't decode",
     () => {
       passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
       opaqueAccounts.add(goWindowsKey("supabase"));
@@ -672,19 +672,22 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
     },
   );
 
-  it.effect("win32: a confirmed Go target whose delete returns false → DeleteTokenError", () => {
-    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
-    failDeleteAccounts.add(goWindowsKey("supabase"));
-    return Effect.gen(function* () {
-      const { deleteAccessToken } = yield* CommandCredentials;
-      const exit = yield* Effect.exit(deleteAccessToken);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
-      }
-      expect(passwords.has(goWindowsKey("supabase"))).toBe(true);
-    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
-  });
+  it.effect(
+    "win32: a confirmed legacy target whose delete returns false → DeleteTokenError",
+    () => {
+      passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
+      failDeleteAccounts.add(goWindowsKey("supabase"));
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* CommandCredentials;
+        const exit = yield* Effect.exit(deleteAccessToken);
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
+        }
+        expect(passwords.has(goWindowsKey("supabase"))).toBe(true);
+      }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+    },
+  );
 
   it.effect("win32: an enumeration hiccup alone does not block logout", () => {
     throwOnFindCredentials = true;
@@ -754,7 +757,7 @@ describe("commandCredentialsLayer.deleteAllProjectCredentials", () => {
     }).pipe(Effect.provide(makeLayer()));
   });
 
-  it.effect("win32: deletes Go target-shaped project credentials", () => {
+  it.effect("win32: deletes legacy target-shaped project credentials", () => {
     passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
     passwords.set(goWindowsKey("abcdefghijklmnopqrs2"), "secret-2");
     return Effect.gen(function* () {
@@ -766,7 +769,7 @@ describe("commandCredentialsLayer.deleteAllProjectCredentials", () => {
   });
 
   it.effect(
-    "win32: a single undecodable entry aborts the Go target sweep without failing logout",
+    "win32: a single undecodable entry aborts the legacy target sweep without failing logout",
     () => {
       passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
       passwords.set(goWindowsKey("abcdefghijklmnopqrs2"), "secret-2");
@@ -783,7 +786,7 @@ describe("commandCredentialsLayer.deleteAllProjectCredentials", () => {
 });
 
 describe("commandCredentialsLayer.deleteProjectCredential", () => {
-  it.effect("win32: deletes a Go target-shaped project credential", () => {
+  it.effect("win32: deletes a legacy target-shaped project credential", () => {
     passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "db-password");
     return Effect.gen(function* () {
       const { deleteProjectCredential } = yield* CommandCredentials;

@@ -25,7 +25,7 @@ describe("stringWidth", () => {
   });
 
   it("treats East Asian Ambiguous as width 1 (modern-terminal default)", () => {
-    // U+00A1 (¡) is Ambiguous; Go's runewidth with EastAsianWidth=false counts it as 1.
+    // U+00A1 (¡) is Ambiguous and counts as 1.
     expect(stringWidth("¡")).toBe(1);
   });
 });

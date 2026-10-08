@@ -33,13 +33,12 @@ export class PflagWorkdirError extends Data.TaggedError("PflagWorkdirError")<{
 }
 
 /**
- * Reconciles an Effect-parsed option flag with pflag's raw-argv semantics: the flag is only
- * set when the raw scan says pflag would have set it, using the scan's own value (last
- * occurrence wins for a `StringVar`).
+ * Reconciles an Effect-parsed option flag with the raw-argv scan: the flag is only set when
+ * the scan shows it set, using the scan's own value (last occurrence wins).
  *
- * The vendored Effect parser refuses to consume a flag-shaped token as a value, while pflag
- * consumes it unconditionally — in `--project-ref --metadata-file x.xml --metadata-url u`,
- * pflag hands `--metadata-file` to `--project-ref` and never sets `metadata-file`, so acting
+ * The vendored Effect parser refuses to consume a flag-shaped token as a value, while the raw
+ * scan consumes it unconditionally — in `--project-ref --metadata-file x.xml --metadata-url u`,
+ * the scan hands `--metadata-file` to `--project-ref` and never sets `metadata-file`, so acting
  * on the parsed options there would still read the metadata file unexpectedly. The two agree
  * on every normal invocation.
  */
@@ -83,7 +82,7 @@ export function pflagSliceValue(
  * default applies, which cannot fail.
  *
  * Resolution order:
- * - the scan's last `--workdir` occurrence wins — pflag consumes flag-shaped tokens the
+ * - the scan's last `--workdir` occurrence wins — the scan consumes flag-shaped tokens the
  *   Effect parser refuses (`--workdir --metadata-file` binds `"--metadata-file"`), so the
  *   parsed flag cannot be trusted;
  * - when the `--workdir` token itself was consumed as another flag's value
@@ -152,7 +151,7 @@ export const validatePflagWorkdir = Effect.fnUntraced(function* (
  * default.
  *
  * Resolution order mirrors {@link pflagWorkdirValue}:
- * - the scan's last `--profile` occurrence wins — pflag consumes flag-shaped tokens the
+ * - the scan's last `--profile` occurrence wins — the scan consumes flag-shaped tokens the
  *   Effect parser refuses (`--profile --metadata-url` binds `"--metadata-url"`), and a
  *   scanned occurrence marks the flag changed even when its value is the `supabase` default
  *   or empty;
@@ -217,7 +216,7 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
   const env = process.env["SUPABASE_PROFILE"];
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
-  // The explicit token pflag-equivalent semantics resolve, vs. the one the config layer's own
+  // The explicit token the raw-argv scan resolves, vs. the one the config layer's own
   // scan resolved (which treats the last raw `--profile` occurrence as explicit even when it
   // was consumed as another flag's value). When both agree on a non-empty token, the layer
   // already resolved the right profile.
@@ -278,7 +277,7 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
   return Option.some(yield* loadProfile(goToken, fs.value));
 });
 
-/** Accepted literal spellings for a pflag boolean flag value (`strconv.ParseBool`). */
+/** Accepted literal spellings for a boolean flag value: `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, `False`. */
 const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
   ["1", true],
   ["t", true],
@@ -301,7 +300,7 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
  * unrecognized literal fails immediately, before any other flag validation or API call.
  *
  * This can't be read off the Effect-parsed boolean: the Effect parser resolves repeated
- * flags first-wins (pflag is last-wins) and accepts `yes`/`no`, which the literal set above
+ * flags first-wins (the scan is last-wins) and accepts `yes`/`no`, which the literal set above
  * rejects. The scan records a bare occurrence as `"true"` and an inline-empty `--flag=` as
  * `""`, so both go through the same literal-set check and fail consistently.
  */

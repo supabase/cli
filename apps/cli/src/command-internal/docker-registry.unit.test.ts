@@ -95,7 +95,7 @@ describe("getRegistryImageUrl", () => {
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 
-  it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
+  it("honors a projectEnvValues (dotenv)-only registry override", () => {
     expect(
       withRegistry(undefined, () =>
         resolveImage("supabase/pg_prove:3.36", {

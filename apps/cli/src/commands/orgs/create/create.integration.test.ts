@@ -85,7 +85,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact preamble + indented JSON for --output json", () => {
+  it.live("emits byte-exact preamble + indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });

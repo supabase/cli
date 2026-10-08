@@ -40,7 +40,7 @@ export const secret = (annotations?: SecretAnnotations) =>
 
 type ExpectedType = "number" | "boolean" | "string" | "array" | "unknown";
 
-// Accepted boolean string forms, matching Go's `strconv.ParseBool`; duplicated rather than
+// Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`); duplicated rather than
 // imported so `packages/config` has no dependency on `apps/cli`.
 const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);

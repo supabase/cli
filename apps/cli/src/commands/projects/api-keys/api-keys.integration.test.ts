@@ -84,7 +84,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the reveal query param by default (Go request parity)", () => {
+  it.live("omits the reveal query param by default", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -126,7 +126,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the revealed secret in the Go json array for --output json --reveal", () => {
+  it.live("emits the revealed secret in the JSON array for --output json --reveal", () => {
     const { layer, out } = setup({ goOutput: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });

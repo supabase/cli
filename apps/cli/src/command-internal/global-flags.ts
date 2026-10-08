@@ -120,7 +120,7 @@ export const AgentFlag = GlobalFlag.setting("agent")({
  * Every global/persistent flag declared above.
  *
  * A value-taking flag added here must also be added to `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/cobra-flag-groups.ts`), which the handler-side pflag scans and pre-parse token
+ * (`shared/cli/cobra-flag-groups.ts`), which the handler-side argv scans and pre-parse token
  * scanners both derive their token set from. A flag missed there fails silently: an unregistered
  * value flag won't consume its following token, so that token gets misread as positional.
  */
@@ -180,7 +180,7 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
 };
 
 /**
- * Drops tokens that pflag would consume as a value-consuming flag's value in space-separated form
+ * Drops tokens consumed as a value-consuming flag's value in space-separated form
  * (`--flag value` / `-f value`), so the `--yes`/`--experimental`/`--debug` argv scanners below
  * don't mistake a consumed value token for an explicit occurrence of the global flag — e.g.
  * `db pull --password --experimental=false` treats `--experimental=false` as `--password`'s

@@ -1,6 +1,6 @@
 /**
- * Matches a glob pattern against a path the way Go's `path.Match` does, for the seed-file
- * globber's `[db.seed] sql_paths` expansion. Hand-ported rather than compiled to a `RegExp`,
+ * Matches a glob pattern against a path using shell-pattern semantics (`*` and `?` never cross
+ * `/`), for the seed-file globber's `[db.seed] sql_paths` expansion. Hand-ported rather than compiled to a `RegExp`,
  * since glob character classes diverge from JS regex classes and a malformed pattern must
  * report `badPattern` instead of being silently reinterpreted.
  *
@@ -239,8 +239,7 @@ const matchChunk = (chunkIn: Bytes, sIn: Bytes): MatchChunk => {
 };
 
 /**
- * Reports whether `name` matches the shell pattern `pattern`, using Go's `path.Match`
- * semantics. `badPattern` is set (instead of throwing) for a malformed pattern.
+ * Reports whether `name` matches the shell pattern `pattern`. `badPattern` is set (instead of throwing) for a malformed pattern.
  */
 export const pathMatch = (pattern: string, name: string): PathMatchResult => {
   let pat = UTF8_ENCODER.encode(pattern);

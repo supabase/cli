@@ -330,7 +330,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.live("auto-confirms from SUPABASE_YES in the project .env", () => {
     // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     const { layer, out } = setup(tmp.current, {
       format: "json",

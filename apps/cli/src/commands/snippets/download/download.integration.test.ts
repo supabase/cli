@@ -90,7 +90,7 @@ describe("snippets download integration", () => {
   // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
   // Guards against a future refactor adding branch-on-goOutput logic by
   // mistake — if the flag is consumed, this assertion diverges.
-  it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
+  it.live("text mode is unaffected by any `--output` value", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();
@@ -135,7 +135,7 @@ describe("snippets download integration", () => {
   });
 
   it.live(
-    "non-UUID input emits Go-format `invalid UUID length: N`, flushes telemetry+cache, skips API",
+    "non-UUID input emits `invalid UUID length: N`, flushes telemetry+cache, skips API",
     () => {
       const { layer, api, telemetry, cache } = setup();
       return Effect.gen(function* () {
@@ -204,7 +204,7 @@ describe("snippets download integration", () => {
   });
 
   it.live(
-    "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL (Go parity)",
+    "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {

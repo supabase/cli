@@ -119,7 +119,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout for -o json", () => {
+  it.live("emits indented JSON to stdout for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
@@ -127,7 +127,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
+  it.live("forces JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsActivate({ projectRef: Option.none(), includeRawOutput: true });

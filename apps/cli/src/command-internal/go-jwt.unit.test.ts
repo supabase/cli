@@ -34,14 +34,14 @@ function decodeSegment(segment: string): string {
 }
 
 describe("generateGoJwt", () => {
-  it("emits Go's exact JWT header (no extra fields, alg before typ)", () => {
+  it("emits the JWT header (no extra fields, alg before typ)", () => {
     const token = generateGoJwt(SECRET, "anon");
     const [header] = token.split(".");
     expect(header).toBeDefined();
     expect(decodeSegment(header ?? "")).toBe('{"alg":"HS256","typ":"JWT"}');
   });
 
-  it("emits the anon payload with Go's exact key order and fixed claims", () => {
+  it("emits the anon payload with the exact key order and fixed claims", () => {
     const token = generateGoJwt(SECRET, "anon");
     const [, payload] = token.split(".");
     expect(payload).toBeDefined();
@@ -55,7 +55,7 @@ describe("generateGoJwt", () => {
     expect(Object.keys(parsed)).not.toContain("is_anonymous");
   });
 
-  it("emits the service_role payload with Go's exact key order and fixed claims", () => {
+  it("emits the service_role payload with the exact key order and fixed claims", () => {
     const token = generateGoJwt(SECRET, "service_role");
     const [, payload] = token.split(".");
     const raw = decodeSegment(payload ?? "");
@@ -94,7 +94,7 @@ describe("generateAsymmetricGoJwt", () => {
     expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
   });
 
-  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go", async () => {
+  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi)", async () => {
     const jwk = generateRsaJwk("rsa-kid");
     const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
     const token = generateAsymmetricGoJwt(jwkWithoutCrtParams, "anon");
@@ -156,7 +156,7 @@ describe("generateAsymmetricGoJwt", () => {
     );
   });
 
-  it("rejects an ES256 EC key whose curve is not P-256, wrapped like Go's GenerateAsymmetricJWT", () => {
+  it("rejects an ES256 EC key whose curve is not P-256, wrapped in the private-key conversion error", () => {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
     const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
     expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
@@ -164,7 +164,7 @@ describe("generateAsymmetricGoJwt", () => {
     );
   });
 
-  it("rejects a JWK with no kty at all, wrapped like Go's GenerateAsymmetricJWT", () => {
+  it("rejects a JWK with no kty at all, wrapped in the private-key conversion error", () => {
     const jwk = { kty: "oct" } as Jwk;
     expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
       "failed to convert JWK to private key: unsupported key type: oct",
@@ -179,7 +179,7 @@ describe("generateAsymmetricGoJwt", () => {
     );
   });
 
-  it("rejects a padded EC coordinate instead of signing a token Go would refuse to produce (CLI-1961 Codex review finding)", () => {
+  it("rejects a padded EC coordinate instead of signing an invalid token", () => {
     const jwk = generateEcJwk("ec-kid");
     const padded = { ...jwk, x: `${jwk.x}=` };
     expect(() => generateAsymmetricGoJwt(padded, "anon")).toThrow(
@@ -204,7 +204,7 @@ describe("generateAsymmetricGoJwt", () => {
 describe("signJwtWithJwk", () => {
   it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
     const jwk = generateEcJwk("ec-kid");
-    // Unsorted and containing `&`, which Go's encoder would normally HTML-escape: this function
+    // Unsorted and containing `&`, which the encoder would normally HTML-escape: this function
     // must sign exactly the bytes it's given.
     const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
     const token = signJwtWithJwk(jwk, payloadJson);
@@ -216,7 +216,7 @@ describe("signJwtWithJwk", () => {
     expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
   });
 
-  it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
+  it("HTML-escapes the kid in the header, unlike JSON.stringify", () => {
     const jwk = generateEcJwk("a<b>c&d");
     const token = signJwtWithJwk(jwk, '{"role":"anon"}');
     const [header] = token.split(".");
@@ -236,7 +236,7 @@ describe("assertDecodableJwkAlgorithm", () => {
     expect(() => assertDecodableJwkAlgorithm(undefined)).not.toThrow();
   });
 
-  it("rejects an unsupported algorithm with Go's exact UnmarshalText message", () => {
+  it("rejects an unsupported algorithm with the allowed-values message", () => {
     expect(() => assertDecodableJwkAlgorithm("HS256")).toThrow("must be one of [RS256 ES256]");
   });
 });

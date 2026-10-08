@@ -492,7 +492,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       fs,
     );
-    // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
+    // Duration fields (duration syntax) are otherwise only parsed inside GoTrue's own env
     // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
     // value must be validated eagerly here or it would be silently accepted.
     const gotrueSessionsForValidation = resolveGotrueSessions(

@@ -113,7 +113,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves literal `|` characters in snippet name and owner username (Go parity)", () => {
+  it.live("preserves literal `|` characters in snippet name and owner username", () => {
     const { layer, out } = setup({ response: PIPE_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -160,7 +160,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
+  it.live("--output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
     const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -173,7 +173,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml emits a `data:` block", () => {
+  it.live("--output=yaml emits a `data:` block", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -182,7 +182,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml fails like Go when a snippet carries a description", () => {
+  it.live("--output=toml fails when a snippet carries a description", () => {
     // The nullable `description` field can't be represented in TOML, so this
     // fails whenever any snippet has a `description` key (present-with-value
     // or explicit null).
@@ -200,7 +200,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits Go-shaped bytes when no snippet has a description", () => {
+  it.live("--output=toml emits the expected bytes when no snippet has a description", () => {
     // The Management API always includes `description`, so this success
     // branch is unreachable in production — kept to pin the encoder bytes
     // for the shape where the key is absent.
@@ -234,7 +234,7 @@ describe("snippets list integration", () => {
   });
 
   it.live(
-    "Go --output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
+    "--output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
     () => {
       const { layer, api, telemetry, cache } = setup({ goOutput: "env" });
       return Effect.gen(function* () {
@@ -252,7 +252,7 @@ describe("snippets list integration", () => {
     },
   );
 
-  it.live("Go --output=pretty falls through to the text renderer", () => {
+  it.live("--output=pretty falls through to the text renderer", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -261,7 +261,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over --output-format when both are set", () => {
+  it.live("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });

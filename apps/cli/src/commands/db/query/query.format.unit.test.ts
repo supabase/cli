@@ -23,7 +23,7 @@ describe("formatValue", () => {
     expect(formatValue(true)).toBe("true");
   });
 
-  it("renders JSON objects and arrays like Go's fmt %v (not [object Object])", () => {
+  it("renders JSON objects and arrays in `map[...]`/`[...]` form (not [object Object])", () => {
     expect(formatValue({ k: "v", z: 1, a: true })).toBe("map[a:true k:v z:1]");
     expect(formatValue([1, 2, "x"])).toBe("[1 2 x]");
     expect(formatValue({ count: 1000000 })).toBe("map[count:1e+06]");
@@ -35,7 +35,7 @@ describe("formatValue", () => {
     expect(formatValue([])).toBe("[]");
   });
 
-  it("renders nested JSON numbers with Go's float64 %g", () => {
+  it("renders nested JSON numbers in `%g` form", () => {
     expect(formatValue([1000000, 1234567, 999999, 0.5, 100.5])).toBe(
       "[1e+06 1.234567e+06 999999 0.5 100.5]",
     );
@@ -44,14 +44,14 @@ describe("formatValue", () => {
     );
   });
 
-  it("renders bytea (Buffer/Uint8Array) as Go's []byte %v decimal array, not map[]", () => {
+  it("renders bytea (Buffer/Uint8Array) as a decimal array, not map[]", () => {
     expect(formatValue(new Uint8Array([222, 173, 190, 239]))).toBe("[222 173 190 239]");
     expect(formatValue(new Uint8Array([]))).toBe("[]");
   });
 });
 
 describe("formatLinkedValue", () => {
-  it("renders top-level JSON numbers with Go's float64 %g (interface{} path)", () => {
+  it("renders top-level JSON numbers in `%g` form", () => {
     expect(formatLinkedValue(1000000)).toBe("1e+06");
     expect(formatLinkedValue(1234567)).toBe("1.234567e+06");
     expect(formatLinkedValue(999999)).toBe("999999");
@@ -87,13 +87,13 @@ describe("makeLocalCellFormatter", () => {
     expect(fmt(42, 99)).toBe("42");
   });
 
-  it("preserves negative zero in a float column like Go's %v (-0, not 0)", () => {
+  it("preserves negative zero in a float column (-0, not 0)", () => {
     const fmt = makeLocalCellFormatter([701, 701]);
     expect(fmt(-0, 0)).toBe("-0");
     expect(fmt(0, 1)).toBe("0");
   });
 
-  it("renders Date (timestamp) cells like Go's time.Time %v instead of map[]", () => {
+  it("renders Date (timestamp) cells as `YYYY-MM-DD HH:MM:SS +0000 UTC` instead of map[]", () => {
     const fmt = makeLocalCellFormatter([1114]);
     expect(fmt(DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2024, 0, 2, 15, 4, 5))), 0)).toBe(
       "2024-01-02 15:04:05 +0000 UTC",
@@ -117,7 +117,7 @@ describe("makeLocalCellFormatter", () => {
     expect(fmt("2026-01-01 05:30:00.5-07", 0)).toBe("2026-01-01 12:30:00.5 +0000 UTC");
   });
 
-  it("renders a date (OID 1082) as Go's midnight-UTC time.Time", () => {
+  it("renders a date (OID 1082) as a midnight-UTC timestamp", () => {
     const fmt = makeLocalCellFormatter([1082]);
     expect(fmt("2026-01-01", 0)).toBe("2026-01-01 00:00:00 +0000 UTC");
   });
@@ -150,13 +150,13 @@ describe("coerceLocalJsonRows", () => {
     expect(out).not.toContain(`"${huge}"`);
   });
 
-  it("coerces bytea (Buffer/Uint8Array) cells to standard base64 like Go's json.Marshal", () => {
+  it("coerces bytea (Buffer/Uint8Array) cells to standard base64", () => {
     // OID 17 = bytea.
     const out = coerceLocalJsonRows([[new Uint8Array([222, 173, 190, 239])]], [17]);
     expect(out[0]?.[0]).toBe("3q2+7w==");
   });
 
-  it("coerces timestamp/timestamptz/date cells to Go's RFC3339Nano (UTC, microseconds)", () => {
+  it("coerces timestamp/timestamptz/date cells to RFC3339Nano (UTC, microseconds)", () => {
     expect(coerceLocalJsonRows([["2026-01-01 00:00:00.123456"]], [1114])[0]?.[0]).toBe(
       "2026-01-01T00:00:00.123456Z",
     );
@@ -217,7 +217,7 @@ describe("renderTablewriter", () => {
     );
   });
 
-  it("sizes columns by terminal rune width so CJK cells stay aligned (Go runewidth)", () => {
+  it("sizes columns by terminal rune width so CJK cells stay aligned", () => {
     // "日本語" is 6 display columns, not 3 code points.
     const out = renderTablewriter(["name"], [["日本語"], ["ab"]]);
     expect(out).toBe(
@@ -250,17 +250,17 @@ describe("renderJson", () => {
     expect(out).toBe('[\n  {\n    "a": 2,\n    "b": 1\n  }\n]\n');
   });
 
-  it("keeps integer-like column keys in Go's lexicographic order (not JS numeric)", () => {
+  it("keeps integer-like column keys in lexicographic order (not JS numeric)", () => {
     const out = renderJson(["10", "2"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "10": 1,\n    "2": 2\n  }\n]\n');
   });
 
-  it("collapses duplicate column names to the last value (Go's map overwrite)", () => {
+  it("collapses duplicate column names to the last value", () => {
     const out = renderJson(["x", "x"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "x": 2\n  }\n]\n');
   });
 
-  it("preserves negative zero like Go's json.Encoder (-0, not 0)", () => {
+  it("preserves negative zero in JSON output (-0, not 0)", () => {
     const out = renderJson(["n"], [[-0]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "n": -0\n  }\n]\n');
   });
@@ -322,7 +322,7 @@ describe("orderedKeys", () => {
 });
 
 describe("findNonFiniteJsonValue", () => {
-  it("returns Go's token for the first non-finite float, else undefined", () => {
+  it("returns the token for the first non-finite float, else undefined", () => {
     expect(findNonFiniteJsonValue([[1, "x", 2.5]])).toBeUndefined();
     expect(findNonFiniteJsonValue([[Number.NaN]])).toBe("NaN");
     expect(findNonFiniteJsonValue([[Number.POSITIVE_INFINITY]])).toBe("+Inf");

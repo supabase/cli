@@ -28,7 +28,7 @@ import {
 } from "./upgrade-notice.ts";
 
 describe("updateNotifierDisabled", () => {
-  it.each(["1", "t", "T", "TRUE", "true", "True"])("suppresses for ParseBool-true %j", (value) => {
+  it.each(["1", "t", "T", "TRUE", "true", "True"])("suppresses for boolean-true %j", (value) => {
     expect(updateNotifierDisabled(value)).toBe(true);
   });
 
@@ -73,7 +73,7 @@ describe("isNewerCliVersion", () => {
 });
 
 describe("formatUpgradeNotice", () => {
-  it("matches the Go CLI's message bytes modulo styling", () => {
+  it("emits the expected message bytes modulo styling", () => {
     expect(stripVTControlCharacters(formatUpgradeNotice("v2.114.0", "2.113.0"))).toBe(
       "A new version of Supabase CLI is available: v2.114.0 (currently installed v2.113.0)\n" +
         "We recommend updating regularly for new features and bug fixes: " +
@@ -212,7 +212,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("--debug=true surfaces fetch failures and --debug=false silences them, like pflag", async () => {
+  it("--debug=true surfaces fetch failures and --debug=false silences them", async () => {
     const on = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug=true"] });
     await runUpgradeNotice(on.deps);
     expect(on.stderr).toContain("Failed to fetch latest release");
@@ -230,7 +230,7 @@ describe("runUpgradeNotice", () => {
     off.cleanup();
   });
 
-  it("a built-in ignores SUPABASE_DEBUG but still honors the --debug flag, like cobra's init order", async () => {
+  it("a built-in ignores SUPABASE_DEBUG but still honors the --debug flag", async () => {
     const viaEnv = setup({
       fetchFails: true,
       project: false,
@@ -263,7 +263,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a --debug operand after -- or consumed by a value flag is not the debug flag, like pflag", async () => {
+  it("a --debug operand after -- or consumed by a value flag is not the debug flag", async () => {
     const afterTerminator = setup({
       fetchFails: true,
       project: false,
@@ -298,7 +298,7 @@ describe("runUpgradeNotice", () => {
   );
 
   it.skipIf(process.platform === "win32")(
-    "creates the cache directory and file with Go-compatible modes",
+    "creates the cache directory and file with the expected modes",
     async () => {
       const ctx = setup({});
       const previousUmask = process.umask(0);
@@ -333,7 +333,7 @@ describe("runUpgradeNotice", () => {
     },
   );
 
-  it("a --debug consumed by the leaf command's own value flag is not the debug flag, like pflag", async () => {
+  it("a --debug consumed by the leaf command's own value flag is not the debug flag", async () => {
     // `login --name --debug`: `--debug` is consumed as `--name`'s value; the
     // real CLI passes the resolved leaf's value-flag predicate into the hook.
     const ctx = setup({ fetchFails: true, project: false, args: ["login", "--name", "--debug"] });
@@ -360,7 +360,7 @@ describe("runUpgradeNotice", () => {
   });
 
   it.skipIf(process.getuid?.() === 0)(
-    "an existing read-only cache file fails the backoff write, like Go's direct open",
+    "an existing read-only cache file fails the backoff write",
     async () => {
       const ctx = setup({
         args: ["db", "start", "--debug"],
@@ -376,7 +376,7 @@ describe("runUpgradeNotice", () => {
     },
   );
 
-  it("project dotenv SUPABASE_DEBUG surfaces diagnostics, like godotenv before the Execute tail", async () => {
+  it("project dotenv SUPABASE_DEBUG surfaces diagnostics", async () => {
     // The symlinked .temp disables the backoff write, so the fetch error is
     // what remains to log.
     const ctx = setup({ fetchFails: true });
@@ -397,7 +397,7 @@ describe("runUpgradeNotice", () => {
     blocked.cleanup();
   });
 
-  it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
+  it("a failed fetch inside a project stays silent under --debug", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
     await runUpgradeNotice(ctx.deps);
     // The empty-cache backoff write succeeds, so no debug line is emitted.
@@ -459,7 +459,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a project dotenv SUPABASE_NO_UPDATE_NOTIFIER opt-out suppresses the notice, like godotenv", async () => {
+  it("a project dotenv SUPABASE_NO_UPDATE_NOTIFIER opt-out suppresses the notice", async () => {
     const ctx = setup({});
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
     await runUpgradeNotice(ctx.deps);
@@ -468,7 +468,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a shell env that defines the key beats the project dotenv, like godotenv's no-override", async () => {
+  it("a shell env that defines the key beats the project dotenv", async () => {
     // Defined-but-unparseable in the shell env still blocks the project
     // dotenv from overriding, and an empty value keeps the notifier on.
     const ctx = setup({ env: { SUPABASE_NO_UPDATE_NOTIFIER: "" } });
@@ -478,7 +478,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("--help ignores the project dotenv opt-out — Go never loads config for the built-ins", async () => {
+  it("--help ignores the project dotenv opt-out — built-ins never load config", async () => {
     const ctx = setup({ args: ["--help"] });
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
     await runUpgradeNotice(ctx.deps);
@@ -486,7 +486,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("resolves --help and --version against the bare cwd, ignoring --workdir, like Go", async () => {
+  it("resolves --help and --version against the bare cwd, ignoring --workdir", async () => {
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     mkdirSync(join(flagged, "supabase"), { recursive: true });
@@ -514,7 +514,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("does not treat Effect's -v shorthand as Go's root version flag", async () => {
+  it("does not treat Effect's -v shorthand as the root version flag", async () => {
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     const cacheFile = join(flagged, "supabase", ".temp", "cli-latest");
@@ -545,7 +545,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("ignores a --workdir operand after the -- terminator, like cobra", async () => {
+  it("ignores a --workdir operand after the -- terminator", async () => {
     const ctx = setup({});
     const elsewhere = join(workdir, "elsewhere");
     mkdirSync(join(elsewhere, "supabase"), { recursive: true });

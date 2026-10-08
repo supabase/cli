@@ -189,21 +189,21 @@ describe("resolveLocalConfigValues", () => {
       expect(values.publishableKey).toBe("value");
     });
 
-    it("fails config loading for an encrypted: secret with no private key, matching Go", () => {
+    it("fails config loading for an encrypted: secret with no private key", () => {
       const config = baseConfig({ auth: { publishable_key: VAULT_ENCRYPTED } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         "failed to parse config: missing private key",
       );
     });
 
-    it("decrypts an encrypted: auth.email.smtp.pass, matching Go's Secret-typed Smtp.Pass field", () => {
+    it("decrypts an encrypted: auth.email.smtp.pass", () => {
       process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
       const document = { auth: { email: { smtp: { enabled: true, pass: VAULT_ENCRYPTED } } } };
       const resolved = resolveAuthEmailSmtp(document.auth, undefined);
       expect(resolved?.pass).toBe("value");
     });
 
-    it("decrypts an encrypted: studio.openai_api_key, matching Go's Secret-typed OpenaiApiKey field", () => {
+    it("decrypts an encrypted: studio.openai_api_key", () => {
       process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
       const config = baseConfig({ studio: { openai_api_key: VAULT_ENCRYPTED } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -221,7 +221,7 @@ describe("resolveLocalConfigValues", () => {
     });
   });
 
-  it("rejects an explicit empty project_id, matching Go's Config.Validate", () => {
+  it("rejects an explicit empty project_id", () => {
     // An explicit `project_id = ""` overwrites the workdir-basename default with the literal
     // empty string, unlike an absent key.
     const config = baseConfig({ project_id: "" });
@@ -235,7 +235,7 @@ describe("resolveLocalConfigValues", () => {
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
   });
 
-  it("rejects an absent project_id when the workdir basename sanitizes to empty, matching Go", () => {
+  it("rejects an absent project_id when the workdir basename sanitizes to empty", () => {
     // The workdir-basename default still applies with no `project_id` key present, so a workdir
     // whose basename sanitizes to empty (e.g. `!!!`) still fails validation.
     const config = Schema.decodeUnknownSync(CliConfigSchema)({});
@@ -262,7 +262,7 @@ describe("resolveLocalConfigValues", () => {
     ).not.toThrow();
   });
 
-  it("hardcodes the Go-parity local S3 credentials", () => {
+  it("hardcodes the local S3 credentials", () => {
     const config = baseConfig();
     const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
     expect(values.storageS3AccessKeyId).toBe("625729a08b95bf1b7ff351a663f3a23c");
@@ -361,7 +361,7 @@ describe("resolveLocalConfigValues", () => {
     });
   });
 
-  describe("SUPABASE_* env(VAR) indirection (Go's LoadEnvHook)", () => {
+  describe("SUPABASE_* env(VAR) indirection ", () => {
     // `env(VAR)` indirection resolves inside any string field, including a `SUPABASE_*` override
     // value itself, not just a config.toml literal.
     const ENV_KEYS = ["SUPABASE_AUTH_JWT_SECRET", "SUPABASE_DB_PORT", "SUPABASE_API_ENABLED"];
@@ -398,7 +398,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
 
-    it("preserves the env(VAR) literal when the indirected var is unset, matching Go", () => {
+    it("preserves the env(VAR) literal when the indirected var is unset", () => {
       process.env["SUPABASE_AUTH_JWT_SECRET"] = "env(INDIRECT_JWT_SECRET)";
       const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -517,7 +517,7 @@ describe("resolveLocalConfigValues", () => {
 
     // Unlike the malformed/out-of-range cases above, db.port=0 is a required-field failure with
     // no `enabled` gate, unlike api.port/studio.port/local_smtp.port.
-    it("rejects a zero SUPABASE_DB_PORT override, matching Go's required-field check", () => {
+    it("rejects a zero SUPABASE_DB_PORT override", () => {
       process.env["SUPABASE_DB_PORT"] = "0";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -692,7 +692,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.rootKey).toBe("custom-root-key");
     });
 
-    it("rejects a non-string root_key (e.g. a bare TOML integer), matching Go's Secret decode failure", () => {
+    it("rejects a non-string root_key (e.g. a bare TOML integer)", () => {
       const config = baseConfig();
       const document = { db: { root_key: 12345 } };
       expect(() =>
@@ -953,7 +953,7 @@ describe("resolveLocalConfigValues", () => {
       ).toBe(16384);
     });
 
-    it("rejects an override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects an override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551616";
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
         "Failed reading config: Invalid realtime.max_header_length: 18446744073709551616.",
@@ -965,7 +965,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).not.toThrow();
     });
 
-    it("rejects a hex override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects a hex override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "0x10000000000000000";
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
         "Failed reading config: Invalid realtime.max_header_length: 0x10000000000000000.",
@@ -1641,7 +1641,7 @@ describe("resolveLocalConfigValues", () => {
       expect(resolved["my_custom"]?.enabled).toBe(false);
     });
 
-    it("weakly coerces a raw numeric custom-provider boolean by truthiness, matching Go's WeaklyTypedInput decode", () => {
+    it("weakly coerces a raw numeric custom-provider boolean by truthiness", () => {
       const authDocument = {
         external: { my_custom: { enabled: 1, client_id: "custom-client-id" } },
       };
@@ -1662,7 +1662,7 @@ describe("resolveLocalConfigValues", () => {
       ).toThrow('cannot parse "1,2" as a bool');
     });
 
-    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all, matching Go's ejected default template", () => {
+    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all", () => {
       const projectEnvValues = {
         SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED: "true",
         SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: "apple-client-id",
@@ -1685,7 +1685,7 @@ describe("resolveLocalConfigValues", () => {
       });
     });
 
-    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets Go's default-template exception", () => {
+    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets the default-template exception", () => {
       const projectEnvValues = {
         SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED: "true",
         SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: "google-client-id",
@@ -1764,7 +1764,7 @@ describe("resolveLocalConfigValues", () => {
   });
 
   describe("rawUnmodeledBool", () => {
-    it("returns false for an absent value, matching Go's zero-value bool default", () => {
+    it("returns false for an absent value", () => {
       expect(rawUnmodeledBool(undefined, "auth.passkey.enabled")).toBe(false);
     });
 
@@ -1773,13 +1773,13 @@ describe("resolveLocalConfigValues", () => {
       expect(rawUnmodeledBool(false, "auth.passkey.enabled")).toBe(false);
     });
 
-    it("weakly coerces a raw number by truthiness, matching mapstructure's WeaklyTypedInput decodeBool", () => {
+    it("weakly coerces a raw number by truthiness", () => {
       expect(rawUnmodeledBool(123, "auth.passkey.enabled")).toBe(true);
       expect(rawUnmodeledBool(0, "auth.passkey.enabled")).toBe(false);
       expect(rawUnmodeledBool(1.5, "auth.passkey.enabled")).toBe(true);
     });
 
-    it("parses a valid boolean-ish string the way Go's strconv.ParseBool does", () => {
+    it("parses a valid boolean-ish string", () => {
       expect(rawUnmodeledBool("true", "auth.passkey.enabled")).toBe(true);
       expect(rawUnmodeledBool("False", "auth.passkey.enabled")).toBe(false);
       expect(rawUnmodeledBool("", "auth.passkey.enabled")).toBe(false);
@@ -1791,7 +1791,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("throws on an array or table value — mapstructure's decodeBool errors on these unconditionally, never weakly coerced", () => {
+    it("throws on an array or table value — never weakly coerced", () => {
       expect(() => rawUnmodeledBool([1, 2], "auth.passkey.enabled")).toThrow(
         InvalidBoolEnvOverrideError,
       );
@@ -1874,7 +1874,7 @@ describe("resolveLocalConfigValues", () => {
       ).toBe(16);
     });
 
-    it("rejects a uint override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects a uint override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "18446744073709551616";
       expect(() => resolveDbSettingsEnvOverrides({}, undefined)).toThrow(
         "Failed reading config: Invalid db.settings.max_connections: 18446744073709551616.",
@@ -1986,14 +1986,14 @@ describe("resolveLocalConfigValues", () => {
       });
     });
 
-    it("throws a Go-worded error when the signing keys file does not exist", () => {
+    it("throws a descriptive error when the signing keys file does not exist", () => {
       const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
         "failed to read signing keys: ",
       );
     });
 
-    it("throws a Go-worded error when the signing keys file is malformed JSON", () => {
+    it("throws a descriptive error when the signing keys file is malformed JSON", () => {
       const supabaseDir = join(tempRoot.current, "supabase");
       mkdirSync(supabaseDir, { recursive: true });
       writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -2173,7 +2173,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.authPasswordRequirements).toBe("lower_upper_letters_digits");
     });
 
-    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override, matching Go's UnmarshalText", () => {
+    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override", () => {
       process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "bogus";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -2879,7 +2879,7 @@ describe("resolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    it("only validates the first enabled provider in Go's fixed priority order", () => {
+    it("only validates the first enabled provider in fixed priority order", () => {
       process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "false";
       process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"] = "true";
       const config = baseConfig();
@@ -3247,7 +3247,7 @@ describe("resolveLocalConfigValues", () => {
     // The "exactly one of cert/key set" checks live in config-validate.unit.test.ts; the file-read
     // behavior below is tested here.
 
-    it("throws a Go-worded error when the configured cert file does not exist", () => {
+    it("throws a descriptive error when the configured cert file does not exist", () => {
       writeTlsFile(tempRoot.current, "key.pem");
       const config = baseConfig({
         api: { tls: { enabled: true, cert_path: "missing-cert.pem", key_path: "key.pem" } },
@@ -3257,7 +3257,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("throws a Go-worded error when the configured key file does not exist", () => {
+    it("throws a descriptive error when the configured key file does not exist", () => {
       writeTlsFile(tempRoot.current, "cert.pem");
       const config = baseConfig({
         api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "missing-key.pem" } },
@@ -4224,14 +4224,14 @@ describe("resolveLocalJwks", () => {
     });
   });
 
-  it("throws a Go-worded error when the signing keys file does not exist", async () => {
+  it("throws a descriptive error when the signing keys file does not exist", async () => {
     const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
     await expect(runLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
       "failed to read signing keys: ",
     );
   });
 
-  it("throws a Go-worded error when the signing keys file is malformed JSON", async () => {
+  it("throws a descriptive error when the signing keys file is malformed JSON", async () => {
     const supabaseDir = join(tempRoot.current, "supabase");
     mkdirSync(supabaseDir, { recursive: true });
     writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -4267,7 +4267,7 @@ describe("resolveLocalJwks", () => {
       );
     });
 
-    it("does not validate third-party providers when auth is disabled, matching Go's ResolveJWKS/IssuerURL", async () => {
+    it("does not validate third-party providers when auth is disabled", async () => {
       const remoteKeys = [{ kty: "RSA", kid: "firebase-key", n: "abc", e: "AQAB" }];
       const issuerUrl = "https://securetoken.google.com/my-project";
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -4302,7 +4302,7 @@ describe("resolveLocalJwks", () => {
       fetchMock.mockRestore();
     });
 
-    it('does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url, matching Go\'s issuerURL != "" check', async () => {
+    it("does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url", async () => {
       const fetchMock = vi.spyOn(globalThis, "fetch");
       const config = baseConfig({
         auth: {

@@ -122,7 +122,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in table cells (Go parity)", () => {
+  it.live("renders literal `|` characters in table cells", () => {
     const { layer, out } = setup({ response: [PIPE_FUNCTION] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -158,7 +158,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.live("emits byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });

@@ -16,7 +16,7 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { status } from "./status.handler.ts";
 
-// pflag-style string-slice flags: each occurrence is CSV-split and accumulated across repeats,
+// String-slice flags: each occurrence is CSV-split and accumulated across repeats,
 // so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
 export const statusOverrideNameFlag = stringSliceFlag(
   "override-name",

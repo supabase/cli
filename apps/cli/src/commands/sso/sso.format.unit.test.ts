@@ -20,7 +20,7 @@ import {
 } from "./sso.format.ts";
 
 describe("formatSsoTimestamp", () => {
-  it("formats RFC3339 input as Go's `YYYY-MM-DD HH:MM:SS` (UTC, no suffix)", () => {
+  it("formats RFC3339 input as `YYYY-MM-DD HH:MM:SS` (UTC, no suffix)", () => {
     expect(formatSsoTimestamp("2023-03-28T13:50:14.464Z")).toBe("2023-03-28 13:50:14");
   });
 
@@ -106,7 +106,7 @@ describe("validateUuid", () => {
     expect(Result.isSuccess(result)).toBe(true);
   });
 
-  it("accepts uppercase UUIDs (matches Go's `uuid.Parse` case-insensitivity)", () => {
+  it("accepts uppercase UUIDs (case-insensitive)", () => {
     const result = validateUuid("B5AE62F9-EF1D-4F11-A02B-731C8BBB11E8");
     expect(Result.isSuccess(result)).toBe(true);
   });
@@ -116,7 +116,7 @@ describe("validateUuid", () => {
     expect(Result.isSuccess(result)).toBe(true);
   });
 
-  it("rejects non-UUIDs with a Go-compatible message", () => {
+  it("rejects non-UUIDs with the UUID message", () => {
     const result = validateUuid("not-a-uuid");
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
@@ -174,7 +174,7 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
   // Not a bug: `renderSingleProvider` renders UPDATED AT from `created_at`,
   // an established output contract. Changing this needs the renderer and
   // this test updated together.
-  it("intentionally renders UPDATED AT using created_at (Go-bug parity guard)", () => {
+  it("intentionally renders UPDATED AT using created_at", () => {
     const out = renderSingleProvider({
       id: "abc",
       created_at: "2023-01-01T00:00:00Z",

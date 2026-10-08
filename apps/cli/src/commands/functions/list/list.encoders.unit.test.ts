@@ -30,7 +30,7 @@ describe("list encoders", () => {
     });
   });
 
-  it("preserves null elements as Go zero-value rows", () => {
+  it("preserves null elements as zero-value rows", () => {
     const decoded = decodeFunctionsResponse("[null]");
     expect(decoded).toEqual({
       ok: true,
@@ -56,7 +56,7 @@ describe("list encoders", () => {
     });
   });
 
-  it("preserves Go zero values for omitted non-pointer fields", () => {
+  it("preserves zero values for omitted non-pointer fields", () => {
     const decoded = decodeFunctionsResponse("[{}]");
     expect(decoded).toEqual({
       ok: true,
@@ -82,7 +82,7 @@ describe("list encoders", () => {
     });
   });
 
-  it("omits null optional fields from Go JSON output", () => {
+  it("omits null optional fields from JSON output", () => {
     const parsed: ParsedFunctions = {
       functions: [SAMPLE_FUNCTION],
       isNil: false,
@@ -90,7 +90,7 @@ describe("list encoders", () => {
     expect(encodeFunctionsGoJson(parsed)).not.toContain('"import_map_path": null');
   });
 
-  it("escapes html-sensitive and line-separator characters in Go JSON output", () => {
+  it("escapes html-sensitive and line-separator characters in JSON output", () => {
     const parsed: ParsedFunctions = {
       functions: [
         {
@@ -105,7 +105,7 @@ describe("list encoders", () => {
     );
   });
 
-  it("keeps Go JSON keys in the legacy order", () => {
+  it("keeps JSON keys in the legacy order", () => {
     const parsed: ParsedFunctions = {
       functions: [SAMPLE_FUNCTION],
       isNil: false,
@@ -124,7 +124,7 @@ describe("list encoders", () => {
   }`);
   });
 
-  it("keeps Go YAML keys and null optional fields", () => {
+  it("keeps YAML keys and null optional fields", () => {
     expect(
       encodeFunctionsGoYaml([{ ...SAMPLE_FUNCTION, verify_jwt: undefined, import_map: undefined }]),
     ).toContain(`- createdat: 1687423025152
@@ -135,7 +135,7 @@ describe("list encoders", () => {
   importmappath: null`);
   });
 
-  it("keeps Go TOML keys in struct order with BurntSushi's 2-space indentation", () => {
+  it("keeps TOML keys in struct order with BurntSushi's 2-space indentation", () => {
     expect(encodeFunctionsGoToml({ functions: [SAMPLE_FUNCTION], isNil: false })).toBe(
       `[[functions]]
   CreatedAt = 1687423025152

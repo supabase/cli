@@ -42,7 +42,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
+  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints the deprecation line.
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withHidden,

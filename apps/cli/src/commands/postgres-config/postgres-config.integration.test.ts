@@ -60,7 +60,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
+  it.live("renders a large integral config value in `%g` form in the pretty table", () => {
     // The established table output renders every JSON number as a float64 with shortest `%g`
     // formatting, so 1000000 renders as `1e+06`, never `1000000`.
     const out = mockOutput({ format: "text" });
@@ -172,7 +172,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets the Go --output flag win over --output-format json", () => {
+  it.live("lets the --output flag win over --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },

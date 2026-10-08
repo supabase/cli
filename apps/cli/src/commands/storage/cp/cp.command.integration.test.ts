@@ -64,7 +64,7 @@ function setup(args: ReadonlyArray<string>) {
 
 describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.live(
-    "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
+    "rejects --jobs=-1 with the exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
     () => {
       const args = [
         "storage",
@@ -95,7 +95,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   );
 
   // `-0` normalizes to negative zero in a numeric check but must still be rejected with its
-  // original spelling (`-01`, not `-1`); non-numeric tokens get the same exact pflag message.
+  // original spelling (`-01`, not `-1`); non-numeric tokens get the same exact message.
   it.live.each([
     {
       token: "-0",
@@ -140,7 +140,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
         'invalid argument "1\\n2" for "-j, --jobs" flag: strconv.ParseUint: parsing "1\\n2": invalid syntax',
     },
   ])(
-    "rejects --jobs=$token at parse time with pflag's exact raw-token message",
+    "rejects --jobs=$token at parse time with the exact raw-token message",
     ({ token, message }) => {
       const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
       const { layer } = setup(args);
@@ -159,7 +159,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
 
   // `0x10`→16, `010`→octal 8, `1_0`→10: valid base-0 forms that must clear parsing.
   it.live.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(
-    "accepts --jobs=$token (Go base-0 form) through flag parsing, reaching the experimental gate",
+    "accepts --jobs=$token (base-0 form) through flag parsing, reaching the experimental gate",
     ({ token }) => {
       const args = ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b", `--jobs=${token}`];
       const { layer } = setup(args);

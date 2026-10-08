@@ -63,7 +63,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes 'Started PITR restore: <ref>\\n' to stderr in text mode (Go parity)", () => {
+  it.live("writes 'Started PITR restore: <ref>\\n' to stderr in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -100,7 +100,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout for --output json (Go-compat)", () => {
+  it.live("emits indented JSON to stdout for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -114,7 +114,7 @@ describe("backups restore integration", () => {
   });
 
   it.live(
-    "renders the stderr text line for --output {pretty,yaml,toml,env} (Go ignores --output)",
+    "renders the stderr text line for --output {pretty,yaml,toml,env} (--output is ignored)",
     () => {
       const { layer, out } = setup({ goOutput: "yaml" });
       return Effect.gen(function* () {

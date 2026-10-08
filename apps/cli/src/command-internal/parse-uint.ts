@@ -1,5 +1,5 @@
 /**
- * Parses a numeric flag token the way `pflag`'s `uint64`/`int64` types do: base-0 prefixes
+ * Parses a numeric flag token as a `uint64`/`int64`: base-0 prefixes
  * (`0x`, `0o`/leading `0`, `0b`), underscore digit separators, and strict int64/uint64 range
  * checks, rejecting any sign on an unsigned value (including `-0`, which a naive numeric parse
  * would treat as non-negative) and preserving the original token spelling. Used by shell

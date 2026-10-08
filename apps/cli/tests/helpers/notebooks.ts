@@ -249,7 +249,7 @@ export interface NotebooksSetupOptions {
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly routes?: NotebooksHttpRoutes;
-  /** The Go `-o`/`--output` flag, which every command family here honours. */
+  /** The `-o`/`--output` flag, which every command family here honours. */
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;

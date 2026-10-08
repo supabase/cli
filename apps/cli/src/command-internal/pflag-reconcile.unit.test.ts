@@ -29,17 +29,17 @@ const occ = (entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>) =
   new Map(entries.map(([name, values]) => [name, [...values]]));
 
 describe("pflagBoolValue", () => {
-  it("is false when the flag never occurs (Go default)", () => {
+  it("is false when the flag never occurs", () => {
     expect(pflagBoolValue(occ([]), "skip-url-validation")).toEqual(Result.succeed(false));
   });
 
-  it('treats a bare occurrence (recorded as pflag\'s NoOptDefVal "true") as true', () => {
+  it('treats a bare occurrence (recorded as "true") as true', () => {
     expect(pflagBoolValue(occ([["skip-url-validation", ["true"]]]), "skip-url-validation")).toEqual(
       Result.succeed(true),
     );
   });
 
-  it("resolves repeats last-wins, not first-wins (pflag Sets every occurrence)", () => {
+  it("resolves repeats last-wins, not first-wins", () => {
     // --skip-url-validation=false --skip-url-validation
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["false", "true"]]]), "skip-url-validation"),
@@ -50,7 +50,7 @@ describe("pflagBoolValue", () => {
     ).toEqual(Result.succeed(false));
   });
 
-  it("fails on an inline-empty occurrence exactly like Go's ParseBool", () => {
+  it("fails on an inline-empty occurrence", () => {
     // --skip-url-validation=false --skip-url-validation=
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
@@ -61,7 +61,7 @@ describe("pflagBoolValue", () => {
     );
   });
 
-  it("accepts exactly Go's strconv.ParseBool literal set", () => {
+  it("accepts exactly the boolean literal set", () => {
     for (const raw of ["1", "t", "T", "TRUE", "true", "True"]) {
       expect(pflagBoolValue(occ([["f", [raw]]]), "f")).toEqual(Result.succeed(true));
     }
@@ -70,7 +70,7 @@ describe("pflagBoolValue", () => {
     }
   });
 
-  it("fails with pflag's byte-exact invalid-argument message on the first bad occurrence", () => {
+  it("fails with the invalid-argument message on the first bad occurrence", () => {
     expect(pflagBoolValue(occ([["skip-url-validation", ["yes"]]]), "skip-url-validation")).toEqual(
       Result.fail(
         `invalid argument "yes" for "--skip-url-validation" flag: strconv.ParseBool: parsing "yes": invalid syntax`,
@@ -93,7 +93,7 @@ describe("pflagEnumValue", () => {
     );
   });
 
-  it("resolves repeats last-wins, matching pflag", () => {
+  it("resolves repeats last-wins", () => {
     const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
     const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient";
     expect(
@@ -105,7 +105,7 @@ describe("pflagEnumValue", () => {
     ).toEqual(Result.succeed(Option.some(persistent)));
   });
 
-  it("fails with the Go enum Set message when any occurrence is invalid", () => {
+  it("fails with the enum message when any occurrence is invalid", () => {
     const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
     expect(
       pflagEnumValue(
@@ -120,7 +120,7 @@ describe("pflagEnumValue", () => {
     );
   });
 
-  it("names the flag with its shorthand when a label is given (pflag errors.go:39-41)", () => {
+  it("names the flag with its shorthand when a label is given", () => {
     expect(pflagEnumValue(occ([["type", ["bogus"]]]), "type", ["saml"], "-t, --type")).toEqual(
       Result.fail(`invalid argument "bogus" for "-t, --type" flag: must be one of [ saml ]`),
     );
@@ -138,7 +138,7 @@ describe("pflagWorkdirValue", () => {
     prePathOccurrences: occ(prePath),
   });
 
-  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+  it("resolves pre-path repeats last-wins (the parser is first-wins)", () => {
     // --workdir /existing --workdir /missing sso add …
     expect(
       pflagWorkdirValue(
@@ -169,7 +169,7 @@ describe("pflagWorkdirValue", () => {
     ).toEqual(Option.some("/post"));
   });
 
-  it("resolves nothing when no flag, parsed value, or env var is present (Go walks up)", () => {
+  it("resolves nothing when no flag, parsed value, or env var is present", () => {
     expect(pflagWorkdirValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
   });
 
@@ -180,7 +180,7 @@ describe("pflagWorkdirValue", () => {
     ).toEqual(Option.some("--metadata-file"));
   });
 
-  it("resolves repeats last-wins, matching pflag StringVar", () => {
+  it("resolves repeats last-wins", () => {
     expect(
       pflagWorkdirValue(scan([["workdir", ["/a", "/b"]]]), Option.some("/a"), undefined),
     ).toEqual(Option.some("/b"));
@@ -241,7 +241,7 @@ describe("pflagProfileValue", () => {
     ).toEqual(Option.some("a.yml"));
   });
 
-  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+  it("resolves pre-path repeats last-wins (the parser is first-wins)", () => {
     expect(
       pflagProfileValue(
         scan([], [], [["profile", ["a.yml", "b.yml"]]]),
@@ -261,7 +261,7 @@ describe("pflagProfileValue", () => {
     ).toEqual(Option.some("post.yml"));
   });
 
-  it("resolves nothing when no flag, parsed value, or env var is present (Go falls to the file/default)", () => {
+  it("resolves nothing when no flag, parsed value, or env var is present (falls to the file/default)", () => {
     expect(pflagProfileValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
   });
 
@@ -272,19 +272,19 @@ describe("pflagProfileValue", () => {
     ).toEqual(Option.some("--metadata-url"));
   });
 
-  it("resolves repeats last-wins, matching pflag StringVar (the parser is first-wins)", () => {
+  it("resolves repeats last-wins (the parser is first-wins)", () => {
     expect(
       pflagProfileValue(scan([["profile", ["a.yml", "b.yml"]]]), Option.some("a.yml"), undefined),
     ).toEqual(Option.some("b.yml"));
   });
 
-  it("keeps an explicit scanned `supabase` — pflag marks it changed, shadowing the env var", () => {
+  it("keeps an explicit scanned `supabase` — it counts as set, shadowing the env var", () => {
     expect(pflagProfileValue(scan([["profile", ["supabase"]]]), Option.none(), "env.yml")).toEqual(
       Option.some("supabase"),
     );
   });
 
-  it("keeps a changed-but-empty occurrence — Go fails LoadProfile on it, never falling to the env", () => {
+  it("keeps a changed-but-empty occurrence — profile loading fails on it, never falling to the env", () => {
     expect(pflagProfileValue(scan([["profile", [""]]]), Option.none(), "env.yml")).toEqual(
       Option.some(""),
     );

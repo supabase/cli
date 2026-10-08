@@ -76,7 +76,7 @@ describe("buildConnectionUrl", () => {
     );
   });
 
-  it("forwards runtimeParams as -c flags in the options startup param (Go RuntimeParams)", () => {
+  it("forwards runtimeParams as -c flags in the options startup param", () => {
     const url = buildConnectionUrl(
       {
         user: "postgres",
@@ -181,7 +181,7 @@ describe("sslOptionFor", () => {
     });
   });
 
-  it("carries the servername for non-verifying TLS modes too (Go enables sslsni by default)", () => {
+  it("carries the servername for non-verifying TLS modes too", () => {
     expect(sslOptionFor("require", false, "db.example.com")).toEqual({
       rejectUnauthorized: false,
       servername: "db.example.com",
@@ -433,7 +433,7 @@ describe("poolStepDownVerify", () => {
     expect(done).toBeUndefined();
   });
 
-  it("propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)", async () => {
+  it("propagates a failing step-down to the pool callback so the checkout fails", async () => {
     const failure = new Error("permission denied to set role");
     const client = { query: () => Promise.reject(failure) };
     const done = await new Promise<Error | undefined>((resolve) => {
@@ -584,7 +584,7 @@ describe("toExecError (pg server-error extraction)", () => {
     expect(error.position).toBe(25);
   });
 
-  it("omits detail and position when the server sent none (Go's non-empty gates)", () => {
+  it("omits detail and position when the server sent none", () => {
     const error = toExecError(
       sqlErrorChain({
         message: 'syntax error at or near "BOOM"',

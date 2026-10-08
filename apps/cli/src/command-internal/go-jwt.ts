@@ -87,7 +87,7 @@ function modInverse(a: bigint, m: bigint): bigint {
 
 /**
  * Backfills the RSA CRT parameters (`dp`, `dq`, `qi`) when absent: Node's `createPrivateKey`
- * rejects an RSA JWK without them, unlike Go, which derives them lazily from `p`/`q`/`d` before
+ * rejects an RSA JWK without them, so they are derived from `p`/`q`/`d` before
  * signing. Returns the key unchanged if all three are already present, or if `d`/`p`/`q` are
  * missing (an invalid key either way).
  */
@@ -140,13 +140,11 @@ function assertSupportedKty(jwk: Jwk): void {
 }
 
 /**
- * Reproduces `encoding/base64`'s `CorruptInputError` message for each numeric field, since Go's
- * unpadded base64 decoder rejects input Node's own JWK importer would silently accept (e.g. a
- * `=`-padded coordinate) and sign a token Go could never have produced.
+ * Produces a `CorruptInputError` message for each numeric field, since unpadded base64 decoding
+ * rejects input Node's own JWK importer would silently accept (e.g. a `=`-padded coordinate).
  *
- * Checks fields in Go's exact order (EC: x, y, d; RSA: n, e, d, p, q) so the first invalid field
- * matches Go's first-failure-wins order. An absent field is skipped, matching Go's zero value
- * decoding to zero bytes.
+ * Checks fields in a fixed order (EC: x, y, d; RSA: n, e, d, p, q) so the first invalid field
+ * is reported. An absent field is skipped and decodes to zero bytes.
  */
 function assertDecodableJwkNumericFields(jwk: Jwk): void {
   const assertField = (label: string, value: string | undefined): void => {
@@ -197,7 +195,7 @@ function assertKeyMatchesAlgorithm(jwk: Jwk, algorithm: SupportedJwtAlgorithm): 
  * `dsaEncoding: "ieee-p1363"` is required for ES256: Node's default ECDSA signature is
  * DER-encoded, not the raw (r‖s) format JWS requires. The header is serialized with
  * {@link encodeGoJsonCompact}, not `JSON.stringify`, since a `kid` containing `<`/`>`/`&` must
- * HTML-escape to sign the same bytes Go would.
+ * HTML-escape so the signed bytes are stable.
  */
 export function signJwtWithJwk(jwk: Jwk, payloadJson: string): string {
   try {

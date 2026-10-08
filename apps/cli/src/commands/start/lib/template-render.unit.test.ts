@@ -107,7 +107,7 @@ describe("renderStartKongYml", () => {
     );
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { gotrueId: _gotrueId, ...withoutGotrue } = kongFields;
     const rawFields: Record<string, string | number> = {
       RestId: withoutGotrue.restId,
@@ -152,7 +152,7 @@ describe("renderStartVectorYaml", () => {
     );
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { apiKey: _apiKey, ...withoutApiKey } = vectorFields;
     const rawFields: Record<string, string | number> = {
       VectorId: withoutApiKey.vectorId,
@@ -216,7 +216,7 @@ end
     expect(rendered).not.toMatch(/"db_port" => 6543\.0/);
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { dbHost: _dbHost, ...withoutDbHost } = poolerFields;
     const rawFields: Record<string, string | number> = {
       DbPort: withoutDbHost.dbPort,

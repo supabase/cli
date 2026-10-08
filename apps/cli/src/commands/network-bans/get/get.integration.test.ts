@@ -99,7 +99,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON bytes for --output json", () => {
+  it.live("emits JSON bytes for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -114,7 +114,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as a JSON alias matching Go's get.go switch", () => {
+  it.live("treats --output pretty as a JSON alias", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
@@ -169,7 +169,7 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
+  it.live("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });

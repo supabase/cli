@@ -118,7 +118,7 @@ function setupFeedback(
     stdin?: Layer.Layer<Stdin>;
     agentName?: string;
     agentFlag?: "auto" | "yes" | "no";
-    /** Simulates the Go-compat `-o`/`--output` global flag. */
+    /** Simulates the `-o`/`--output` global flag. */
     goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     submitFailWith?: string;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */

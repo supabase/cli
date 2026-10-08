@@ -48,7 +48,7 @@ describe("parseStorageUrl", () => {
     expect(parseStorageUrl("ss:///bucket/a%20b")).toBe("/bucket/a b");
   });
 
-  it("decodes a multi-byte UTF-8 percent-escape as one rune (Go raw-byte path)", () => {
+  it("decodes a multi-byte UTF-8 percent-escape as one rune", () => {
     // %E4%B8%AD is the UTF-8 encoding of 中 — decoded as one rune, not three.
     expect(parseStorageUrl("ss:///bucket/%E4%B8%AD.txt")).toBe("/bucket/中.txt");
   });

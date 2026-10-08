@@ -450,7 +450,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.live("emits byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -519,7 +519,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the request body with Go-sorted keys", () => {
+  it.live("sends the request body with sorted keys", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -594,7 +594,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.live("rejects --size nano at flag-parse time", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([projectsCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),

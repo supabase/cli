@@ -82,7 +82,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in secret names without escaping (Go parity)", () => {
+  it.live("renders literal `|` characters in secret names without escaping", () => {
     const { layer, out } = setup({
       response: [{ name: "with|pipe", value: "digest" }],
     });
@@ -117,7 +117,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON to stdout for --output json", () => {
+  it.live("emits byte-exact indented JSON to stdout for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });

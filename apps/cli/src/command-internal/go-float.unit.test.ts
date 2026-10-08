@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { goFormatFloat } from "./go-float.ts";
 
 describe("goFormatFloat", () => {
-  it("renders fixed notation within Go's [-4, 6) decimal-exponent range", () => {
+  it("renders fixed notation within the [-4, 6) decimal-exponent range", () => {
     expect(goFormatFloat(100)).toBe("100");
     expect(goFormatFloat(100000)).toBe("100000");
     expect(goFormatFloat(0.5)).toBe("0.5");

@@ -79,7 +79,7 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("network-restrictions experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-restrictions experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-restrictions", "get"] },
     { name: "update", args: ["network-restrictions", "update"] },
@@ -115,9 +115,9 @@ describe("network-restrictions experimental gate (Go PersistentPreRunE parity)",
   }
 
   it.live(
-    "update: malformed --db-allow-cidr CSV fails at parse time with pflag's exact diagnostic, before the gate",
+    "update: malformed --db-allow-cidr CSV fails at parse time with the exact diagnostic, before the gate",
     () => {
-      // `"1.2.3.0/24` is 11 bytes, so pflag's CSV reader hits EOF at column 12.
+      // `"1.2.3.0/24` is 11 bytes, so the CSV reader hits EOF at column 12.
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

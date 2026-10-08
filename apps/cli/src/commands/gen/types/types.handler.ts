@@ -235,7 +235,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const generator = yield* GenTypesGenerator;
   const backend = yield* currentStackBackend;
 
-  // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
+  // "Set" means the flag appeared in argv at all (set at all), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
   // `-s --linked` consumes `--linked` as `-s`'s value, not as its own boolean flag.
   const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);

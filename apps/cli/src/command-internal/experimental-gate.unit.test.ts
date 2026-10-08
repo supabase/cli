@@ -14,7 +14,7 @@ describe("requireExperimental", () => {
     requireExperimental.pipe(Effect.provide(withFlag(true))),
   );
 
-  it.effect("fails with Go's byte-exact message when neither flag nor env is set", () =>
+  it.effect("fails with the gate message when neither flag nor env is set", () =>
     Effect.gen(function* () {
       const saved = process.env[ENV];
       delete process.env[ENV];

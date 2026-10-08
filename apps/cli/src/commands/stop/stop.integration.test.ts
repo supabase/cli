@@ -345,7 +345,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps an explicit --project-id raw, unsanitized (Go's bypass)", () =>
+  it.live("keeps an explicit --project-id raw, unsanitized", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ projectId: Option.some("Raw Value!!") })).pipe(Effect.provide(layer));
@@ -637,7 +637,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits --all from docker's volume prune on a pre-1.42 API host, matching Go's gate", () =>
+  it.live("omits --all from docker's volume prune on a pre-1.42 API host", () =>
     Effect.gen(function* () {
       // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
       // nothing) on an older daemon.
@@ -680,7 +680,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("--backup=false alone does not delete data volumes, matching Go's dead flag", () =>
+  it.live("--backup=false alone does not delete data volumes", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -1245,7 +1245,7 @@ enabled = true
     vi.spyOn(process.stderr, "write").mockImplementation(() => true),
   );
 
-  it.live("reports Go's --debug Pruned lines to stderr, in stage order", () =>
+  it.live("reports the --debug Pruned lines to stderr, in stage order", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         debug: true,
@@ -1276,7 +1276,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("never writes Go's Pruned lines to stderr without --debug", () =>
+  it.live("never writes the Pruned lines to stderr without --debug", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",

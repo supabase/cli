@@ -24,7 +24,7 @@ const config = {
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
     Flag.withDescription("Use pg-delta to pull declarative schema."),
     // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints
-    // cobra's deprecation line.
+    // the deprecation line.
     Flag.withHidden,
     Flag.optional,
   ),

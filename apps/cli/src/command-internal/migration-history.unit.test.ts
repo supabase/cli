@@ -69,24 +69,24 @@ describe("reconcileMigrations", () => {
     });
   });
 
-  it("skips empty / whitespace versions (matches strconv.Atoi, not Number())", () => {
+  it("skips empty / whitespace versions (not Number() coercion)", () => {
     expect(reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"])).toEqual({
       kind: "in-sync",
     });
   });
 
-  it("treats a version within Go's int64 range as a real conflict (BigInt parity)", () => {
+  it("treats a version within the int64 range as a real conflict", () => {
     expect(reconcileMigrations(["9999999999999999"], []).kind).toBe("conflict");
   });
 
-  it("skips a version beyond Go's int64 range instead of hanging the scan", () => {
+  it("skips a version beyond the int64 range instead of hanging the scan", () => {
     expect(
       reconcileMigrations(["20240101000000", "9999999999999999999"], ["20240101000000"]),
     ).toEqual({ kind: "in-sync" });
   });
 });
 
-describe("listRemoteMigrations (suppress only undefined_table, like Go)", () => {
+describe("listRemoteMigrations (suppress only undefined_table)", () => {
   const run = (error: DbExecError) =>
     Effect.runPromiseExit(listRemoteMigrations(failingSession(error)));
 
@@ -122,7 +122,7 @@ describe("listRemoteMigrations (suppress only undefined_table, like Go)", () => 
   });
 });
 
-describe("findPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMismatch)", () => {
+describe("findPendingMigrations", () => {
   it("returns the local paths after the remote count when in sync", () => {
     const local = ["0", "1", "2"].map(mig);
     const result = findPendingMigrations(local, ["0"]);
@@ -185,7 +185,7 @@ describe("suggestRevertHistory", () => {
   });
 });
 
-describe("resolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
+describe("resolveMigrationFile (byte-ordered match)", () => {
   it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
     // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
     // private-use character (U+E000): JS's default `.sort()` ranks the surrogate pair first —

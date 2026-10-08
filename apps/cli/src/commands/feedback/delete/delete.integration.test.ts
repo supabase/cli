@@ -103,7 +103,7 @@ function setupFeedbackDelete(
     stdinIsTTY?: boolean;
     client?: MockClientOpts;
     yes?: boolean;
-    /** Simulates the Go-compat `-o`/`--output` global flag. */
+    /** Simulates the `-o`/`--output` global flag. */
     goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */
     projectIdEnv?: string;

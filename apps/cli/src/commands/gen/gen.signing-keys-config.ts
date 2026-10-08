@@ -44,18 +44,18 @@ function jwkFieldKindName(value: unknown): string {
   return goJsonKindName(value);
 }
 
-/** Reproduces `encoding/json`'s struct-field type-mismatch text: `"json: cannot unmarshal <kind> into Go struct field JWK.<field> of type <goType>"`. */
+/** Builds the struct-field type-mismatch text: `"json: cannot unmarshal <kind> into Go struct field JWK.<field> of type <goType>"`. */
 function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
   return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
 }
 
-/** `null` is treated as absent, not a type mismatch, matching `encoding/json`'s zero-value semantics for a null field. */
+/** `null` is treated as absent, not a type mismatch. */
 function isAbsentJwkField(value: unknown): boolean {
   return value === undefined || value === null;
 }
 
 /**
- * Looks up a JWK field case-insensitively, matching `encoding/json`'s struct-field matching.
+ * Looks up a JWK field case-insensitively.
  * When multiple case-variant keys are present, the last one in source order wins.
  */
 export function resolveJwkFieldValue(record: Record<string, unknown>, field: string): unknown {
@@ -91,7 +91,7 @@ export function readOptionalString(
 /**
  * Reads the optional `key_ops` field, throwing {@link jwkStructFieldTypeMismatch} when present
  * but not an array or containing a non-string, non-null element. A `null` element decodes to
- * `""` (its zero value) instead, matching `encoding/json`'s slice-element decoding.
+ * `""` (its zero value) instead.
  */
 export function readOptionalStringArray(
   record: Record<string, unknown>,
@@ -273,8 +273,7 @@ function findTopLevelObjectFieldOccurrences(
 
 /**
  * Rejects an earlier malformed duplicate JWK field even though `JSON.parse` keeps only
- * the last occurrence, matching `encoding/json`'s first-mismatch-wins duplicate-key
- * handling; `alg` also fails on an earlier disallowed value even if a later one is valid.
+ * the last occurrence (first mismatch wins); `alg` also fails on an earlier disallowed value even if a later one is valid.
  */
 export function assertNoMalformedDuplicateJwkField(objectText: string): void {
   const occurrences = findTopLevelObjectFieldOccurrences(objectText);
@@ -415,7 +414,7 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     );
   }
   // A `null` array element normalizes to `{}` (every field absent) rather than being
-  // rejected here, matching `encoding/json`'s zero-value decoding of a `null` struct element.
+  // rejected here.
   // Downstream signing may still fail on an all-absent key; this step never rejects it.
   for (const item of decoded) {
     if (item !== null && !isRecord(item)) {

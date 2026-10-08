@@ -149,7 +149,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY with empty stdin prints the label and takes the Yes default (Go parity)", () => {
+  it.live("non-TTY with empty stdin prints the label and takes the Yes default", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -162,7 +162,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY with piped `n` declines like Go (echoed answer, no DELETE)", () => {
+  it.live("non-TTY with piped `n` declines (echoed answer, no DELETE)", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -175,7 +175,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-TTY with piped `y` confirms like Go", () => {
+  it.live("non-TTY with piped `y` confirms", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });

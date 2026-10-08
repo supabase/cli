@@ -28,7 +28,7 @@ import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
 
 /**
- * Implements the shell completion protocol that cobra-generated scripts (`supabase
+ * Implements the shell completion protocol that the generated scripts (`supabase
  * completion {bash,zsh,fish,powershell}`) call into via `supabase __complete`/
  * `__completeNoDesc` on every tab press. Completion argv can contain partial or malformed
  * flag tokens (e.g. `--de` mid-word), so this bypasses the structured CLI parser and
@@ -472,7 +472,7 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
+ * Flags validated against duration syntax (see `isValidGoDuration`) rather than this
  * tree's plain `Flag.string` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
@@ -483,7 +483,7 @@ const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
 /** `--exp` (`gen bearer-jwt`) is validated as an RFC 3339 timestamp, not a plain string. */
 const COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
-/** Nanosecond scale for each unit the Go duration grammar accepts. */
+/** Nanosecond scale for each unit the duration grammar accepts. */
 const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["ns", 1n],
   ["us", 1_000n],
@@ -495,7 +495,7 @@ const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["h", 3_600_000_000_000n],
 ]);
 
-// Go's duration grammar accumulates into a `uint64` (range-checked against `1<<63`
+// The duration grammar accumulates into a `uint64` (range-checked against `1<<63`
 // mid-parse) and narrows to the `int64` max in the final non-negative check below.
 const GO_DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
 const GO_DURATION_MAX_INT64 = (1n << 63n) - 1n;
@@ -505,10 +505,10 @@ function isAsciiDigit(char: string | undefined): boolean {
 }
 
 /**
- * Validates the Go duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
+ * Validates the duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
  * boolean verdict rather than a parsed value. Uses `BigInt` for the integer/fraction
- * accumulators to match Go's `uint64` overflow semantics exactly, and a plain `Number` for
- * the one step Go performs in `float64` — a JS `number` is itself an IEEE-754 double, so
+ * accumulators to get `uint64` overflow semantics, and a plain `Number` for
+ * the one step performed in `float64` — a JS `number` is itself an IEEE-754 double, so
  * this round-trips bit-for-bit rather than merely approximating it.
  */
 function isValidGoDuration(value: string): boolean {

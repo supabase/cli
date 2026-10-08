@@ -8,11 +8,11 @@ import {
 } from "./go-json.ts";
 
 describe("escapeGoJsonString", () => {
-  it("escapes quotes and backslashes like Go", () => {
+  it("escapes quotes and backslashes", () => {
     expect(escapeGoJsonString(`a"b\\c`)).toBe('"a\\"b\\\\c"');
   });
 
-  it("HTML-escapes <, > and & (Go's default escapeHTML)", () => {
+  it("HTML-escapes <, > and &", () => {
     expect(escapeGoJsonString("<a> & <b>")).toBe('"\\u003ca\\u003e \\u0026 \\u003cb\\u003e"');
   });
 
@@ -64,7 +64,7 @@ describe("encodeGoJsonIndented", () => {
 });
 
 describe("encodeGoJsonCompact", () => {
-  it("matches Go's json.Marshal compact shape with HTML escaping", () => {
+  it("emits the compact shape with HTML escaping", () => {
     expect(encodeGoJsonCompact({ metadata_xml: "<xml>&stuff</xml>", type: "saml" })).toBe(
       '{"metadata_xml":"\\u003cxml\\u003e\\u0026stuff\\u003c/xml\\u003e","type":"saml"}',
     );

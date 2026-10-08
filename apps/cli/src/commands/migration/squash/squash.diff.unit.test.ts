@@ -17,7 +17,7 @@ const readGoFixture = Effect.fnUntraced(function* (name: string) {
 });
 
 describe("squashLineByLineDiff", () => {
-  it.live("diffs real pg_dump output into Go's exact diff.sql bytes", () =>
+  it.live("diffs real pg_dump output into the exact diff.sql bytes", () =>
     Effect.gen(function* () {
       const before = yield* readGoFixture("before.sql");
       const after = yield* readGoFixture("after.sql");
@@ -95,7 +95,7 @@ describe("squashScanLines", () => {
 });
 
 describe("SQUASH_SEPARATOR_COMMENT", () => {
-  it("carries Go's leading newline before the dashed comment banner", () => {
+  it("carries the leading newline before the dashed comment banner", () => {
     expect(SQUASH_SEPARATOR_COMMENT).toBe(
       "\n--\n-- Dumped schema changes for auth and storage\n--\n\n",
     );

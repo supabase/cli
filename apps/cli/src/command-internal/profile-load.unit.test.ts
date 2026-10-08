@@ -30,7 +30,7 @@ const writeProfile = (name: string, content: string): string => {
 };
 
 describe("loadProfile", () => {
-  it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
+  it.effect("resolves built-in profile names case-insensitively", () =>
     Effect.gen(function* () {
       expect(yield* load("SUPABASE-LOCAL")).toBe("http://localhost:8080");
       expect(yield* load("supabase")).toBe("https://api.supabase.com");
@@ -59,7 +59,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("uses Go filepath.Ext semantics for dot-files (`.yml` IS extension `yml`)", () =>
+  it.effect("treats dot-files as having an extension (`.yml` IS extension `yml`)", () =>
     Effect.gen(function* () {
       expect(yield* loadError(join(tempRoot, ".yml"))).toBe(
         `failed to read profile: open ${join(tempRoot, ".yml")}: no such file or directory`,
@@ -67,7 +67,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails on a missing file with Go's os.Open error", () =>
+  it.effect("fails on a missing file with the open error", () =>
     Effect.gen(function* () {
       expect(yield* loadError("missing.yml")).toBe(
         `failed to read profile: open missing.yml: no such file or directory`,
@@ -75,7 +75,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails on a directory with Go's read error", () =>
+  it.effect("fails on a directory with the read error", () =>
     Effect.gen(function* () {
       const dir = join(tempRoot, "dir.yml");
       mkdirSync(dir, { recursive: true });
@@ -157,26 +157,24 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect(
-    "returns Go's CurrentProfile.Name — the canonical built-in or the file's name field",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
-        const file = writeProfile(
-          "named.yml",
-          [
-            "name: harness",
-            "api_url: http://127.0.0.1:44444",
-            "dashboard_url: http://127.0.0.1:44444/dashboard",
-            "project_host: supabase.co",
-          ].join("\n"),
-        );
-        expect((yield* loadProfile(file, fs)).name).toBe("harness");
-      }).pipe(Effect.provide(BunServices.layer)),
+  it.effect("returns the profile name — the canonical built-in or the file's name field", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
+      const file = writeProfile(
+        "named.yml",
+        [
+          "name: harness",
+          "api_url: http://127.0.0.1:44444",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: supabase.co",
+        ].join("\n"),
+      );
+      expect((yield* loadProfile(file, fs)).name).toBe("harness");
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("rejects unknown keys with mapstructure's padded UnmarshalExact block", () =>
+  it.effect("rejects unknown keys with a padded unknown-keys block", () =>
     Effect.gen(function* () {
       const file = writeProfile(
         "extra-keys.yml",

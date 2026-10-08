@@ -45,8 +45,8 @@ function interpolateLeafValue(
   // `./env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
   // `edge_runtime.secrets.FOO = "env(EMPTY)"`) resolves to `""` here, gets
   // redacted by `redactValue` as a real value instead of skipped as an
-  // unresolved literal, and `secrets set` uploads a blank secret Go would
-  // never send.
+  // unresolved literal, and `secrets set` uploads a blank secret that
+  // is never meant to be sent.
   if (resolved === undefined || resolved === "") {
     return value;
   }

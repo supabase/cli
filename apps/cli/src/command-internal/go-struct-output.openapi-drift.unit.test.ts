@@ -13,11 +13,11 @@ import type { GoType } from "./go-struct-output.encoders.ts";
  * match, or a future spec edit silently changes `-o yaml`/`-o toml` bytes instead of failing a
  * test.
  *
- * oapi-codegen names its Go struct fields from the schema's JSON keys and declares them in
- * alphabetical order, not the schema's own `properties` order, so field order here is compared
- * against an ASCII sort of `properties` keys. That assumption holds for every schema below;
- * `KNOWN_ORDER_EXCEPTIONS` records the real order for any future schema where oapi-codegen's
- * Go-identifier sort diverges from a plain JSON-key sort.
+ * Struct fields are named from the schema's JSON keys and declared in alphabetical order, not
+ * the schema's own `properties` order, so field order here is compared against an ASCII sort of
+ * `properties` keys. That assumption holds for every schema below; `KNOWN_ORDER_EXCEPTIONS`
+ * records the real order for any future schema where the field-name sort diverges from a plain
+ * JSON-key sort.
  */
 
 interface JsonSchema {
@@ -115,7 +115,7 @@ function comparePointerRequired(
   const required = new Set(schema.required ?? []);
   const mismatches: Array<DriftMismatch> = [];
   for (const field of fields) {
-    // oapi-codegen never pointer-wraps a Go map regardless of the schema's `required` list, so
+    // A map field is never pointer-wrapped regardless of the schema's `required` list, so
     // this is the one field kind the goPtr/required rule doesn't hold for.
     if (unwrapPointer(field.type).kind === "map") {
       continue;
@@ -162,7 +162,7 @@ function compareValueType(
         return [
           {
             path,
-            message: `expected type=string format=date-time (Go time.Time), got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
+            message: `expected type=string format=date-time (timestamp), got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
           },
         ];
       }

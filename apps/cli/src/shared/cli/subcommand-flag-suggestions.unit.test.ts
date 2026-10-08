@@ -196,7 +196,7 @@ describe("subcommand flag placement suggestions", () => {
     );
   });
 
-  it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
+  it("passes a complete `invalid argument` diagnostic through verbatim", () => {
     const pflagMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const errors = formatCliErrorsForDisplay([

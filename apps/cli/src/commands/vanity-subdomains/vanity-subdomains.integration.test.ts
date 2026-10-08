@@ -421,7 +421,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.live("fails with the required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api });
@@ -593,7 +593,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
+  it.live("fails with the required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api });

@@ -952,9 +952,9 @@ const UINT_MAX = 18446744073709551615n; // 2^64 - 1
 
 /**
  * Base-0 unsigned integer literal parsing (`0b`/`0o`/`0x` prefixes, and a bare leading zero
- * also meaning octal — so `"010"` parses as `8`), matching Go's `strconv.ParseUint(str, 0, …)`
- * grammar. Underscores between digits are allowed; a leading sign is never accepted. Returns
- * `undefined` for anything invalid instead of throwing, leaving bit-width bounds to the caller.
+ * also meaning octal — so `"010"` parses as `8`). Underscores between digits are allowed; a
+ * leading sign is never accepted. Returns `undefined` for anything invalid instead of throwing,
+ * leaving bit-width bounds to the caller.
  */
 function parseGoBaseZeroUint(value: string): bigint | undefined {
   if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;

@@ -1,5 +1,5 @@
 /**
- * Formats a number the way Go's `fmt.Sprintf("%v", float64)` does: shortest `%g`, exponent
+ * Formats a number in shortest `%g` form: exponent
  * notation when the decimal exponent is `< -4` or `>= 6` (`1000000` → `1e+06`), fixed notation
  * otherwise, with a signed, at-least-two-digit exponent.
  *
@@ -8,7 +8,7 @@
 export function goFormatFloat(n: number): string {
   if (Number.isNaN(n)) return "NaN";
   if (!Number.isFinite(n)) return n > 0 ? "+Inf" : "-Inf";
-  // Go's `%v` preserves the sign of negative zero; `n === 0` is true for both `+0` and `-0`.
+  // Negative zero keeps its sign; `n === 0` is true for both `+0` and `-0`.
   if (Object.is(n, -0)) return "-0";
   if (n === 0) return "0";
   const neg = n < 0;

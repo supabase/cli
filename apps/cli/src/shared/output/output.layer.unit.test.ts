@@ -168,7 +168,7 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("fail writes Go-byte-identical red message + suggestion to stderr", () => {
+    it.effect("fail writes a red message + suggestion to stderr", () => {
       const writes: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string | Uint8Array) => {

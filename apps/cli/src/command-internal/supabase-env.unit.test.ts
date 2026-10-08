@@ -14,7 +14,7 @@ describe("supabaseEnvBool", () => {
     delete process.env[KEY];
   });
 
-  it("is true only for strconv.ParseBool's true set", () => {
+  it("is true only for the boolean true set", () => {
     for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
       process.env[KEY] = value;
       expect(supabaseEnvBool(KEY)).toBe(true);

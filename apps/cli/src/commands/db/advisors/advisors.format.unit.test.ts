@@ -24,7 +24,7 @@ const lint = (over: Partial<AdvisorLint>): AdvisorLint => ({
   cacheKey: over.cacheKey ?? "",
 });
 
-describe("ADVISORS_LEVEL_ENUM (Go toEnum, exact case-insensitive)", () => {
+describe("ADVISORS_LEVEL_ENUM", () => {
   it("maps info/warn/error in both cases", () => {
     expect(ADVISORS_LEVEL_ENUM.toEnum("info")).toBe(0);
     expect(ADVISORS_LEVEL_ENUM.toEnum("INFO")).toBe(0);
@@ -46,7 +46,7 @@ describe("matchesAdvisorType", () => {
   });
 });
 
-describe("filterAdvisorLints (maps Go TestFilterLints)", () => {
+describe("filterAdvisorLints", () => {
   const lints: ReadonlyArray<AdvisorLint> = [
     lint({ name: "rls_disabled", level: "ERROR", categories: ["SECURITY"] }),
     lint({ name: "unindexed_fk", level: "INFO", categories: ["PERFORMANCE"] }),
@@ -107,7 +107,7 @@ describe("scanAdvisorLintRow", () => {
   });
 });
 
-describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
+describe("apiResponseToAdvisorLints", () => {
   it("coerces API fields to strings and projects metadata to the known fields", () => {
     const lints = apiResponseToAdvisorLints({
       lints: [
@@ -143,13 +143,13 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     expect(lints[0]?.name).toBe("some_brand_new_advisor");
   });
 
-  it("returns an empty array for Go zero-value shapes (null, missing/null lints)", () => {
+  it("returns an empty array for zero-value shapes (null, missing/null lints)", () => {
     expect(apiResponseToAdvisorLints(null)).toEqual([]);
     expect(apiResponseToAdvisorLints({})).toEqual([]);
     expect(apiResponseToAdvisorLints({ lints: null })).toEqual([]);
   });
 
-  it("null lints element becomes zero-value lint (Go encoding/json nil-slice decode parity)", () => {
+  it("null lints element becomes zero-value lint", () => {
     const result = apiResponseToAdvisorLints({
       lints: [
         null,
@@ -178,14 +178,14 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     expect(result[1]?.level).toBe("ERROR");
   });
 
-  it("null categories element becomes empty string (Go encoding/json []string null-element parity)", () => {
+  it("null categories element becomes empty string", () => {
     const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: [null, "SECURITY"] }],
     });
     expect(result[0]?.categories).toEqual(["", "SECURITY"]);
   });
 
-  it("throws on structural shapes Go's typed decode rejects", () => {
+  it("throws on invalid structural shapes", () => {
     expect(() => apiResponseToAdvisorLints("nope")).toThrow();
     expect(() => apiResponseToAdvisorLints([])).toThrow();
     expect(() => apiResponseToAdvisorLints({ lints: "nope" })).toThrow();
@@ -201,7 +201,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     ).toThrow();
   });
 
-  it("throws on scalar fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
+  it("throws on scalar fields with the wrong JSON type", () => {
     expect(() => apiResponseToAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
     expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", level: true }] })).toThrow();
     expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", categories: [1] }] })).toThrow();
@@ -210,7 +210,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     ).toThrow();
   });
 
-  it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
+  it("treats absent scalar fields as the empty-string zero value", () => {
     // `categories` absent encodes as `null` too (no omitempty on the field).
     const lints = apiResponseToAdvisorLints({ lints: [{ name: "only_name" }] });
     expect(lints[0]).toEqual({
@@ -226,7 +226,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     });
   });
 
-  it("collapses null and empty categories to null (Go nil-slice parity)", () => {
+  it("collapses null and empty categories to null", () => {
     const fromNull = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: null }],
     });
@@ -241,7 +241,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
   });
 
-  it("normalizes null fkey_columns elements to 0 (Go encoding/json float32 zero value)", () => {
+  it("normalizes null fkey_columns elements to 0", () => {
     const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
     });
@@ -257,7 +257,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     expect(meta?.["fkey_columns"]).toEqual([0, 0]);
   });
 
-  it("still throws on non-number, non-null fkey_columns elements (Go UnmarshalTypeError)", () => {
+  it("still throws on non-number, non-null fkey_columns elements", () => {
     expect(() =>
       apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
@@ -271,7 +271,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     ).toThrow();
   });
 
-  it("still throws on a non-array fkey_columns (Go UnmarshalTypeError)", () => {
+  it("still throws on a non-array fkey_columns", () => {
     expect(() =>
       apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
@@ -280,7 +280,7 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
   });
 });
 
-describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
+describe("encodeAdvisorLints", () => {
   it("emits struct-order keys, jsonb metadata, cache_key last, trailing newline", () => {
     const lints: ReadonlyArray<AdvisorLint> = [
       lint({
@@ -329,7 +329,7 @@ describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
     expect(out).toContain('"cache_key": ""');
   });
 
-  it("emits categories:null (key present, null value) when categories is null — Go nil []string parity", () => {
+  it("emits categories:null (key present, null value) when categories is null", () => {
     const lintWithNullCategories: AdvisorLint = {
       name: "n",
       title: "",

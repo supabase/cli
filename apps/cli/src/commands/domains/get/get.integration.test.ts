@@ -41,7 +41,7 @@ interface SetupOpts {
   readonly response?: unknown;
 }
 
-/** Just enough of the Go JSON envelope to reach the fields under assertion. */
+/** Just enough of the JSON envelope to reach the fields under assertion. */
 const GoJsonResult = Schema.Struct({
   data: Schema.Struct({
     result: Schema.Struct({
@@ -109,7 +109,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
+  it.live("emits indented JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
@@ -120,7 +120,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
+  it.live("backfills zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
       custom_origin_server: _customOriginServer,
@@ -171,7 +171,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("backfills Go zero values in JSON output when the API omits envelope fields", () => {
+  it.live("backfills zero values in JSON output when the API omits envelope fields", () => {
     const {
       status: _status,
       custom_hostname: _customHostname,
@@ -336,7 +336,7 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
+  it.live("forces JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
@@ -345,16 +345,13 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "forces Go JSON even when -o is explicitly pretty and --include-raw-output is set",
-    () => {
-      const { layer, out } = setup({ goOutput: "pretty" });
-      return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-        expect(out.stdoutText.startsWith("{")).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("forces JSON even when -o is explicitly pretty and --include-raw-output is set", () => {
+    const { layer, out } = setup({ goOutput: "pretty" });
+    return Effect.gen(function* () {
+      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
+      expect(out.stdoutText.startsWith("{")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });

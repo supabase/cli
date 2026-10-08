@@ -2079,23 +2079,20 @@ describe("db diff", () => {
       }).pipe(Effect.provide(s.layer));
     });
 
-    it.effect(
-      "omits --add-host on a non-Linux host (Go's docker_darwin.go/docker_windows.go)",
-      () => {
-        const s = setup(tmp.current, {
-          pgadminStdout: [JSON.stringify([pgadminEntry()])],
-          platform: "darwin",
-        });
-        return Effect.gen(function* () {
-          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.extraHosts).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
+    it.effect("omits --add-host on a non-Linux host", () => {
+      const s = setup(tmp.current, {
+        pgadminStdout: [JSON.stringify([pgadminEntry()])],
+        platform: "darwin",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+        const call = s.differCalls[0] as DockerRunOpts;
+        expect(call.extraHosts).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
 
     it.effect(
-      "hardcodes the shadow target's postgres:postgres credentials, ignoring a configured [db] password (Go pgadmin.go quirk)",
+      "hardcodes the shadow target's postgres:postgres credentials, ignoring a configured [db] password",
       () => {
         const s = setup(tmp.current, {
           files: {
@@ -2394,7 +2391,7 @@ describe("db diff", () => {
     });
 
     it.effect(
-      "fails on engine-flag conflict (--use-pgadmin with --use-pg-delta), byte-exact cobra message",
+      "fails on engine-flag conflict (--use-pgadmin with --use-pg-delta), byte-exact message",
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {

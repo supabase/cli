@@ -15,7 +15,7 @@ import { networkBansRemove } from "./remove.handler.ts";
 
 /**
  * CSV-splits each occurrence (`--db-unban-ip=1.2.3.4,5.6.7.8` → two IPs) and appends across
- * repeats, failing at parse time with pflag's diagnostic on malformed CSV. If `-o` is also
+ * repeats, failing at parse time with a diagnostic on malformed CSV. If `-o` is also
  * invalid, this error wins since `-o` is validated later, in the handler.
  */
 export const networkBansRemoveDbUnbanIpFlag = stringSliceFlag(

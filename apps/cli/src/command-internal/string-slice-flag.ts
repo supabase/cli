@@ -6,8 +6,8 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Parses a pflag `StringSliceVar` flag: CSV-splits each occurrence, matching
- * `encoding/csv`, and accumulates across repeats. A naive `.split(",")`
+ * Parses a repeatable string-slice flag: CSV-splits each occurrence
+ * and accumulates across repeats. A naive `.split(",")`
  * diverges on quoted/embedded commas (e.g. `'"a,b",c'`).
  *
  * Whitespace is not trimmed and empty fields are not dropped.
@@ -64,8 +64,7 @@ export class StringSliceFlagParseError extends Error {
 }
 
 /**
- * Parses one CSV record from `val`, matching Go's `encoding/csv` reader as
- * used by pflag's `readAsCSV`. Only the first record is read — an unquoted
+ * Parses one CSV record from `val`. Only the first record is read — an unquoted
  * newline ends it and the rest is dropped. Blank lines before the record are
  * skipped; blank-only input throws `EOF`. `\r\n` normalizes to `\n`, and
  * parse errors report 1-based line/byte-column positions.
@@ -242,10 +241,10 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 }
 
 /**
- * Builds a repeatable CSV-split flag matching pflag's `StringSliceVar`
- * behavior, including its `invalid argument %q for %q flag: %v` diagnostic.
+ * Builds a repeatable CSV-split flag, including its `invalid argument %q for %q flag: %v`
+ * diagnostic.
  *
- * `options.alias` must be registered here, not piped on afterwards: pflag's
+ * `options.alias` must be registered here, not piped on afterwards: the
  * diagnostic frames both spellings (`-x, --exclude`), so the alias must be
  * present when the error message is built.
  */

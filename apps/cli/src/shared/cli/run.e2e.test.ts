@@ -106,7 +106,7 @@ describe("CLI upgrade notice (#5853)", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps the Go upgrade notice before a native command suggestion", () =>
+  it.live("keeps the upgrade notice before a native command suggestion", () =>
     Effect.gen(function* () {
       const workdir = yield* upgradeNoticeWorkdir;
 

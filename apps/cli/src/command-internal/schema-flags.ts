@@ -12,7 +12,7 @@ export { StringSliceFlagParseError as SchemaFlagParseError };
 
 export const parseSchemaFlags = parseStringSliceFlag;
 
-// Whether a CSV field must be quoted (matches Go's `encoding/csv` writer, so a printed
+// Whether a CSV field must be quoted (so a printed
 // suggestion round-trips through the same CSV parsing rules `--schema` values use): never quote
 // the empty string; always quote `\.`; quote when the field contains `,`, `"`, `\r`, or `\n`;
 // otherwise quote when the first rune is whitespace.

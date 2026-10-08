@@ -61,7 +61,7 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
+describe("ssl-enforcement experimental gate", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["ssl-enforcement", "get"] },
     { name: "update", args: ["ssl-enforcement", "update", "--enable-db-ssl-enforcement"] },

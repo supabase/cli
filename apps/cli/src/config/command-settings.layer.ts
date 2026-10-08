@@ -122,7 +122,7 @@ export const commandSettingsLayer = Layer.unwrap(
         );
 
         // Optional service: tests without argv default to "not explicit". An empty command
-        // path scans all of argv up to `--`, matching pflag.
+        // path scans all of argv up to `--`.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
         const explicitProfileFlag = Option.match(cliArgs, {
           onNone: () => undefined,

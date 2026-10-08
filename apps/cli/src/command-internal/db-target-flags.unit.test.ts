@@ -135,7 +135,7 @@ describe("resolveDbTargetFlags", () => {
     expect(result.setFlags).toEqual(["local"]);
   });
 
-  it("--schema -- --linked: -- consumed as schema value, --linked is a real flag (Go pflag parity)", () => {
+  it("--schema -- --linked: -- consumed as schema value, --linked is a real flag", () => {
     const result = resolveDbTargetFlags(["db", "lint", "--schema", "--", "--linked"]);
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
@@ -271,7 +271,7 @@ describe("changedLinkedLocalFlags", () => {
     expect(changedLinkedLocalFlags(["seed", "buckets", "--local"])).toEqual(["local"]);
   });
 
-  it("returns both selectors in cobra's sorted order when both are set", () => {
+  it("returns both selectors in sorted order when both are set", () => {
     expect(changedLinkedLocalFlags(["seed", "buckets", "--local", "--linked"])).toEqual([
       "linked",
       "local",

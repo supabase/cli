@@ -90,7 +90,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal | characters in organization names (Go parity)", () => {
+  it.live("renders literal | characters in organization names", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG_PIPE] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -116,7 +116,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.live("emits byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});

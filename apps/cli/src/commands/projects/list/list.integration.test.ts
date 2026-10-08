@@ -167,7 +167,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("warns on stderr when no project is linked (Go parity)", () => {
+  it.live("warns on stderr when no project is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
       yield* projectsList({});
@@ -274,7 +274,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON including `linked` for --output json", () => {
+  it.live("emits byte-exact indented JSON including `linked` for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* projectsList({});

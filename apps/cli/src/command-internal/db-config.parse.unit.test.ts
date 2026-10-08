@@ -111,7 +111,7 @@ describe("parseConnectionString (URL form)", () => {
     });
   });
 
-  it("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () => {
+  it("strips the brackets from an IPv6 literal host", () => {
     expect(parseConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
       host: "::1",
       port: 5432,
@@ -723,7 +723,7 @@ describe("connect_timeout (pgconn parity)", () => {
     });
   });
 
-  it("omits connectTimeoutSeconds when unset or zero (driver applies Go's default)", () => {
+  it("omits connectTimeoutSeconds when unset or zero (driver applies its default)", () => {
     expect(parseConnectionString("postgres://u:p@h/db")).not.toHaveProperty(
       "connectTimeoutSeconds",
     );

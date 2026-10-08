@@ -6,8 +6,8 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Storage URL parsing, matching Go's `net/url.Parse` semantics for the `ss://`
- * scheme. `goUrlParse` implements `net/url.Parse` for the fields storage
+ * Storage URL parsing for the `ss://`
+ * scheme. `goUrlParse` parses the fields storage
  * commands need (scheme, host, path); `parseStorageUrl` additionally requires
  * scheme `ss` (case-insensitive), a non-empty path, and no host.
  *
@@ -166,7 +166,7 @@ function isValidOptionalPort(port: string): boolean {
 
 /**
  * Validates IP-literal (`[...]`) bracket/port syntax and `host[:port]`
- * port-digit checks, matching Go's host validation for realistic inputs but
+ * port-digit checks, for realistic inputs but
  * skipping bracketed-literal IP-address checks and IPv6 zone-id decoding.
  * http/https treat the first colon as the port separator; other schemes use
  * the last.
@@ -199,7 +199,7 @@ function validateGoUrlHost(scheme: string, host: string): void {
 }
 
 /**
- * Parses a URL for `scheme`/`host`/`path`, matching Go's `net/url.Parse`.
+ * Parses a URL for `scheme`/`host`/`path`.
  * Throws `GoUrlParseError` on parse failure. Query and fragment are stripped,
  * though storage URLs never use them.
  */

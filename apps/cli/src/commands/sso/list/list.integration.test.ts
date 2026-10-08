@@ -216,7 +216,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json wraps response in `{providers: …}`", () => {
+  it.live("--output=json wraps response in `{providers: …}`", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -226,7 +226,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml emits providers key", () => {
+  it.live("--output=yaml emits providers key", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -234,7 +234,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits provider data", () => {
+  it.live("--output=toml emits provider data", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -242,7 +242,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml fails like BurntSushi on a nil attribute-mapping array element", () => {
+  it.live("--output=toml fails like BurntSushi on a nil attribute-mapping array element", () => {
     const item = {
       ...PROVIDER_ITEM,
       saml: {
@@ -263,7 +263,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits a flat PROVIDERS= entry", () => {
+  it.live("--output=env emits a flat PROVIDERS= entry", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -271,7 +271,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=pretty falls through to text rendering", () => {
+  it.live("--output=pretty falls through to text rendering", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -296,7 +296,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both set", () => {
+  it.live("--output wins over --output-format when both set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });

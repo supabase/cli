@@ -8,8 +8,8 @@ import { addSecondsAndFloor, type BearerJwtInstant } from "./bearer-jwt.flags.ts
  * dependencies).
  *
  * The claims object is a map, so it must be serialized via
- * {@link encodeBearerJwtClaims}, which key-sorts like Go's `encoding/json`
- * does for a map — `JSON.stringify` would wrongly preserve insertion order.
+ * {@link encodeBearerJwtClaims}, which key-sorts
+ * like a map — `JSON.stringify` would wrongly preserve insertion order.
  */
 
 export interface BearerJwtClaimsInput {
@@ -22,7 +22,7 @@ export interface BearerJwtClaimsInput {
    */
   readonly expiresAt: Option.Option<BearerJwtInstant>;
   /**
-   * `--valid-for`, parsed from Go duration syntax into seconds, unfloored —
+   * `--valid-for`, parsed from duration syntax into seconds, unfloored —
    * see {@link parseBearerJwtValidFor} for why sub-second precision must
    * survive until the final `exp`/`iat` computation.
    */
@@ -131,7 +131,7 @@ function findJsonContainerEnd(value: string, start: number): number | undefined 
 
 const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 
-/** Literal keywords, keyed by their first byte; matched char-by-char below, like `encoding/json`'s scanner. */
+/** Literal keywords, keyed by their first byte; matched char-by-char below. */
 const GO_JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "false" };
 
 /**
@@ -182,7 +182,7 @@ function reportGoJsonTrailingGarbage(trimmed: string, validPrefixLength: number)
 }
 
 /**
- * Reproduces `encoding/json`'s scanner syntax-error text for a malformed
+ * Produces the scanner syntax-error text for a malformed
  * `--payload` value: truncated input, an invalid leading byte, a partial
  * keyword match, or trailing garbage after valid JSON.
  *
@@ -243,7 +243,7 @@ function goJsonSyntaxErrorMessage(raw: string): string {
  * Merges a parsed `--payload` JSON object over `claims`, payload values
  * winning on any key collision. A JSON `null` payload is a no-op.
  *
- * A non-object top-level value raises a Go-style type-mismatch error before
+ * A non-object top-level value raises a type-mismatch error before
  * any number-overflow scan runs; only once the top level is an object does
  * an overflowing number anywhere inside it raise the float64-overflow error
  * from {@link findFirstNonFiniteJsonNumberLiteral}. Throws a bare `Error`,
@@ -277,10 +277,10 @@ export function mergeBearerJwtPayload(
 }
 
 /**
- * Serializes claims the way a Go map marshals via `encoding/json`:
+ * Serializes claims as a map:
  * alphabetically key-sorted at every level, HTML + control-character
  * escaping, no indentation or trailing newline. Reuses
- * `encodeGoStructJsonBody`, since a map's `json.Marshal` shape is identical
+ * `encodeGoStructJsonBody`, since a map's marshalled shape is identical
  * regardless of what produced it.
  */
 export function encodeBearerJwtClaims(claims: Record<string, unknown>): string {

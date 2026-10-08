@@ -54,7 +54,7 @@ describe("hasExplicitLongFlag", () => {
 });
 
 describe("lastExplicitLongFlagValue", () => {
-  test("resolves repeated occurrences last-wins, like pflag", () => {
+  test("resolves repeated occurrences last-wins", () => {
     expect(
       lastExplicitLongFlagValue(["link", "--profile", "a", "--profile", "b"], [], "profile"),
     ).toBe("b");
@@ -73,7 +73,7 @@ describe("lastExplicitLongFlagValue", () => {
 });
 
 describe("explicitBooleanLongFlag", () => {
-  test("a bare flag records pflag's NoOptDefVal true", () => {
+  test("a bare flag records true", () => {
     expect(explicitBooleanLongFlag(["--debug"], "debug")).toBe(true);
   });
 
@@ -81,11 +81,11 @@ describe("explicitBooleanLongFlag", () => {
     expect(explicitBooleanLongFlag(["--debug=false"], "debug")).toBe(false);
   });
 
-  test("an inline =0 records false, matching pflag's ParseBool false set", () => {
+  test("an inline =0 records false", () => {
     expect(explicitBooleanLongFlag(["--debug=0"], "debug")).toBe(false);
   });
 
-  test("an inline =F records false, matching pflag's ParseBool false set", () => {
+  test("an inline =F records false", () => {
     expect(explicitBooleanLongFlag(["--debug=F"], "debug")).toBe(false);
   });
 
@@ -93,7 +93,7 @@ describe("explicitBooleanLongFlag", () => {
     expect(explicitBooleanLongFlag(["--debug=true"], "debug")).toBe(true);
   });
 
-  test("a garbage inline value is truthy, matching pflag's permissive cast", () => {
+  test("a garbage inline value is truthy", () => {
     expect(explicitBooleanLongFlag(["--debug=yes"], "debug")).toBe(true);
   });
 
@@ -221,7 +221,7 @@ describe("pflagArgvScan", () => {
     expect(occurrences.get("domains")).toEqual(["a.com", "b.com"]);
   });
 
-  test("a bare boolean (non-value) flag records pflag's NoOptDefVal true without consuming", () => {
+  test("a bare boolean (non-value) flag records true without consuming", () => {
     const scan = pflagArgvScan(
       ["sso", "update", "id", "--skip-url-validation", "--metadata-url", "url"],
       SSO_UPDATE_PATH,
@@ -264,8 +264,8 @@ describe("pflagArgvScan", () => {
     expect(occurrences.get("domains")).toEqual(["a.com"]);
   });
 
-  describe("missing value detection (pflag ValueRequiredError parity)", () => {
-    test("a bare value flag at the end of argv reports pflag's parse error", () => {
+  describe("missing value detection", () => {
+    test("a bare value flag at the end of argv reports the parse error", () => {
       const scan = pflagArgvScan(["sso", "update", "id", "--metadata-file"], SSO_UPDATE_PATH, SPEC);
       expect(scan.missingValueError).toBe("flag needs an argument: --metadata-file");
       expect(scan.occurrences.has("metadata-file")).toBe(false);
@@ -328,7 +328,7 @@ describe("pflagArgvScan", () => {
     expect(occurrences.get("domains")).toEqual(["a.com"]);
   });
 
-  describe("positional counting (cobra ValidateArgs parity)", () => {
+  describe("positional counting", () => {
     test("a plain invocation has exactly the operands as positionals", () => {
       const scan = pflagArgvScan(
         ["sso", "update", "id", "--domains", "a.com"],
@@ -406,7 +406,7 @@ describe("pflagArgvScan", () => {
     });
   });
 
-  describe("shorthand handling (pflag parseSingleShortArg parity)", () => {
+  describe("shorthand handling", () => {
     const ADD_PATH = ["sso", "add"] as const;
     const ADD_SPEC = {
       valueFlagNames: new Set(["type", "domains", "metadata-url", ...PERSISTENT_VALUE_FLAG_NAMES]),
@@ -441,7 +441,7 @@ describe("pflagArgvScan", () => {
     });
   });
 
-  describe("anchoring across interspersed flags (cobra Find/stripFlags parity)", () => {
+  describe("anchoring across interspersed flags", () => {
     test("a persistent value flag between group and leaf still anchors", () => {
       const scan = pflagArgvScan(
         ["sso", "--profile", "foo", "update", "id", "--domains", "a.com"],
@@ -501,7 +501,7 @@ describe("pflagArgvScan", () => {
     });
   });
 
-  describe("consumed flag tracking (cobra ValidateRequiredFlags parity)", () => {
+  describe("consumed flag tracking", () => {
     const ADD_PATH = ["sso", "add"] as const;
     const ADD_SPEC = {
       valueFlagNames: new Set(["type", "domains", ...PERSISTENT_VALUE_FLAG_NAMES]),
@@ -582,7 +582,7 @@ describe("GLOBAL_VALUE_FLAG_TOKENS", () => {
 });
 
 describe("cobraMutuallyExclusiveErrorMessage", () => {
-  test("byte-matches cobra's validateExclusiveFlagGroups template", () => {
+  test("formats the mutually-exclusive group message", () => {
     expect(
       cobraMutuallyExclusiveErrorMessage(
         ["use-api", "use-docker", "legacy-bundle"],

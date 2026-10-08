@@ -14,7 +14,7 @@ import {
 import { postgresConfigDelete } from "./delete.handler.ts";
 
 /**
- * CSV-splits each occurrence into config keys, failing at parse time with pflag's diagnostic
+ * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
  * on malformed CSV — before the --experimental gate runs.
  */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(

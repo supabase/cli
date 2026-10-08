@@ -190,7 +190,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+  it.live("prints a duplicated slug argument verbatim", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -1150,7 +1150,7 @@ describe("functions deploy", () => {
     });
   });
 
-  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+  it.live("rejects the bundler mutex with the exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
@@ -1180,7 +1180,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
+  describe("--jobs validation", () => {
     function setupJobsTest(rawArgs: ReadonlyArray<string>) {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
@@ -1215,7 +1215,7 @@ describe("functions deploy", () => {
       });
     });
 
-    it.live("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
+    it.live("rejects --jobs > 1 with --use-docker=false and no --use-api", () => {
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1345,7 +1345,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("bundler routing with --use-api=false (Go parity: cmd/functions.go:79-80)", () => {
+  describe("bundler routing with --use-api=false", () => {
     it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
       // `useDocker` forces the API path only when `useApi` resolves to true, so
       // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
@@ -1416,7 +1416,7 @@ describe("functions deploy", () => {
     );
   });
 
-  describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
+  describe("no-functions error styling (structured output stays plain)", () => {
     // Uses a marker `styleEmphasis` instead of `functionsDeploy`'s real `bold`
     // hook, which is TTY-gated and inert under vitest.
     function setupNoFunctionsTest(format: "text" | "json") {
@@ -1556,38 +1556,35 @@ describe("functions deploy", () => {
       },
     );
 
-    it.live(
-      "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockCommandPlatformApi();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
-          }),
-        );
+    it.live("reports a Config.Validate failure before an invalid slug's format error", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
 
-          const error = yield* functionsDeploy({
-            ...baseFlags,
-            functionNames: ["1-invalid-slug"],
-          }).pipe(Effect.flip);
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["1-invalid-slug"],
+        }).pipe(Effect.flip);
 
-          expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe("Missing required field in config: project_id");
-          expect(api.requests).toEqual([]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("Missing required field in config: project_id");
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live("still rejects an invalid slug once the config itself is valid", () => {
       const out = mockOutput({ format: "text" });
@@ -1619,7 +1616,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("Docker bundling path Go-parity config/env wiring (CLI-1963)", () => {
+  describe("Docker bundling path config/env wiring (CLI-1963)", () => {
     function mockFunctionCreateApi() {
       return mockCommandPlatformApi({
         handler: (request) => {
@@ -1831,59 +1828,56 @@ describe("functions deploy", () => {
       },
     );
 
-    it.live(
-      "labels the bundler container with the resolved project id (Go parity: docker.go:349-386)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockFunctionCreateApi();
-        const child = mockDockerBundleSpawner();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          child.layer,
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
-          }),
-        );
+    it.live("labels the bundler container with the resolved project id", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          const path = yield* Path.Path;
-          yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
-          yield* writeLocalFunction(tempRoot.current, "hello-world");
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
-          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+        yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
-          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toEqual(
-            expect.arrayContaining([
-              "--label",
-              "com.supabase.cli.project=test-project",
-              "--label",
-              "com.docker.compose.project=test-project",
-            ]),
-          );
-          // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
-          const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
-          expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toEqual(
+          expect.arrayContaining([
             "--label",
             "com.supabase.cli.project=test-project",
             "--label",
             "com.docker.compose.project=test-project",
-          ]);
-          // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
-          const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
-          expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
-            "-w",
-            toDockerPath(tempRoot.current, path),
-          ]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+          ]),
+        );
+        // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
+        const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
+        expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+          "--label",
+          "com.supabase.cli.project=test-project",
+          "--label",
+          "com.docker.compose.project=test-project",
+        ]);
+        // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
+        const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
+        expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
+          "-w",
+          toDockerPath(tempRoot.current, path),
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
@@ -1991,7 +1985,7 @@ describe("functions deploy", () => {
     },
   );
 
-  describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
+  describe("docker-not-running warning styling (only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Uses a marker `styleWarning` instead of `functionsDeploy`'s real
       // `yellow` hook, which is TTY-gated and inert under vitest.

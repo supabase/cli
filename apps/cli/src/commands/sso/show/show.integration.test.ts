@@ -64,7 +64,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("sso show integration", () => {
-  it.live("rejects bad UUID with Go-format message", () => {
+  it.live("rejects bad UUID with the formatted message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -153,7 +153,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env returns env-not-supported error with Go-format message", () => {
+  it.live("--output=env returns env-not-supported error with the formatted message", () => {
     const { layer } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -172,7 +172,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response with Go's HTML escaping", () => {
+  it.live("--output=json encodes response with HTML escaping", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -187,7 +187,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
+  it.live("--output=yaml encodes the provider with yaml.v3's byte shape", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -212,7 +212,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
+  it.live("--output=toml encodes the provider with BurntSushi's byte shape", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -248,7 +248,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=pretty matches text mode", () => {
+  it.live("--output=pretty matches text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -284,7 +284,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire cli_upgrade_suggested on 404 (Go's `show` omits it)", () => {
+  it.live("does NOT fire cli_upgrade_suggested on 404", () => {
     const { layer, analytics } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(

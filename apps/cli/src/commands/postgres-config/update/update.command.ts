@@ -14,7 +14,7 @@ import {
 import { postgresConfigUpdate } from "./update.handler.ts";
 
 /**
- * CSV-splits each occurrence into config overrides, failing at parse time with pflag's
+ * CSV-splits each occurrence into config overrides, failing at parse time with a
  * diagnostic on malformed CSV — before the --experimental gate runs.
  */
 export const postgresConfigUpdateConfigFlag = stringSliceFlag(

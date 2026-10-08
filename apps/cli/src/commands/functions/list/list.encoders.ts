@@ -253,9 +253,8 @@ export function encodeFunctionsGoYaml(functions: Functions): string {
 }
 
 export function encodeFunctionsGoToml(parsed: ParsedFunctions): string {
-  // Go encodes `Functions: *resp.JSON200` — a JSON `null` body decodes to a
-  // nil slice (BurntSushi emits nothing), while `[]` decodes to a non-nil
-  // empty slice (`functions = []`).
+  // A JSON `null` body is a nil list (BurntSushi emits nothing), while `[]` is a
+  // non-nil empty list (`functions = []`).
   return encodeGoToml(
     { functions: parsed.isNil ? undefined : parsed.functions },
     GO_FUNCTIONS_TOML_WRAPPER,

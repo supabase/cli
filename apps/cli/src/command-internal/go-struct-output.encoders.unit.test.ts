@@ -22,12 +22,6 @@ import {
   goUuid,
 } from "./go-struct-output.encoders.ts";
 
-/**
- * Golden byte strings in this file were captured from a scratch Go program calling
- * `utils.EncodeOutput`, using the same BurntSushi toml and yaml.v3 versions pinned in the
- * reference `go.mod`.
- */
-
 // Mirrors the branch response struct.
 const BRANCH_RESPONSE = goStruct([
   ["created_at", goTime],
@@ -63,7 +57,7 @@ const SAMPLE_BRANCH = {
   with_data: true,
 };
 
-// All pointer fields absent — Go zero-fills the value fields.
+// All pointer fields absent — the value fields are zero-filled.
 const ZERO_BRANCH = {
   name: "Production",
   is_default: true,
@@ -73,7 +67,7 @@ const ZERO_BRANCH = {
 };
 
 describe("encodeGoToml", () => {
-  it("matches Go byte-for-byte for a branches list wrapper (PascalCase, nil pointers omitted, native datetimes)", () => {
+  it("matches the golden output for a branches list wrapper (PascalCase, nil pointers omitted, native datetimes)", () => {
     const wrapper = goTomlListWrapper("branches", BRANCH_RESPONSE);
     expect(encodeGoToml({ branches: [SAMPLE_BRANCH, ZERO_BRANCH] }, wrapper)).toBe(
       `[[branches]]
@@ -123,9 +117,9 @@ WithData = true
 
   it("emits nothing for a nil list and `key = []` for a decoded empty list", () => {
     const wrapper = goTomlListWrapper("branches", BRANCH_RESPONSE);
-    // Go: `var result []api.BranchResponse` stays nil when empty → no output.
+    // An absent list → no output.
     expect(encodeGoToml({ branches: undefined }, wrapper)).toBe("");
-    // Go: a decoded `[]` is a non-nil empty slice → `branches = []`.
+    // A decoded `[]` is an empty list → `branches = []`.
     expect(encodeGoToml({ branches: [] }, wrapper)).toBe("branches = []\n");
   });
 
@@ -280,7 +274,7 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("keeps hand-written Go struct declaration order (services imageVersion)", () => {
+  it("keeps hand-written struct declaration order (services imageVersion)", () => {
     const spec = goTomlListWrapper(
       "services",
       goStruct([
@@ -310,7 +304,7 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("skips nil nullable fields and fails like Go on populated ones", () => {
+  it("skips nil nullable fields and fails on populated ones", () => {
     const spec = goStruct([
       ["desc", goNullable(goString)],
       ["name", goString],
@@ -324,7 +318,7 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("renders floats with a decimal point and Go's exponent form", () => {
+  it("renders floats with a decimal point and the exponent form", () => {
     const spec = goStruct([
       ["f1", goFloat32],
       ["f2", goFloat64],
@@ -377,7 +371,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("fails like Go on nil elements inside interface{} arrays", () => {
+  it("fails on nil elements inside untyped arrays", () => {
     const spec = goStruct([["default", goAny, "Default"]]);
     const message = "toml: cannot encode array with nil element";
     expect(() => encodeGoToml({ default: [null, "x"] }, spec)).toThrow(message);
@@ -402,7 +396,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("leaves overflowing float-shaped strings plain like yaml.v3's ParseFloat gate", () => {
+  it("leaves overflowing float-shaped strings plain", () => {
     const spec = goStruct([["s", goString, "S"]]);
     expect(encodeGoYaml({ s: "1e999" }, spec)).toBe("s: 1e999\n");
     expect(encodeGoYaml({ s: "-1e999" }, spec)).toBe("s: -1e999\n");
@@ -411,7 +405,7 @@ SUPABASE_ANON_KEY = "anon"
     expect(encodeGoYaml({ s: "1e10" }, spec)).toBe('s: "1e10"\n');
   });
 
-  it("wraps 19+-digit numeric key runs like Go's unchecked int64 accumulation", () => {
+  it("wraps 19+-digit numeric key runs via unchecked int64 accumulation", () => {
     const spec = goStruct([["default", goAny, "Default"]]);
     expect(
       encodeGoYaml({ default: { a9000000000000000000: 1, a10000000000000000000: 2 } }, spec),
@@ -425,7 +419,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("normalizes Go's accepted comma fractional separator to the dot Go re-emits", () => {
+  it("normalizes a comma fractional separator to a dot", () => {
     const spec = goStruct([["t", goTime, "T"]]);
     expect(encodeGoToml({ t: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.123Z\n",
@@ -435,7 +429,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
+  it("sorts map keys by UTF-8 byte order", () => {
     // U+E000/U+FF21 sort before the astral U+1D400/U+1F600 in UTF-8 byte order; JS `<` on UTF-16
     // units would sort both astral keys first.
     const spec = goMap(goString);
@@ -464,7 +458,7 @@ SUPABASE_ANON_KEY = "anon"
 });
 
 describe("encodeGoYaml", () => {
-  it("matches Go byte-for-byte for a branches list (lowercased keys, explicit nulls)", () => {
+  it("matches the golden output for a branches list (lowercased keys, explicit nulls)", () => {
     expect(encodeGoYaml([SAMPLE_BRANCH, ZERO_BRANCH], goSlice(BRANCH_RESPONSE))).toBe(
       `- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
@@ -760,7 +754,7 @@ k29: "with\\rcarriage"
     );
   });
 
-  it("renders floats with Go's g-format exponent switch", () => {
+  it("renders floats with the g-format exponent switch", () => {
     const spec = goMap(goAny);
     expect(encodeGoYaml({ f2: 1000000, f3: 78125, f4: 0.5, f5: 0.000001, f6: 1234567 }, spec)).toBe(
       `f2: 1e+06
@@ -907,7 +901,7 @@ describe("goFieldName", () => {
 });
 
 describe("goFormatFloat", () => {
-  it("matches strconv.FormatFloat(f, 'g', -1, 64)", () => {
+  it("formats shortest `%g` digits for 64-bit floats", () => {
     expect(goFormatFloat(1, 64)).toBe("1");
     expect(goFormatFloat(123456, 64)).toBe("123456");
     expect(goFormatFloat(1000000, 64)).toBe("1e+06");
@@ -918,7 +912,7 @@ describe("goFormatFloat", () => {
     expect(goFormatFloat(-2.5, 64)).toBe("-2.5");
   });
 
-  it("rounds through float32 like Go's typed fields", () => {
+  it("rounds through float32 for typed fields", () => {
     expect(goFormatFloat(16777217, 32)).toBe("1.6777216e+07");
     expect(goFormatFloat(78125, 32)).toBe("78125");
     expect(goFormatFloat(0.5, 32)).toBe("0.5");

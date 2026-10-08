@@ -82,7 +82,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("network-restrictions get integration", () => {
-  it.live("prints the Go-format text block when the response has v4 and v6 entries", () => {
+  it.live("prints the formatted text block when the response has v4 and v6 entries", () => {
     const { layer, out } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -161,7 +161,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON when --output=json", () => {
+  it.live("emits JSON when --output=json", () => {
     const { layer, out } = setup({ goOutput: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -172,7 +172,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible YAML when --output=yaml", () => {
+  it.live("emits YAML when --output=yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -180,7 +180,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible TOML when --output=toml", () => {
+  it.live("emits TOML when --output=toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -188,7 +188,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible env output when --output=env", () => {
+  it.live("emits env output when --output=env", () => {
     const { layer, out } = setup({ goOutput: "env", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -208,7 +208,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
+  it.live("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -240,7 +240,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the API returns a non-200 status", () => {
+  it.live("reports an error message when the API returns a non-200 status", () => {
     const { layer } = setup({ status: 503, response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
@@ -253,7 +253,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the network is unreachable", () => {
+  it.live("reports an error message when the network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));

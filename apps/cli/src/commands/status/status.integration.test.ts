@@ -510,29 +510,26 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "succeeds against an unhealthy db when --ignore-health-check is set (status.go:104-108)",
-    () => {
-      // Pairs with "fails when the db container is unhealthy" below to cover both sides of
-      // the ignore-health-check gate.
-      const { layer, child } = setup({
-        route: defaultRoute({
-          dbInspectStdout: JSON.stringify({
-            Status: "running",
-            Running: true,
-            Health: { Status: "starting" },
-          }),
+  it.live("succeeds against an unhealthy db when --ignore-health-check is set", () => {
+    // Pairs with "fails when the db container is unhealthy" below to cover both sides of
+    // the ignore-health-check gate.
+    const { layer, child } = setup({
+      route: defaultRoute({
+        dbInspectStdout: JSON.stringify({
+          Status: "running",
+          Running: true,
+          Health: { Status: "starting" },
         }),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* status(flags({ ignoreHealthCheck: true }));
-        expect(
-          child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
-        ).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags({ ignoreHealthCheck: true }));
+      expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect")).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("reports stopped services on stderr", () => {
     const { layer, out } = setup({
@@ -950,22 +947,19 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "succeeds against a paused-but-healthy db, matching Go's boolean-based running gate",
-    () => {
-      // Gates on the boolean `Running`, not the status string — `Running: true` can coexist
-      // with `Status: "paused"`, and the handler continues past the not-running branch.
-      const { layer } = setup({
-        route: defaultRoute({
-          dbInspectStdout: '{"Status":"paused","Running":true,"Health":{"Status":"healthy"}}',
-        }),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* status(flags());
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("succeeds against a paused-but-healthy db", () => {
+    // Gates on the boolean `Running`, not the status string — `Running: true` can coexist
+    // with `Status: "paused"`, and the handler continues past the not-running branch.
+    const { layer } = setup({
+      route: defaultRoute({
+        dbInspectStdout: '{"Status":"paused","Running":true,"Health":{"Status":"healthy"}}',
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags());
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("fails when the db container is absent, preserving the real Docker stderr text", () => {
     const { layer } = setup({
@@ -1080,7 +1074,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("merges an auto-detected stopped service with a --exclude entry (status.go:116)", () => {
+  it.live("merges an auto-detected stopped service with a --exclude entry", () => {
     const { layer, out } = setup({
       goOutput: Option.some("json"),
       // kong (index 0) is absent from the running set, so it's auto-detected as stopped.

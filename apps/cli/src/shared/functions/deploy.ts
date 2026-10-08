@@ -300,7 +300,7 @@ function isDenoConfigFile(path: Path.Path, pathname: string) {
 
 /**
  * Presence-based `Option.some(value)` when `--<flagName>` was passed
- * explicitly after `commandPath`, matching cobra's `Changed()`;
+ * explicitly after `commandPath`;
  * `Option.none()` otherwise. Used only by `deployFunctions`'s
  * `--no-verify-jwt` override below — kept private per this file's own
  * "used by one command only -> keep it in the command's own directory" rule.
@@ -318,8 +318,7 @@ function explicitBooleanFlag(
  * Must stay in sync with `CLI_WORKDIR_LABEL`
  * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported so `shared/` does not depend on the
- * command tree (this file has no Go equivalent for the other two
- * labels either). Read back by `cleanupStartSecrets` so a later
+ * command tree. Read back by `cleanupStartSecrets` so a later
  * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
  */
@@ -1581,8 +1580,8 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
     .makeTempDirectory({ directory: outputRoot, prefix: outputPrefix })
     .pipe(Effect.mapError(unknownHostError(path.join(outputRoot, outputPrefix))));
   try {
-    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
-    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    // Windows ignores the 0777 mode on mkdir; calling chmod separately
+    // would add an NTFS WRITE_ATTRIBUTES requirement.
     if (shouldChmodBundleOutputDirectory(process.platform)) {
       yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(hostError(outputDir)));
     }

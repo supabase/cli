@@ -15,7 +15,7 @@ import { networkRestrictionsUpdate } from "./update.handler.ts";
 
 /**
  * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
- * appends across repeats, failing at parse time with pflag's diagnostic on malformed CSV.
+ * appends across repeats, failing at parse time with a diagnostic on malformed CSV.
  * If `-o` is also invalid, this error wins since `-o` is validated later, in the handler.
  */
 export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(

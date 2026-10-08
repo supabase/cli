@@ -253,7 +253,7 @@ describe("config io", () => {
     ).toThrow();
   });
 
-  test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
+  test("only validates the highest-priority enabled sms provider during decode", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority
     // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
@@ -304,7 +304,7 @@ describe("config io", () => {
     ).toThrow();
   });
 
-  test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
+  test("decodes an unmodeled email template/notification name", () => {
     // `auth.email.template`/`notification` are open maps with no key restriction, and every
     // entry is validated regardless of name — an unrecognized key like
     // `[auth.email.template.custom]` is a legitimate config shape, not a decode error.
@@ -1075,7 +1075,7 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     ["f", false],
     ["FALSE", false],
   ] as const)(
-    "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
+    "resolves env() on boolean fields using the boolean acceptance set (%s -> %s)",
     async (envValue, expected) => {
       const cwd = makeTempProject();
 
@@ -1099,7 +1099,7 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     },
   );
 
-  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
+  test("splits a comma-separated string literal into a slice", async () => {
     // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
     // when `cliCompat` is set, not just via `env(...)`.
     const cwd = makeTempProject();
@@ -1186,7 +1186,7 @@ additional_redirect_urls = ["http://a", "http://b"]
     }
   });
 
-  test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
+  test("preserves env() literals on string fields when the var is unset", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1207,7 +1207,7 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
-  test("preserves env() literals on string fields when the var is set but empty (Go parity)", async () => {
+  test("preserves env() literals on string fields when the var is set but empty", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1951,7 +1951,7 @@ project_id = "dupref"
 
   // `cliCompat` is required even though `projectRef` is passed: the duplicate/format checks
   // are gated solely on `cliCompat`, not on whether a remote is being selected.
-  test("rejects duplicate project_id across remotes with Go's message", async () => {
+  test("rejects duplicate project_id across remotes", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
@@ -2110,7 +2110,7 @@ enabled = true
     }
   });
 
-  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
+  test("resolves env() on a lowercase-named variable", async () => {
     // Env-var matching is case-agnostic when `cliCompat` is set; without it, the strict
     // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
     const previous = process.env.project_id;
@@ -2129,7 +2129,7 @@ enabled = true
     }
   });
 
-  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
+  test("does not match a remote whose project_id is env(REF) against the resolved ref", async () => {
     // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
     // `REF`: matching compares the literal `env(REF)` string, not what it resolves to.
     const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;

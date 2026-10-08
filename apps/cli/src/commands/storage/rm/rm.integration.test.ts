@@ -111,7 +111,7 @@ describe("storage rm", () => {
     );
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.live("auto-confirms from SUPABASE_YES in the project .env", () => {
     // SUPABASE_YES here lives only in supabase/.env, not the shell.
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -133,37 +133,34 @@ describe("storage rm", () => {
     });
   });
 
-  it.live(
-    "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
-    () => {
-      // The malformed supabase/.env must never be read; ref resolution fails first.
-      const { layer, requests } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        linkedFails: true,
-        files: { "supabase/.env": "!=\n" },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageRm({
-          files: ["ss:///private/a.pdf"],
-          recursive: false,
-          linked: true,
-          local: false,
-          projectRef: Option.none(),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("Cannot find project ref");
-          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
-          const failures = exit.cause.reasons
-            .filter(Cause.isFailReason)
-            .map((reason) => reason.error);
-          expect(failures.some((error) => error instanceof ProjectRefNotLinkedError)).toBe(true);
-          expect(failures.some((error) => error instanceof DbConfigLoadError)).toBe(false);
-        }
-        expect(requests).toHaveLength(0);
-      });
-    },
-  );
+  it.live("surfaces not-linked guidance before a malformed project .env", () => {
+    // The malformed supabase/.env must never be read; ref resolution fails first.
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      linkedFails: true,
+      files: { "supabase/.env": "!=\n" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Cannot find project ref");
+        expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+        const failures = exit.cause.reasons
+          .filter(Cause.isFailReason)
+          .map((reason) => reason.error);
+        expect(failures.some((error) => error instanceof ProjectRefNotLinkedError)).toBe(true);
+        expect(failures.some((error) => error instanceof DbConfigLoadError)).toBe(false);
+      }
+      expect(requests).toHaveLength(0);
+    });
+  });
 
   it.live("skips the bucket when the confirmation is declined", () => {
     const { layer, requests } = setupStorage(tmp.current, {

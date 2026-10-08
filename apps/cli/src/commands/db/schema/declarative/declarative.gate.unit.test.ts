@@ -23,7 +23,7 @@ describe("isPgDeltaEnabled", () => {
 });
 
 describe("pgDeltaSuggestion", () => {
-  it("byte-matches Go's CmdSuggestion text (ANSI stripped)", () => {
+  it("emits the suggestion text byte-for-byte (ANSI stripped)", () => {
     expect(stripAnsi(pgDeltaSuggestion("supabase/config.toml"))).toBe(EXPECTED_SUGGESTION);
   });
 });

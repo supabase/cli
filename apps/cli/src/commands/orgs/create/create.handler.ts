@@ -44,7 +44,7 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Printed once before the format switch, but only for the Go-format branches — the
+    // Printed once before the format switch, but only for the `-o` branches — the
     // --output-format json/stream-json paths emit a single structured event instead and
     // stay preamble-free.
     const preamble = `Created organization: ${created.id}\n`;

@@ -470,7 +470,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
+  it.live("writes the linked-project cache for --linked", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },

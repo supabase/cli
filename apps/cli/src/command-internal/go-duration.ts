@@ -1,6 +1,5 @@
 /**
- * Duration string parsing and formatting matching Go's `time.ParseDuration()`/`Duration.String()`
- * grammar and rounding — the syntax the hosted API and container env vars expect.
+ * Duration string parsing and formatting in the `1h30m0s` grammar with nanosecond rounding — the syntax the hosted API and container env vars expect.
  *
  * Several `config.toml` duration fields (e.g. `auth.sessions.timebox = "1h"`) are stored as the
  * raw string, but a container's env var is built from the parsed-then-reserialized value, which
@@ -34,7 +33,7 @@ const MAX_INT64_NS = 9223372036854775807n;
 const UINT64_ACCUMULATOR_BOUND_NS = 1n << 63n;
 
 /**
- * Parses a Go-style duration string to nanoseconds: a possibly-signed sequence of decimal
+ * Parses a duration string to nanoseconds: a possibly-signed sequence of decimal
  * numbers, each with a unit suffix (`"ns"`, `"us"`/`"µs"`/`"μs"`, `"ms"`, `"s"`, `"m"`, `"h"`), e.g.
  * `"5s"`, `"1h30m"`, `"300ms"`. Throws on invalid input, including an overflowing magnitude.
  *
@@ -139,7 +138,7 @@ export function parseGoDuration(value: string): number {
 }
 
 /**
- * Formats nanoseconds as a Go-style duration string. `0` formats as `"0s"`; otherwise only the
+ * Formats nanoseconds as a duration string. `0` formats as `"0s"`; otherwise only the
  * needed units show, with minutes/seconds always trailing an hours component (`"1h0m0s"`), and a
  * sub-second remainder as a fraction of its largest applicable unit (`"1.5s"`, `"300ms"`).
  */

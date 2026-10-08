@@ -464,63 +464,50 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "runs the native Docker unbundle path by default (Go parity), with no flags passed",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi();
-      // Non-empty stdout/stderr exercises both the text-mode stdout routing
-      // and always-to-stderr branches in `downloadWithDockerUnbundle`.
-      const child = mockDockerUnbundle({
-        runStdout: ["unbundle: wrote index.ts"],
-        runStderr: ["unbundle: warning about deno.json"],
-      });
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        }),
-        child.layer,
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            PROJECT_ID,
-          ]),
-        }),
-      );
+  it.live("runs the native Docker unbundle path by default, with no flags passed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    // Non-empty stdout/stderr exercises both the text-mode stdout routing
+    // and always-to-stderr branches in `downloadWithDockerUnbundle`.
+    const child = mockDockerUnbundle({
+      runStdout: ["unbundle: wrote index.ts"],
+      runStderr: ["unbundle: warning about deno.json"],
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "hello-world", "--project-ref", PROJECT_ID]),
+      }),
+    );
 
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* functionsDownload({ ...baseFlags, useDocker: true });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-        expect(api.requests.some((request) => request.url.endsWith("/hello-world/body"))).toBe(
-          true,
-        );
-        expect(
-          child.spawned.some(
-            (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
-          ),
-        ).toBe(true);
-        expect(out.stderrText).toContain("Downloading function: hello-world\n");
-        expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
-        expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
-        // Unlike the server-side path, the native Docker path never prints a
-        // "Downloaded Function ..." success line.
-        expect(out.stderrText).not.toContain("Downloaded Function");
-        // No `--debug` — the temp eszip file is removed after the run.
-        expect(
-          yield* fs.exists(
-            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
-          ),
-        ).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(api.requests.some((request) => request.url.endsWith("/hello-world/body"))).toBe(true);
+      expect(
+        child.spawned.some((spawned) => spawned.command === "docker" && spawned.args[0] === "run"),
+      ).toBe(true);
+      expect(out.stderrText).toContain("Downloading function: hello-world\n");
+      expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
+      expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
+      // Unlike the server-side path, the native Docker path never prints a
+      // "Downloaded Function ..." success line.
+      expect(out.stderrText).not.toContain("Downloaded Function");
+      // No `--debug` — the temp eszip file is removed after the run.
+      expect(
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live(
     "does not treat the --use-docker default as conflicting with an explicit --use-api",
@@ -1792,49 +1779,46 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:178)",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi({
-        handler: (request) =>
-          request.url.endsWith("/body")
-            ? Effect.succeed(multipartResponse(request))
-            : Effect.succeed(jsonResponse(request, 200, {})),
+  it.live("does not redact --project-ref in cli_command_executed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/body")
+          ? Effect.succeed(multipartResponse(request))
+          : Effect.succeed(jsonResponse(request, 200, {})),
+    });
+    const analytics = mockContextualAnalytics();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        analytics,
+      }),
+      commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* functionsDownloadHandler({
+        ...baseFlags,
+        projectRef: Option.some("abcdefghijklmnopqrst"),
       });
-      const analytics = mockContextualAnalytics();
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-          analytics,
-        }),
-        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
-      );
 
-      return Effect.gen(function* () {
-        yield* functionsDownloadHandler({
-          ...baseFlags,
-          projectRef: Option.some("abcdefghijklmnopqrst"),
-        });
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
+    }).pipe(Effect.provide(layer));
+  });
 
-        const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-        expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+  it.live("rejects the bundler mutex with the exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
@@ -2196,49 +2180,46 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
-      "labels the unbundle container with the resolved project id (Go parity: docker.go:349-386)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockCommandPlatformApi();
-        const child = mockChildProcessSpawner({ exitCode: 0 });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-          }),
-          child.layer,
-          Stdio.layerTest({
-            args: Effect.succeed([
-              "functions",
-              "download",
-              "hello-world",
-              "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
-            ]),
-          }),
+    it.live("labels the unbundle container with the resolved project id", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
+
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toEqual(
+          expect.arrayContaining([
+            "--label",
+            `com.supabase.cli.project=${PROJECT_ID}`,
+            "--label",
+            `com.docker.compose.project=${PROJECT_ID}`,
+          ]),
         );
-
-        return Effect.gen(function* () {
-          yield* functionsDownload({ ...baseFlags, useDocker: true });
-
-          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toEqual(
-            expect.arrayContaining([
-              "--label",
-              `com.supabase.cli.project=${PROJECT_ID}`,
-              "--label",
-              `com.docker.compose.project=${PROJECT_ID}`,
-            ]),
-          );
-        }).pipe(Effect.provide(layer));
-      },
-    );
+      }).pipe(Effect.provide(layer));
+    });
   });
 
-  describe("docker-not-running warning styling (Go parity: download.go:146; only WARNING: is styled)", () => {
+  describe("docker-not-running warning styling (only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Uses a marker `styleWarning` instead of `functionsDownload`'s real
       // `yellow` hook, which is TTY-gated and inert under vitest.

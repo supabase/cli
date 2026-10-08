@@ -278,35 +278,32 @@ describe("commandPlatformApiLayer", () => {
     });
   });
 
-  it.effect(
-    "fails with the invalid-token error when the env token is malformed (Go parity)",
-    () => {
-      const http = captureRequests();
-      const layer = commandPlatformApiLayer.pipe(
-        Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
-        Layer.provide(mockCredentials(Option.none())),
-        Layer.provide(http.layer),
-        withBaseDeps(),
+  it.effect("fails with the invalid-token error when the env token is malformed", () => {
+    const http = captureRequests();
+    const layer = commandPlatformApiLayer.pipe(
+      Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.gen(function* () {
+          const api = yield* CommandPlatformApi;
+          return yield* api.v1.listAllProjects();
+        }).pipe(Effect.provide(layer)),
       );
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          Effect.gen(function* () {
-            const api = yield* CommandPlatformApi;
-            return yield* api.v1.listAllProjects();
-          }).pipe(Effect.provide(layer)),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
-          expect(errorJson).toContain("InvalidAccessTokenError");
-          expect(errorJson).toContain("Invalid access token format");
-        }
-        expect(http.requests).toHaveLength(0);
-      });
-    },
-  );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const errorJson = JSON.stringify(exit.cause);
+        expect(errorJson).toContain("InvalidAccessTokenError");
+        expect(errorJson).toContain("Invalid access token format");
+      }
+      expect(http.requests).toHaveLength(0);
+    });
+  });
 
-  it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
+  it.effect("sends the CLI User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = commandPlatformApiLayer.pipe(
       Layer.provide(

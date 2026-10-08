@@ -61,22 +61,19 @@ describe("completion fish", () => {
     },
   );
 
-  it.live(
-    "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
-    () => {
-      const out = setupCompletionFish();
-      const analytics = mockAnalytics();
-      const layer = Layer.mergeAll(
-        out.layer,
-        analytics.layer,
-        BunServices.layer,
-        processControlLayer,
-      );
-      return Effect.gen(function* () {
-        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["fish"]);
-        const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-        expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("fires the cli_command_executed telemetry event (CLI-1965 review finding)", () => {
+    const out = setupCompletionFish();
+    const analytics = mockAnalytics();
+    const layer = Layer.mergeAll(
+      out.layer,
+      analytics.layer,
+      BunServices.layer,
+      processControlLayer,
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["fish"]);
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event).toBeDefined();
+    }).pipe(Effect.provide(layer));
+  });
 });

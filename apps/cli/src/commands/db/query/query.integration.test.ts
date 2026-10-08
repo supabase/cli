@@ -307,7 +307,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a local float8 column with Go's %g, integer columns plain", () => {
+  it.live("renders a local float8 column in `%g` form, integer columns plain", () => {
     // OIDs: int8=20 → plain; float8=701 → %g (select 1000000::int8, 1000000::float8).
     const { layer, out } = setup({
       result: {
@@ -500,7 +500,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
+  it.live("fails JSON output on a non-finite float, no stdout", () => {
     const { layer, out } = setup({
       result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
       agent: "no",
@@ -516,7 +516,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
+  it.live("records the resolved -o as the telemetry output_format", () => {
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
     const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
@@ -581,7 +581,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
+  it.live("resolves the --db-url/config before reading SQL", () => {
     const { layer } = setup({ resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -620,7 +620,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --local=false --linked=false as a target conflict (Go flag.Changed)", () => {
+  it.live("rejects --local=false --linked=false as a target conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
@@ -736,7 +736,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
+  it.live("treats --linked=false as an explicit linked target", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
@@ -748,7 +748,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the linked DB config before the API call (Go root PreRun order)", () => {
+  it.live("resolves the linked DB config before the API call", () => {
     const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
@@ -765,7 +765,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
+  it.live("caches the linked project even when SQL resolution fails", () => {
     const { layer, cache } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
@@ -870,22 +870,19 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "rejects an invalid env access token before the linked query (Go LoadAccessTokenFS)",
-    () => {
-      const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
-      return Effect.gen(function* () {
-        const exit = yield* dbQuery(
-          flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toContain("Invalid access token format");
-        expect(out.stdoutText).toBe("");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("rejects an invalid env access token before the linked query", () => {
+    const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("Invalid access token format");
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
+  it.live("runs the --linked login preflight before reading --file", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(

@@ -22,7 +22,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { VanitySubdomainsGetFlags } from "./get.command.ts";
 
-/** Type shape for `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
+/** Type shape for the vanity subdomain config response. */
 const GO_VANITY_CONFIG_RESPONSE = goStruct([
   ["custom_domain", goPtr(goString)],
   ["status", goString],

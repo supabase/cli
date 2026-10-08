@@ -136,7 +136,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in branch fields (Go parity)", () => {
+  it.live("renders literal `|` characters in branch fields", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH_PIPE] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -172,7 +172,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.live("emits byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -182,7 +182,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact YAML for --output yaml", () => {
+  it.live("emits byte-exact YAML for --output yaml", () => {
     // Omits every optional field to assert how absent values render.
     const zeroBranch: Branches[number] = {
       id: "00000000-0000-0000-0000-000000000000",
@@ -237,7 +237,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
+  it.live("emits nothing for --output toml when the branch list is empty", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -476,7 +476,7 @@ describe("branches list integration", () => {
     });
 
     it.live(
-      "omits the marker entirely for --output json (Go machine format, byte-identical to before)",
+      "omits the marker entirely for --output json (machine format, byte-identical to before)",
       () => {
         const { layer, out, workdir } = setup({
           goOutput: "json",

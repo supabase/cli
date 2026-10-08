@@ -67,7 +67,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("sso StringSlice flags (pflag CSV parity)", () => {
+describe("sso StringSlice flags", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -100,7 +100,7 @@ describe("sso StringSlice flags (pflag CSV parity)", () => {
   ];
 
   for (const { name, args, message } of cases) {
-    it.live(`${name} CSV fails at parse time with pflag's exact diagnostic`, () => {
+    it.live(`${name} CSV fails at parse time with the exact diagnostic`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));

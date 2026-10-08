@@ -215,7 +215,7 @@ describe("ssl-enforcement update integration", () => {
     },
   );
 
-  it.live("emits Go-compatible env output for --output env (exact bytes)", () => {
+  it.live("emits env output for --output env (exact bytes)", () => {
     const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
@@ -227,7 +227,7 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
+  it.live("emits indented JSON for --output json (exact bytes)", () => {
     const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
@@ -316,7 +316,7 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output (Go) wins over --output-format (TS) when both provided", () => {
+  it.live("--output wins over --output-format when both provided", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({

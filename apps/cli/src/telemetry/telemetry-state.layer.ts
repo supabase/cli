@@ -235,7 +235,7 @@ function hasGoDecodableFieldTokens(
       case "distinct_id": // string
         if (!token.startsWith('"') && token !== "null") return false;
         break;
-      case "schema_version": // int — Go parses the raw token as base-10 int64
+      case "schema_version": // int — the raw token is parsed as base-10 int64
         if (token !== "null" && !isInt64Token(token)) return false;
         break;
       default:

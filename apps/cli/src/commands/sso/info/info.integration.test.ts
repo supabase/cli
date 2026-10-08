@@ -82,7 +82,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
+  it.live("--output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -92,7 +92,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json sorts keys alphabetically and includes all three", () => {
+  it.live("--output=json sorts keys alphabetically and includes all three", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -105,7 +105,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml emits the three keys", () => {
+  it.live("--output=yaml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });
@@ -115,7 +115,7 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits the three keys", () => {
+  it.live("--output=toml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoInfo({ projectRef: Option.none() });

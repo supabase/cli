@@ -170,13 +170,13 @@ function extractChangedFlagNames(
     if (arg === undefined) continue;
 
     // Skip a token that was consumed as the value of the previous flag — even
-    // when that token is `--` (pflag lets a value-taking flag consume `--`).
+    // when that token is `--` (a value-taking flag consumes `--`).
     if (skipNext) {
       skipNext = false;
       continue;
     }
 
-    // End-of-options sentinel: pflag-style parsing stops at a bare `--`, so everything after it
+    // End-of-options sentinel: parsing stops at a bare `--`, so everything after it
     // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag). Mirrors
     // `resolveDbTargetFlags`'s `--` handling.
     if (arg === "--") break;
@@ -188,7 +188,7 @@ function extractChangedFlagNames(
       const isBare = eqIdx === -1;
       if (flagName.length === 0) continue;
       used.add(flagName);
-      // A bare value-consuming flag's next token is its value (pflag space-separated form) —
+      // A bare value-consuming flag's next token is its value (space-separated form) —
       // skip it so only the flag name itself is recorded, not the value that follows.
       if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(flagName)) {
         skipNext = true;

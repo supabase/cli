@@ -45,13 +45,14 @@ export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Accepted boolean string forms, matching Go's `strconv.ParseBool`; any other value is a
-// parse error.
+// Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`,
+// and the empty string as false); any other value is a parse error.
 const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
 
 /**
- * Parses a config bool value: accepts the same string forms as `strconv.ParseBool`, returns
+ * Parses a config bool value: accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and
+ * `0`/`f`/`F`/`FALSE`/`false`/`False` (and the empty string as false), returns
  * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
  * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
  */

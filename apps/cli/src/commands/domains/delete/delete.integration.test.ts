@@ -75,7 +75,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores -o json and still only prints to stderr (Go parity)", () => {
+  it.live("ignores -o json and still only prints to stderr", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -84,7 +84,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --include-raw-output (inert on delete, Go parity)", () => {
+  it.live("ignores --include-raw-output (inert on delete)", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });

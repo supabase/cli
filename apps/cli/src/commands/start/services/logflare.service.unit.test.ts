@@ -25,7 +25,7 @@ const base: LogflareContainerSpecInput = {
 
 describe("buildLogflareContainerSpec", () => {
   it.effect(
-    "builds the shared shape: identity, hostname, entrypoint/cmd, ports, healthcheck, aliases (start.go:350-394)",
+    "builds the shared shape: identity, hostname, entrypoint/cmd, ports, healthcheck, aliases",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -71,34 +71,31 @@ describe("buildLogflareContainerSpec", () => {
     },
   );
 
-  it.effect(
-    "emits the common DB_*/LOGFLARE_* env vars regardless of backend (start.go:315-330)",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const spec = buildLogflareContainerSpec(base, path);
-        expect(spec.env).toMatchObject({
-          DB_DATABASE: "_supabase",
-          DB_HOSTNAME: "supabase_db_proj",
-          DB_PORT: "5432",
-          DB_SCHEMA: "_analytics",
-          DB_USERNAME: "supabase_admin",
-          DB_PASSWORD: "secret",
-          LOGFLARE_MIN_CLUSTER_SIZE: "1",
-          LOGFLARE_SINGLE_TENANT: "true",
-          LOGFLARE_SUPABASE_MODE: "true",
-          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
-          LOGFLARE_LOG_LEVEL: "warn",
-          LOGFLARE_NODE_HOST: "127.0.0.1",
-          LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
-          RELEASE_COOKIE: "cookie",
-        });
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("emits the common DB_*/LOGFLARE_* env vars regardless of backend", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const spec = buildLogflareContainerSpec(base, path);
+      expect(spec.env).toMatchObject({
+        DB_DATABASE: "_supabase",
+        DB_HOSTNAME: "supabase_db_proj",
+        DB_PORT: "5432",
+        DB_SCHEMA: "_analytics",
+        DB_USERNAME: "supabase_admin",
+        DB_PASSWORD: "secret",
+        LOGFLARE_MIN_CLUSTER_SIZE: "1",
+        LOGFLARE_SINGLE_TENANT: "true",
+        LOGFLARE_SUPABASE_MODE: "true",
+        LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
+        LOGFLARE_LOG_LEVEL: "warn",
+        LOGFLARE_NODE_HOST: "127.0.0.1",
+        LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
+        RELEASE_COOKIE: "cookie",
+      });
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect(
-    "postgres backend: sets POSTGRES_BACKEND_URL/SCHEMA, no GCP env or bind, no bind mounts (start.go:343-347)",
+    "postgres backend: sets POSTGRES_BACKEND_URL/SCHEMA, no GCP env or bind, no bind mounts",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -116,7 +113,7 @@ describe("buildLogflareContainerSpec", () => {
   );
 
   it.effect(
-    "bigquery backend: sets GOOGLE_* env and binds the host JWT path, no postgres env (start.go:334-342)",
+    "bigquery backend: sets GOOGLE_* env and binds the host JWT path, no postgres env",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -143,26 +140,23 @@ describe("buildLogflareContainerSpec", () => {
     },
   );
 
-  it.effect(
-    "bigquery backend still binds workdir itself when gcpJwtPath is empty, matching Go's unconditional filepath.Join",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const spec = buildLogflareContainerSpec(
-          {
-            ...base,
-            backend: "bigquery",
-            gcpJwtPath: "",
-            workdir: "/workdir",
-          },
-          path,
-        );
-        expect(spec.binds).toEqual([
-          `${path.join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`,
-        ]);
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("bigquery backend still binds workdir itself when gcpJwtPath is empty", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const spec = buildLogflareContainerSpec(
+        {
+          ...base,
+          backend: "bigquery",
+          gcpJwtPath: "",
+          workdir: "/workdir",
+        },
+        path,
+      );
+      expect(spec.binds).toEqual([
+        `${path.join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`,
+      ]);
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect(
     "bigquery on a slim analytics image uses the same gcloud.json bind as docker.io",

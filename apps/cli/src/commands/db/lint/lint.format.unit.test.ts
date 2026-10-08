@@ -8,7 +8,7 @@ import {
   parseLintResult,
 } from "./lint.format.ts";
 
-describe("LINT_LEVEL_ENUM (Go toEnum, prefix match)", () => {
+describe("LINT_LEVEL_ENUM", () => {
   it("maps warning/error and the plpgsql_check 'warning extra' level", () => {
     expect(LINT_LEVEL_ENUM.toEnum("warning")).toBe(0);
     expect(LINT_LEVEL_ENUM.toEnum("error")).toBe(1);
@@ -40,11 +40,11 @@ describe("parseLintResult", () => {
     });
   });
 
-  it("throws on malformed json (Go's failed to marshal json path)", () => {
+  it("throws on malformed json", () => {
     expect(() => parseLintResult("malformed", "public.f")).toThrow();
   });
 
-  it("throws on Go-rejected shapes (top-level array/scalar, non-array issues, scalar entry)", () => {
+  it("throws on rejected shapes (top-level array/scalar, non-array issues, scalar entry)", () => {
     expect(() => parseLintResult("[]", "public.f")).toThrow();
     expect(() => parseLintResult("42", "public.f")).toThrow();
     expect(() => parseLintResult(`{"issues":"nope"}`, "public.f")).toThrow();
@@ -52,7 +52,7 @@ describe("parseLintResult", () => {
     expect(() => parseLintResult(`{"issues":["not-an-object"]}`, "public.f")).toThrow();
   });
 
-  it("throws on issue fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
+  it("throws on issue fields with the wrong JSON type", () => {
     expect(() => parseLintResult(`{"issues":[{"level":123,"message":"m"}]}`, "public.f")).toThrow();
     expect(() =>
       parseLintResult(`{"issues":[{"level":"warning","message":true}]}`, "public.f"),
@@ -83,7 +83,7 @@ describe("parseLintResult", () => {
     });
   });
 
-  it("tolerates Go-accepted shapes (null, missing issues, unknown fields)", () => {
+  it("tolerates accepted shapes (null, missing issues, unknown fields)", () => {
     expect(parseLintResult("null", "public.f")).toEqual({ function: "public.f", issues: [] });
     expect(parseLintResult("{}", "public.f")).toEqual({ function: "public.f", issues: [] });
     expect(parseLintResult(`{"issues":null}`, "public.f")).toEqual({
@@ -96,7 +96,7 @@ describe("parseLintResult", () => {
     });
   });
 
-  it("decodes a null array element to the zero-value Issue{} (Go encoding/json behavior)", () => {
+  it("decodes a null array element to the zero-value Issue{}", () => {
     // Included in the slice, not skipped; `filterLintResult` later drops it since
     // `toEnum("")` returns -1.
     const result = parseLintResult(`{"issues":[null]}`, "public.f");
@@ -138,7 +138,7 @@ describe("filterLintResult", () => {
   });
 });
 
-describe("encodeLintResults (Go printResultJSON byte parity)", () => {
+describe("encodeLintResults", () => {
   it("emits struct-order keys, drops empty omitempty fields, trailing newline", () => {
     const results: ReadonlyArray<LintResult> = [
       {

@@ -1031,12 +1031,12 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.rate_limit).toEqual({ sign_in_sign_ups: 30 });
   });
 
-  test("sessions_timebox (hours) converts to a Go duration string", () => {
+  test("sessions_timebox (hours) converts to a duration string", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 2 } });
     expect(result.auth?.sessions?.timebox).toBe("2h0m0s");
   });
 
-  test("smtp_max_frequency (seconds) converts to a Go duration string", () => {
+  test("smtp_max_frequency (seconds) converts to a duration string", () => {
     const result = fromApiProjectConfig({ auth: { smtp_max_frequency: 60 } });
     expect(result.auth?.email?.max_frequency).toBe("1m0s");
   });
@@ -1635,7 +1635,7 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
   });
 
   test("a digit-less document duration stays verbatim instead of rewriting to 0s", () => {
-    // Go's ParseDuration rejects "s"; the canonicalizer therefore leaves it
+    // A strict duration parse rejects "s"; the canonicalizer therefore leaves it
     // untouched rather than silently reading it as zero.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "s" } } });
     expect(projected.auth?.sessions?.timebox).toBe("s");
@@ -2041,7 +2041,7 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
     // Document side: the push-formatter truncation drops the remainder.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1h1ns" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1h0m0s");
-    // API arm: the Go-faithful formatter renders a hosted sub-second tail
+    // API arm: the API formatter renders a hosted sub-second tail
     // fixed-decimal, never exponent notation (1h + 1ns in hours).
     const api = fromApiProjectConfig({ auth: { sessions_timebox: 1 + 1e-9 / 3600 } });
     expect(api.auth?.sessions?.timebox).toBe("1h0m0.000000001s");
@@ -2115,7 +2115,7 @@ describe("review round: clone taxonomy, precision bound, type discriminator, sec
   });
 });
 
-describe("review round: safe integers, Go truncation, bigint, fractional-hour bound (CLI-2230)", () => {
+describe("review round: safe integers, truncation, bigint, fractional-hour bound (CLI-2230)", () => {
   test("an unsafe integer throws instead of laundering JSON parse rounding", () => {
     let thrown: unknown;
     try {
@@ -2129,7 +2129,7 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
 
   test("fractional nanoseconds round like the push parser (the pipeline authority)", () => {
     // The push parser rounds fractional nanoseconds; canonicalization predicts its reading rather
-    // than Go's own truncation, which would target a value push never produces.
+    // than truncating, which would target a value push never produces.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1.0000000005s" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1.000000001s");
   });
@@ -2295,7 +2295,7 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
       auth: { sessions: { timebox: "0.999999999999999999s" } },
     });
     // The push parser's float accumulation reads this as exactly 1s, and that reading is what the
-    // canonical spelling predicts, not Go's own truncation to 999999999ns.
+    // canonical spelling predicts, not a truncation to 999999999ns.
     expect(projected.auth?.sessions?.timebox).toBe("1s");
   });
 
@@ -2319,16 +2319,16 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
   });
 });
 
-describe("review round: Go fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
-  test("short decimal fractions scale exactly like Go", () => {
+describe("review round: fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
+  test("short decimal fractions scale exactly", () => {
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "0.2593ms" } } });
-    // Go computes int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly; the reverse operand
+    // int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly; the reverse operand
     // order truncates a nanosecond short (259.299µs).
     expect(projected.auth?.sessions?.timebox).toBe("259.3µs");
   });
 
   test("the Greek small mu spelling stays verbatim (the push parser rejects it)", () => {
-    // Go accepts U+03BC, but the push parser only takes us/µs; canonicalizing "1μs" into a
+    // The grammar accepts U+03BC, but the push parser only takes us/µs; canonicalizing "1μs" into a
     // pushable spelling would fabricate a reading the pipeline never performs.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1μs" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1μs");
@@ -2361,10 +2361,10 @@ describe("review round: Go fraction order, mu units, realms, disabled-gate valid
   });
 });
 
-describe("review round: Go-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
-  test("year-scale whole-hour durations parse and map inside Go's range", () => {
+describe("review round: int64-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
+  test("year-scale whole-hour durations parse and map inside the int64 range", () => {
     // "8760h" is a valid push-side value; single whole-unit components stay exact at any
-    // magnitude inside Go's range.
+    // magnitude inside the int64 range.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "8760h" } } });
     expect(projected.auth?.sessions?.timebox).toBe("8760h0m0s");
     const mapped = fromApiProjectConfig({ auth: { sessions_timebox: 8760 } });
@@ -2569,7 +2569,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the sessions floor includes int64's own minimum, asymmetrically", () => {
-    // -2^63 ns is a valid Go duration (the int64 minimum); its hours spelling rounds back to
+    // -2^63 ns is a valid duration (the int64 minimum); its hours spelling rounds back to
     // exactly -2^63 through magnitude-then-sign. The positive mirror of the endpoint stays
     // rejected, since +2^63 is one past max int64.
     const endpoint = fromApiProjectConfig({
@@ -2669,7 +2669,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the document parser rejects the positive int64 endpoint the API arm rejects", () => {
-    // +2^63 ns is one past Go's maximum, so a non-canonical spelling summing to exactly 2^63
+    // +2^63 ns is one past the maximum, so a non-canonical spelling summing to exactly 2^63
     // stays verbatim rather than canonicalizing into a duration the API arm would reject.
     const positive = fromConfigDocument({
       auth: { sessions: { timebox: "2562047h47m16s854775808ns" } },
@@ -3239,7 +3239,7 @@ describe("review round: unified snapshot, exact scaling, signed frequencies, end
     expect(result.auth?.email?.max_frequency).toBe("-5s");
   });
 
-  test("the session-hour ceiling itself maps below Go's maximum duration", () => {
+  test("the session-hour ceiling itself maps below the maximum duration", () => {
     const ceilingHours = (2 ** 63 - 2 ** 10) / 3_600_000_000_000;
     const result = fromApiProjectConfig({ auth: { sessions_timebox: ceilingHours } });
     expect(typeof result.auth?.sessions?.timebox).toBe("string");

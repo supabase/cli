@@ -2,8 +2,7 @@ import { DateTime } from "effect";
 import { parseGoDuration } from "../../../command-internal/go-duration.ts";
 import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
-// The fractional-seconds separator accepts either `.` or `,`, matching
-// `time.Parse`'s RFC3339 handling for any layout element.
+// The fractional-seconds separator accepts either `.` or `,`.
 const RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:(Z)|([+-])(\d{2}):(\d{2}))$/;
 
@@ -155,7 +154,7 @@ export function parseBearerJwtExp(value: string): BearerJwtInstant {
 }
 
 /**
- * `--valid-for`, parsed via {@link parseGoDuration} (Go duration syntax);
+ * `--valid-for`, parsed via {@link parseGoDuration} (duration syntax);
  * unlike `--exp`, this input is not trimmed.
  *
  * Returns seconds unfloored: `buildBearerJwtClaims` floors only the final

@@ -1,5 +1,5 @@
 /**
- * `strconv.Quote` (the `%q` verb) over raw UTF-8 bytes, shared by every error message that must
+ * Quotes a string (the `%q` verb) over raw UTF-8 bytes, shared by every error message that must
  * reproduce a `%q` interpolation byte-for-byte.
  *
  * Operates on bytes, not JS strings: a byte slice can split a multibyte rune (rendered as `\xNN`
@@ -63,7 +63,7 @@ const GO_ESCAPES: Readonly<Record<number, string>> = {
 };
 
 /**
- * `%q` (`strconv.Quote`) over raw UTF-8 bytes. Valid printable runes print literally;
+ * `%q` over raw UTF-8 bytes. Valid printable runes print literally;
  * control/non-printable ones use the `\a…\v` shorthands then `\xNN`/`\uNNNN`/`\UNNNNNNNN`.
  */
 export function goQuote(bytes: Uint8Array): string {

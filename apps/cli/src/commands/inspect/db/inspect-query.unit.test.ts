@@ -92,11 +92,11 @@ describe("inspectStmt (whitespace-collapsed %s)", () => {
   it("leaves a literal pipe in place (renderGlamourTable takes clean cells)", () => {
     expect(inspectStmt("a | b")).toBe("a | b");
   });
-  it("replaces each vertical tab individually (Go's RE2 `\\s` excludes `\\v`)", () => {
+  it("replaces each vertical tab individually (`\\s` excludes `\\v`)", () => {
     expect(inspectStmt("a\v\vb")).toBe("a  b");
     expect(inspectStmt("a \vb")).toBe("a  b");
   });
-  it("leaves a non-breaking space untouched (not in Go's `\\s`)", () => {
+  it("leaves a non-breaking space untouched (not in `\\s`)", () => {
     expect(inspectStmt("a b")).toBe("a b");
   });
 });

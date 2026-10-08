@@ -1406,8 +1406,8 @@ export interface BuildTestRuntimeOpts {
   readonly tty?: Layer.Layer<Tty>;
   /**
    * `Stdin` for prompts routed through `promptYesNo` (piped-answer reads on
-   * a non-TTY, Go's `Console.ReadLine`). Defaults to a non-TTY stdin with no
-   * piped input, i.e. every bounded read times out like Go's empty 100ms scan.
+   * a non-TTY). Defaults to a non-TTY stdin with no
+   * piped input, i.e. every bounded read times out.
    */
   readonly stdin?: Layer.Layer<Stdin>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };

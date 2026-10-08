@@ -2079,32 +2079,29 @@ describe("db reset", () => {
       },
     );
 
-    it.live(
-      "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
-      () => {
-        // Built as a migration file and run through a batch executor, so a failure gets the same
-        // rich context (`At statement: <index>` + statement text) a real migration failure would.
-        const { layer } = setup(tmp.current, {
-          toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
-          isLocal: true,
-          failStatement: {
-            sql: "CREATE DATABASE postgres WITH OWNER postgres",
-            message: "permission denied to create database",
-          },
-        });
-        return Effect.gen(function* () {
-          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const causeText = Cause.pretty(exit.cause);
-            expect(causeText).toContain("permission denied to create database");
-            expect(causeText).toContain("At statement: 1");
-            expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
-          }
-        });
-      },
-    );
+    it.live("attaches the batch error context to a failed DROP/CREATE DATABASE statement", () => {
+      // Built as a migration file and run through a batch executor, so a failure gets the same
+      // rich context (`At statement: <index>` + statement text) a real migration failure would.
+      const { layer } = setup(tmp.current, {
+        toml: PG14_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        failStatement: {
+          sql: "CREATE DATABASE postgres WITH OWNER postgres",
+          message: "permission denied to create database",
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("permission denied to create database");
+          expect(causeText).toContain("At statement: 1");
+          expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+        }
+      });
+    });
 
     it.live("swallows a disconnect-clients failure when the code is invalid_catalog_name", () => {
       const { layer, conn } = setup(tmp.current, {
@@ -2423,7 +2420,7 @@ describe("db reset", () => {
       });
     });
 
-    it.live("loads a Go-style env() boolean in config for a remote reset", () => {
+    it.live("loads an env() boolean in config for a remote reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
@@ -2846,7 +2843,7 @@ describe("db reset", () => {
     );
 
     it.live(
-      "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
+      "silently applies nothing when schema_paths is unset on an experimental remote reset",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
@@ -2956,7 +2953,7 @@ describe("db reset", () => {
     });
 
     it.live(
-      "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
+      "attaches the schema-file suggestion when a schema file fails to apply on an experimental remote reset",
       () => {
         const { layer } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
@@ -3133,7 +3130,7 @@ describe("db reset", () => {
       },
     );
 
-    it.live("attaches the Go seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
+    it.live("attaches the seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* dbReset({

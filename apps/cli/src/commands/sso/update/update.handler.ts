@@ -206,9 +206,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
-    // Validate against pflag's accepted values before the missing-value,
-    // arity, and mutex checks — pflag fails on the first invalid occurrence
-    // even if a later one overrides it, and its bool parsing excludes
+    // Validate against the accepted values before the missing-value,
+    // arity, and mutex checks — the first invalid occurrence fails
+    // even if a later one overrides it, and bool parsing excludes
     // `yes`/`no`.
     const skipUrlValidation = yield* Result.match(
       pflagBoolValue(occurrences, "skip-url-validation"),
@@ -225,15 +225,15 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       },
     );
 
-    // A bare value-taking flag as the final token is a pflag parse error,
+    // A bare value-taking flag as the final token is a parse error,
     // reported even when the arg count is also wrong. The TS parser accepts
     // it as unset, so this must run before the arity check.
     if (scan.missingValueError !== undefined) {
       return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
-    // Arity is counted from pflag-effective positionals, which shift
-    // whenever pflag consumed a flag token as another flag's value — the TS
+    // Arity is counted from the scanned positionals, which shift
+    // whenever a flag token was consumed as another flag's value — the TS
     // parser's own arity check can't see that. Gated on `anchored`: an
     // unscoped scan has no positional information.
     if (scan.anchored && scan.positionals.length !== 1) {
@@ -276,7 +276,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       }
     }
 
-    // Everything below reads pflag-effective values from the scan rather
+    // Everything below reads values from the scan rather
     // than the TS-parsed flags — see `add.handler.ts` and `pflag-reconcile.ts`.
     const projectRefFlag = pflagStringValue(occurrences, "project-ref");
     const metadataFile = pflagStringValue(occurrences, "metadata-file");

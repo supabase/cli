@@ -280,7 +280,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("serialises the inventory for the Go -o flag", () =>
+  it.live("serialises the inventory for the -o flag", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({

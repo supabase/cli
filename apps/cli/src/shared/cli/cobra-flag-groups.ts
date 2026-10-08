@@ -1,7 +1,7 @@
 /**
  * Whether `--<flagName>` (or `--<flagName>=`) appears in argv after the command path. A flag
  * counts as set once passed explicitly, regardless of its value (e.g. `--use-docker=false` still
- * counts as changed) — matching pflag's `Changed` semantics.
+ * counts as changed).
  */
 export function hasExplicitLongFlag(
   rawArgs: ReadonlyArray<string>,
@@ -39,7 +39,7 @@ const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
 /**
  * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in argv (`undefined` if
  * absent), last occurrence wins. A bare flag is true; an inline
- * value is false only when it matches pflag's boolean false set, otherwise truthy.
+ * value is false only when it is one of `0`, `f`, `F`, `FALSE`, `false`, `False`, otherwise truthy.
  */
 export function explicitBooleanLongFlag(
   rawArgs: ReadonlyArray<string>,
@@ -57,7 +57,7 @@ export function explicitBooleanLongFlag(
 }
 
 /**
- * The last explicit `--<flagName>` occurrence's value in argv (pflag's last-wins resolution:
+ * The last explicit `--<flagName>` occurrence's value in argv (last wins:
  * `--profile a --profile b` → `b`), or `undefined` when absent. `--<flagName> <next>` consumes
  * the following token verbatim; a trailing valueless occurrence is ignored.
  */
@@ -92,7 +92,7 @@ export function lastExplicitLongFlagValue(
 /**
  * Value-taking long flags recognized globally — the persistent root flags (`--workdir`,
  * `--network-id`, `--profile`, `--output`, `--dns-resolver`, `--agent`) plus the TS-only
- * `--output-format` and `--log-level` — so a pflag-faithful scan doesn't miscount positionals.
+ * `--output-format` and `--log-level` — so the argv scan doesn't miscount positionals.
  * Excludes `--completions`, which only pre-parse scanners need (see `GLOBAL_VALUE_FLAG_TOKENS`
  * below); no command handler ever runs while it's set.
  */
@@ -132,8 +132,7 @@ export interface PflagArgvScanSpec {
   readonly valueFlagNames: ReadonlySet<string>;
   /**
    * Value-taking shorthand characters (`t` for `-t`) mapped to their canonical long names.
-   * Occurrences are recorded under the long name, matching pflag's behavior of reporting the
-   * canonical flag regardless of which form set it.
+   * Occurrences are recorded under the long name, regardless of which form set the flag.
    */
   readonly valueFlagShorthands?: ReadonlyMap<string, string>;
 }
@@ -142,41 +141,41 @@ export interface PflagArgvScan {
   /** Whether the command path was found in argv and the scan is scoped to it. */
   readonly anchored: boolean;
   /**
-   * Every flag pflag would mark `Changed`, mapped to the raw value of each occurrence in argv
+   * Every flag set in argv, mapped to the raw value of each occurrence in argv
    * order (shorthand occurrences recorded under their canonical long name).
    */
   readonly occurrences: ReadonlyMap<string, ReadonlyArray<string>>;
   /**
-   * pflag-effective positional arguments: tokens not interpreted as flags and not consumed as a
-   * flag's value; this can differ from what the Effect parser saw when pflag consumed a
-   * flag-shaped token as a value. Only populated when `anchored`.
+   * Positional arguments: tokens not interpreted as flags and not consumed as a flag's value;
+   * this can differ from what the Effect parser saw when the scan consumed a flag-shaped token
+   * as a value. Only populated when `anchored`.
    */
   readonly positionals: ReadonlyArray<string>;
   /**
-   * Canonical long names of flags whose own token was consumed as another flag's value — pflag
-   * never parses them, so they stay unchanged even though the token is visibly present in argv
-   * (covers both long and mapped shorthand spellings). Used to emulate cobra's
-   * `ValidateRequiredFlags` for flags the Effect parser believed were set.
+   * Canonical long names of flags whose own token was consumed as another flag's value — they
+   * are never parsed as flags, so they stay unchanged even though the token is visibly present in argv
+   * (covers both long and mapped shorthand spellings). Used to apply required-flag checks to
+   * flags the Effect parser believed were set.
    */
   readonly consumedFlagNames: ReadonlySet<string>;
   /**
-   * Value-taking flags parsed before the command path completed. Cobra routes past them while
-   * locating the subcommand, but pflag still parses and marks them `Changed`, so a pre-path
+   * Value-taking flags parsed before the command path completed. Subcommand lookup routes past
+   * them, but they still count as set, so a pre-path
    * occurrence is the effective value once every post-path token for the same flag gets consumed
    * elsewhere. Boolean pre-path flags are not tracked.
    */
   readonly prePathOccurrences: ReadonlyMap<string, ReadonlyArray<string>>;
   /**
-   * pflag's `ValueRequiredError` message when a bare value-taking flag is the final argv token,
-   * byte-exact (`flag needs an argument: --domains` / `flag needs an argument: 't' in -t`). pflag
-   * fails parsing before any validation or side effect runs, so handlers must reject argv
+   * The missing-value message when a bare value-taking flag is the final argv token
+   * (`flag needs an argument: --domains` / `flag needs an argument: 't' in -t`). Parsing
+   * fails before any validation or side effect runs, so handlers must reject argv
    * carrying this before any other check.
    */
   readonly missingValueError: string | undefined;
 }
 
 /**
- * Walks a shorthand cluster (`token.slice(1)`) the way pflag does: characters before the first
+ * Walks a shorthand cluster (`token.slice(1)`): characters before the first
  * value-taking shorthand are boolean/unknown and consume nothing; the first value-taking
  * shorthand either carries an inline value (`-o=json`, `-ojson`) or consumes the next argv token
  * (`-o`). Returns `undefined` when no character maps to a value-taking flag.
@@ -207,11 +206,11 @@ function clusterValueShorthand(
 }
 
 /**
- * Scans raw argv the way pflag would after the command path completes: which flags pflag marks
- * `Changed` and their values, the resulting positional arguments, and any flag whose own token
+ * Scans raw argv after the command path completes: which flags are set and their values, the
+ * resulting positional arguments, and any flag whose own token
  * was consumed as another flag's value instead of being parsed itself.
  *
- * Anchoring mirrors cobra: persistent flags may sit before or between path segments, so the walk
+ * Persistent flags may sit before or between path segments, so the walk
  * steps over flag tokens while matching the path in order, falling back to an unscoped scan when
  * the path can't be completed. The spec is per-command, and unknown flags are treated as
  * non-consuming and fail-open, since the Effect parser rejects them before any handler runs.
@@ -307,8 +306,8 @@ export function pflagArgvScan(
       existing.push(value);
     }
   };
-  // pflag consumes the next token unconditionally as the value, even if it looks like a flag —
-  // remember that flag's canonical name as consumed, since pflag never parses it itself.
+  // The next token is consumed unconditionally as the value, even if it looks like a flag —
+  // remember that flag's canonical name as consumed, since it is never parsed as a flag itself.
   const consumeNext = (name: string, index: number, missingMessage: string): number => {
     const next = tokens[index + 1];
     if (next === undefined) {
@@ -320,7 +319,7 @@ export function pflagArgvScan(
       const equalsIndex = next.indexOf("=");
       consumedFlagNames.add(next.slice(2, equalsIndex === -1 ? undefined : equalsIndex));
     } else if (next.startsWith("-") && !next.startsWith("--") && next !== "-") {
-      // A consumed shorthand cluster (`--domains -t saml`): pflag never parses `-t`, so `type`
+      // A consumed shorthand cluster (`--domains -t saml`): `-t` is never parsed as a flag, so `type`
       // stays unchanged even though the Effect parser read it as a flag.
       const hit = clusterValueShorthand(next.slice(1), valueFlagShorthands);
       if (hit !== undefined) {
@@ -359,7 +358,7 @@ export function pflagArgvScan(
         if (hit.inlineValue !== undefined) {
           record(hit.longName, hit.inlineValue); // `-o=json` / `-ojson`
         } else {
-          // `-o json` — pflag quotes the shorthand character and remaining cluster when the
+          // `-o json` — the message quotes the shorthand character and remaining cluster when the
           // value is missing.
           index = consumeNext(
             hit.longName,
@@ -379,7 +378,7 @@ export function pflagArgvScan(
     if (valueFlagNames.has(name)) {
       index = consumeNext(name, index, `flag needs an argument: --${name}`);
     } else {
-      // A bare boolean records the value pflag would set — `"true"` — keeping it distinct from
+      // A bare boolean records `"true"` keeping it distinct from
       // the `""` an inline-empty `--name=` records above.
       record(name, "true");
     }

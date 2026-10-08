@@ -118,7 +118,7 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("weakly coerces scalar rule fields to strings, matching Go's decoder", () =>
+  it.effect("weakly coerces scalar rule fields to strings", () =>
     Effect.gen(function* () {
       // Weakly-typed decoding: an int/bool field
       // coerces to its string form (123 → "123", true → "1") rather than erroring.
@@ -137,7 +137,7 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("fails when an inspect.rules entry is not a table (Go aborts)", () =>
+  it.effect("fails when an inspect.rules entry is not a table", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         readRules('[experimental.inspect]\nrules = ["not-a-table"]\n'),
@@ -149,7 +149,7 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("rejects unknown keys in a rule table (Go's UnmarshalExact ErrorUnused)", () =>
+  it.effect("rejects unknown keys in a rule table", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         readRules(
@@ -171,7 +171,7 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("accepts a single inline rules table as one rule (Go weak-typing wrap)", () =>
+  it.effect("accepts a single inline rules table as one rule", () =>
     Effect.gen(function* () {
       const rules = yield* readRules(
         [
@@ -187,7 +187,7 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("fails when rules is a scalar string (Go aborts)", () =>
+  it.effect("fails when rules is a scalar string", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(readRules('[experimental.inspect]\nrules = "oops"\n'));
       expect(Exit.isFailure(exit)).toBe(true);

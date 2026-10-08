@@ -8,7 +8,7 @@ import {
 } from "./go-output-flag.ts";
 
 describe("go-output-flag", () => {
-  it("joins the allowed set with Go's ` | ` bracket format", () => {
+  it("joins the allowed set with the ` | ` bracket format", () => {
     expect(outputFormatEnumMessage(RESOURCE_OUTPUT_FORMATS)).toBe(
       "must be one of [ env | pretty | json | toml | yaml ]",
     );
@@ -17,8 +17,7 @@ describe("go-output-flag", () => {
     );
   });
 
-  it("reproduces Go's pflag rejection message byte-for-byte", () => {
-    // pflag: `invalid argument %q for %q flag: %v`, shorthand-prefixed `-o, --output`.
+  it("formats the rejection message with the shorthand-prefixed flag name", () => {
     expect(invalidOutputFormatMessage("table", RESOURCE_OUTPUT_FORMATS)).toBe(
       'invalid argument "table" for "-o, --output" flag: must be one of [ env | pretty | json | toml | yaml ]',
     );

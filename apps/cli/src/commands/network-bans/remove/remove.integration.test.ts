@@ -98,7 +98,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("unbans every IP in a comma-separated --db-unban-ip value (pflag CSV parity)", () => {
+  it.live("unbans every IP in a comma-separated --db-unban-ip value", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
@@ -205,7 +205,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
+  it.live("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({

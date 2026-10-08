@@ -73,7 +73,7 @@ describe("parseGoDuration", () => {
     expect(parseGoDuration("1.9ns")).toBe(1);
   });
 
-  it('rounds a long fractional remainder up like Go\'s float64 conversion ("0.999999999999999999s")', () => {
+  it('rounds a long fractional remainder up ("0.999999999999999999s")', () => {
     expect(parseGoDuration("0.999999999999999999s")).toBe(1_000_000_000);
   });
 
@@ -81,21 +81,21 @@ describe("parseGoDuration", () => {
     expect(() => parseGoDuration("2562048h")).toThrow('time: invalid duration "2562048h"');
   });
 
-  it("accepts Go's actual maximum parseable duration without overflowing", () => {
+  it("accepts the maximum parseable duration without overflowing", () => {
     expect(() => parseGoDuration("2562047h47m16.854775807s")).not.toThrow();
   });
 
-  it('rejects a duration exactly 1ns past Go\'s true math.MaxInt64 ceiling ("9223372036854775808ns")', () => {
+  it('rejects a duration exactly 1ns past the int64 maximum ("9223372036854775808ns")', () => {
     expect(() => parseGoDuration("9223372036854775808ns")).toThrow(
       'time: invalid duration "9223372036854775808ns"',
     );
   });
 
-  it("accepts a duration exactly at Go's true math.MaxInt64 ceiling in nanoseconds", () => {
+  it("accepts a duration exactly at the int64 maximum in nanoseconds", () => {
     expect(() => parseGoDuration("9223372036854775807ns")).not.toThrow();
   });
 
-  it("accepts Go's exact minimum representable negative duration (math.MinInt64 ns)", () => {
+  it("accepts the minimum representable negative duration (int64 minimum ns)", () => {
     expect(parseGoDuration("-9223372036854775808ns")).toBe(-9223372036854775808);
   });
 

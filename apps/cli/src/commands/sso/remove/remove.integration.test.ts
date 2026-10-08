@@ -183,7 +183,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits nothing", () => {
+  it.live("--output=env emits nothing", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -191,7 +191,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response verbatim", () => {
+  it.live("--output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -199,8 +199,8 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml fails like Go's EncodeOutput on an unencodable payload", () => {
-    // BurntSushi rejects a nil array element; Go surfaces it as an ordinary
+  it.live("--output=toml fails on an unencodable payload", () => {
+    // BurntSushi rejects a nil array element; it surfaces as an ordinary
     // `failed to output toml: …` command error, not a crash (review
     // r3684270640 — the same wrapping list/show gained in the prior round).
     const body = {

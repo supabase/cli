@@ -13,7 +13,7 @@ describe("renderSnippetsTable", () => {
     expect(out).toContain("UPDATED AT (UTC)");
   });
 
-  it("preserves literal `|` characters in name, visibility, and owner (Glamour decodes Go's escape back)", () => {
+  it("preserves literal `|` characters in name, visibility, and owner (Glamour decodes the escape back)", () => {
     const out = renderSnippetsTable([
       {
         id: "00000000-0000-4000-8000-000000000001",

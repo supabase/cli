@@ -99,15 +99,15 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
 
   yield* Effect.gen(function* () {
     // Required-flag and mutex validation run first, against raw argv rather
-    // than the parsed flags: pflag treats a flag as "set" once passed
-    // regardless of value, and consumes tokens differently than the TS
+    // than the parsed flags: a flag counts as "set" once passed
+    // regardless of value, and tokens are consumed differently than the TS
     // parser does.
     const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
-    // Validate against pflag's accepted values before the missing-value,
-    // required-flag, and mutex checks — pflag fails on the first invalid
-    // occurrence even if a later one overrides it, and its bool parsing
+    // Validate against the accepted values before the missing-value,
+    // required-flag, and mutex checks — the first invalid
+    // occurrence fails even if a later one overrides it, and bool parsing
     // excludes `yes`/`no`.
     yield* Result.match(pflagEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
       onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
@@ -129,7 +129,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     );
 
     // A bare value-taking flag as the final token (e.g. `--domains` with
-    // nothing after) is a pflag parse error; the TS parser accepts it as
+    // nothing after) is a parse error; the TS parser accepts it as
     // unset, so this must run before every other validation.
     if (scan.missingValueError !== undefined) {
       return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
@@ -162,8 +162,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // wrong metadata source.
     yield* validatePflagWorkdir(scan);
 
-    // `--type` is required. If pflag would have consumed the `--type`/`-t`
-    // token as another flag's value rather than registering it, the
+    // `--type` is required. If the `--type`/`-t`
+    // token was consumed as another flag's value rather than registered, the
     // required-flag check must still fail — the TS parser can't see that
     // (it refuses flag-shaped values), so this reproduces it from the scan.
     if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
@@ -177,8 +177,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       });
     }
 
-    // Everything below reads pflag-effective values from the scan rather
-    // than the TS-parsed flags, since pflag consumes flag-shaped tokens as
+    // Everything below reads values from the scan rather
+    // than the TS-parsed flags, since the scan consumes flag-shaped tokens as
     // values where the parser doesn't.
     const projectRef = pflagStringValue(occurrences, "project-ref");
     const metadataFile = pflagStringValue(occurrences, "metadata-file");

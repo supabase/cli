@@ -20,7 +20,7 @@ export const QUERY_OUTPUT_FORMATS = ["json", "table", "csv"] as const;
 
 /**
  * Raised when `-o`/`--output` carries a value the active command doesn't accept. The message
- * matches the established pflag rejection format: `invalid argument %q for %q flag: %v`.
+ * has the form `invalid argument %q for %q flag: %v`.
  */
 export class InvalidOutputFormatError extends Data.TaggedError("InvalidOutputFormatError")<{
   readonly message: string;
@@ -36,8 +36,8 @@ export function outputFormatEnumMessage(allowed: ReadonlyArray<string>): string 
 }
 
 /**
- * The full rejection message for an invalid `-o` value, matching the established
- * `invalid argument %q for %q flag: %v` pflag format.
+ * The full rejection message for an invalid `-o` value, in the
+ * `invalid argument %q for %q flag: %v` format.
  */
 export function invalidOutputFormatMessage(value: string, allowed: ReadonlyArray<string>): string {
   return `invalid argument "${value}" for "-o, --output" flag: ${outputFormatEnumMessage(allowed)}`;

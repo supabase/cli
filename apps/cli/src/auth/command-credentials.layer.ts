@@ -171,7 +171,7 @@ function normalizeGoWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
   if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
 
-  // Go writes Windows CredentialBlob values as raw UTF-8 bytes, which the keyring search API
+  // Legacy Windows CredentialBlob values are raw UTF-8 bytes, which the keyring search API
   // can surface packed into UTF-16 code units; unpack each back into the original byte sequence.
   const bytes: number[] = [];
   for (let index = 0; index < value.length; index += 1) {
@@ -379,7 +379,7 @@ const readFallbackFile = (
 /**
  * Resolves an access token for an explicit profile account: env token → keyring (profile
  * account, then legacy account) → fallback file. Used by commands that reconcile a
- * pflag-effective profile after `CommandCredentials` already captured a different one at
+ * profile resolved from raw argv after `CommandCredentials` already captured a different one at
  * construction. Fails with the same validation error as `resolveAccessToken` and propagates
  * credential storage failures.
  */

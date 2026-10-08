@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 
 describe("assertSeedTargetsExclusive", () => {
-  it("fails when both --local and --linked are set (cobra mutual exclusivity)", () => {
+  it("fails when both --local and --linked are set (mutual exclusivity)", () => {
     const exit = Effect.runSyncExit(
       assertSeedTargetsExclusive(["seed", "buckets", "--local", "--linked"]),
     );

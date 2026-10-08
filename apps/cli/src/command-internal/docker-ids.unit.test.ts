@@ -34,7 +34,7 @@ describe("resolveLocalProjectId", () => {
 });
 
 describe("serviceContainerIds", () => {
-  it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
+  it("returns the 13 service container ids in order", () => {
     expect(serviceContainerIds("my-app")).toEqual([
       "supabase_kong_my-app",
       "supabase_auth_my-app",
@@ -59,7 +59,7 @@ describe("serviceContainerIds", () => {
 });
 
 describe("cliProjectFilterValue", () => {
-  it("returns the bare label when the project id is empty (Go's --all path)", () => {
+  it("returns the bare label when the project id is empty (the --all path)", () => {
     expect(cliProjectFilterValue("")).toBe(CLI_PROJECT_LABEL);
   });
 
@@ -104,7 +104,7 @@ describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFal
     expect(resolve(undefined, { [KEY]: "project-network" })).toBe("project-network");
   });
 
-  it("prefers the shell value over the project .env value (presence wins, matching godotenv.Load)", () => {
+  it("prefers the shell value over the project .env value (presence wins)", () => {
     process.env[KEY] = "shell-network";
     expect(resolve(undefined, { [KEY]: "project-network" })).toBe("shell-network");
   });
