@@ -19,14 +19,12 @@
 ## API Routes
 
 **Handling of a malformed ref:** the resolved ref is validated against
-`^[a-z]{20}$`. The old Go CLI only warned on failure and still called the remote
-lookup with the malformed ref anyway. This port prints the same warning
-("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.") but
-deliberately skips the remote lookup instead of reproducing that behavior — the
+`^[a-z]{20}$`. A malformed ref prints a warning
+("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.") and skips the
+remote lookup — the
 ref is embedded unescaped into the tenant gateway hostname below, so proceeding
 with a malformed value would let it redirect the service-role key to an
-attacker-controlled host. Only the local matrix is printed in this case. This
-is intentional TS-only hardening, not a parity bug.
+attacker-controlled host. Only the local matrix is printed in this case.
 
 Tenant calls send `apikey: <serviceKey>` and additionally
 `Authorization: Bearer <serviceKey>` unless the key is a new-style `sb_…` key

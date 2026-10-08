@@ -7,8 +7,8 @@ gate without `--declarative`). Both export modes run the native pg-delta
 export. The initial-migra pull (no local migrations) seeds the migration file
 with a native `pg_dump` of the remote schema (a Docker `pg_dump` container,
 with IPv4 transaction-pooler fallback) and then appends the migra diff.
-`--experimental` without `--declarative` used to dump remote SQL through Go's
-`format.WriteStructuredSchemas` (schemas + cluster AST split). That path now
+`--experimental` without `--declarative` used to dump remote SQL as a split
+schemas + cluster AST. That path now
 runs the same in-process declarative export (`supabase/schemas` plus
 `.pgdelta-export.json`) and prints a deprecation line pointing at
 `--declarative`. `--experimental --declarative` does not print that line:
@@ -72,7 +72,7 @@ disables formatting without disabling safe compaction.
   Pipelines, which drops the mount).
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource` in
   `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
-  `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Torn down with
+  `command-internal/db-bootstrap/shadow-database.ts`). Torn down with
   `docker rm -f -v` on every run, cache or no cache — see the shadow baseline cache section
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
@@ -184,14 +184,13 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
-  env var simply leaves unused on a non-linked target). The deprecated
+  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
+  unused on a non-linked target). The deprecated
   `--experimental` export honors `--project-ref` the same way `--declarative`
   does.
 - `--use-pg-delta` is hidden, selects the declarative export, and prints

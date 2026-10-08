@@ -98,20 +98,16 @@ The `--output`/`-o` flag does not change deploy output.
   `import_map_path` / `static_patterns` at the workdir (relative to the working
   directory, forward slashes). Imports outside the workdir but inside
   the nearest git root still upload, with `../`-relative names. The git-root
-  containment boundary is a TS-only safeguard with no Go CLI equivalent — the old Go
-  CLI uploaded any reachable import unbounded; #5755 widened the TS boundary from the
-  workdir to the git root.
+  containment boundary keeps an upload from reaching outside the repository.
 - Requires a linked project unless `--project-ref` is provided.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
   global `--yes` skips the prompt.
-- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
-  2026-08-12):** the functions import scanner (`walkImportPaths`/`substituteImportMapValue`,
+- **Spec-strict import-map key matching:** the functions import scanner (`walkImportPaths`/`substituteImportMapValue`,
   shared with `functions serve` and `start`'s Edge Runtime bring-up) matches import-map keys
   per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only
-  for a `/`-suffixed key — instead of Go's any-key `strings.HasPrefix`
-  (`pkg/function/deno.go:150-155`). Upload sets may shrink vs the Go CLI for maps that relied
-  on bare-key prefix matching; an unwalkable target (`ENOTDIR` — a value routed through a
+  for a `/`-suffixed key — so a bare-key prefix does not match, and upload sets are
+  limited to spec-matching keys; an unwalkable target (`ENOTDIR` — a value routed through a
   file) is skipped with a `WARN` instead of aborting the deploy.

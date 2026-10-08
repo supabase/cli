@@ -49,13 +49,10 @@ provisioned remote runs no provisioning DDL — supabase/cli#6393) followed by o
 repair transaction: (for repair-all) `TRUNCATE`, plus `applied` → per-version
 `UPSERT` from the local file, `reverted` → `DELETE ... WHERE version = ANY($1)`.
 
-> **Atomicity note:** the old Go CLI ran the TRUNCATE/UPSERT/DELETE via a batched
-> pipeline (not an explicit transaction), so a partial failure mid-batch (e.g.
-> TRUNCATE commits but a later UPSERT fails) could leave the history table in a
-> half-updated state. The TS port wraps the same statements in an explicit
-> `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure leaves the table
-> unchanged. This handler deliberately keeps that safer transaction instead of using
-> the migration apply path's batch primitive; the success path is unchanged.
+> **Atomicity note:** the TRUNCATE/UPSERT/DELETE statements run in an explicit
+> `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure (e.g. TRUNCATE
+> succeeds but a later UPSERT fails) leaves the table unchanged. This handler keeps
+> that transaction instead of using the migration apply path's batch primitive.
 
 ### `--output-format json`
 
@@ -87,10 +84,9 @@ migration history table to match local migration files?` (default **NO**).
   `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
   (stderr `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.`), and a
   temporary login role is minted instead (ADR 0031).
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  `SUPABASE_PROJECT_ID`, which is simply unused on
   a non-linked target).

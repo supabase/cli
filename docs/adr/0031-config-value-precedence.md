@@ -94,6 +94,13 @@ order stays the same for every key.
   without `withCliConfigFlags` fails `tsc`.
 - Registry unit tests check env-name uniqueness, alias resolution, section gating, and that every
   schema leaf is in the registry or explicitly excluded.
+- `cli-config-contract.unit.test.ts` walks every registry key and family field and checks that
+  each resolves from the highest tier that can supply it, with that tier's origin, that a lower
+  tier wins only when every higher one is unavailable, and that an empty shell variable falls
+  through. It also pins deprecated aliases, secret keys and the declared flags to real keys.
+- `cli-config-flag-ownership.unit.test.ts` walks the command tree, hidden commands included, and
+  fails when a flag the registry owns is missing from a command, bound to another key, or bound by
+  a command that does not declare it.
 
 ### Adding a key or a flag
 

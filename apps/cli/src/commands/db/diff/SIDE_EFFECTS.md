@@ -66,7 +66,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   Pipelines, which drops the mount).
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
   in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
-  `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
+  `command-internal/db-bootstrap/shadow-database.ts`). Explicit
   `--from/--to migrations` provisions its migrations shadow through the pg-delta shadow layer
   (`pgdelta-next-shadow.layer.ts`), which builds on the same shadow-baseline cache
   primitives (`acquireShadowDatabase`), with no declarative-schema-override branch.
@@ -214,8 +214,7 @@ transaction metadata.
   group; `--db-url` / `--linked` / `--local` are a mutually-exclusive target group (default
   `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
   Notes below), so it is never a live member of the group.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
@@ -228,8 +227,8 @@ transaction metadata.
   `--linked` was explicitly set either. It still fires for e.g. `--from local
 --to migrations --project-ref X` (explicit mode, `--linked` unchanged, and
   neither side `linked`), where the flag would otherwise go silently unused
-  (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env
-  var simply leaves unused on a non-linked target). `--use-pgadmin --linked`
+  (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply unused
+  on a non-linked target). `--use-pgadmin --linked`
   honors the flag like every other native engine (CLI-1968 — same target
   resolve); `--use-pg-schema` is removed and rejects before any target
   resolution happens (see Notes below), so this guard never runs for it.

@@ -2,11 +2,10 @@
 
 Writes flat state files under `<workdir>/supabase/.temp/`.
 
-TS-only divergence from Go (CLI-2167): `link` accepts an optional `[ref-or-branch]` positional
+`link` accepts an optional `[ref-or-branch]` positional
 argument, and `--project-ref` also accepts a branch name instead of a project ref. A value is
 treated as a ref when it matches `PROJECT_REF_PATTERN` (20 lowercase letters); any other
-non-empty value is looked up as a branch name of the currently-linked parent project. No Go
-counterpart exists for this behavior.
+non-empty value is looked up as a branch name of the currently-linked parent project.
 
 ## Files Read
 
@@ -51,8 +50,7 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 | `storage-version`     | best-effort — Storage `/storage/v1/version` body, prefixed with `v` unless it already starts with `v`                                                                                                                                                                                                                                                                                    |
 | `linked-project.json` | best-effort — `{ref,name,organization_id,organization_slug}` for a resolvable, non-404 project; on the 404 (branch) path, best-effort WRITTEN as a ref-only `{ref}` record when a name/UUID-resolved branch's parent isn't already cached (PR #6168 review), or best-effort DELETED when a raw ref-shaped branch link's existing cache is verifiably for a different project (see below) |
 
-> **404-path cache maintenance is TS-only (PR #6168 review) — Go never writes or deletes this file
-> for a branch ref at all.** Two cases, both best-effort (`Effect.ignore`/caught, never affect
+> **404-path cache maintenance.** Two cases, both best-effort (`Effect.ignore`/caught, never affect
 > `link`'s outcome, no new exit code):
 >
 > - `link <branch-name-or-uuid>` (name resolution ran, so the parent is KNOWN): if the existing
@@ -70,9 +68,7 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 >   branch link cannot REPLACE a divergent cache (write failure), the stale cache is deleted
 >   rather than left trusted.
 >
-> This diverges from Go's filesystem behavior on the branch/404 link path (Go never touches this
-> file there at all) — flag if the cli-e2e parity harness's filesystem-comparison dimension
-> exercises a branch/404 `link` scenario.
+> `linked-project.json` is the only file touched on the branch/404 link path.
 
 ## API Routes
 
@@ -96,7 +92,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | `GET`  | `/auth/v1/health`     | best-effort |
 | `GET`  | `/storage/v1/version` | best-effort |
 
-> Certain config probes the old Go CLI made (`/config/database/postgres`, `/postgrest`,
+> Certain config probes (`/config/database/postgres`, `/postgrest`,
 > `/config/auth`, `/network-restrictions`) are **omitted** here: they only populated in-process
 > config that standalone `link` discards, and they emit nothing observable.
 
@@ -156,6 +152,5 @@ in these modes (stderr in `json`; a structured `log` event in `stream-json`) rat
   **not** reproduced: it requires loading the local `config.toml` `[db].major_version` with CLI
   defaults, which the CLI does not surface. The `postgres-version` file (the meaningful
   side effect) is still written.
-- The `Finished supabase link.` line is emitted as **plain text**; the old Go CLI rendered
-  `supabase link` in ANSI cyan. This matches the established port convention (color
-  helpers are rendered plain); ANSI-stripping scripts are unaffected.
+- The `Finished supabase link.` line is emitted as **plain text**, with no ANSI color
+  on `supabase link`.

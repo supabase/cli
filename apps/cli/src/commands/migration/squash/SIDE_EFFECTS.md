@@ -150,8 +150,7 @@ code or the rest of the payload.
   `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
   (stderr `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.`), and a
   temporary login role is minted instead (ADR 0031).
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
@@ -168,19 +167,14 @@ code or the rest of the payload.
   answer) is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
-- **Atomicity note:** the old Go CLI sent the baseline `DELETE`/`INSERT` via a batched pipeline
-  (not an explicit transaction) — a partial failure could leave the DELETE applied without the
-  INSERT. The TS port wraps both statements in an explicit `BEGIN`/`COMMIT` with `ROLLBACK` on
-  error (matching `migration repair`'s own equivalent divergence); the success path produces
-  the same output as before.
-- **Documented divergences** (neither reproduced, both judged strictly worse to replicate):
-  (a) the old Go CLI's line-scanning silently truncated `lineByLineDiff`'s output when a
-  single dumped line exceeded 64 KiB, with no error surfaced — not reproduced (`squash.diff.ts`);
-  (b) the old Go CLI's separator-comment write discarded its error return, while the
-  auth/storage diff write right after it was checked — this port combines both into one write,
-  so a hypothetical failure isolated to just the separator bytes now surfaces as
-  `failed to write line: …`; not realistically triggerable on a real filesystem for a single
-  already-open file descriptor.
+- **Atomicity note:** the baseline `DELETE`/`INSERT` run in an explicit `BEGIN`/`COMMIT` with
+  `ROLLBACK` on error, so a partial failure cannot leave the DELETE applied without the INSERT
+  (as in `migration repair`).
+- **Diff output handling:** (a) a dumped line longer than 64 KiB is written in full, not
+  truncated (`squash.diff.ts`); (b) the separator comment and the auth/storage diff are
+  combined into one write, so a failure isolated to just the separator bytes surfaces as
+  `failed to write line: …`; this is not realistically triggerable on a real filesystem for a
+  single already-open file descriptor.
 - `Initialising schema...` is printed by the shared setup prelude just before
   `setupDatabase` runs rather than from inside it — inherited from CLI-1956, shared with
   `db diff`/`db pull`'s identical shadow-provisioning prelude.

@@ -90,14 +90,13 @@ shell inherits the suppressing variables and is missed.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution used for the connection and
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and
   the linked-project cache (flag > `SUPABASE_PROJECT_ID`/config.toml
   `project_id` > `.temp/project-ref`) — it does not affect any local container
   id. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
-  env var simply leaves unused on a non-linked target).
+  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
+  unused on a non-linked target).
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is

@@ -88,7 +88,9 @@ Read config and `SUPABASE_*` values through `CliConfigValues` (`snapshot.get(Cli
 which resolves flag > shell env > project `.env*` > config > default. Bind a flag that sets a config
 key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Never read
 `process.env` or a registry env name directly; `code-structure.unit.test.ts` and the `oxlint`
-`process.env` ban fail the build. To add a key, a flag or an exception, see
+`process.env` ban fail the build, and `cli-config-contract.unit.test.ts` and
+`cli-config-flag-ownership.unit.test.ts` check every registry key and flag against the command
+tree. To add a key, a flag or an exception, see
 [ADR 0031](../../docs/adr/0031-config-value-precedence.md).
 
 ## Experimental feature registration

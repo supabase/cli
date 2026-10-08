@@ -7,8 +7,7 @@ drops all user schemas, upserts vault secrets, then either re-applies migrations
 with pg-delta not enabled, applies the declarative `[db.migrations].schema_paths`
 files instead (the `MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
 seeds. The **local** path (`--local`/default, or a `--db-url` pointing at the local
-stack) is ALSO fully native (CLI-1955 removed the hidden Go `db __db-bootstrap` seam
-this used to delegate to): the running check, the PG14/PG15 container-recreate
+stack) is ALSO fully native: the running check, the PG14/PG15 container-recreate
 composition (`command-internal/db-bootstrap/recreate-local-database.ts`, reusing the
 same container-bootstrap primitives `db start` uses — see that command's own
 `SIDE_EFFECTS.md`), the post-recreate satellite-restart + Kong reload
@@ -23,10 +22,8 @@ reset-local-database.ts`'s `resetLocalDatabase` (CLI-2062), which this
 handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
 seed-flags resolution and the JSON envelope, which are specific to this top-level
 command). `db schema declarative`'s smart-target local-reset prompt and `db schema
-sync`'s failed-apply recovery reset both call the SAME function in-process now,
-instead of shelling out to a second `supabase-go` child through the previously
-removed `DeclarativeSeam.execInherit` seam — see those commands' own
-`SIDE_EFFECTS.md`.
+sync`'s failed-apply recovery reset both call the SAME function in-process — see those
+commands' own `SIDE_EFFECTS.md`.
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
@@ -102,9 +99,8 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | `docker container inspect <kong container>` + `docker exec <kong> kong reload --nginx-conf /home/kong/custom_nginx.template` | local path, both PG14 and PG15        | reload Kong so it re-resolves the restarted containers' addresses (issue #6016) — the `--nginx-conf` flag is load-bearing: a bare `kong reload` regenerates nginx.conf from Kong's default template and drops the custom `email_templates` server (#6059) |
 | `docker container inspect supabase_storage_<project>`                                                                        | local path                            | storage-health gate before bucket seeding                                                                                                                                                                                                                 |
 
-No subprocess delegation remains on either target — the remote path's
-`--experimental` schema-files apply (formerly delegated to a `supabase-go db reset`
-child) is fully native as of CLI-1958.
+No subprocess delegation on either target — the remote path's
+`--experimental` schema-files apply is fully native.
 
 ## Database Mutations
 
@@ -210,8 +206,8 @@ echoed, because those may genuinely have reached the server.
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
 
-There is no remaining Go child on either target (CLI-1955 removed it for local,
-CLI-1958 for remote) — every failure is a native, typed TS error surfaced as `1`.
+Neither target delegates to a child process — every failure is a native, typed error
+surfaced as `1`.
 
 ## Output
 
@@ -265,8 +261,7 @@ to those defaults (the usual outcome for an interactive terminal).
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
   unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
   never implies `--linked`: passing it with a resolved `--local`/`--db-url`
@@ -307,8 +302,7 @@ to those defaults (the usual outcome for an interactive terminal).
   `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled` is
   NOT set. Taking this branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
-  nothing. Faithfully reproduces two undocumented quirks inherited from the old
-  Go CLI: (1) the `schema_paths`
+  nothing. Two undocumented quirks apply: (1) the `schema_paths`
   default is `[]`, so a stock project running an experimental reset silently applies
   NOTHING (drops schemas, seeds, but replays no SQL) rather than falling back to
   migrations; (2) a partial glob failure (some patterns match, others don't) is
@@ -318,18 +312,13 @@ to those defaults (the usual outcome for an interactive terminal).
   progress line is printed per file, no
   migration-history row is inserted, and no `RESET ALL` runs between files. Seeding
   still runs afterward, unconditionally, exactly as on the migrations branch. The
-  local target's branch was already native before this port (`migrateAndSeed`,
-  reused by both the PG14 and PG15 recreate branches, already implements this exact
-  branch); CLI-1958 ports the remote target's copy of the same branch
-  (`applySchemaFiles`), removing the last Go delegation on this command.
+  local target's branch is `migrateAndSeed`, reused by both the PG14 and PG15 recreate
+  branches; the remote target's copy of the same branch is `applySchemaFiles`.
   `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbToml`
   decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.
-- `db schema declarative`/`db schema sync`'s own local-reset paths now call
-  `resetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
-  (those two commands shelling out to a second `supabase-go` child via the now-removed
-  `DeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
+- `db schema declarative`/`db schema sync`'s own local-reset paths call
+  `resetLocalDatabase` in-process too, so the reset runs inside a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema
-declarative`/`sync` command's own) — the removed subprocess design used to fire a
-  second, independent one from the child process's own execution.
+declarative`/`sync` command's own).
