@@ -3,6 +3,7 @@ import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { loadLocalProjectContext } from "./local-project-context.ts";
@@ -153,6 +154,7 @@ describe("stack config precedence goldens", () => {
         const layer = Layer.mergeAll(
           BunServices.layer,
           runtimeInfoLayer,
+          cliConfigValuesTestLayer,
           Layer.succeed(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromEnvRecord(

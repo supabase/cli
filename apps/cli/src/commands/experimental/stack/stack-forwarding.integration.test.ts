@@ -11,8 +11,9 @@ import { makeSpec as studioSpec } from "../../../../../../packages/stack/src/ser
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
-const layer = Layer.merge(BunServices.layer, runtimeInfoLayer);
+const layer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer);
 
 describe("stack service configuration", () => {
   it.live("carries editable TOML settings into native and container service environments", () =>

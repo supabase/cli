@@ -35,6 +35,7 @@ import {
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 type DatabaseInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
@@ -310,6 +311,7 @@ const fixture = (
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       api,
       mockCommandSettings({

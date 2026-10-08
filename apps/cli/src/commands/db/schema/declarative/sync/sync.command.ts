@@ -9,6 +9,7 @@ import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -86,5 +87,6 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     }),
   ),
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

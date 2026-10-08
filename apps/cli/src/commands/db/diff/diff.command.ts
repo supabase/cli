@@ -8,6 +8,7 @@ import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   // The four engine flags are a mutually-exclusive group, and `--use-migra` defaults to true, so
@@ -128,5 +129,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     ),
   ),
   Command.provide(dbDiffRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

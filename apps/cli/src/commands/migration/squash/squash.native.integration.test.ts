@@ -8,6 +8,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -98,6 +99,7 @@ const testLayer = (root: string) =>
     dbConnectionLayer,
     stackCatalogSetupLayer,
     stackBackendLayer("stack"),
+    cliConfigValuesAmbientTestLayer,
   );
 
 describe("managed migration squash", { timeout: 180_000 }, () => {

@@ -61,34 +61,10 @@
       "seed": {
         "enabled": true,
         "sql_paths": [
-          "./seed.sql"
+          "supabase/seed.sql"
         ]
       },
-      "settings": {
-        "effective_cache_size": null,
-        "logical_decoding_work_mem": null,
-        "maintenance_work_mem": null,
-        "max_connections": null,
-        "max_locks_per_transaction": null,
-        "max_parallel_maintenance_workers": null,
-        "max_parallel_workers": null,
-        "max_parallel_workers_per_gather": null,
-        "max_replication_slots": null,
-        "max_slot_wal_keep_size": null,
-        "max_standby_archive_delay": null,
-        "max_standby_streaming_delay": null,
-        "max_wal_senders": null,
-        "max_wal_size": null,
-        "max_worker_processes": null,
-        "session_replication_role": null,
-        "shared_buffers": null,
-        "statement_timeout": null,
-        "track_activity_query_size": null,
-        "track_commit_timestamp": null,
-        "wal_keep_size": null,
-        "wal_sender_timeout": null,
-        "work_mem": null
-      },
+      "settings": {},
       "shadow_port": 54320,
       "ssl_enforcement": {
         "enabled": false
@@ -337,22 +313,34 @@
         },
         "hook": {
           "before_user_created": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           },
           "custom_access_token": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           },
           "mfa_verification_attempt": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           },
           "password_verification_attempt": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           },
           "send_email": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           },
           "send_sms": {
-            "enabled": false
+            "enabled": false,
+            "secrets": "",
+            "uri": ""
           }
         },
         "jwt_expiry": 3600,
@@ -472,7 +460,7 @@
         "seed": {
           "enabled": true,
           "sql_paths": [
-            "./seed.sql"
+            "supabase/seed.sql"
           ]
         },
         "settings": {},

@@ -2,7 +2,10 @@ import { Crypto, Effect, type FileSystem, Path } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/effect";
+import type { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { normalizeProjectId } from "./functions-docker.ts";
+
+type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
 
 /**
  * Config resolution context shared by the `functions` Docker paths
@@ -12,7 +15,7 @@ import { normalizeProjectId } from "./functions-docker.ts";
  * omit it keep the plain `loadCliConfig` behavior.
  */
 interface FunctionsCliConfigContext {
-  readonly loaded: LoadedCliConfig | null;
+  readonly loaded: FunctionsLoadedConfig | null;
   /** Merged env with ambient values winning; `undefined` when the hook is not injected. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** Sanitized project id, resolved after config validation. */
@@ -31,13 +34,13 @@ export interface FunctionsGoConfigCompat {
     readonly projectRef: string | undefined;
   }) => Effect.Effect<
     {
-      readonly loaded: LoadedCliConfig | null;
+      readonly loaded: FunctionsLoadedConfig | null;
       readonly projectEnvValues: Readonly<Record<string, string>>;
       readonly projectId: string;
       readonly denoVersion: number;
     },
     Error,
-    FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+    FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
   >;
 }
 
@@ -63,12 +66,9 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
     return {
       loaded,
       projectEnvValues: undefined,
-      // Falls back to `basename` only when `projectRef` is undefined and the
-      // config lacks `project_id`. Sanitized because it also feeds Docker
-      // label/resource names, where an unsanitized value breaks cleanup filters.
-      projectId: normalizeProjectId(
-        loaded?.config.project_id ?? input.projectRef ?? path.basename(input.projectRoot),
-      ),
+      // Sanitized because it also feeds Docker label/resource names, where an
+      // unsanitized value breaks cleanup filters.
+      projectId: normalizeProjectId(loaded?.config.project_id ?? path.basename(input.projectRoot)),
       denoVersion: loaded?.config.edge_runtime.deno_version,
     } satisfies FunctionsCliConfigContext;
   }

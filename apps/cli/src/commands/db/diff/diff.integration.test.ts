@@ -33,6 +33,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import {
   dbCommandConfigValuesLayer,
@@ -407,6 +408,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
+    cliConfigValuesAmbientTestLayer,
     out.layer,
     dbCommandConfigValuesLayer(out.layer, {
       flags:

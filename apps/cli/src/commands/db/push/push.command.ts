@@ -1,6 +1,7 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -91,5 +92,6 @@ export const dbPushCommand = Command.make("push", config).pipe(
     ),
   ),
   Command.provide(dbPushRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

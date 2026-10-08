@@ -83,6 +83,7 @@ export const declarativeSeamLayer = Layer.effect(
     const experimentalFlag = yield* ExperimentalFlag;
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
+    const cliConfigValues = yield* CliConfigValues;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -97,6 +98,7 @@ export const declarativeSeamLayer = Layer.effect(
             Effect.provideService(ExperimentalFlag, experimentalFlag),
             Effect.provideService(CliArgs, cliArgs),
             Effect.provideService(StackCatalogSetup, stackCatalogSetup),
+            Effect.provideService(CliConfigValues, cliConfigValues),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({

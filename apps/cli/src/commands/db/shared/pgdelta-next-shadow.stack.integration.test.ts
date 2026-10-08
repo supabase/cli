@@ -5,6 +5,7 @@ import { Effect, FileSystem, Layer, Option } from "effect";
 
 import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -107,6 +108,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(settings),
           Layer.provide(runtimeInfoLayer),
           Layer.provide(output),
+          Layer.provide(cliConfigValuesAmbientTestLayer),
           Layer.provide(Layer.succeed(DebugFlag, false)),
           Layer.provide(Layer.succeed(ExperimentalFlag, false)),
           Layer.provide(Layer.succeed(NetworkIdFlag, Option.none())),

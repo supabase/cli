@@ -7,6 +7,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbReset } from "./reset.handler.ts";
 import { dbResetRuntimeLayer } from "./reset.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -73,5 +74,6 @@ export const dbResetCommand = Command.make("reset", config).pipe(
     ),
   ),
   Command.provide(dbResetRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

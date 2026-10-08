@@ -16,6 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
 
+import { cliConfigValuesAmbientTestLayer } from "../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -212,6 +213,7 @@ const setup = (opts: SetupOpts = {}) =>
     });
 
     const layer = Layer.mergeAll(
+      cliConfigValuesAmbientTestLayer,
       runtimeInfoLayer,
       out.layer,
       cliSettings,

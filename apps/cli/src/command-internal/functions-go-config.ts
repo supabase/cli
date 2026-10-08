@@ -27,28 +27,16 @@ export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
             context.config,
             context.hostname,
             projectRoot,
-            context.projectEnvValues,
-            context.loaded?.document,
-            // No `[remotes.<ref>]` override-tier gating (empty set, the default): the remote
-            // block already merged over the base config at file level via
-            // `loadLocalProjectContext`'s `projectRef` threading above. Known narrow divergence:
-            // an ambient `SUPABASE_EDGE_RUNTIME_DENO_VERSION` still beats a matched remote
-            // block's own `deno_version` here, since computing the override keys needs
-            // `db-config.toml-read.ts`'s remote-resolution pipeline, which this path doesn't run.
             undefined,
-            projectRef,
+            context.loaded.document,
           ),
         catch: toError,
       });
       return {
         loaded: context.loaded,
         projectEnvValues: context.projectEnvValues,
-        // `context.projectId`, not `validated.projectId`: the context's id is the one built for
-        // Docker naming/labels — sanitized, `--project-ref` defaulted, and
-        // `SUPABASE_PROJECT_ID`-gated when a `[remotes.<ref>]` block matched (see
-        // `local-project-context.ts`'s gate). `validated.projectId` exists only to feed
-        // `validateResolvedConfig`'s emptiness check and skips that gate — see its own doc
-        // comment.
+        // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
+        // exists only to feed `validateResolvedConfig`'s emptiness check.
         projectId: context.projectId,
         denoVersion: validated.edgeRuntimeDenoVersion,
       };

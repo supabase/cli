@@ -185,13 +185,6 @@ function asRecord(value: unknown): RawDoc | undefined {
     : undefined;
 }
 
-/** Retained for callers that still gate on it; remote blocks no longer win over env names. */
-export type RemoteOverridableKey = string;
-
-export function makeRemoteWins(keys: ReadonlySet<string>): (key: RemoteOverridableKey) => boolean {
-  return (key) => keys.has(key);
-}
-
 const ENV_PATTERN = /^env\((.*)\)$/;
 
 /** The variable name inside an `env(VAR)` reference, or `undefined` for any other string. */

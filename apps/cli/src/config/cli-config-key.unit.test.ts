@@ -5,7 +5,6 @@ import {
   InvalidAnalyticsBackendEnvOverrideError,
   InvalidBoolEnvOverrideError,
   InvalidPortEnvOverrideError,
-  envOverrideUint,
 } from "../command-internal/local-config-values.ts";
 import {
   binaryCodec,
@@ -354,14 +353,8 @@ describe("pickCliConfigKey attributes", () => {
 });
 
 describe("pickCliConfigKey failure text matches the legacy readers", () => {
-  const legacyUintMessage = (name: string, path: string, value: string) => {
-    try {
-      envOverrideUint(name, path, 1, { [name]: value });
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-    return undefined;
-  };
+  const legacyUintMessage = (path: string, value: string) =>
+    `Failed reading config: Invalid ${path}: ${value}.`;
 
   it("reproduces the bool message", () => {
     const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "maybe" } });
@@ -393,7 +386,7 @@ describe("pickCliConfigKey failure text matches the legacy readers", () => {
     });
 
     expect(failureOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "08" } }).message).toBe(
-      legacyUintMessage("SUPABASE_AUTH_JWT_EXPIRY", "auth.jwt_expiry", "08"),
+      legacyUintMessage("auth.jwt_expiry", "08"),
     );
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "0x10" } }).value).toBe(16);
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "010" } }).value).toBe(8);

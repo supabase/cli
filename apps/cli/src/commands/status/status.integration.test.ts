@@ -23,6 +23,7 @@ import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { vi } from "vitest";
 
+import { cliConfigValuesAmbientTestLayer } from "../../../tests/helpers/config-snapshot-ambient-layer.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
   statusCodeFailure,
@@ -365,6 +366,7 @@ function setup(opts: SetupOpts = {}) {
       : mockCommandPlatformApiFactoryDirect(opts.apiFactory);
 
   const layer = Layer.mergeAll(
+    cliConfigValuesAmbientTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     out.layer,
@@ -443,6 +445,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   const outputLayer = opts.format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
 
   const layer = Layer.mergeAll(
+    cliConfigValuesAmbientTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     outputLayer.pipe(Layer.provide(stdio.layer)),

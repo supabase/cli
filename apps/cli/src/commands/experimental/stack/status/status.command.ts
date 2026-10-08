@@ -4,6 +4,8 @@ import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStatus } from "./status.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
@@ -43,4 +45,6 @@ export const stackStatusCommand = Command.make("status", config).pipe(
   Command.withHandler((flags) =>
     stackStatus(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

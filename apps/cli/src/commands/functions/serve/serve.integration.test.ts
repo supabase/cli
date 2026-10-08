@@ -69,6 +69,7 @@ import {
   type FunctionsServeFlags,
   type FunctionsServeTimers,
 } from "../../../shared/functions/serve.ts";
+import { cliConfigValuesAmbientTestLayer } from "../../../../tests/helpers/config-snapshot-ambient-layer.ts";
 
 const deployMockState = vi.hoisted(() => ({
   runCalls: [] as Array<{
@@ -442,6 +443,7 @@ function setupServe(options: SetupOptions = {}) {
   const childSpawner = options.childSpawner ?? mockDockerLogSpawner([{ exitCode: 1 }]);
 
   const layer = Layer.mergeAll(
+    cliConfigValuesAmbientTestLayer,
     buildTestRuntime({
       out,
       api: {

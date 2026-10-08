@@ -12,6 +12,7 @@ import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 
 const config = {
   overwrite: Flag.boolean("overwrite").pipe(
@@ -123,5 +124,6 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     }),
   ),
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );
