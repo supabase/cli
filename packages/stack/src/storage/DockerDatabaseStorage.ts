@@ -550,32 +550,38 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         labels: ReadonlyArray<string>,
       ) {
         const testRunLabel = yield* testRunLabelArgs();
+        // Create the container before attaching so its name exists on the daemon before any
+        // readiness timeout can fire. A `run` client killed mid-create leaves the daemon to
+        // finish creating a container that nothing ever starts, so `--rm` never fires and a
+        // later `rm -f` by name finds nothing to remove. `--rm -i` on `create` sets the same
+        // AutoRemove and StdinOnce as on `run`, so stdin EOF still ends the helper when the
+        // attached client dies.
+        yield* engineCommand([
+          "create",
+          "--rm",
+          "-i",
+          "--name",
+          name,
+          "--label",
+          "com.supabase.stack-managed=true",
+          "--label",
+          `com.supabase.stack=${options.stackId}`,
+          ...labels.flatMap((label) => ["--label", label]),
+          "--label",
+          `com.supabase.stack-root=${options.path.resolve(options.root)}`,
+          ...composeHelperLabels,
+          ...testRunLabel,
+          ...mountArgs(mounts),
+          image,
+          "/bin/sh",
+          "-c",
+          "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
+        ]).pipe(Effect.mapError((cause) => errorFor("helper", cause)));
         const child = yield* options.spawner
           .spawn(
             ChildProcess.make(
               options.target.engine,
-              [
-                ...options.target.argv,
-                "run",
-                "--rm",
-                "-i",
-                "--name",
-                name,
-                "--label",
-                "com.supabase.stack-managed=true",
-                "--label",
-                `com.supabase.stack=${options.stackId}`,
-                ...labels.flatMap((label) => ["--label", label]),
-                "--label",
-                `com.supabase.stack-root=${options.path.resolve(options.root)}`,
-                ...composeHelperLabels,
-                ...testRunLabel,
-                ...mountArgs(mounts),
-                image,
-                "/bin/sh",
-                "-c",
-                "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
-              ],
+              [...options.target.argv, "start", "--attach", "--interactive", name],
               { stdin: "pipe", stdout: "pipe", stderr: "pipe", forceKillAfter: "5 seconds" },
             ),
           )
