@@ -3,6 +3,7 @@ import { Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
@@ -203,6 +204,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -218,6 +220,13 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   // `link` itself writes `linked-project.json` on success (below), so `cache` only fires for
   // the failure / 404 paths.
   yield* Effect.gen(function* () {
+    if (Option.isSome(flags.password)) {
+      yield* output.raw(
+        "WARN: the --password flag is deprecated and ignored: link does not connect to the database.\n",
+        "stderr",
+      );
+    }
+
     // An empty-string positional or flag value is treated as absent, matching the resolver's
     // own treatment of an empty `--project-ref`.
     const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);
@@ -252,9 +261,11 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     const paths = tempPaths(path, cliSettings.workdir);
 
     const writeTempFile: WriteTempFile = (filePath, content) =>
-      fs
-        .makeDirectory(path.dirname(filePath), { recursive: true })
-        .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
+      configValues.writeThrough(
+        fs
+          .makeDirectory(path.dirname(filePath), { recursive: true })
+          .pipe(Effect.andThen(() => fs.writeFileString(filePath, content))),
+      );
 
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
@@ -298,12 +309,14 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     }
 
     // 3. Link services — best-effort, using the service-role key for tenant probes.
-    yield* linkServicesCore({
-      ref,
-      serviceKey: serviceRole,
-      skipPooler: flags.skipPooler,
-      workdir: cliSettings.workdir,
-    });
+    yield* configValues.writeThrough(
+      linkServicesCore({
+        ref,
+        serviceKey: serviceRole,
+        skipPooler: flags.skipPooler,
+        workdir: cliSettings.workdir,
+      }),
+    );
 
     // 4. Save project ref (mandatory — a write failure fails the command).
     yield* writeTempFile(paths.projectRef, ref);

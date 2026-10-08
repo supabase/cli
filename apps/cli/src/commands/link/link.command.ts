@@ -4,6 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
@@ -65,5 +66,6 @@ export const linkCommand = Command.make("link", config).pipe(
   ]),
   Command.withHandler(linkHandler),
   Command.provide(managementApiRuntimeLayer(["link"])),
+  Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

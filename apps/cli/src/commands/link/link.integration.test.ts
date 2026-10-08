@@ -13,6 +13,7 @@ import {
   mockContextualAnalytics,
   mockOutput,
 } from "../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -238,14 +239,17 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildTestRuntime({
-    out,
-    api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliSettings,
-    analytics,
-    telemetry: telemetry.layer,
-    linkedProjectCache: linkedCache.layer,
-  });
+  const layer = Layer.merge(
+    buildTestRuntime({
+      out,
+      api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
+      cliSettings,
+      analytics,
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedCache.layer,
+    }),
+    cliConfigValuesTestLayer,
+  );
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
@@ -603,11 +607,14 @@ describe("link integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
-        cliSettings,
-      });
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
+          cliSettings,
+        }),
+        cliConfigValuesTestLayer,
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -615,6 +622,23 @@ describe("link integration", () => {
         const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* existsTemp(tempRoot.current, "project-ref")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("warns that --password is ignored without echoing the value", () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* link(flags({ password: Option.some("hunter2") }));
+        expect(out.stderrText).toContain("the --password flag is deprecated and ignored");
+        expect(out.stderrText).not.toContain("hunter2");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("does not warn about --password when the flag is absent", () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* link(flags());
+        expect(out.stderrText).not.toContain("--password");
       }).pipe(Effect.provide(layer));
     });
 
@@ -1460,6 +1484,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
+          cliConfigValuesTestLayer,
           commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", VALID_REF]),
@@ -1490,6 +1515,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
+          cliConfigValuesTestLayer,
           commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "my-branch"]),
