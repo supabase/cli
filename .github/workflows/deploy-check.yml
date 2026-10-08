@@ -2,7 +2,8 @@ name: Check Deploy
 
 # Always reports a result so it can be a required check on `main`, and so the
 # promotion's head SHA carries a success for the release App's direct push.
-# See apps/cli/docs/release-process.md.
+# Stays on pull_request: the check must attach to the PR head SHA, and only
+# same-repository heads are accepted. See apps/cli/docs/release-process.md.
 on:
   pull_request:
     types:
@@ -36,10 +37,14 @@ jobs:
           case "$HEAD_REF" in
             hotfix/*) ;;
             *)
-              echo "::error ::Pull requests into main are only allowed from this repository's develop branch or from hotfix/* branches, got '$HEAD_REPO:$HEAD_REF'. Rename the branch (git branch -m hotfix/<name>) and reopen the PR, or target develop instead."
+              echo "::error ::Pull requests into main are only allowed from this repository's develop branch or hotfix/* branches, got '$HEAD_REPO:$HEAD_REF'. Rename the branch (git branch -m hotfix/<name>) and reopen the PR, or target develop instead."
               exit 1
               ;;
           esac
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error ::Hotfixes must come from a hotfix/* branch in this repository, not a fork ('$HEAD_REPO'). Push the branch here and reopen the PR."
+            exit 1
+          fi
           # semantic-release publishes a patch only for fix, perf, and revert.
           # A `!` before the colon would publish a major.
           if printf '%s' "$PR_TITLE" | grep -Eq '^(fix|perf|revert)(\([^)]*\))?: '; then
