@@ -4121,6 +4121,46 @@ export const V1GetPostgresConfigInput = Schema.Struct({
 export const V1GetPostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
@@ -8950,6 +8990,46 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
     ),
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
@@ -9141,6 +9221,46 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
 export const V1UpdatePostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
@@ -11553,6 +11673,20 @@ export const V2GetProjectConfigOutput = Schema.Struct({
         postgres_settings: Schema.Struct({
           effective_cache_size: Schema.optionalKey(Schema.String),
           logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+          autovacuum_max_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(1).annotate({
+                  expected: "a value greater than or equal to 1",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          autovacuum_work_mem: Schema.optionalKey(Schema.String),
           log_autovacuum_min_duration: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
               Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
@@ -11756,6 +11890,32 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           ),
           hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
           cron_log_statement: Schema.optionalKey(Schema.Boolean),
+          pg_net_batch_size: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(32767).annotate({
+                  expected: "a value less than or equal to 32767",
+                }),
+              ),
+          ),
+          pg_stat_statements_max: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(100).annotate({
+                  expected: "a value greater than or equal to 100",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(45000).annotate({
+                  expected: "a value less than or equal to 45000",
+                }),
+              ),
+          ),
         }).annotate({
           description:
             "Postgres parameter overrides. Empty when the project runs entirely on defaults.",
@@ -16543,6 +16703,10 @@ export const operationDefinitions = {
       fields: [
         "effective_cache_size",
         "logical_decoding_work_mem",
+        "pg_stat_statements.max",
+        "pg_net.batch_size",
+        "autovacuum_max_workers",
+        "autovacuum_work_mem",
         "cron.log_statement",
         "log_autovacuum_min_duration",
         "log_checkpoints",
