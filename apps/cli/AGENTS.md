@@ -84,19 +84,59 @@ Every applicable command must preserve these invariants:
 
 ## Config values
 
-Read config and `SUPABASE_*` values through `CliConfigValues` (`resolvedConfig.get(CliConfigKeys.<path>)`),
-which resolves flag > shell env > project `.env*` > config > default. Bind a flag that sets a config
-key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Use
-`resolvedConfig.loaded`, `materialized` or `fileDeclared` for the whole document and `envValues(names)`
-for `env(NAME)` references; `projectEnvValues` is only for variables outside the registry.
+Every config value resolves in one order for every command: flag > shell env > project `.env*`
+(`supabase/` then the project root, by `SUPABASE_ENV`) > `config.toml` (a matched `[remotes.*]`
+block over the base document) > default. Do not reorder it or special-case it per command.
 
-Never read `process.env`, `Bun.env`, `globalThis.process` or a registry env name directly, and
-never call `loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment` outside
-`config/cli-config-*.ts` and `shared/config/cli-config-*.ts`. `code-structure.unit.test.ts` and
-`oxlint` fail the build, and `cli-config-contract.unit.test.ts` and
-`cli-config-flag-ownership.unit.test.ts` check every registry key and `CLI_CONFIG_FLAGS` flag
-against the command tree. To add a key, a flag or an exception, see
-[ADR 0031](../../docs/adr/0031-config-value-precedence.md).
+**Read a value**
+
+- Load once per command and pass the result down: `const configValues = yield* CliConfigValues`,
+  then `const resolvedConfig = yield* configValues.load({ workdir, projectRef })`. Do not reload a
+  resolved config a caller already holds.
+- `resolvedConfig.get(CliConfigKeys.<path>)` returns `{ value, origin }`; `origin.tier` names the
+  tier that won.
+- For the whole document: `loaded` (what the project declares, every winner written in, no
+  defaults), `materialized.config` (`loaded` plus defaults and normalizers, what commands act on)
+  or `fileDeclared` (the config file alone, no flag or env overlay, for `config diff`/`pull`).
+  `envValues(names)` resolves `env(NAME)` references, shell before project `.env*`.
+- Wrap writes that change config or `.temp` in `configValues.writeThrough(...)` so the memoised
+  resolved config is dropped.
+
+**Add a flag that sets a config value**
+
+1. List the name in `CLI_CONFIG_FLAGS` (`config/cli-config-key-annotations.ts`).
+2. Declare it with `CliConfigKeys.<path>.flag({ name, description })` in the command config, never
+   a raw `Flag.*`.
+3. Pipe the command config through `withCliConfigFlags` and provide `cliConfigValuesLayer` with
+   `Command.provide`. Read the value with `get`; never merge a flag into a value by hand.
+
+**Add a config key or env var**
+
+Add the field to `CliConfigSchema`; the registry key and its `SUPABASE_<UPPER_SNAKE_PATH>` env name
+follow. Touch `config/cli-config-key-annotations.ts` only for a deprecated env alias, section gate,
+codec override, secret or exclusion. Never read a `SUPABASE_*` name anywhere else.
+
+**Variables that are not config keys**
+
+Names outside the registry (libpq `PG*`, Docker, proxy, `SUPABASE_YES`) come from
+`resolvedConfig.projectEnvValues` (project `.env*` only; a shell-set name is not in it) or
+`ambientEnvironment()` (the live process env). Importing `ambientEnvironment` is limited by
+`oxlint` to the audited files listed in `.oxlintrc.json`. Never read a registry name through
+either, and never read `process.env`, `Bun.env` or `globalThis.process` directly.
+
+**What fails the build**
+
+`code-structure.unit.test.ts` (registry env names as literals, direct env reads, a raw `Flag.*` for
+a registry flag, `loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment` outside
+`config/cli-config-*.ts` and `shared/config/cli-config-*.ts`), `oxlint` (`process.env`, `Bun.env`,
+`ambientEnvironment` imports), `cli-config-contract.unit.test.ts` and
+`cli-config-flag-ownership.unit.test.ts` (every registry key and `CLI_CONFIG_FLAGS` flag against
+the command tree), and `tsc` (a command that reads config without `withCliConfigFlags`).
+
+**Exceptions**
+
+They live in [ADR 0031](../../docs/adr/0031-config-value-precedence.md) and nowhere else. Do not add a
+per-command exception without updating the ADR and the guard's exemption list together.
 
 ## Experimental feature registration
 
