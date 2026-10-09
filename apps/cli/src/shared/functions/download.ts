@@ -532,7 +532,7 @@ function decodeMultipartForm(
           try: () => parseDownloadMetadata(rawMetadata),
           catch: (cause) =>
             new InvalidFunctionDownloadResponseError({
-              message: `failed to unmarshal metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
+              message: `failed to parse metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });
       }

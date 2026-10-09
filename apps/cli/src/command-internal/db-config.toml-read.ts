@@ -1959,7 +1959,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     return undefined;
   };
   // A non-scalar glob element (nested array/table, or a bare TOML datetime) fails with
-  // an "unconvertible type" error instead of being silently dropped; each datetime
+  // an "expected a string" error instead of being silently dropped; each datetime
   // variant reports its own type name for the message. `smol-toml` parses every TOML
   // datetime to a `TomlDate` (a `Date` subclass), exposing the `isDate`/`isTime`/
   // `isLocal` discriminators needed to pick the right variant name.
@@ -1968,7 +1968,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     if (value.isTime()) return "local time";
     return value.isLocal() ? "local date-time" : "offset date-time";
   };
-  const unconvertibleTypeName = (value: unknown): string | undefined =>
+  const unsupportedTypeName = (value: unknown): string | undefined =>
     value instanceof SmolToml.TomlDate
       ? tomlDateTypeName(value)
       : Array.isArray(value)
@@ -1976,7 +1976,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         : typeof value === "object" && value !== null
           ? "table"
           : undefined;
-  // Returns the "unconvertible type" issue for each bad array element, without
+  // Returns the "expected a string" issue for each bad array element, without
   // failing — both `Glob` fields' issues are combined into one error afterward (see
   // `failOnGlobIssues`), with `db.migrations.schema_paths` ordered before `db.seed.sql_paths`.
   const globArrayIssues = (
@@ -1984,26 +1984,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     values: ReadonlyArray<unknown>,
   ): ReadonlyArray<string> =>
     values.flatMap((value, index) => {
-      const typeName = unconvertibleTypeName(value);
+      const typeName = unsupportedTypeName(value);
       return typeName === undefined
         ? []
-        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${typeName}'`];
+        : [`${keyPath}[${index}]: expected a string, got ${typeName}`];
     });
   // Fails once with every issue collected across both `Glob` fields, instead of
   // failing on the first field checked.
   const failOnGlobIssues = (
     issues: ReadonlyArray<string>,
   ): Effect.Effect<void, DbConfigLoadError> =>
-    issues.length === 0
-      ? Effect.void
-      : fail(
-          `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
-        );
+    issues.length === 0 ? Effect.void : fail(`failed to parse config:\n${issues.join("\n")}`);
   // A scalar top-level value (e.g. `schema_paths = 42`) is treated like a
   // single-element array: a zero-length map decodes to `[]`, anything else weakly
-  // coerces or reports an unconvertible-type issue. A `TomlDate` must not match the
+  // coerces or reports an unsupported-type issue. A `TomlDate` must not match the
   // zero-length-map case — its value is stored internally, so `Object.keys` is empty
-  // too, but it should still be treated as unconvertible.
+  // too, but it should still be reported as an unsupported type.
   const resolveScalarGlobFallback = (
     keyPath: string,
     value: unknown,

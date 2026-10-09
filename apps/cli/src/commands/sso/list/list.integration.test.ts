@@ -242,7 +242,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml fails like BurntSushi on a nil attribute-mapping array element", () => {
+  it.live("--output=toml fails on a null attribute-mapping array element", () => {
     const item = {
       ...PROVIDER_ITEM,
       saml: {
@@ -257,7 +257,7 @@ describe("sso list integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoTomlEncodeError");
-        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+        expect(dump).toContain("failed to output toml: cannot encode an array with a null element");
       }
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));

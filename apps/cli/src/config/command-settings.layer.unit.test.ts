@@ -276,14 +276,14 @@ describe("commandSettingsLayer", () => {
         env: { SUPABASE_PROFILE: "rogue-profile" },
         cwd: tempRoot,
       });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }),
   );
 
   it.effect("fails when --profile names a non-existent profile instead of falling back", () =>
     Effect.gen(function* () {
       const exit = yield* configExit({ profileFlag: "resms", cwd: tempRoot });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }),
   );
 
@@ -334,7 +334,7 @@ describe("commandSettingsLayer", () => {
         profileFlag: "supabase",
         cwd: tempRoot,
       });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     }),
   );
 
@@ -402,8 +402,8 @@ describe("commandSettingsLayer", () => {
       expectProfileLoadFailure(
         exit,
         "invalid profile:",
-        "Field validation for 'DashboardURL' failed on the 'required' tag",
-        "Field validation for 'ProjectHost' failed on the 'required' tag",
+        "dashboard_url is required",
+        "project_host is required",
       );
     });
   });
@@ -424,7 +424,7 @@ describe("commandSettingsLayer", () => {
     writeFileSync(profilePath, "::: not yaml :::\n[unbalanced");
     return Effect.gen(function* () {
       const exit = yield* configExit({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot });
-      expectProfileLoadFailure(exit, "failed to read profile: While parsing config:");
+      expectProfileLoadFailure(exit, "failed to read profile: invalid config file:");
     });
   });
 
@@ -436,7 +436,7 @@ describe("commandSettingsLayer", () => {
     writeFileSync(join(home, ".supabase", "profile"), "resms\n");
     return Effect.gen(function* () {
       const exit = yield* configExit({ home, cwd: tempRoot });
-      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      expectProfileLoadFailure(exit, "failed to read profile: unsupported config file type");
     });
   });
 

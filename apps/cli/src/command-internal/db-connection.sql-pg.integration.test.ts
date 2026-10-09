@@ -428,37 +428,35 @@ describe("dbConnectionLayer connect failures", () => {
     }),
   );
 
-  it.live(
-    "reproduces pgconn's server-error rendering for an auth failure and suggests SUPABASE_DB_PASSWORD",
-    () =>
-      Effect.gen(function* () {
-        const server = yield* Effect.promise(() =>
-          fakePostgresServer((socket) => {
-            socket.write(
-              errorResponse({
-                S: "FATAL",
-                V: "FATAL",
-                C: "28P01",
-                M: 'password authentication failed for user "postgres"',
-                F: "auth.c",
-                L: "326",
-                R: "auth_failed",
-              }),
-            );
-            socket.end();
-          }),
-        );
-        const error = yield* connectFailure({ port: server.port }).pipe(
-          Effect.ensuring(Effect.sync(server.close)),
-        );
-        expect(error.message).toBe(
-          "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
-            'server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))',
-        );
-        expect(error.suggestion).toBe(SUGGEST_ENV_VAR);
-        expect(error.message).not.toContain(SENTINEL_PASSWORD);
-        expect(error.retryable).toBeUndefined();
-      }),
+  it.live("renders the server error for an auth failure and suggests SUPABASE_DB_PASSWORD", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() =>
+        fakePostgresServer((socket) => {
+          socket.write(
+            errorResponse({
+              S: "FATAL",
+              V: "FATAL",
+              C: "28P01",
+              M: 'password authentication failed for user "postgres"',
+              F: "auth.c",
+              L: "326",
+              R: "auth_failed",
+            }),
+          );
+          socket.end();
+        }),
+      );
+      const error = yield* connectFailure({ port: server.port }).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(error.message).toBe(
+        "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
+          'server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))',
+      );
+      expect(error.suggestion).toBe(SUGGEST_ENV_VAR);
+      expect(error.message).not.toContain(SENTINEL_PASSWORD);
+      expect(error.retryable).toBeUndefined();
+    }),
   );
 
   it.live(
@@ -485,7 +483,7 @@ describe("dbConnectionLayer connect failures", () => {
 
 describe("dbConnectionLayer exec failures", () => {
   it.live(
-    "maps a real wire ErrorResponse to pgconn's PgError rendering with detail and position",
+    "maps a real wire ErrorResponse to the server-error rendering with detail and position",
     () =>
       // Tripwire for the server-error extraction: drives the real driver stack (node-postgres
       // wire parsing → `DatabaseError` → `@effect/sql-pg`'s `SqlError` cause chain →

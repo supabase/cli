@@ -101,7 +101,7 @@ describe("connectFailureMessage", () => {
     );
   });
 
-  it("surfaces the last dial attempt of a dual-stack AggregateError (pgconn last-fallback parity)", () => {
+  it("surfaces the last dial attempt of a dual-stack AggregateError (last attempt wins)", () => {
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [
@@ -114,7 +114,7 @@ describe("connectFailureMessage", () => {
     );
   });
 
-  it("reproduces pgconn's server-error rendering byte-for-byte for a server ErrorResponse", () => {
+  it("renders a server ErrorResponse byte-for-byte", () => {
     expect(connectFailureMessage(target, realSqlConnectError(authFailedError()))).toBe(
       `${prefix} server error (FATAL: password authentication failed for user "postgres" (SQLSTATE 28P01))`,
     );
@@ -336,7 +336,7 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(realSqlConnectError(aggregate), ctx)).toBe(ipv6Suggestion());
   });
 
-  it("classifies only the LAST attempt of a mixed-family aggregate (pgconn last-fallback parity)", () => {
+  it("classifies only the LAST attempt of a mixed-family aggregate (last attempt wins)", () => {
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "EHOSTUNREACH",
       errors: [

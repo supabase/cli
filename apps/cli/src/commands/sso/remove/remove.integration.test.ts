@@ -200,7 +200,7 @@ describe("sso remove integration", () => {
   });
 
   it.live("--output=toml fails on an unencodable payload", () => {
-    // BurntSushi rejects a nil array element; it surfaces as an ordinary
+    // A null array element is unencodable; it surfaces as an ordinary
     // `failed to output toml: …` command error, not a crash (review
     // r3684270640 — the same wrapping list/show gained in the prior round).
     const body = {
@@ -219,7 +219,7 @@ describe("sso remove integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoTomlEncodeError");
-        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+        expect(dump).toContain("failed to output toml: cannot encode an array with a null element");
       }
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));

@@ -585,7 +585,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     for (const [slug, func] of Object.entries(config.functions)) {
       if (Object.keys(func.env).length > 0) {
         return yield* new StartInvalidConfigError({
-          message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
+          message: `failed to parse config:\nfunctions[${slug}]: unknown keys: env`,
         });
       }
     }

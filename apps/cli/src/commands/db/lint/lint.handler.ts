@@ -89,7 +89,7 @@ const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
         try: () => parseLintResult(data, `${schema}.${name}`),
         catch: (cause) =>
           new DbLintMalformedJsonError({
-            message: `failed to marshal json: ${String(cause)}`,
+            message: `failed to parse lint result: ${String(cause)}`,
           }),
       });
       results.push(result);

@@ -64,14 +64,14 @@ export function loadProfile(
       };
     }
 
-    // An empty token falls back to the established "no config file" search-path error.
+    // An empty token has no config file to read.
     if (token === "") {
-      return yield* failRead(`Config File "config" Not Found in "[]"`);
+      return yield* failRead("no profile config file specified");
     }
 
     const ext = fileExtension(token);
     if (!PROFILE_FILE_EXTS.has(ext)) {
-      return yield* failRead(`Unsupported Config Type ${JSON.stringify(ext)}`);
+      return yield* failRead(`unsupported config file type ${JSON.stringify(ext)}`);
     }
 
     const content = yield* fs
@@ -94,13 +94,13 @@ export function loadProfile(
     try {
       parsed = parseYaml(content);
     } catch (cause) {
-      return yield* failRead(`While parsing config: ${parseDetail(cause)}`);
+      return yield* failRead(`invalid config file: ${parseDetail(cause)}`);
     }
     if (parsed === null || parsed === undefined) {
       parsed = {};
     }
     if (typeof parsed !== "object" || Array.isArray(parsed)) {
-      return yield* failRead("While parsing config: expected a YAML mapping at the top level");
+      return yield* failRead("invalid config file: expected a YAML mapping at the top level");
     }
     // Configuration keys are lowercased before decoding, so `API_URL:`/`Name:` behave like
     // their lowercase spellings, and unknown-key errors report the lowercased form. A
@@ -110,15 +110,15 @@ export function loadProfile(
       config[key.toLowerCase()] = value;
     }
 
-    // Unknown keys abort decoding, reported sorted in a padded multi-line block.
+    // Unknown keys abort decoding, reported sorted.
     const invalidKeys = Object.keys(config)
       .filter((key) => !PROFILE_STRUCT_KEYS.has(key))
       .sort();
     if (invalidKeys.length > 0) {
-      return yield* failDecode(`'utils.Profile' has invalid keys: ${invalidKeys.join(", ")}`);
+      return yield* failDecode(`unknown keys: ${invalidKeys.join(", ")}`);
     }
 
-    // Weak scalar decoding + per-field tag validation, in struct field order.
+    // Weak scalar decoding + per-field format validation, in field order.
     const decodeErrors: string[] = [];
     const validationErrors: string[] = [];
     const values = new Map<string, string>();
@@ -127,26 +127,26 @@ export function loadProfile(
       const weak = weakString(raw);
       if (weak === undefined) {
         decodeErrors.push(
-          `'${field.structFieldName}' expected type 'string', got unconvertible type '${valueTypeName(raw)}', value: '${renderInvalidValue(raw)}'`,
+          `${field.key}: expected a string, got ${valueTypeName(raw)}: ${JSON.stringify(raw)}`,
         );
         continue;
       }
       values.set(field.key, weak);
       if (weak === "") {
         if (field.required) {
-          validationErrors.push(validatorLine(field.structFieldName, "required"));
+          validationErrors.push(`${field.key} is required`);
         }
         continue;
       }
       if (field.format !== undefined && !FORMAT_TAG_CHECKS[field.format](weak)) {
-        validationErrors.push(validatorLine(field.structFieldName, field.format));
+        validationErrors.push(`${field.key} ${FORMAT_TAG_DESCRIPTIONS[field.format]}`);
       }
     }
     if (decodeErrors.length > 0) {
       return yield* failDecode(decodeErrors.join("\n"));
     }
     if (validationErrors.length > 0) {
-      return yield* fail(padErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
+      return yield* fail(`invalid profile:\n${validationErrors.join("\n")}`);
     }
 
     // All required fields passed validation above; pooler_host stays "" when absent.
@@ -165,12 +165,7 @@ const fail = (message: string) => Effect.fail(new ProfileLoadError({ message }))
 const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
 
 /** Aggregate decode-error template: multiple failing fields render as one block. */
-const failDecode = (detail: string) =>
-  fail(
-    padErrorBlock(
-      `failed to parse profile: decoding failed due to the following error(s):\n\n${detail}`,
-    ),
-  );
+const failDecode = (detail: string) => fail(`failed to parse profile:\n${detail}`);
 
 /** Recognized config file extensions, checked case-sensitively. */
 const PROFILE_FILE_EXTS: ReadonlySet<string> = new Set([
@@ -218,7 +213,6 @@ type FormatTag = "http_url" | "hostname_rfc1123" | "uuid4";
 
 interface ProfileStringField {
   readonly key: string;
-  readonly structFieldName: string;
   readonly required: boolean;
   readonly format?: FormatTag;
 }
@@ -228,29 +222,29 @@ interface ProfileStringField {
  * `regions` (a slice) is exempt from weak string decoding and never validated.
  */
 const PROFILE_STRING_FIELDS: ReadonlyArray<ProfileStringField> = [
-  { key: "name", structFieldName: "Name", required: true },
-  { key: "api_url", structFieldName: "APIURL", required: true, format: "http_url" },
-  { key: "dashboard_url", structFieldName: "DashboardURL", required: true, format: "http_url" },
-  { key: "docs_url", structFieldName: "DocsURL", required: false, format: "http_url" },
+  { key: "name", required: true },
+  { key: "api_url", required: true, format: "http_url" },
+  { key: "dashboard_url", required: true, format: "http_url" },
+  { key: "docs_url", required: false, format: "http_url" },
   {
     key: "project_host",
-    structFieldName: "ProjectHost",
     required: true,
     format: "hostname_rfc1123",
   },
   {
     key: "pooler_host",
-    structFieldName: "PoolerHost",
     required: false,
     format: "hostname_rfc1123",
   },
-  { key: "client_id", structFieldName: "AuthClientID", required: false, format: "uuid4" },
-  { key: "studio_image", structFieldName: "StudioImage", required: false },
+  { key: "client_id", required: false, format: "uuid4" },
+  { key: "studio_image", required: false },
 ];
 
-function validatorLine(structFieldName: string, tag: string): string {
-  return `Key: 'Profile.${structFieldName}' Error:Field validation for '${structFieldName}' failed on the '${tag}' tag`;
-}
+const FORMAT_TAG_DESCRIPTIONS: Record<FormatTag, string> = {
+  http_url: "must be an http(s) URL",
+  hostname_rfc1123: "must be a valid hostname",
+  uuid4: "must be a lowercase UUID v4",
+};
 
 /** RFC 1123 hostname pattern. */
 const HOSTNAME_RFC1123 = /^([a-zA-Z0-9][a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62})*?$/;
@@ -274,7 +268,7 @@ const FORMAT_TAG_CHECKS: Record<FormatTag, (value: string) => boolean> = {
 
 /**
  * Weak string coercion: strings pass through, booleans become `"1"`/`"0"`, numbers are
- * stringified, and `null`/`undefined` decode to `""`. Arrays/objects are unconvertible
+ * stringified, and `null`/`undefined` decode to `""`. Arrays/objects are unsupported
  * (`undefined`, a decode error).
  */
 function weakString(value: unknown): string | undefined {
@@ -289,28 +283,6 @@ function valueTypeName(value: unknown): string {
   if (Array.isArray(value)) return "array";
   if (typeof value === "object" && value !== null) return "object";
   return typeof value;
-}
-
-/** Best-effort rendering of an invalid field's value for the error message. */
-function renderInvalidValue(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(renderInvalidValue).join(" ")}]`;
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => `${key}:${renderInvalidValue(entry)}`)
-      .join(" ");
-    return `map[${entries}]`;
-  }
-  return String(value);
-}
-
-/**
- * Pads every line (including blank ones) with trailing spaces to the longest line's width, to
- * match the CLI's established multi-line error rendering exactly.
- */
-export function padErrorBlock(message: string): string {
-  const lines = message.split("\n");
-  const width = Math.max(...lines.map((line) => line.length));
-  return lines.map((line) => line.padEnd(width)).join("\n");
 }
 
 function parseDetail(cause: unknown): string {

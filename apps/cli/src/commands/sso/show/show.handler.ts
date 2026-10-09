@@ -89,7 +89,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         return;
       }
       if (outputFlagFormat === "toml") {
-        // TOML encoding can fail on a nil element in an attribute-mapping `default` array.
+        // TOML encoding can fail on a null element in an attribute-mapping `default` array.
         const toml = yield* Effect.try({
           try: () => encodeStructToml(response, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>

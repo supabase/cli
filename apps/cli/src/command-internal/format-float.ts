@@ -1,7 +1,7 @@
 /**
- * Formats a number in shortest `%g` form: exponent
- * notation when the decimal exponent is `< -4` or `>= 6` (`1000000` → `1e+06`), fixed notation
- * otherwise, with a signed, at-least-two-digit exponent.
+ * Formats a number in its shortest round-trip form, switching to exponent notation when the
+ * decimal exponent is `< -4` or `>= 6` (`1000000` → `1e+06`), with a signed, at-least-two-digit
+ * exponent.
  *
  * Shared by `db query`'s value formatter and `postgres-config`'s pretty table.
  */

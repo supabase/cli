@@ -41,8 +41,8 @@ function readHexRange(s: Uint8Array, start: number, end: number): string | undef
 
 /**
  * Case-insensitive match against "urn:uuid:" over raw bytes. ASCII-only
- * folding is exact here: no non-ASCII rune case-folds to any rune of
- * "urn:uuid:", and multibyte runes can never byte-match an ASCII target.
+ * folding is exact here: no non-ASCII character case-folds to any character of
+ * "urn:uuid:", and multibyte characters can never byte-match an ASCII target.
  */
 function isUrnUuidPrefix(bytes: Uint8Array): boolean {
   const expected = "urn:uuid:";

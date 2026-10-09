@@ -59,7 +59,7 @@ export class DbLintQueryError extends Data.TaggedError("DbLintQueryError")<{
   }
 }
 
-/** `failed to marshal json: <cause>`; message text is an established output contract. */
+/** `failed to parse lint result: <cause>`; message text is an established output contract. */
 export class DbLintMalformedJsonError extends Data.TaggedError("DbLintMalformedJsonError")<{
   readonly message: string;
 }> {

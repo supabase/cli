@@ -2151,7 +2151,7 @@ content_path = "./supabase/templates/custom_notice.html"
       Effect.gen(function* () {
         // A per-function `env` key is rejected unconditionally at config
         // load, before any Docker work — the established error is
-        // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
+        // `functions[foo]: unknown keys: env`. `@supabase/config`'s own schema DOES model
         // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
         // CLI-side rejection.
         const { layer, child } = yield* setup({
@@ -2164,7 +2164,7 @@ content_path = "./supabase/templates/custom_notice.html"
         if (Exit.isFailure(exit)) {
           const serialized = Cause.pretty(exit.cause);
           expect(serialized).toContain("StartInvalidConfigError");
-          expect(serialized).toContain("'functions[foo]' has invalid keys: env");
+          expect(serialized).toContain("functions[foo]: unknown keys: env");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       }).pipe(Effect.provide(BunServices.layer)),

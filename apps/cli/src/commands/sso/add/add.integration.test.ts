@@ -1108,7 +1108,7 @@ describe("sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("ProfileLoadError");
-          expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
+          expect(dump).toContain(`failed to read profile: unsupported config file type ""`);
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));

@@ -144,7 +144,7 @@ describe("readInspectRules", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("expected a map or struct");
+        expect(Cause.pretty(exit.cause)).toContain("expected a table");
       }
     }),
   );
@@ -166,7 +166,7 @@ describe("readInspectRules", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("invalid keys: fails");
+        expect(Cause.pretty(exit.cause)).toContain("unknown keys: fails");
       }
     }),
   );
@@ -192,7 +192,7 @@ describe("readInspectRules", () => {
       const exit = yield* Effect.exit(readRules('[experimental.inspect]\nrules = "oops"\n'));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("expected a map or struct");
+        expect(Cause.pretty(exit.cause)).toContain("expected a table");
       }
     }),
   );

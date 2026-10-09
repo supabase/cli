@@ -10,7 +10,7 @@
  * Decodes the UTF-8 code point at `i`, returning its value and byte length, or `cp: -1` with
  * `size: 1` for an invalid or truncated sequence.
  */
-function decodeUtf8Rune(
+function decodeUtf8CodePoint(
   bytes: Uint8Array,
   i: number,
 ): { readonly cp: number; readonly size: number } {
@@ -67,7 +67,7 @@ const ESCAPE_SHORTHANDS: Readonly<Record<number, string>> = {
 export function quoteBytes(bytes: Uint8Array): string {
   let out = '"';
   for (let i = 0; i < bytes.length;) {
-    const { cp, size } = decodeUtf8Rune(bytes, i);
+    const { cp, size } = decodeUtf8CodePoint(bytes, i);
     if (cp === -1) {
       out += `\\x${(bytes[i] ?? 0).toString(16).padStart(2, "0")}`;
       i += 1;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { stringWidth } from "./rune-width.ts";
+import { stringWidth } from "./string-width.ts";
 
 describe("stringWidth", () => {
   it("counts ASCII as 1 each", () => {

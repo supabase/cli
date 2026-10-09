@@ -5,7 +5,7 @@
  * report `badPattern` instead of being silently reinterpreted.
  *
  * Byte-wise (UTF-8), not UTF-16 code units: the `*`-retry loop can land mid-character, whose
- * byte decodes as a single invalid rune that a `?` in the retried chunk can then consume.
+ * byte decodes as a single invalid code point that a `?` in the retried chunk can then consume.
  */
 
 /** `badPattern` reports a malformed pattern instead of throwing. */
@@ -28,7 +28,7 @@ const UTF8_ENCODER = new TextEncoder();
  */
 type Bytes = Uint8Array<ArrayBuffer>;
 
-const RUNE_ERROR = 0xfffd;
+const REPLACEMENT_CHAR = 0xfffd;
 const SLASH = 0x2f;
 const STAR = 0x2a;
 const QUESTION = 0x3f;
@@ -38,19 +38,19 @@ const CARET = 0x5e;
 const HYPHEN = 0x2d;
 const BACKSLASH = 0x5c;
 
-interface DecodedRune {
+interface DecodedCodePoint {
   readonly r: number;
   readonly size: number;
 }
 
 /**
- * Decodes the UTF-8 rune starting at byte offset `i` of `b`. Any invalid or truncated
- * sequence decodes as `(RUNE_ERROR, 1)` — never throws, and never consumes more than the
+ * Decodes the UTF-8 code point starting at byte offset `i` of `b`. Any invalid or truncated
+ * sequence decodes as `(REPLACEMENT_CHAR, 1)` — never throws, and never consumes more than the
  * single invalid lead byte.
  */
-const decodeRune = (b: Bytes, i: number): DecodedRune => {
+const decodeCodePoint = (b: Bytes, i: number): DecodedCodePoint => {
   const n = b.length - i;
-  if (n <= 0) return { r: RUNE_ERROR, size: 0 };
+  if (n <= 0) return { r: REPLACEMENT_CHAR, size: 0 };
   const b0 = b[i]!;
   if (b0 < 0x80) return { r: b0, size: 1 };
   let size: number;
@@ -87,17 +87,17 @@ const decodeRune = (b: Bytes, i: number): DecodedRune => {
   } else {
     // 0x80-0xC1: a bare continuation byte or an overlong 2-byte lead. 0xF5-0xFF: past
     // the max valid lead byte. Both are invalid lead bytes.
-    return { r: RUNE_ERROR, size: 1 };
+    return { r: REPLACEMENT_CHAR, size: 1 };
   }
-  if (n < size) return { r: RUNE_ERROR, size: 1 };
+  if (n < size) return { r: REPLACEMENT_CHAR, size: 1 };
   const b1 = b[i + 1]!;
-  if (b1 < lo || b1 > hi) return { r: RUNE_ERROR, size: 1 };
+  if (b1 < lo || b1 > hi) return { r: REPLACEMENT_CHAR, size: 1 };
   if (size === 2) return { r: ((b0 & 0x1f) << 6) | (b1 & 0x3f), size: 2 };
   const b2 = b[i + 2]!;
-  if (b2 < 0x80 || b2 > 0xbf) return { r: RUNE_ERROR, size: 1 };
+  if (b2 < 0x80 || b2 > 0xbf) return { r: REPLACEMENT_CHAR, size: 1 };
   if (size === 3) return { r: ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f), size: 3 };
   const b3 = b[i + 3]!;
-  if (b3 < 0x80 || b3 > 0xbf) return { r: RUNE_ERROR, size: 1 };
+  if (b3 < 0x80 || b3 > 0xbf) return { r: REPLACEMENT_CHAR, size: 1 };
   return {
     r: ((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f),
     size: 4,
@@ -150,9 +150,9 @@ const getEsc = (chunk: Bytes): GetEsc => {
     c = c.subarray(1);
     if (c.length === 0) return { r: 0, rest: c, bad: true };
   }
-  const { r, size } = decodeRune(c, 0);
+  const { r, size } = decodeCodePoint(c, 0);
   // A genuinely invalid byte, not a literal (valid, 3-byte-encoded) U+FFFD character.
-  if (r === RUNE_ERROR && size === 1) return { r, rest: c.subarray(1), bad: true };
+  if (r === REPLACEMENT_CHAR && size === 1) return { r, rest: c.subarray(1), bad: true };
   const rest = c.subarray(size);
   return { r, rest, bad: rest.length === 0 };
 };
@@ -181,7 +181,7 @@ const matchChunk = (chunkIn: Bytes, sIn: Bytes): MatchChunk => {
     if (op === LBRACKET) {
       let r = 0;
       if (!failed) {
-        const decoded = decodeRune(s, 0);
+        const decoded = decodeCodePoint(s, 0);
         r = decoded.r;
         s = s.subarray(decoded.size);
       }
@@ -215,7 +215,7 @@ const matchChunk = (chunkIn: Bytes, sIn: Bytes): MatchChunk => {
     } else if (op === QUESTION) {
       if (!failed) {
         if (s[0] === SLASH) failed = true;
-        const { size } = decodeRune(s, 0);
+        const { size } = decodeCodePoint(s, 0);
         s = s.subarray(size);
       }
       chunk = chunk.subarray(1);

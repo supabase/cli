@@ -673,7 +673,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidBoolEnvOverrideError,
       );
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'Invalid config for db.network_restrictions.enabled: cannot parse "notabool" as a bool',
+        'Invalid config for db.network_restrictions.enabled: "notabool" is not a valid boolean',
       );
     });
   });
@@ -697,9 +697,7 @@ describe("resolveLocalConfigValues", () => {
       const document = { db: { root_key: 12345 } };
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
-      );
+      ).toThrow("failed to parse config:\ndb.root_key: expected a table");
     });
   });
 
@@ -787,7 +785,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidAnalyticsBackendEnvOverrideError,
       );
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'Invalid config for analytics.backend: cannot parse "mysql" as one of "postgres", "bigquery"',
+        'Invalid config for analytics.backend: "mysql" must be one of "postgres", "bigquery"',
       );
     });
   });
@@ -826,7 +824,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
       ).toThrow(
-        'Invalid config for experimental.webhooks.enabled: cannot parse "notabool" as a bool',
+        'Invalid config for experimental.webhooks.enabled: "notabool" is not a valid boolean',
       );
     });
 
@@ -926,7 +924,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidRealtimeIpVersionEnvOverrideError,
       );
       expect(() => envOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
-        'Invalid config for realtime.ip_version: cannot parse "IPv5" as one of "IPv4", "IPv6"',
+        'Invalid config for realtime.ip_version: "IPv5" must be one of "IPv4", "IPv6"',
       );
     });
   });
@@ -1060,7 +1058,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidPoolModeEnvOverrideError,
       );
       expect(() => envOverridePoolMode("transaction", undefined)).toThrow(
-        'Invalid config for db.pooler.pool_mode: cannot parse "invalid" as one of "transaction", "session"',
+        'Invalid config for db.pooler.pool_mode: "invalid" must be one of "transaction", "session"',
       );
     });
   });
@@ -1085,7 +1083,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidEdgeRuntimePolicyEnvOverrideError,
       );
       expect(() => envOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
-        'Invalid config for edge_runtime.policy: cannot parse "invalid" as one of "per_worker", "oneshot"',
+        'Invalid config for edge_runtime.policy: "invalid" must be one of "per_worker", "oneshot"',
       );
     });
   });
@@ -1194,7 +1192,7 @@ describe("resolveLocalConfigValues", () => {
           { enabled: false, provider: "hcaptcha", secret: "shh" },
           undefined,
         ),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("suppresses a malformed SUPABASE_AUTH_CAPTCHA_SECRET when a remote block already set auth.captcha.secret", () => {
@@ -1360,7 +1358,7 @@ describe("resolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "not-a-bool";
       const authDocument = { hook: { custom_access_token: { enabled: false } } };
       expect(() => resolveAuthHooks(authDocument, allHooks, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -1424,7 +1422,7 @@ describe("resolveLocalConfigValues", () => {
     it("still rejects a malformed SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED when no remote block matched", () => {
       process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "not-a-bool";
       const mfa = baseConfig().auth.mfa;
-      expect(() => resolveAuthMfa(mfa, undefined)).toThrow('cannot parse "not-a-bool" as a bool');
+      expect(() => resolveAuthMfa(mfa, undefined)).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("prefers a remote-set auth.mfa.phone.template over a conflicting SUPABASE_AUTH_MFA_PHONE_TEMPLATE", () => {
@@ -1490,7 +1488,7 @@ describe("resolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "not-a-bool";
       const authDocument = { email: { smtp: { enabled: true } } };
       expect(() => resolveAuthEmailSmtp(authDocument, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -1626,7 +1624,7 @@ describe("resolveLocalConfigValues", () => {
       };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("leaves an absent custom-provider boolean field at its schema default without throwing", () => {
@@ -1659,7 +1657,7 @@ describe("resolveLocalConfigValues", () => {
       };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "1,2" as a bool');
+      ).toThrow('"1,2" is not a valid boolean');
     });
 
     it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all", () => {
@@ -1743,7 +1741,7 @@ describe("resolveLocalConfigValues", () => {
       const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_ENABLED: "not-a-bool" };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, projectEnvValues),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("prefers a remote-set auth.external.<name>.client_id over a conflicting SUPABASE_AUTH_EXTERNAL_<NAME>_CLIENT_ID", () => {
@@ -1787,7 +1785,7 @@ describe("resolveLocalConfigValues", () => {
 
     it("throws on an unparsable string instead of silently disabling it", () => {
       expect(() => rawUnmodeledBool("not-a-bool", "auth.passkey.enabled")).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -1914,7 +1912,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidSessionReplicationRoleEnvOverrideError,
       );
       expect(() => resolveDbSettingsEnvOverrides({}, undefined)).toThrow(
-        'Invalid config for db.settings.session_replication_role: cannot parse "invalid" as one of "origin", "replica", "local"',
+        'Invalid config for db.settings.session_replication_role: "invalid" must be one of "origin", "replica", "local"',
       );
     });
 
@@ -2270,7 +2268,7 @@ describe("resolveLocalConfigValues", () => {
       const document = { auth: { passkey: { enabled: "not-a-bool" } } };
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
   });
 
@@ -3024,7 +3022,7 @@ describe("resolveLocalConfigValues", () => {
         vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
       };
       expect(() => resolveAuthSms(undefined, configured, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -3215,7 +3213,7 @@ describe("resolveLocalConfigValues", () => {
         },
       };
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
       expect(() =>
         resolveLocalConfigValues(
@@ -3704,7 +3702,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
     const config = baseConfig({ auth: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3727,7 +3725,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_ANALYTICS_ENABLED"] = "not-a-bool";
     const config = baseConfig({ analytics: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for analytics.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for analytics.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3942,7 +3940,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
       auth: { enabled: true, third_party: { firebase: { enabled: false } } },
     });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.third_party.firebase.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.third_party.firebase.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3988,7 +3986,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
     const config = baseConfig({ api: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for api.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for api.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4011,7 +4009,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_STUDIO_ENABLED"] = "not-a-bool";
     const config = baseConfig({ studio: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for studio.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for studio.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4049,7 +4047,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_LOCAL_SMTP_ENABLED"] = "not-a-bool";
     const config = baseConfig({ local_smtp: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for local_smtp.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for local_smtp.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4072,7 +4070,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "not-a-bool";
     const config = baseConfig({ auth: { enable_signup: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.enable_signup: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enable_signup: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4453,7 +4451,7 @@ describe("resolveLocalJwks", () => {
       process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
       const config = baseConfig({ auth: { enabled: false } });
       await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
-        'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+        'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
       );
     });
   });
@@ -4524,7 +4522,7 @@ describe("resolveConfiguredSigningKeys — remoteOverrideKeys (linked shadow pro
     process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
     const config = baseConfig({ auth: { enabled: false } });
     expect(() => resolveConfiguredSigningKeys(config, tempRoot.current, undefined)).toThrow(
-      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 });

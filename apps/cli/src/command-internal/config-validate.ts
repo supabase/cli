@@ -341,7 +341,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
         provider !== "turnstile"
       ) {
         throw new ConfigValidateError(
-          "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+          "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
         );
       }
       if (auth.captcha.enabled) {
@@ -538,7 +538,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     backend !== "bigquery"
   ) {
     throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
+      "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
     );
   }
   if (input.analytics.enabled && backend === "bigquery") {

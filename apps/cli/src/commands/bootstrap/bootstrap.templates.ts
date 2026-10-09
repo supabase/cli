@@ -131,7 +131,7 @@ export const templateServiceLayer = Layer.effect(
         Effect.mapError(
           (cause) =>
             new BootstrapTemplateListError({
-              message: `failed to unmarshal samples: ${cause.message}`,
+              message: `failed to parse samples: ${cause.message}`,
             }),
         ),
       );

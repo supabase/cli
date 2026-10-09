@@ -217,7 +217,7 @@ Status = "2_initiated"
     );
   });
 
-  it("escapes strings like BurntSushi and quotes string-typed timestamps (sso provider)", () => {
+  it("escapes TOML strings and quotes string-typed timestamps (sso provider)", () => {
     const spec = shapeStruct([
       ["created_at", shapePtr(shapeString)],
       [
@@ -314,7 +314,7 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
       new TomlEncodeError().message,
     );
     expect(() => encodeStructToml({ name: "x", desc: "d" }, spec)).toThrow(
-      "toml: cannot encode a map with non-string key type",
+      "cannot encode a map with non-string keys",
     );
   });
 
@@ -346,7 +346,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("renders map elements of mixed interface{} arrays as inline tables like BurntSushi", () => {
+  it("renders map elements of mixed untyped arrays as inline tables", () => {
     const spec = shapeStruct([["default", shapeAny, "Default"]]);
     // Sorted byte order, non-table values before table values.
     expect(encodeStructToml({ default: [{ b: 2, a: 1, C: 3 }, "x"] }, spec)).toBe(
@@ -371,9 +371,9 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("fails on nil elements inside untyped arrays", () => {
+  it("fails on null elements inside untyped arrays", () => {
     const spec = shapeStruct([["default", shapeAny, "Default"]]);
-    const message = "toml: cannot encode array with nil element";
+    const message = "cannot encode an array with a null element";
     expect(() => encodeStructToml({ default: [null, "x"] }, spec)).toThrow(message);
     expect(() => encodeStructToml({ default: [null] }, spec)).toThrow(message);
     expect(() => encodeStructToml({ default: [[null], "x"] }, spec)).toThrow(message);
@@ -389,7 +389,7 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("quotes comma-fraction timestamp-shaped STRINGS like yaml.v3's resolver", () => {
+  it("quotes comma-fraction timestamp-shaped strings", () => {
     const spec = shapeStruct([["s", shapeString, "S"]]);
     expect(encodeStructYaml({ s: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       's: "2026-01-01T00:00:00,123Z"\n',
@@ -412,7 +412,7 @@ SUPABASE_ANON_KEY = "anon"
     ).toBe("default:\n    a10000000000000000000: 2\n    a9000000000000000000: 1\n");
   });
 
-  it("orders Unicode-digit map keys with yaml.v3's naive rune arithmetic", () => {
+  it("orders Unicode-digit map keys by code point, with numeric runs compared by ASCII digits only", () => {
     const spec = shapeStruct([["default", shapeAny, "Default"]]);
     expect(encodeStructYaml({ default: { a٢: 1, a3: 2, a10: 3, a9: 4 } }, spec)).toBe(
       "default:\n    a3: 2\n    a9: 4\n    a10: 3\n    a٢: 1\n",
@@ -564,7 +564,7 @@ updatedat: "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("renders nullable fields the way yaml.v3 renders map[bool]T (api keys)", () => {
+  it("renders nullable fields as a mapping with a plain bool key (api keys)", () => {
     // Mirror of api.ApiKeyResponse.
     const spec = shapeSlice(
       shapeStruct([
@@ -668,7 +668,7 @@ walgenabled: true
     );
   });
 
-  it("quotes strings exactly like yaml.v3's resolver and emitter", () => {
+  it("quotes strings that would resolve to a non-string YAML tag", () => {
     const spec = shapeMap(shapeString);
     const payload = {
       k01: "yes",
@@ -737,7 +737,7 @@ k53: "2001-12-15 2:59:43.10"
     );
   });
 
-  it("renders block literal chomping indicators like yaml.v3", () => {
+  it("renders block literal chomping indicators", () => {
     const spec = shapeMap(shapeString);
     expect(
       encodeStructYaml(
@@ -771,7 +771,7 @@ f6: 1.234567e+06
     );
   });
 
-  it("sorts plain map keys with yaml.v3's natural ordering", () => {
+  it("sorts plain map keys in natural order", () => {
     const spec = shapeMap(shapeString);
     expect(encodeStructYaml({ z: "1", a: "2", "10": "3", "2": "4", B: "5", b: "6" }, spec)).toBe(
       `"2": "4"
@@ -784,9 +784,9 @@ z: "1"
     );
   });
 
-  it("sorts unicode map keys by rune and escapes astral keys like yaml.v3", () => {
-    // keyList.Less compares runes, so the astral U+1F600/U+1D400 sort after U+E000/U+FF21; the
-    // emitter double-quotes astral characters as \U-escapes (not printable to libyaml).
+  it("sorts unicode map keys by code point and double-quotes astral keys with \\U escapes", () => {
+    // Keys compare by code point, so the astral U+1F600/U+1D400 sort after U+E000/U+FF21; the
+    // emitter double-quotes astral characters as \U-escapes (not printable in YAML).
     const spec = shapeMap(shapeString);
     expect(
       encodeStructYaml(
@@ -867,7 +867,7 @@ t12: 1900-02-29
     );
   });
 
-  it("escapes non-printable scalars with \\x/\\u/\\U like yaml.v3's emitter", () => {
+  it("escapes non-printable scalars with \\x/\\u/\\U", () => {
     const spec = shapeMap(shapeString);
     expect(
       encodeStructYaml(
@@ -906,7 +906,7 @@ describe("pascalCaseFieldName", () => {
 });
 
 describe("formatStructFloat", () => {
-  it("formats shortest `%g` digits for 64-bit floats", () => {
+  it("formats shortest round-trip digits for 64-bit floats", () => {
     expect(formatStructFloat(1, 64)).toBe("1");
     expect(formatStructFloat(123456, 64)).toBe("123456");
     expect(formatStructFloat(1000000, 64)).toBe("1e+06");

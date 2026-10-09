@@ -6,12 +6,11 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Byte-stable `-o yaml`/`-o toml` output for struct payloads, following `yaml.v3` and
- * `BurntSushi/toml` conventions. Neither reads `json:` tags, so emitted keys are the
- * PascalCase struct field names, not the snake_case JSON the API returns.
+ * Byte-stable `-o yaml`/`-o toml` output for struct payloads. Emitted keys are the
+ * PascalCase field names declared by the shape, not the snake_case JSON the API returns.
  *
  * Each payload family declares a {@link OutputShape} spec describing the struct so the decoded
- * JSON can be re-expressed with each library's own casing, nil handling, and quoting rules.
+ * JSON can be re-expressed with the established casing, null handling, and quoting rules.
  */
 
 export type OutputShape =
@@ -25,7 +24,7 @@ export type OutputShape =
   /** Untyped value — shape inferred from the JSON value. */
   | { readonly kind: "any" }
   | { readonly kind: "ptr"; readonly elem: OutputShape }
-  /** oapi-codegen `nullable.Nullable[T]` — a `map[bool]T` under the hood. */
+  /** A nullable API field: absent, explicit null, or a value. */
   | { readonly kind: "nullable"; readonly elem: OutputShape }
   | { readonly kind: "slice"; readonly elem: OutputShape }
   | { readonly kind: "map"; readonly value: OutputShape }
@@ -112,7 +111,7 @@ type NormalizedValue =
       readonly nil: boolean;
       readonly entries: ReadonlyArray<readonly [string, NormalizedValue]>;
     }
-  /** `nullable.Nullable[T]`: nil map, `{false: zero}` (explicit null) or `{true: value}`. */
+  /** A nullable field: absent (nil), `{false: zero}` (explicit null) or `{true: value}`. */
   | {
       readonly k: "nullable";
       readonly present: boolean | undefined;
@@ -202,8 +201,7 @@ function normalize(value: unknown, type: OutputShape): NormalizedValue {
     case "ptr":
       return value === undefined || value === null ? { k: "nil" } : normalize(value, type.elem);
     case "nullable":
-      // oapi-codegen: absent key → nil map; explicit JSON null → {false: zero};
-      // value → {true: value}.
+      // Absent key → nil; explicit JSON null → {false: zero}; value → {true: value}.
       if (value === undefined) return { k: "nullable", present: undefined };
       if (value === null) return { k: "nullable", present: false, value: zeroValue(type.elem) };
       return { k: "nullable", present: true, value: normalize(value, type.elem) };
@@ -358,9 +356,8 @@ function roundDecimalDigits(
 }
 
 /**
- * Shortest-digits `%g` formatting: switching to
- * scientific notation when the decimal exponent is < -4 or >= 6 (`eprec = 6` for shortest
- * formatting), with a sign and >= 2 exponent digits.
+ * Shortest round-trip digits, switching to scientific notation when the decimal exponent is
+ * < -4 or >= 6, with a sign and >= 2 exponent digits.
  */
 export function formatStructFloat(value: number, bits: 32 | 64): string {
   if (Number.isNaN(value)) return "NaN";
@@ -431,16 +428,15 @@ function yamlDocument(root: NormalizedValue): string {
 }
 
 /**
- * A populated `nullable.Nullable[T]` is a `map[bool]T`; yaml.v3 renders the
- * bool key plain (`true:` / `false:`), unlike the string keys `"true"` would
- * produce.
+ * A populated nullable renders as a mapping with a plain bool key (`true:` / `false:`),
+ * unlike the quoted string keys `"true"` would produce.
  */
 function yamlNullableBlock(present: boolean, value: NormalizedValue, indent: number): string {
   const pad = " ".repeat(indent);
   return `${pad}${present ? "true" : "false"}:${yamlValueSuffix(value, indent)}`;
 }
 
-/** yaml.v3's indent algorithm: children of a mapping align to the next 4-column stop. */
+/** Children of a mapping align to the next 4-column stop. */
 function yamlNextIndent(indent: number): number {
   return 4 * Math.floor((indent + 4) / 4);
 }
@@ -448,7 +444,7 @@ function yamlNextIndent(indent: number): number {
 function yamlStructEntries(
   entries: ReadonlyArray<readonly [string, NormalizedValue]>,
 ): ReadonlyArray<readonly [string, NormalizedValue]> {
-  // yaml.v3 lowercases field names wholesale (no yaml tags on these structs).
+  // Field names are lowercased wholesale in YAML output.
   return entries.map(([name, value]) => [name.toLowerCase(), value] as const);
 }
 
@@ -477,8 +473,8 @@ export function compareByCodepoint(a: string, b: string): number {
 }
 
 /**
- * yaml.v3's `keyList.Less` natural string ordering. Digit runs use `unicode.IsDigit` (any Unicode
- * `Nd` digit), so a non-ASCII digit like Arabic-Indic sorts by its raw code point and ends up
+ * Natural string ordering: runs of digits compare numerically. Digit runs match any Unicode
+ * `Nd` digit, so a non-ASCII digit like Arabic-Indic sorts by its raw code point and ends up
  * after ASCII digit runs. The ASCII-only {@link isDigit} stays for the scalar parser.
  */
 function yamlKeyLess(a: string, b: string): boolean {
@@ -525,7 +521,7 @@ function yamlKeyLess(a: string, b: string): boolean {
   return ar.length < br.length;
 }
 
-/** yaml.v3 sorter's `unicode.IsDigit` — any Unicode decimal digit (`Nd`). */
+/** Any Unicode decimal digit (`Nd`), as used by the key sorter. */
 function isSortDigit(c: string): boolean {
   return /\p{Nd}/u.test(c);
 }
@@ -604,7 +600,7 @@ function yamlSequence(items: ReadonlyArray<NormalizedValue>, indent: number): st
           break;
         }
         // Compact form: the first key rides on the `- ` line; the block keeps
-        // a +2 indent (yaml.v3 special-cases indent inside sequence items).
+        // a +2 indent (indent inside sequence items is special-cased).
         const block = yamlMapping(entries, indent + 2);
         out += `${pad}- ${block.slice(indent + 2)}`;
         break;
@@ -674,7 +670,7 @@ function yamlKeyScalar(key: string): string {
 type YamlStringStyle = "plain" | "single" | "double" | "literal";
 
 /**
- * yaml.v3's style selection: literal for multi-line strings, double quotes for a string that
+ * Style selection: literal for multi-line strings, double quotes for a string that
  * resolves to a non-string tag, otherwise downgraded from plain to single (or double) based on
  * scalar analysis.
  */
@@ -694,7 +690,7 @@ function yamlStringStyle(s: string): YamlStringStyle {
 }
 
 /**
- * Characters yaml.v3 treats as "special" (not printable) or line breaks other
+ * Characters treated as "special" (not printable) or line breaks other
  * than `\n` — all of these force double-quoted style with escapes. U+2028 and
  * U+2029 are technically YAML line breaks, but every realistic payload
  * containing them round-trips through the double-quoted `\L` / `\P` escapes.
@@ -710,8 +706,7 @@ function yamlHasSpecialChars(s: string): boolean {
 }
 
 /**
- * libyaml's `is_printable` in code-point terms. The byte-oriented original never accepts a 4-byte
- * UTF-8 lead, so every astral character — along with C0/C1 controls, DEL, surrogates, the U+FEFF
+ * YAML printability in code-point terms: every astral character — along with C0/C1 controls, DEL, surrogates, the U+FEFF
  * BOM, and U+FFFE/U+FFFF — is "not printable" and gets double-quoted escapes.
  */
 function yamlIsPrintable(code: number): boolean {
@@ -737,7 +732,7 @@ function yamlPlainDisallowed(s: string): boolean {
 }
 
 /**
- * Would yaml.v3's `resolve("", s)` produce a non-string tag? Also covers the
+ * Would the plain scalar `s` resolve to a non-string YAML tag? Also covers the
  * YAML 1.1 "old bool" and base-60 spellings the encoder force-quotes.
  */
 function yamlResolvesToString(s: string): boolean {
@@ -852,13 +847,11 @@ function parsesAsBaseZeroInt(plain: string): boolean {
 }
 
 /**
- * yaml.v3's `parseTimestamp` layouts, which delegate to `time.Parse` — so calendar dates and zone
- * offsets are validated like `time.Parse` (`2025-02-31` and `2100-02-29` stay plain,
- * `2024-02-29` is a timestamp).
+ * Timestamp layouts with validated calendar dates and zone offsets (`2025-02-31` and
+ * `2100-02-29` stay plain, `2024-02-29` is a timestamp).
  */
 function yamlIsTimestamp(s: string): boolean {
-  // The fraction separator is `.` or `,` — yaml.v3 resolves timestamps through `time.Parse`,
-  // which accepts either.
+  // The fraction separator is `.` or `,`.
   const match =
     /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[.,]\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
       s,
@@ -871,7 +864,7 @@ function yamlIsTimestamp(s: string): boolean {
     if (separator !== " " && offset === undefined) return false;
     if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
   }
-  // time.Parse's zone-offset range checks: the hour is rejected above 24 and the minute above 60
+  // Zone-offset range checks: the hour is rejected above 24 and the minute above 60
   // — `+24:59` and `+00:60` are accepted, `+25:00` and `+23:99` are not.
   if (offset !== undefined && offset !== "Z") {
     if (Number(offset.slice(1, 3)) > 24 || Number(offset.slice(4, 6)) > 60) return false;
@@ -883,7 +876,7 @@ function yamlIsTimestamp(s: string): boolean {
   return true;
 }
 
-/** `time.Parse`'s "day out of range" bound (`daysIn`, proleptic Gregorian). */
+/** Days in a month of the proleptic Gregorian calendar. */
 function daysInMonth(year: number, month: number): number {
   if (month === 2) {
     const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -951,8 +944,7 @@ function yamlDoubleQuoted(s: string): string {
         out += "\\P";
         break;
       default:
-        // Non-printables escape by rune width like yaml.v3's double-quoted
-        // writer: `\xXX`, `\uXXXX`, or `\U00XXXXXX` with uppercase hex.
+        // Non-printables escape as `\xXX`, `\uXXXX`, or `\U00XXXXXX` with uppercase hex.
         if (yamlIsPrintable(code)) {
           out += ch;
         } else if (code <= 0xff) {
@@ -983,7 +975,7 @@ function yamlBlockLiteral(s: string, indent: number): string {
   const indicator = s.startsWith(" ") || s.startsWith("\n") ? "4" : "";
   const lines = s.split("\n");
   if (s.endsWith("\n")) lines.pop();
-  // yaml.v3 merges a leading empty line's break with the header newline (e.g. "\nx" → `|4-\n
+  // A leading empty line's break merges with the header newline (e.g. "\nx" → `|4-\n
   // x\n`).
   if (lines[0] === "") lines.shift();
   const body = lines.map((line) => (line.length === 0 ? "" : `${pad}${line}`)).join("\n");
@@ -991,14 +983,13 @@ function yamlBlockLiteral(s: string, indent: number): string {
 }
 
 /**
- * Thrown when BurntSushi would refuse the payload: a populated
- * `nullable.Nullable` field (`map[bool]T` has a non-string key type — observed
- * on `snippets list -o toml`) or a `nil` element inside an inline array.
+ * Thrown when the payload has no TOML form: a populated nullable field (its bool key is not a
+ * valid TOML key — observed on `snippets list -o toml`) or a null element inside an inline array.
  */
 export class TomlEncodeError extends Error {
   // The fingerprint and `name` are the stable telemetry/output identity of this error.
   static readonly [ErrorActionabilityFingerprintId] = "GoTomlEncodeError";
-  constructor(message = "toml: cannot encode a map with non-string key type") {
+  constructor(message = "cannot encode a map with non-string keys") {
     super(message);
     this.name = "GoTomlEncodeError";
   }
@@ -1010,7 +1001,7 @@ export class TomlEncodeError extends Error {
 
 /**
  * Encodes a decoded payload as `-o toml` output. Returns the full document, which can
- * be empty (BurntSushi emits nothing for an all-nil payload). Throws {@link TomlEncodeError} on
+ * be empty (an all-nil payload emits nothing). Throws {@link TomlEncodeError} on
  * a populated nullable field.
  *
  * Emits nothing on error rather than the accumulated prefix.
@@ -1049,8 +1040,7 @@ function tomlIsTable(value: NormalizedValue): boolean {
     case "nullable":
       return true;
     case "slice":
-      // Array-of-tables only when non-empty with table elements (BurntSushi's
-      // isTableArray returns false for empty slices).
+      // Array-of-tables only when non-empty with table elements.
       return value.tables && value.items.length > 0;
     default:
       return false;
@@ -1080,7 +1070,7 @@ function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: Normali
       tomlTable(state, key, value);
       return;
     case "nullable":
-      // Populated nullable.Nullable[T] is a map[bool]T — BurntSushi panics.
+      // A populated nullable has a bool key, which TOML cannot encode.
       throw new TomlEncodeError();
     case "slice":
       if (tomlIsTable(value)) {
@@ -1095,10 +1085,10 @@ function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: Normali
 }
 
 /**
- * Map/struct entries in BurntSushi's write order: map entries sorted by
+ * Map/struct entries in TOML write order: map entries sorted by
  * {@link compareByCodepoint} (structs keep declaration order), then both
  * partitioned into non-table ("direct") and table ("sub") groups via
- * {@link tomlIsTable} — `eStruct`/`eMap` always write direct fields before
+ * {@link tomlIsTable} — direct fields are always written before
  * sub-tables.
  */
 function tomlOrderedEntries(value: Extract<NormalizedValue, { k: "struct" | "map" }>): {
@@ -1193,14 +1183,14 @@ function tomlElement(value: NormalizedValue): string {
     case "nullable":
       throw new TomlEncodeError();
     case "nil":
-      // BurntSushi's `eElement` rejects nil inline-array elements (`[null, "x"]` fails), while nil
+      // Null inline-array elements are rejected (`[null, "x"]` fails), while null
       // map values are silently skipped.
-      throw new TomlEncodeError("toml: cannot encode array with nil element");
+      throw new TomlEncodeError("cannot encode an array with a null element");
   }
 }
 
 /**
- * BurntSushi's inline-table form, used for map/struct elements of arrays that aren't
+ * The inline-table form, used for map/struct elements of arrays that aren't
  * arrays-of-tables: `{k = v, ...}` with nil entries skipped and non-table values before table
  * values, map keys byte-sorted within each group.
  *
@@ -1239,7 +1229,7 @@ function tomlInlineTable(value: Extract<NormalizedValue, { k: "struct" | "map" }
   return `${out}}`;
 }
 
-/** BurntSushi's `dblQuotedReplacer` escape set. */
+/** The double-quoted TOML string escape set. */
 function tomlQuoted(s: string): string {
   let out = '"';
   for (const ch of s) {

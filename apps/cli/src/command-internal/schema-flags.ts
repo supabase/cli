@@ -15,7 +15,7 @@ export const parseSchemaFlags = parseStringSliceFlag;
 // Whether a CSV field must be quoted (so a printed
 // suggestion round-trips through the same CSV parsing rules `--schema` values use): never quote
 // the empty string; always quote `\.`; quote when the field contains `,`, `"`, `\r`, or `\n`;
-// otherwise quote when the first rune is whitespace.
+// otherwise quote when the first character is whitespace.
 function fieldNeedsQuotes(field: string): boolean {
   if (field === "") return false;
   if (field === "\\.") return true;

@@ -167,7 +167,7 @@ export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-curre
   const rawBody = yield* response.text;
   return yield* parseJsonObject(
     rawBody,
-    (description) => `failed to unmarshal response body: ${description}`,
+    (description) => `failed to parse response body: ${description}`,
     (args) => new PostgresConfigGetUnmarshalError(args),
   );
 });
@@ -185,10 +185,10 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
     readonly body: string;
     readonly message: string;
   }) => StatErr;
-  readonly unmarshalError: (args: { readonly message: string }) => UnmErr;
+  readonly parseError: (args: { readonly message: string }) => UnmErr;
   readonly networkMessage: (description: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-  readonly unmarshalMessage: (description: string) => string;
+  readonly parseMessage: (description: string) => string;
 }
 
 export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
@@ -244,7 +244,7 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   }
 
   const rawBody = yield* response.text;
-  return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
+  return yield* parseJsonObject(rawBody, errors.parseMessage, errors.parseError);
 });
 
 export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output")(function* (

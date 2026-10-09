@@ -185,7 +185,7 @@ describe("functions list integration", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
-      // BurntSushi indents array-of-table keys by 2 spaces.
+      // Array-of-table keys are indented by 2 spaces.
       expect(out.stdoutText).toContain(`[[functions]]
   CreatedAt = 1687423025152
   EntrypointPath = "functions/hello-world/index.ts"

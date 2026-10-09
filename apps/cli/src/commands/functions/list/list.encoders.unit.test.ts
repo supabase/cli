@@ -137,7 +137,7 @@ describe("list encoders", () => {
   importmappath: null`);
   });
 
-  it("keeps TOML keys in struct order with BurntSushi's 2-space indentation", () => {
+  it("keeps TOML keys in struct order with a 2-space indentation", () => {
     expect(encodeFunctionsListToml({ functions: [SAMPLE_FUNCTION], isNil: false })).toBe(
       `[[functions]]
   CreatedAt = 1687423025152

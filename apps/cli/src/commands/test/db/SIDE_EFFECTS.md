@@ -117,18 +117,17 @@ command (exit 1).
   connections honor the URL's `sslmode` —
   `disable` → plaintext, `verify-ca` / `verify-full` → TLS **with** certificate
   verification, and everything else (`prefer` / `require` / unset) → TLS **without**
-  verification (mirroring pgx's default for `prefer`/`require`, non-TLS fallbacks stripped).
+  verification (non-TLS fallbacks stripped).
 - `--db-url` accepts both the WHATWG `postgres(ql)://…` URL form and the libpq
-  keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), matching
-  pgconn's parsing. The `sslmode` and libpq `options` (Supavisor
+  keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), following libpq parsing. The `sslmode` and libpq `options` (Supavisor
   `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or
   percent escape surfaces as a redacted `failed to parse connection string` error, never
   an unhandled defect.
 - Multi-host failover connection strings (`postgres://h1:5432,h2:5433/db`,
-  `host=h1,h2 port=5432,5433`) are supported on both forms, matching pgconn's
+  `host=h1,h2 port=5432,5433`) are supported on both forms, following libpq's
   connection-string handling: the primary host is dialed first, then each fallback in order,
   reusing the first port when a host omits one.
-- Password precedence matches pgconn/libpq semantics: a password supplied by
+- Password precedence matches libpq semantics: a password supplied by
   the connection string — **even an explicit empty one** (`user:@host`, `?password=`,
   `password=`) — overrides `PGPASSWORD`; an empty resolved value then falls through to
   `.pgpass`. A connection string with no password key at all uses `PGPASSWORD` then

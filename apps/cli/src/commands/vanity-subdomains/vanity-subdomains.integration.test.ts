@@ -191,7 +191,7 @@ describe("vanity-subdomains get", () => {
     return Effect.gen(function* () {
       yield* vanitySubdomainsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: custom-domain-used");
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
@@ -497,7 +497,7 @@ describe("vanity-subdomains activate", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });

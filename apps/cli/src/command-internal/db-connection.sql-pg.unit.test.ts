@@ -135,7 +135,7 @@ describe("sslOptionFor", () => {
     expect(sslOptionFor(undefined, false, undefined)).toEqual({ rejectUnauthorized: false });
   });
 
-  it("treats prefer/require as TLS without verification (their pgconn primary)", () => {
+  it("treats prefer/require as TLS without verification (their primary mode)", () => {
     expect(sslOptionFor("prefer", false, undefined)).toEqual({ rejectUnauthorized: false });
     expect(sslOptionFor("require", false, undefined)).toEqual({ rejectUnauthorized: false });
   });
@@ -151,7 +151,7 @@ describe("sslOptionFor", () => {
     });
   });
 
-  it("verifies the CA chain but skips hostname for verify-ca (pgconn parity)", () => {
+  it("verifies the CA chain but skips hostname for verify-ca", () => {
     const ssl = sslOptionFor("verify-ca", false, undefined);
     expect(ssl).toMatchObject({ rejectUnauthorized: true });
     if (typeof ssl === "object" && ssl !== null) {
@@ -160,7 +160,7 @@ describe("sslOptionFor", () => {
     }
   });
 
-  it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
+  it("attaches the client cert (cert/key/passphrase) to every TLS mode", () => {
     const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
     expect(sslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject({
       cert: "CERT",
@@ -203,7 +203,7 @@ describe("sslOptionFor", () => {
   });
 });
 
-describe("sslConfigsFor (pgconn fallback list)", () => {
+describe("sslConfigsFor (fallback list)", () => {
   it("local connections try a single plaintext (no-TLS) config", () => {
     expect(sslConfigsFor(undefined, true, undefined)).toEqual([false]);
   });
@@ -212,7 +212,7 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     expect(sslConfigsFor("disable", false, undefined)).toEqual([false]);
   });
 
-  it("allow is plaintext primary with a TLS fallback ({nil, tlsConfig})", () => {
+  it("allow is plaintext primary with a TLS fallback (plaintext first, then TLS)", () => {
     expect(sslConfigsFor("allow", false, undefined)).toEqual([
       false,
       { rejectUnauthorized: false },
@@ -520,14 +520,14 @@ describe("isUnixSocketHost", () => {
     expect(isUnixSocketHost("::1")).toBe(false);
   });
 
-  it("treats an uppercase Windows drive path as a socket, lowercase as TCP (pgconn parity)", () => {
+  it("treats an uppercase Windows drive path as a socket, lowercase as TCP", () => {
     expect(isUnixSocketHost("C:\\pgsql")).toBe(true);
     expect(isUnixSocketHost("c:\\pgsql")).toBe(false);
     expect(isUnixSocketHost("C:")).toBe(false);
   });
 });
 
-describe("isTerminalConnectError (pgconn fallback termination)", () => {
+describe("isTerminalConnectError (fallback termination)", () => {
   it("terminates on auth/catalog/privilege SQLSTATEs carried on the error cause", () => {
     // The pg driver attaches the SQLSTATE as `code`; @effect/sql wraps it in `cause`.
     expect(isTerminalConnectError({ cause: { code: "28P01" } }, false)).toBe(true);
@@ -535,7 +535,7 @@ describe("isTerminalConnectError (pgconn fallback termination)", () => {
     expect(isTerminalConnectError({ code: "42501" }, false)).toBe(true);
   });
 
-  it("gates 28000 on the attempt having used TLS (pgconn fc.TLSConfig != nil)", () => {
+  it("gates 28000 on the attempt having used TLS (a TLS attempt is required)", () => {
     expect(isTerminalConnectError({ code: "28000" }, true)).toBe(true);
     expect(isTerminalConnectError({ code: "28000" }, false)).toBe(false);
   });
@@ -568,7 +568,7 @@ describe("toExecError (pg server-error extraction)", () => {
       }),
     });
 
-  it("renders pgconn's PgError message and carries code, detail, and position", () => {
+  it("renders the server error message and carries code, detail, and position", () => {
     const error = toExecError(
       sqlErrorChain({
         message: 'type "ltree" does not exist',

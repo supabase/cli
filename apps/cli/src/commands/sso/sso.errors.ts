@@ -51,7 +51,7 @@ export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")
 }
 
 // Shared across list/show. Reachable when an `attribute_mapping` `default`
-// value can't be encoded (e.g. an array with a nil element).
+// value can't be encoded (e.g. an array with a null element).
 export class SsoTomlEncodeError extends Data.TaggedError("SsoTomlEncodeError")<{
   readonly message: string;
 }> {

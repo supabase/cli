@@ -96,14 +96,14 @@ describe("parseLintResult", () => {
     });
   });
 
-  it("decodes a null array element to the zero-value Issue{}", () => {
-    // Included in the slice, not skipped; `filterLintResult` later drops it since
+  it("decodes a null array element to an empty issue", () => {
+    // Included in the issues array, not skipped; `filterLintResult` later drops it since
     // `toEnum("")` returns -1.
     const result = parseLintResult(`{"issues":[null]}`, "public.f");
     expect(result.issues).toEqual([{ level: "", message: "" }]);
   });
 
-  it("null element alongside real issues normalizes to zero-value without throwing", () => {
+  it("null element alongside real issues normalizes to an empty issue without throwing", () => {
     const result = parseLintResult(
       `{"issues":[null,{"level":"error","message":"boom"}]}`,
       "public.f",

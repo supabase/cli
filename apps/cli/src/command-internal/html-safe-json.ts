@@ -17,7 +17,7 @@ function unicodeEscape(codeUnit: number): string {
 
 /**
  * Quotes and escapes a string with HTML escaping.
- * Iterates by UTF-16 code unit; the only non-ASCII runes escaped (U+2028, U+2029) are single
+ * Iterates by UTF-16 code unit; the only non-ASCII characters escaped (U+2028, U+2029) are single
  * BMP code units, so code units suffice.
  */
 export function escapeHtmlSafeJsonString(value: string): string {

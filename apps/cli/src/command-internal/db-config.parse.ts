@@ -157,7 +157,7 @@ function unbracketIpv6(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
-/** Sentinel for a present-but-non-numeric `connect_timeout` (pgconn parse error). */
+/** Sentinel for a present-but-non-numeric `connect_timeout` (parse error). */
 const CONNECT_TIMEOUT_INVALID = Symbol("connect-timeout-invalid");
 
 /**

@@ -1,6 +1,5 @@
 /**
- * Connection-error classification and rendering ported from the established
- * connect helpers and pgconn's `connectError`.
+ * Connection-error classification and rendering.
  * Used by the container-level pooler fallback (`db dump --linked`) to decide
  * whether a failed pg_dump/pg container was an IPv6 connectivity failure that
  * warrants retrying through the IPv4 transaction pooler, and by the connection
@@ -29,7 +28,7 @@ export function ipv6Suggestion(): string {
 const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
 // Node's dial-failure shape (`connect ENETUNREACH 2600:…:5432`). The port may be
 // followed by whitespace, end-of-string, or a closing paren — the connect-failure
-// message renders the driver cause parenthesized (pgconn `dial error (…)` form).
+// message renders the driver cause parenthesized (`dial error (…)` form).
 const NODE_ENETUNREACH_PATTERN = /\benetunreach\s+([0-9a-fA-F:]+):\d+(?:[\s)]|$)/i;
 
 /**
@@ -86,8 +85,8 @@ export interface ConnectSuggestionContext {
  * and `code`. The `@effect/sql` `SqlError` wraps the node-postgres/node `net` driver error on
  * its `cause`; a multi-address dial wraps an `AggregateError` whose `errors[]` carry the
  * per-IP `ECONNREFUSED`/`ENETUNREACH` system errors — an aggregate node contributes nothing
- * itself and only its last child is visited, since pgconn's own fallback loop overwrites its
- * error on every attempt so only the last one survives. The parent's own fields are skipped:
+ * itself and only its last child is visited, since each attempt overwrites the previous error
+ * so only the last one survives. The parent's own fields are skipped:
  * node's `aggregateErrors` copies `errors[0].code` onto the aggregate itself (`lib/internal/
  * errors.js`, Bun matches), so reading them would blame an abandoned first attempt.
  */
@@ -126,7 +125,7 @@ export interface ConnectFailureTarget {
  * Walks to the deepest underlying driver error: unwraps `cause` chains (the `@effect/sql`
  * `SqlError` exposes its `ConnectionError` reason as `cause`, and the reason exposes the
  * node-postgres error the same way) and descends into the last entry of an `AggregateError`'s
- * `errors[]` — pgconn's multi-address fallback loop likewise surfaces the last attempt's error.
+ * `errors[]` — the last attempt's error is the one surfaced.
  */
 function deepestConnectCause(error: unknown): unknown {
   let current: unknown = error;
@@ -146,8 +145,8 @@ function deepestConnectCause(error: unknown): unknown {
   return current;
 }
 
-// Node/Bun errno codes raised while dialing the server — pgconn wraps the
-// equivalent net.Dial failures as `dial error (…)`.
+// Node/Bun errno codes raised while dialing the server, rendered as
+// `dial error (…)`.
 const DIAL_ERROR_CODES = new Set([
   "ECONNREFUSED",
   "ETIMEDOUT",
@@ -179,8 +178,7 @@ export function isDialFailure(error: unknown): boolean {
 // The complete documented Node/OpenSSL X509 certificate-verification code
 // family (Node tls docs "X509 certificate error codes", OpenSSL's
 // `X509_verify_cert_error` set), complemented by node's ERR_TLS_*/ERR_SSL_*
-// prefixes at the use site. pgconn stages by connection phase — any `startTLS`
-// failure becomes `tls error (…)` — but node exposes no
+// prefixes at the use site. Any TLS-phase failure renders as `tls error (…)`, but node exposes no
 // phase marker, so the full code family is the proxy. These strings are unique
 // to TLS-layer verification: server SQLSTATEs and dial/DNS `E…` errnos are
 // classified by earlier branches.
@@ -215,13 +213,13 @@ const TLS_ERROR_CODES = new Set([
   "HOSTNAME_MISMATCH",
 ]);
 // node-postgres' own message when the server answers `N` to SSLRequest
-// (`pg/lib/connection.js`); pgconn: `tls error (server refused TLS connection)`.
+// (`pg/lib/connection.js`); rendered as `tls error (server refused TLS connection)`.
 const SERVER_REFUSED_SSL = "The server does not support SSL connections";
 // Node/Bun's TLS-socket message when the server accepts SSLRequest but closes
 // the socket before the handshake completes (node `lib/_tls_wrap.js`
 // `onConnectEnd`; Bun emits the same text for both FIN and RST). Phase-specific
 // by construction — only ever raised pre-secure-connection — so it maps to
-// pgconn's startTLS stage (`tls error (…)`). Its code is
+// the TLS stage (`tls error (…)`). Its code is
 // ECONNRESET, absent from DIAL_ERROR_CODES: a raw
 // post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
 const TLS_DISCONNECT_MESSAGE =
@@ -240,24 +238,17 @@ const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 export const isSqlState = (code: string): boolean => SQLSTATE_PATTERN.test(code);
 
 /**
- * Render the underlying driver failure the way pgconn stages its
- * `connectError.msg` (`server error` / `hostname resolving error` /
+ * Render the underlying driver failure by stage (`server error` / `hostname resolving error` /
  * `dial error` / `tls error`, each with the cause parenthesized).
- * A server ErrorResponse reproduces pgconn's `PgError`
- * rendering byte-for-byte (`Severity: Message (SQLSTATE Code)`);
- * for the other stages the parenthesized text is the node driver's own message,
- * which cannot byte-match libpq/pgconn wording (e.g. node's
- * `connect ECONNREFUSED 1.2.3.4:5432` vs
- * `dial tcp 1.2.3.4:5432: connect: connection refused`). An unrecognized cause
- * (e.g. node-postgres' `Connection terminated unexpectedly`, where pgconn would
- * say `failed to receive message (unexpected EOF)`) is rendered verbatim rather
+ * A server ErrorResponse renders as `Severity: Message (SQLSTATE Code)`;
+ * for the other stages the parenthesized text is the node driver's own message
+ * (e.g. `connect ECONNREFUSED 1.2.3.4:5432`). An unrecognized cause
+ * (e.g. node-postgres' `Connection terminated unexpectedly`) is rendered verbatim rather
  * than guessing a stage.
  *
- * Known stage-label caveat: pgconn labels by auth phase, which node-postgres
- * does not expose — a wrong password over SCRAM arrives mid-SASL, so pgconn renders
- * `failed SASL auth (FATAL: password authentication failed … (SQLSTATE 28P01))`
- * where this renders `server error (…)` with the identical
- * inner `PgError` bytes. The suggestion classifier keys off the inner text, so
+ * Known stage-label caveat: node-postgres does not expose the auth phase, so a wrong password
+ * over SCRAM arrives mid-SASL and renders as `server error (…)` with the same inner server-error
+ * text a SASL-stage label would carry. The suggestion classifier keys off the inner text, so
  * the `SUPABASE_DB_PASSWORD` hint fires identically either way.
  */
 function connectCauseDetail(cause: unknown): string {
@@ -293,10 +284,9 @@ function connectCauseDetail(cause: unknown): string {
 }
 
 /**
- * Port of pgconn's `connectError.Error()`, the inner text of
- * `failed to connect to postgres: <cause>` wrap:
+ * The inner text of the `failed to connect to postgres: <cause>` wrap:
  * `` failed to connect to `host=… user=… database=…`: <staged driver cause> ``.
- * Callers pass the connection config (pgconn embeds the config-level identity)
+ * Callers pass the connection config (its identity is embedded in the message)
  * and the raw failure — either the `@effect/sql` `SqlError`
  * from the pooled connect probe or the bare node-postgres error from the raw
  * client, both unwrapped by {@link deepestConnectCause}.
@@ -344,7 +334,7 @@ function hasIPv6DialCause(error: unknown, depth = 0): boolean {
  * `SqlError` cause/aggregate chain. Returns `undefined` when no specific suggestion applies.
  *
  * The rendered message ({@link connectFailureMessage}) and this classifier inspect the same
- * surfaced attempt: pgconn's fallback loop keeps only the last error on every attempt, so the
+ * surfaced attempt: only the last attempt's error survives, so the
  * collectors above descend into only the last aggregate child too — the displayed cause and
  * the suggestion can never disagree.
  */

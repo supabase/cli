@@ -487,7 +487,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${typeName}'`,
+                `db.migrations.schema_paths[0]: expected a string, got ${typeName}`,
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -515,7 +515,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'offset date-time'",
+                "db.migrations.schema_paths[1]: expected a string, got offset date-time",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -536,7 +536,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'offset date-time'",
+                "db.seed.sql_paths[0]: expected a string, got offset date-time",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -559,7 +559,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'table'",
+                "db.migrations.schema_paths[0]: expected a string, got table",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -599,7 +599,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'array'",
+                "failed to parse config:\\ndb.migrations.schema_paths[0]: expected a string, got array",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -622,7 +622,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'table'",
+                "db.migrations.schema_paths[1]: expected a string, got table",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -643,7 +643,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'array'",
+                "db.seed.sql_paths[0]: expected a string, got array",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -654,7 +654,7 @@ describe("readDbToml", () => {
   );
 
   it.effect(
-    "aggregates unconvertible-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error",
+    "aggregates non-string-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error",
     () => {
       const dir = withConfig(
         ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
@@ -668,10 +668,8 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               const message = JSON.stringify(exit.cause);
-              const schemaIssue =
-                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'array'";
-              const seedIssue =
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'array'";
+              const schemaIssue = "db.migrations.schema_paths[0]: expected a string, got array";
+              const seedIssue = "db.seed.sql_paths[0]: expected a string, got array";
               expect(message).toContain(schemaIssue);
               expect(message).toContain(seedIssue);
               expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
@@ -2949,7 +2947,7 @@ describe("readDbToml auth.Enabled validation", () => {
   it.effect("rejects an unknown captcha provider, regardless of enabled", () =>
     failsWith(
       ["[auth.captcha]", "enabled = false", 'provider = "cloudflare"'],
-      "'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+      "auth.captcha.provider: must be one of hcaptcha, turnstile",
     ),
   );
 });
@@ -3111,7 +3109,7 @@ describe("readDbToml [analytics] validation", () => {
   it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
     failsWith(
       ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
-      "'analytics.backend' must be one of [postgres bigquery]",
+      "analytics.backend: must be one of postgres, bigquery",
     ),
   );
   it.effect("rejects bigquery analytics missing gcp_project_id", () =>

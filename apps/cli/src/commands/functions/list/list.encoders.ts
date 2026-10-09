@@ -255,7 +255,7 @@ export function encodeFunctionsListYaml(functions: Functions): string {
 }
 
 export function encodeFunctionsListToml(parsed: ParsedFunctions): string {
-  // A JSON `null` body is a nil list (BurntSushi emits nothing), while `[]` is a
+  // A JSON `null` body is a nil list (nothing is emitted), while `[]` is a
   // non-nil empty list (`functions = []`).
   return encodeStructToml(
     { functions: parsed.isNil ? undefined : parsed.functions },

@@ -307,8 +307,8 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a local float8 column in `%g` form, integer columns plain", () => {
-    // OIDs: int8=20 → plain; float8=701 → %g (select 1000000::int8, 1000000::float8).
+  it.live("renders a local float8 column in exponent notation, integer columns plain", () => {
+    // OIDs: int8=20 → plain; float8=701 → exponent form (select 1000000::int8, 1000000::float8).
     const { layer, out } = setup({
       result: {
         fields: ["n", "f"],

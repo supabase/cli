@@ -60,9 +60,9 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a large integral config value in `%g` form in the pretty table", () => {
-    // The established table output renders every JSON number as a float64 with shortest `%g`
-    // formatting, so 1000000 renders as `1e+06`, never `1000000`.
+  it.live("renders a large integral config value in exponent notation in the pretty table", () => {
+    // The table renders every JSON number as a float64 in shortest round-trip form, so 1000000
+    // renders as `1e+06`, never `1000000`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 1000000 } },

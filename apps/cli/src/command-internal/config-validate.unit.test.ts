@@ -1289,7 +1289,7 @@ describe("validateResolvedConfig", () => {
           }),
         ),
       ).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+        "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
       );
     });
   });

@@ -294,7 +294,9 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("Invalid config for api.port: cannot parse");
+        expect(Cause.pretty(exit.cause)).toContain(
+          'Invalid config for api.port: "not-a-port" is not a valid port',
+        );
       }
       expect(requests).toHaveLength(0);
     }).pipe(seedScenario),
@@ -1297,7 +1299,9 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("Invalid config for api.port: cannot parse");
+        expect(causeText).toContain(
+          'Invalid config for api.port: "not-a-port" is not a valid port',
+        );
         expect(causeText).toContain("not-a-port");
       }
       expect(requests).toHaveLength(0);
@@ -1436,7 +1440,9 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("Invalid config for api.tls.enabled: cannot parse");
+        expect(causeText).toContain(
+          'Invalid config for api.tls.enabled: "notabool" is not a valid boolean',
+        );
         expect(causeText).toContain("notabool");
       }
       expect(requests).toHaveLength(0);
@@ -2887,7 +2893,7 @@ describe("stack backend", () => {
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("StorageConfigError");
-        expect(causeText).toContain("Invalid config for api.port: cannot parse");
+        expect(causeText).toContain('Invalid config for api.port: "notaport" is not a valid port');
       }
       expect(requests).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer)),

@@ -187,7 +187,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=yaml encodes the provider with yaml.v3's byte shape", () => {
+  it.live("--output=yaml encodes the provider with the established byte shape", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -212,7 +212,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml encodes the provider with BurntSushi's byte shape", () => {
+  it.live("--output=toml encodes the provider with the established byte shape", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({

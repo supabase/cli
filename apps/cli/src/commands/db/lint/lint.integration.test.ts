@@ -270,7 +270,7 @@ describe("db lint", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("failed to marshal json");
+        expect(causeText).toContain("failed to parse lint result");
       }
     }).pipe(Effect.provide(layer));
   });

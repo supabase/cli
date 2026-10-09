@@ -1,7 +1,7 @@
 import { DateTime, Option } from "effect";
 
 import { formatGeneralFloat } from "../../../command-internal/format-float.ts";
-import { stringWidth } from "../../../command-internal/rune-width.ts";
+import { stringWidth } from "../../../command-internal/string-width.ts";
 
 // `JSON.rawJSON` (ES2025, in Bun) wraps a string so `JSON.stringify` emits it verbatim as a
 // number token, used for exact int8/bigint precision. TypeScript's bundled lib doesn't declare it.
@@ -19,7 +19,7 @@ declare global {
 
 /**
  * Formats a decoded JSON value: objects as `map[k:v ...]` with byte-sorted keys, arrays as
- * space-separated `[a b ...]`, booleans as `true`/`false`, numbers via `%g`-style formatting,
+ * space-separated `[a b ...]`, booleans as `true`/`false`, numbers in shortest round-trip form,
  * and nested `nil` as `<nil>`.
  */
 function formatJsonValue(value: unknown): string {
@@ -53,7 +53,7 @@ export function formatValue(value: unknown): string {
 
 /**
  * Formats `--linked` table/CSV cell values. The API response decodes every number as a JSON
- * float, so numbers render via `%g`-style formatting (`1000000` → `1e+06`) instead of staying
+ * float, so numbers render in shortest round-trip form (`1000000` → `1e+06`) instead of staying
  * plain like the local path's `formatValue`; JSON output re-marshals the raw values instead.
  */
 export function formatLinkedValue(value: unknown): string {
@@ -62,7 +62,7 @@ export function formatLinkedValue(value: unknown): string {
 }
 
 // Postgres `float4` / `float8` type OIDs. node-postgres parses both to JS
-// numbers; table/CSV cells render them via `%g` (established output contract).
+// numbers; table/CSV cells render them in shortest round-trip form.
 const PG_FLOAT4_OID = 700;
 const PG_FLOAT8_OID = 701;
 
@@ -163,8 +163,8 @@ function formatDate(d: Date): string {
 
 /**
  * Per-column cell formatter for the local/`--db-url` path: `date`/`timestamp`/`timestamptz`
- * columns render via the established timestamp format, `float4`/`float8` via `%g`-style
- * formatting (`1000000` → `1e+06`), everything else via `formatValue` so integers stay plain.
+ * columns render via the established timestamp format, `float4`/`float8` in shortest round-trip
+ * form (`1000000` → `1e+06`), everything else via `formatValue` so integers stay plain.
  */
 export function makeLocalCellFormatter(
   fieldTypeIds: ReadonlyArray<number>,

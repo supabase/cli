@@ -35,7 +35,7 @@ describe("formatValue", () => {
     expect(formatValue([])).toBe("[]");
   });
 
-  it("renders nested JSON numbers in `%g` form", () => {
+  it("renders nested JSON numbers in shortest round-trip form", () => {
     expect(formatValue([1000000, 1234567, 999999, 0.5, 100.5])).toBe(
       "[1e+06 1.234567e+06 999999 0.5 100.5]",
     );
@@ -51,7 +51,7 @@ describe("formatValue", () => {
 });
 
 describe("formatLinkedValue", () => {
-  it("renders top-level JSON numbers in `%g` form", () => {
+  it("renders top-level JSON numbers in shortest round-trip form", () => {
     expect(formatLinkedValue(1000000)).toBe("1e+06");
     expect(formatLinkedValue(1234567)).toBe("1.234567e+06");
     expect(formatLinkedValue(999999)).toBe("999999");
@@ -66,14 +66,14 @@ describe("formatLinkedValue", () => {
     expect(formatLinkedValue({ k: "v", z: 1 })).toBe("map[k:v z:1]");
   });
 
-  it("local formatValue keeps top-level integers plain (no %g)", () => {
+  it("local formatValue keeps top-level integers plain (no exponent notation)", () => {
     expect(formatValue(1000000)).toBe("1000000");
   });
 });
 
 describe("makeLocalCellFormatter", () => {
   // OIDs: int4=23, float4=700, float8=701, text=25.
-  it("renders float4/float8 columns with %g and integer columns plain", () => {
+  it("renders float4/float8 columns in shortest round-trip form and integer columns plain", () => {
     const fmt = makeLocalCellFormatter([23, 701, 700]);
     expect(fmt(1000000, 0)).toBe("1000000");
     expect(fmt(1000000, 1)).toBe("1e+06");
@@ -168,7 +168,7 @@ describe("coerceLocalJsonRows", () => {
 });
 
 describe("renderTablewriter", () => {
-  it("applies a custom cell formatter (linked %g) when provided", () => {
+  it("applies a custom cell formatter (linked float form) when provided", () => {
     const out = renderTablewriter(["n"], [[1000000]], formatLinkedValue);
     expect(out).toContain("1e+06");
     expect(renderTablewriter(["n"], [[1000000]])).toContain("1000000");
@@ -217,7 +217,7 @@ describe("renderTablewriter", () => {
     );
   });
 
-  it("sizes columns by terminal rune width so CJK cells stay aligned", () => {
+  it("sizes columns by terminal display width so CJK cells stay aligned", () => {
     // "日本語" is 6 display columns, not 3 code points.
     const out = renderTablewriter(["name"], [["日本語"], ["ab"]]);
     expect(out).toBe(

@@ -194,7 +194,7 @@ describe("snippets list integration", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("SnippetsTomlEncodeError");
         expect(causeText).toContain(
-          "failed to output toml: toml: cannot encode a map with non-string key type",
+          "failed to output toml: cannot encode a map with non-string keys",
         );
       }
     }).pipe(Effect.provide(layer));

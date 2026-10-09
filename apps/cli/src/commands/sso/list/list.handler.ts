@@ -92,7 +92,7 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
         return;
       }
       if (outputFlagFormat === "toml") {
-        // TOML encode failure wrapping (e.g. a nil element in an
+        // TOML encode failure wrapping (e.g. a null element in an
         // attribute-mapping `default` array).
         const toml = yield* Effect.try({
           try: () => encodeStructToml(payload, SSO_PROVIDERS_WRAPPER_SHAPE),

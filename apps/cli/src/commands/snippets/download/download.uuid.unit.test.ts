@@ -99,7 +99,7 @@ describe("parseSnippetUuid", () => {
       });
     });
 
-    it("renders a rune split by the 9-byte prefix slice as a lone \\xNN escape", () => {
+    it("renders a code point split by the 9-byte prefix slice as a lone \\xNN escape", () => {
       // 8 ASCII + é (2 bytes) + 35 = 45 bytes; byte 9 splits é, so the escaped
       // form is "12345678\xc3".
       expect(parseSnippetUuid(`12345678é${canonical.slice(0, 35)}`)).toEqual({
