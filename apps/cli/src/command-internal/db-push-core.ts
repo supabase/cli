@@ -230,6 +230,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
           if (seed.consent !== undefined) yield* seedConsentDryRunNote(seed.consent, yes);
         }
       } else {
+        const seedConsented = seeds.length > 0 && seed.consent !== undefined;
         if (seeds.length > 0 && seed.consent !== undefined) {
           const consented = yield* confirmSeedIntoMatchedRemote({
             command: "push",
@@ -289,12 +290,14 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
         }
 
         if (seeds.length > 0) {
-          const ok = yield* promptYesNo(
-            output,
-            yes,
-            `Do you want to seed the ${databaseName} with these files?\n${confirmSeedAll(seeds)}`,
-            true,
-          );
+          const ok =
+            seedConsented ||
+            (yield* promptYesNo(
+              output,
+              yes,
+              `Do you want to seed the ${databaseName} with these files?\n${confirmSeedAll(seeds)}`,
+              true,
+            ));
           if (!ok) {
             return yield* Effect.fail(
               new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),

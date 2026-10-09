@@ -135,7 +135,8 @@ Nothing was changed.`) before any write; piped stdin is read for one line, and a
   in the base config, and the matched remote still asks for consent unless it
   declares `enabled = true` itself.
 - **Prompt order**: seed consent (matched remote only) → custom roles →
-  migrations → seeds; each defaults to "yes" and declining returns `context canceled`.
+  migrations → seeds (not asked again once seed consent is given); each prompt except
+  seed consent defaults to "yes" and declining returns `context canceled`.
 - **`--dry-run`** prints the plan (roles / migrations / seeds) and applies nothing.
 - **`[db.migrations].enabled = false`** / **`[db.seed].enabled = false`** print a
   skip notice naming the project ref (empty for local/db-url).

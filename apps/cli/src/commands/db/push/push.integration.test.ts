@@ -702,13 +702,22 @@ describe("db push", () => {
       conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"));
 
     it.live("asks first, naming the ref, the remote and the files, defaulting to no", () => {
-      const { layer, out, conn } = remoteSeed({ confirm: [true, true] });
+      const { layer, out, conn } = remoteSeed({ confirm: [true] });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
         expect(out.promptConfirmCalls[0]?.message).toBe(
           `Project ${VALID_REF} matches [remotes.preview]. Run 1 seed file (supabase/seed.sql) against it?`,
         );
         expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(seeded(conn)).toBe(true);
+      });
+    });
+
+    it.live("asks about seeding once after the matched-remote consent is given", () => {
+      const { layer, out, conn } = remoteSeed({ confirm: [true] });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toHaveLength(1);
         expect(seeded(conn)).toBe(true);
       });
     });
