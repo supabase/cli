@@ -29,6 +29,8 @@ export interface HttpRoute {
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
   readonly keyRewrite?: HttpRouteKeyRewrite;
+  /** Sends each write over a fresh upstream connection; reads still share the pool and its retry. */
+  readonly freshWrites?: boolean;
 }
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
@@ -388,8 +390,15 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
         agent,
         method: request.method,
         path: pathFor(request, route),
-        // Bun ends a streamed upstream response early when the request says Connection: close.
-        headers: { ...upstreamHeadersFor(request.headers, route), connection: "keep-alive" },
+        // Bun ends a streamed upstream response early when the request says Connection: close,
+        // and sends a GET or DELETE body unframed unless the request says it is chunked.
+        headers: {
+          ...upstreamHeadersFor(request.headers, route),
+          ...(request.headers["transfer-encoding"] === undefined
+            ? {}
+            : { "transfer-encoding": "chunked" }),
+          connection: "keep-alive",
+        },
       },
       (value) => {
         incoming = value;
@@ -444,7 +453,7 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
         response,
         route,
         backend,
-        isReplayable(request) ? agent : false,
+        route.freshWrites === true && !isReplayable(request) ? false : agent,
         sent,
       ).pipe(
         Effect.catchIf(isRetryable(request, response), (error) =>
@@ -595,7 +604,8 @@ export const makeHttpProxy = (options: {
   Effect.gen(function* () {
     const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
     // Sockets per upstream stay unbounded so long-lived streamed responses never queue requests.
-    // Idle sockets close before Node upstreams' default 5 s keep-alive timeout can race a reuse.
+    // Idle sockets close before an upstream's 5 s keep-alive timeout, the shortest in the stack,
+    // can race a reuse.
     const agent = yield* Effect.acquireRelease(
       Effect.sync(() => new Agent({ keepAlive: true, timeout: 4_000 })),
       (value) => Effect.sync(() => value.destroy()),
