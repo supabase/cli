@@ -715,12 +715,9 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("skips the ignored-files note for a tree exported by declarative generate", () => {
+  it.effect("keeps a local diff without -f quiet while reporting the declarative advisory", () => {
     const s = setup(tmp.current, {
-      files: {
-        "supabase/schemas/public.sql": "create table declared ();\n",
-        "supabase/schemas/.pgdelta-export.json": '{"redactSecrets":false,"scope":"database"}\n',
-      },
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
       format: "json",
       diffSql: "",
     });
@@ -738,7 +735,9 @@ describe("db diff", () => {
         files: { "supabase/config.toml": config, [file]: "create table declared ();\n" },
         diffSql: "",
       });
-      yield* dbDiff(flags({ usePgDelta: Option.some(true) })).pipe(Effect.provide(s.layer));
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("declared") })).pipe(
+        Effect.provide(s.layer),
+      );
       return stderr(s.out);
     });
 
@@ -825,7 +824,9 @@ describe("db diff", () => {
       });
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
-      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
+      expect(stderr(s.out)).toContain("declarative sync` reads declarative_schema_path");
+      expect(stderr(s.out)).toContain("enabled = false to keep using schema_paths with migra");
+      expect(stderr(s.out)).not.toContain("are not read");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
@@ -1476,6 +1477,7 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
       expect(stderr(s.out)).toContain("-f names the migration; it does not filter objects");
+      expect(stderr(s.out)).toContain("Run supabase db schema declarative sync to generate");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

@@ -17,9 +17,9 @@ export function isPgDeltaEnabled(experimental: boolean, pgDeltaEnabled: boolean)
  * `aqua`/`bold` render plain when stderr is not a TTY.
  */
 export function pgDeltaSuggestion(configPath: string): string {
-  return `Either pass ${aqua("--experimental")} or set ${aqua("enabled = true")} under ${aqua(
-    "[experimental.pgdelta]",
-  )} in ${bold(configPath)}`;
+  return `Pass ${aqua("--experimental")} to run declarative commands while ${aqua(
+    "[experimental.pgdelta] enabled = false",
+  )} is set in ${bold(configPath)}`;
 }
 
 /**

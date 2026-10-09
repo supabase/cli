@@ -68,7 +68,7 @@ import {
   type PgDeltaEndpoint,
   type PgDeltaRenderedFile,
 } from "../shared/pgdelta-engine.service.ts";
-import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../shared/pgdelta-files.ts";
+import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
 import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import {
   type PgDeltaContext,
@@ -102,15 +102,14 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   },
 });
 
-const declarativeBaselineNote = (displayPath: string) =>
-  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
+const declarativeNextSteps = (suggestMigra: boolean, syncNeedsExperimental: boolean) =>
+  `Run ${aqua(`supabase db schema declarative sync${syncNeedsExperimental ? " --experimental" : ""}`)} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.`;
 
-const declarativeFilesIgnoredNote = (
-  displayPath: string,
-  suggestMigra: boolean,
-  syncNeedsExperimental: boolean,
-) =>
-  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua(`supabase db schema declarative sync${syncNeedsExperimental ? " --experimental" : ""}`)} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.\n`;
+const declarativeBaselineNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects. ${nextSteps}\n`;
+
+const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. ${nextSteps}\n`;
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
@@ -694,11 +693,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       "diff.drop_statement_count": drops.length,
     });
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
-    const writesMigration =
-      out.length >= 2 && Option.isSome(flags.file) && flags.file.value.length > 0;
-    // A local target is where migra used to read declarative files, so their silent absence
-    // from a pg-delta diff is worth explaining even without `-f` or with an empty diff.
-    if (useDelta && (writesMigration || resolved.isLocal)) {
+    const fileRequested = Option.isSome(flags.file) && flags.file.value.length > 0;
+    const writesMigration = out.length >= 2 && fileRequested;
+    // `db diff -f` after editing declarative files is the migra-era workflow pg-delta no longer
+    // serves, so only `-f` runs get a text note; local runs keep the structured advisory.
+    if (useDelta && (fileRequested || resolved.isLocal)) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
@@ -714,30 +713,23 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
-        // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`): schema_paths
-        // first, then this dir while pg-delta stays enabled in config, then supabase/schemas.
-        // The stack backend rejects migra outright.
+        // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`), which applies
+        // only to local targets: schema_paths first, then this dir while pg-delta stays enabled
+        // in config, then supabase/schemas. The stack backend rejects migra outright.
         const migraReadsDeclarativeDir =
+          resolved.isLocal &&
           cfg.schemaPathPatterns.length === 0 &&
           (cfg.pgDelta.enabled ||
             path.normalize(declarativeDir) === path.join("supabase", "schemas"));
         const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
-        if (writesMigration) {
-          yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
-        } else {
-          // An export manifest means the tree already comes from `declarative generate`/`sync`,
-          // so the transition note would only repeat on every routine diff.
-          const exportManifest = yield* ReadPgDeltaExportManifest(
-            fs,
-            path,
-            declarativeDirAbsolute,
-          ).pipe(Effect.orElseSucceed(() => undefined));
-          if (exportManifest === undefined) {
-            yield* output.raw(
-              declarativeFilesIgnoredNote(displayPath, suggestMigra, !cfg.pgDelta.enabled),
-              "stderr",
-            );
-          }
+        if (fileRequested) {
+          const nextSteps = declarativeNextSteps(suggestMigra, !cfg.pgDelta.enabled);
+          yield* output.raw(
+            writesMigration
+              ? declarativeBaselineNote(displayPath, nextSteps)
+              : declarativeFilesIgnoredNote(displayPath, nextSteps),
+            "stderr",
+          );
         }
       }
     }
