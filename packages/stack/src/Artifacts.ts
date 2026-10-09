@@ -165,6 +165,27 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
           },
         },
       },
+      "17.11.0.002-orioledb": {
+        upstreamVersion: "17.11.0.002-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:8bfda219b7748273a46c3f097df3562a73087df8170ca4be4316f8215bf6b765",
+        upstreamImage: "supabase/postgres:17.11.0.002-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "66670aca62cb96a5eb555bc6d0b39e1e2581247b664c75bb3325a44eac475843",
+            manifest: "2a0ac16cc7cfa78a44a3876cdacd8f77622a85c55458bd80fa465daaab76b478",
+          },
+          "linux-amd64": {
+            archive: "a2ea7fdd73f5f516db52ae05ca6ea52d8c94423177503f42ee8c9c2dd2474104",
+            manifest: "71d538e058c642b6cf7277f935074c3022b45a464079f9797ab0656d2edf2bdb",
+          },
+          "linux-arm64": {
+            archive: "981c0c74ca229bb1744675527599d1180a9adef85314d2d4c0e46406c5cfa0bd",
+            manifest: "3faab299bedc021f5e7208d761614f3ee8a3fe08439de901a94ba2889ede404f",
+          },
+        },
+      },
     },
   ),
   rest: definition(
@@ -581,10 +602,39 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
   };
 });
 
-/** Resolves a PostgreSQL major alias against the pinned database artifacts. */
+const ORIOLEDB_SUFFIX = "-orioledb";
+
+/** PostgreSQL major of a database artifact version or major alias. */
+export const postgresMajor = (version: string): string => version.split(".")[0] ?? version;
+
+/** Whether a database artifact version is an OrioleDB build. */
+export const isOrioledbVersion = (version: string): boolean => version.endsWith(ORIOLEDB_SUFFIX);
+
+/**
+ * Release line of a database artifact version: the PostgreSQL major of a stock build (`17`), or the
+ * exact OrioleDB build (`17.11.0.002-orioledb`), since a newer OrioleDB build may refuse older data.
+ * Initialized data is reusable only within one line.
+ */
+export const postgresLine = (version: string): string =>
+  isOrioledbVersion(version) ? version : postgresMajor(version);
+
+/** Database artifact version of a `db.orioledb_version` value. */
+export const orioledbPostgresVersion = (orioledbVersion: string): string =>
+  `${orioledbVersion}${ORIOLEDB_SUFFIX}`;
+
+/** `db.orioledb_version` value of an OrioleDB database artifact version. */
+export const orioledbConfigVersion = (version: string): string =>
+  version.slice(0, -ORIOLEDB_SUFFIX.length);
+
+/** `db.orioledb_version` values the catalog pins an OrioleDB artifact for. */
+export const orioledbVersions = (): ReadonlyArray<string> =>
+  Object.keys(definitions.database.pins).filter(isOrioledbVersion).map(orioledbConfigVersion);
+
+/** Resolves a PostgreSQL major alias against the pinned stock database artifacts. */
 export const postgresVersion = (version: string): string =>
-  Object.keys(definitions.database.pins).find((candidate) => candidate.split(".")[0] === version) ??
-  version;
+  Object.keys(definitions.database.pins).find(
+    (candidate) => !isOrioledbVersion(candidate) && postgresMajor(candidate) === version,
+  ) ?? version;
 
 /** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
@@ -593,7 +643,7 @@ export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
 /**
  * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
  * pin `resolveArtifact` picks when no version is requested (postgres's 17.x line today); every
- * other pin (postgres's 15.x additional line) carries `isDefault: false`.
+ * other pin (postgres's 15.x and OrioleDB lines) carries `isDefault: false`.
  */
 export const catalogPins = (): ReadonlyArray<{
   readonly service: ArtifactKind;

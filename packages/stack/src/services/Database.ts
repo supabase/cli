@@ -24,6 +24,7 @@ import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,
+  postgresLine,
   postgresVersion,
   resolveArtifact,
   useNativeArtifact,
@@ -89,6 +90,7 @@ import {
   type DockerDatabaseStorage,
   type DockerDatabaseStorageError,
 } from "../storage/DockerDatabaseStorage.ts";
+import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
 
 export const DatabaseConfig = Schema.Struct({
   version: Schema.String,
@@ -109,6 +111,10 @@ const DatabaseReadyMarker = Schema.Struct({
   runtime: Schema.Literals(["native", "docker", "podman"]),
   profile: Schema.Literal("supabase"),
 });
+
+/** Release line a native first start initializes, written before initdb so an interrupted start can resume. */
+const DatabaseLineMarker = Schema.Struct({ line: Schema.String });
+const lineMarkerFile = ".supabase-database-line.json";
 
 // Health reconciles role passwords as supabase_admin, including after a configured password change.
 const NATIVE_HBA_RULES = "local all supabase_admin trust\nlocal all all scram-sha-256\n";
@@ -730,32 +736,64 @@ export const makeDatabase = (
       );
     });
 
+    /** Records the release line before initdb runs; initialized data keeps the line it has. */
+    const recordLine = Effect.fn("Database.recordLine")(
+      function* (dataPath: string, version: string) {
+        if (yield* fs.exists(path.join(dataPath, "PG_VERSION"))) return;
+        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DatabaseLineMarker))({
+          line: postgresLine(version),
+        });
+        const stage = yield* fs.makeTempDirectoryScoped({
+          directory: instanceRoot,
+          prefix: ".line-",
+        });
+        yield* fs.writeFileString(path.join(stage, "marker"), encoded, { mode: 0o600 });
+        yield* fs.rename(path.join(stage, "marker"), path.join(instanceRoot, lineMarkerFile));
+      },
+      Effect.scoped,
+      Effect.mapError((cause) => errorFor("launch", cause)),
+    );
+
+    /**
+     * Why the instance's data cannot serve `requested`, or `undefined` when it can. Prepare runs
+     * outside the lifecycle gate, so the gated launch checks again before touching the data.
+     */
+    const reuseFailure = Effect.fn("Database.reuseFailure")(function* (requested: string) {
+      const recreate = recreateStackAdvice(String(options.stackId));
+      const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
+      if (yield* fs.exists(markerPath)) {
+        const marker = yield* fs
+          .readFileString(markerPath)
+          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
+        return postgresLine(marker.version) === postgresLine(requested) &&
+          marker.runtime === options.runtime
+          ? undefined
+          : `Initialized database data is ${marker.version} on the ${marker.runtime} runtime, but ${requested} on the ${options.runtime} runtime was requested; ${recreate}`;
+      }
+      const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
+      if (options.runtime !== "native" || !(yield* fs.exists(versionPath))) return undefined;
+      const linePath = path.join(instanceRoot, lineMarkerFile);
+      const recorded = (yield* fs.exists(linePath))
+        ? (yield* fs
+            .readFileString(linePath)
+            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseLineMarker)))))
+            .line
+        : undefined;
+      const reason = unusableDatabaseData(
+        {
+          major: (yield* fs.readFileString(versionPath)).trim(),
+          line: recorded,
+          initialized: false,
+        },
+        requested,
+      );
+      return reason === undefined ? undefined : `${reason}; ${recreate}`;
+    });
+
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
-        const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
-        const hasMarker = yield* fs.exists(markerPath);
-        if (hasMarker) {
-          const marker = yield* fs
-            .readFileString(markerPath)
-            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
-          if (
-            marker.version.split(".")[0] !== postgresVersion(input.version).split(".")[0] ||
-            marker.runtime !== options.runtime
-          )
-            return yield* errorFor(
-              "prepare",
-              "Initialized database artifact/runtime does not match the requested configuration",
-            );
-        }
-        const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
-        if (!hasMarker && options.runtime === "native" && (yield* fs.exists(versionPath))) {
-          const initialized = (yield* fs.readFileString(versionPath)).trim();
-          if (initialized !== postgresVersion(input.version).split(".")[0])
-            return yield* errorFor(
-              "prepare",
-              "Initialized PostgreSQL major does not match the requested configuration",
-            );
-        }
+        const reason = yield* reuseFailure(postgresVersion(input.version));
+        if (reason !== undefined) return yield* errorFor("prepare", reason);
         yield* prepareArtifact(input);
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
@@ -879,6 +917,10 @@ export const makeDatabase = (
             version: postgresVersion(context.config.version),
             rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
           };
+          const reuse = yield* reuseFailure(config.version).pipe(
+            Effect.mapError((cause) => errorFor("launch", cause)),
+          );
+          if (reuse !== undefined) return yield* errorFor("launch", reuse);
           if (storage !== undefined)
             yield* storage
               .prepare(config.version)
@@ -901,6 +943,7 @@ export const makeDatabase = (
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+            yield* recordLine(dataPath, config.version);
             const rootKeyPath = path.join(nativeRoot, "pgsodium_root.key");
             yield* fs
               .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })

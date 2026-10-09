@@ -32,6 +32,10 @@ credentials when present. Starting with Studio creates `supabase/snippets/`, whe
 snippets.
 Email template `content_path` values and third-party identity providers remain unsupported: they
 require template serving and shared external JWKS verification respectively.
+`db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) runs the catalog's OrioleDB build of that
+version instead of the stock major. Loading fails unless the catalog pins that OrioleDB version and
+`db.major_version` matches its major; the error lists the pinned OrioleDB versions. The
+`experimental.s3_*` OrioleDB settings are not forwarded, so loading fails when they are set.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
@@ -185,6 +189,13 @@ saved and requested values and suggesting reverting it; a changed catalog-pinned
 a same-major PostgreSQL build mismatch, which no `config.toml` key or env var controls, instead uses
 a plain label with no revert advice. Either way the failure suggests running the stack's exact
 `supabase stack destroy` command to recreate it.
+Switching between stock PostgreSQL and OrioleDB is an artifact version change, reported as
+`db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
+Initialized database data is reused only on its own release line (the PostgreSQL major for stock
+builds, the exact build for OrioleDB, since a newer OrioleDB build may refuse older data). A
+first start records the requested line before initializing data, so a first start interrupted
+before readiness resumes on that line; unmarked data without a recorded line can prove only its
+major, so it is never reused for OrioleDB.
 
 ## First startup and retries
 
@@ -238,8 +249,9 @@ listener for `api`), and its old and new port (`from`, `to`), and an empty messa
 typed command errors and package diagnostics. Telemetry state is flushed after success or failure.
 
 A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
-envelope: one entry per affected service (a shared setting such as the API port appears once per
-API-backed service, unlike the deduplicated text message), each with `service`, `path` (the
+envelope: one entry per affected service and setting (a shared setting such as the API port appears
+once per API-backed service, unlike the deduplicated text message; a database version change that
+moves both `db.major_version` and `db.orioledb_version` has an entry for each), each with `service`, `path` (the
 composition planner's dotted path, e.g. `endpoints.http.port`, not a `config.toml` key), `key`,
 `saved`, `requested`, and `editable`. `recreate_command` is present only when recreating the stack
 is among the suggested remedies; it is the exact `supabase stack destroy --stack-id <id>`

@@ -1,7 +1,11 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
-import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
+import {
+  slimImageForAlias,
+  slimImageForCurrentPin,
+  slimImagesEnabled,
+} from "../shared/services/slim-images.ts";
 import { PropOrioleDb } from "../shared/telemetry/event-catalog.ts";
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 
@@ -77,6 +81,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
+  const slim = yield* slimImagesEnabled;
   yield* recordOrioleDbTelemetry(orioledbVersion, majorVersion);
   // The OrioleDB tag takes precedence over the default/pinned image.
   if (selectsOrioleDb(orioledbVersion, majorVersion)) {
@@ -84,9 +89,8 @@ export const resolveDbImage = Effect.fnUntraced(function* (
       versionCompare(orioledbVersion, "15.1.1.13") > 0
         ? `supabase/postgres:${orioledbVersion}-orioledb`
         : `supabase/postgres:orioledb-${orioledbVersion}`;
-    return { image, configImage: image };
+    return { image: slimImageForAlias("pg", image, slim), configImage: image };
   }
-  const slim = yield* slimImagesEnabled;
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
