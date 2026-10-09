@@ -703,7 +703,9 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   // but correctness on the match+`env()` path matters more than avoiding that.
   const resolvedEnvironmentPaths: Array<string[]> = [];
   const resolvedEnvironmentNames = new Map<string, ReadonlyArray<string>>();
-  const documentToDecode: unknown = options.document ?? merged.document;
+  const documentToDecode: unknown = isObject(merged.document)
+    ? (options.document ?? merged.document)
+    : merged.document;
   const documentForDecode = isObject(documentToDecode)
     ? interpolateDocument(documentToDecode, (path, envNames) => {
         resolvedEnvironmentPaths.push(Array.from(path));

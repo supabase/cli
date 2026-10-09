@@ -506,6 +506,25 @@ describe("CliConfigValues memoisation", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live.each(["[]", "42", '"text"', "null"])(
+    "fails the load when config.json holds %s instead of a table",
+    (content) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* project('project_id = "ok"\n');
+        yield* fs.remove(path.join(root, "supabase", "config.toml"));
+        yield* fs.writeFileString(path.join(root, "supabase", "config.json"), content);
+
+        const error = yield* CliConfigValues.use((values) =>
+          values.load({ workdir: root, projectRef: Option.none() }),
+        ).pipe(Effect.provide(configValuesLayer()), Effect.flip);
+
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(error).toMatchObject({ path: path.join(root, "supabase", "config.json") });
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("fails the load when a config value does not decode", () =>
     Effect.gen(function* () {
       const root = yield* project("[db]\nport = 70000\n");
