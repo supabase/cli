@@ -23,6 +23,9 @@
     "lint:effect:fix": {
       "cache": false
     },
+    "lint:actions:check": {
+      "cache": false
+    },
     "fmt:check": {
       "cache": false
     },
