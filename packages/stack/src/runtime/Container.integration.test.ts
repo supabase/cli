@@ -879,7 +879,12 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       Effect.scoped(
         Effect.gen(function* () {
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const { spawner, started } = makeFailingStartSpawner(delegate, pastaAddressInUse, 1);
+          const fs = yield* FileSystem.FileSystem;
+          const { spawner, started, envFiles } = makeFailingStartSpawner(
+            delegate,
+            pastaAddressInUse,
+            1,
+          );
           const process = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
@@ -909,6 +914,9 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           expect(yield* exists(started[0]!)).toBe(false);
           expect(yield* exists(started[1]!)).toBe(true);
           expect(process.ports[8080]).toBeDefined();
+          expect(envFiles).toHaveLength(2);
+          expect(yield* fs.exists(envFiles[0]!)).toBe(false);
+          expect(yield* fs.exists(envFiles[1]!)).toBe(true);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1819,7 +1827,12 @@ const makeFailingStartSpawner = (
   failures: number,
 ) => {
   const started: Array<string> = [];
+  const envFiles: Array<string> = [];
   const spawner = ChildProcessSpawner.make((command) => {
+    if (ChildProcess.isStandardCommand(command) && command.command === testEngine) {
+      const envFile = command.args[command.args.indexOf("--env-file") + 1];
+      if (command.args[0] === "create" && envFile !== undefined) envFiles.push(envFile);
+    }
     if (
       !ChildProcess.isStandardCommand(command) ||
       command.command !== testEngine ||
@@ -1837,7 +1850,7 @@ const makeFailingStartSpawner = (
           ),
         );
   });
-  return { spawner, started };
+  return { spawner, started, envFiles };
 };
 
 const hostGatewayRejectionScript = `console.error(${JSON.stringify(

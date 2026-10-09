@@ -1124,26 +1124,40 @@ export const makeContainerRuntime = (options: {
       spec: ContainerSpec,
       interactive: boolean,
       oneOff: boolean,
+      owner: Scope.Scope,
       attempt: number,
     ): ReturnType<ContainerRuntime["launch"]> =>
-      launchOnce(spec, interactive, oneOff).pipe(
-        Effect.catchTag("ContainerLaunchError", (error) =>
-          attempt >= PORT_COLLISION_ATTEMPTS || error.failure.kind !== "port-allocation"
-            ? Effect.fail(error)
-            : Effect.logDebug(`Retrying container launch: ${error.failure.message}`).pipe(
-                Effect.andThen(error.process.remove),
-                Effect.mapError(() => error),
-                Effect.andThen(Effect.annotateCurrentSpan({ "retry.attempt_count": attempt + 1 })),
-                Effect.andThen(launchWithRetry(spec, interactive, oneOff, attempt + 1)),
-              ),
-        ),
-      );
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ "retry.attempt_count": attempt });
+        const attemptScope = yield* Scope.fork(owner);
+        return yield* launchOnce(spec, interactive, oneOff).pipe(
+          Effect.provideService(Scope.Scope, attemptScope),
+          Effect.catchTag("ContainerLaunchError", (error) =>
+            attempt >= PORT_COLLISION_ATTEMPTS || error.failure.kind !== "port-allocation"
+              ? Effect.fail(error)
+              : Effect.logDebug(`Retrying container launch: ${error.failure.message}`).pipe(
+                  Effect.andThen(
+                    error.process.remove.pipe(
+                      Effect.tapError((cause) =>
+                        Effect.logWarning(
+                          `Failed to remove collided container ${error.process.id}: ${cause.message}`,
+                        ),
+                      ),
+                      Effect.mapError(() => error),
+                    ),
+                  ),
+                  Effect.andThen(Scope.close(attemptScope, Exit.void)),
+                  Effect.andThen(launchWithRetry(spec, interactive, oneOff, owner, attempt + 1)),
+                ),
+          ),
+        );
+      });
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
       oneOff = false,
     ) {
-      return yield* launchWithRetry(spec, interactive, oneOff, 1);
+      return yield* launchWithRetry(spec, interactive, oneOff, yield* Scope.Scope, 1);
     });
     return {
       prepare,
