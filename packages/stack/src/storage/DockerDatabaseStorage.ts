@@ -562,15 +562,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ),
             Effect.forkScoped,
           );
-        // Create the container before attaching so its name exists on the daemon before any
-        // readiness timeout can fire. A `run` client killed mid-create leaves the daemon to
-        // finish creating a container that nothing ever starts, so `--rm` never fires and a
-        // later `rm -f` by name finds nothing to remove. `--rm -i` on `create` sets the same
-        // AutoRemove and StdinOnce as on `run`, so stdin EOF still ends the helper when the
-        // attached client dies. The create is bounded like readiness so a stalled daemon cannot
-        // hang shutdown; the owned name is already registered, so the cleanup that follows a
-        // failure removes a helper the daemon finishes creating late, and the stack sweep on
-        // stop and destroy removes one left behind by an owner killed before `start`.
+        /* Create by name before attaching so a readiness timeout's `rm -f` always finds the helper;
+           `--rm -i` keeps the AutoRemove and StdinOnce of `run`, so owner death still ends it. */
         const creator = yield* options.spawner
           .spawn(
             ChildProcess.make(
@@ -597,23 +590,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "-c",
                 "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
               ],
-              { stdin: "ignore", stdout: "pipe", stderr: "pipe", forceKillAfter: "5 seconds" },
+              { stdin: "ignore", stdout: "ignore", stderr: "pipe", forceKillAfter: "5 seconds" },
             ),
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
         const createStderr = yield* stderrTail(creator);
-        const created = yield* Effect.all(
-          [creator.stdout.pipe(Stream.decodeText, Stream.runDrain), creator.exitCode],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.timeout("30 seconds"), Effect.exit);
+        const created = yield* creator.exitCode.pipe(Effect.timeout("30 seconds"), Effect.exit);
+        if (Exit.isFailure(created))
+          yield* creator
+            .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+            .pipe(Effect.ignore);
         const createTail = (yield* Fiber.join(createStderr).pipe(
           Effect.timeout("1 second"),
           Effect.orElseSucceed(() => ""),
         )).trim();
-        if (Exit.isFailure(created) || Number(created.value[1]) !== 0) {
-          yield* creator
-            .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
-            .pipe(Effect.ignore);
+        if (Exit.isFailure(created) || Number(created.value) !== 0) {
           const reason = Exit.isFailure(created)
             ? Option.match(Cause.findErrorOption(created.cause), {
                 onNone: () => Cause.pretty(created.cause),
@@ -622,7 +613,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     ? "Database helper was not created within 30 seconds"
                     : failureMessage(error),
               })
-            : createTail || `Container engine exited with ${created.value[1]}`;
+            : createTail || `Container engine exited with ${created.value}`;
           return yield* errorFor(
             "helper",
             Exit.isFailure(created) && createTail !== "" ? `${reason}: ${createTail}` : reason,

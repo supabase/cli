@@ -27,11 +27,9 @@ const run = Effect.gen(function* () {
   const spawner = stallBeforeStart
     ? ChildProcessSpawner.make((command) =>
         ChildProcess.isStandardCommand(command) && command.args[0] === "start"
-          ? Effect.sync(() => {
-              process.stdout.write("HELPER_CREATED\n");
-              // Nothing else holds the event loop once the create client has exited.
-              setInterval(() => {}, 60_000);
-            }).pipe(Effect.andThen(Effect.never))
+          ? Effect.sync(() => process.stdout.write("HELPER_CREATED\n")).pipe(
+              Effect.andThen(Effect.never),
+            )
           : realSpawner.spawn(command),
       )
     : realSpawner;
