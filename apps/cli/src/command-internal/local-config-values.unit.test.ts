@@ -477,7 +477,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("rejects a SUPABASE_DB_PORT override above the uint16 range", () => {
+    it("rejects a SUPABASE_DB_PORT override above the 65535 port maximum", () => {
       process.env["SUPABASE_DB_PORT"] = "99999";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -507,7 +507,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.dbPort).toBe(5432);
     });
 
-    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the uint16 range", () => {
+    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the 65535 port maximum", () => {
       process.env["SUPABASE_DB_PORT"] = "0x1FFFF";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(

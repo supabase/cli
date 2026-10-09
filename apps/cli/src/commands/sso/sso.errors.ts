@@ -40,7 +40,7 @@ const gatedNotFoundActionability = (
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
-// Shared across show/update/remove. Message: `identity provider ID %q is not a UUID`.
+// Shared across show/update/remove. Message: `identity provider ID "<id>" is not a UUID`.
 export class SsoInvalidUuidError extends Data.TaggedError("SsoInvalidUuidError")<{
   readonly providerId: string;
   readonly message: string;

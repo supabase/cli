@@ -23,7 +23,7 @@ export class DbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
   }
 }
 
-/** `failed to begin transaction: %w`; message text is an established output contract. */
+/** `failed to begin transaction: <cause>`; message text is an established output contract. */
 export class DbLintBeginTxError extends Data.TaggedError("DbLintBeginTxError")<{
   readonly message: string;
 }> {
@@ -32,7 +32,7 @@ export class DbLintBeginTxError extends Data.TaggedError("DbLintBeginTxError")<{
   }
 }
 
-/** `failed to list schemas: %w`; message text is an established output contract. */
+/** `failed to list schemas: <cause>`; message text is an established output contract. */
 export class DbLintListSchemasError extends Data.TaggedError("DbLintListSchemasError")<{
   readonly message: string;
 }> {
@@ -41,7 +41,7 @@ export class DbLintListSchemasError extends Data.TaggedError("DbLintListSchemasE
   }
 }
 
-/** `failed to enable pgsql_check: %w`; message text is an established output contract. */
+/** `failed to enable pgsql_check: <cause>`; message text is an established output contract. */
 export class DbLintEnableCheckError extends Data.TaggedError("DbLintEnableCheckError")<{
   readonly message: string;
 }> {
@@ -50,7 +50,7 @@ export class DbLintEnableCheckError extends Data.TaggedError("DbLintEnableCheckE
   }
 }
 
-/** `failed to query rows: %w`; message text is an established output contract. */
+/** `failed to query rows: <cause>`; message text is an established output contract. */
 export class DbLintQueryError extends Data.TaggedError("DbLintQueryError")<{
   readonly message: string;
 }> {
@@ -59,7 +59,7 @@ export class DbLintQueryError extends Data.TaggedError("DbLintQueryError")<{
   }
 }
 
-/** `failed to marshal json: %w`; message text is an established output contract. */
+/** `failed to marshal json: <cause>`; message text is an established output contract. */
 export class DbLintMalformedJsonError extends Data.TaggedError("DbLintMalformedJsonError")<{
   readonly message: string;
 }> {
@@ -68,7 +68,7 @@ export class DbLintMalformedJsonError extends Data.TaggedError("DbLintMalformedJ
   }
 }
 
-/** `fail-on is set to %s, non-zero exit`; message text is an established output contract. */
+/** `fail-on is set to <level>, non-zero exit`; message text is an established output contract. */
 export class DbLintFailOnError extends Data.TaggedError("DbLintFailOnError")<{
   readonly message: string;
 }> {

@@ -262,7 +262,7 @@ describe("apiResponseToAdvisorLints", () => {
       apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
       }),
-    ).toThrow("cannot unmarshal advisor metadata.fkey_columns element into float32");
+    ).toThrow("invalid advisor metadata.fkey_columns element: expected a number");
 
     expect(() =>
       apiResponseToAdvisorLints({
@@ -276,7 +276,7 @@ describe("apiResponseToAdvisorLints", () => {
       apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
       }),
-    ).toThrow("cannot unmarshal advisor metadata.fkey_columns into []float32");
+    ).toThrow("invalid advisor metadata.fkey_columns: expected an array of numbers");
   });
 });
 

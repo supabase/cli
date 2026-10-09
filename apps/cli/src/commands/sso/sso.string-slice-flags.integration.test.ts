@@ -18,7 +18,7 @@ import { ssoCommand } from "./sso.command.ts";
 
 // All four sso domain-list flags are CSV string-slice flags, so malformed CSV
 // aborts flag parsing — before the handler and its eager token resolution —
-// with an `invalid argument %q for %q flag: %v` line on stderr. These run
+// with an `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr. These run
 // through the whole command tree to cover the real flag wiring and renderer.
 
 const tempRoot = useTempWorkdir("supabase-sso-string-slice-int-");

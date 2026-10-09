@@ -294,7 +294,7 @@ function connectCauseDetail(cause: unknown): string {
 
 /**
  * Port of pgconn's `connectError.Error()`, the inner text of
- * `failed to connect to postgres: %w` wrap:
+ * `failed to connect to postgres: <cause>` wrap:
  * `` failed to connect to `host=… user=… database=…`: <staged driver cause> ``.
  * Callers pass the connection config (pgconn embeds the config-level identity)
  * and the raw failure — either the `@effect/sql` `SqlError`

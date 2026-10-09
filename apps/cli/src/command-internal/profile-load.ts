@@ -100,11 +100,7 @@ export function loadProfile(
       parsed = {};
     }
     if (typeof parsed !== "object" || Array.isArray(parsed)) {
-      // A non-mapping YAML document (e.g. a scalar or list) is rejected; detail text is
-      // best-effort.
-      return yield* failRead(
-        `While parsing config: yaml: unmarshal errors:\n  cannot unmarshal into map[string]interface {}`,
-      );
+      return yield* failRead("While parsing config: expected a YAML mapping at the top level");
     }
     // Configuration keys are lowercased before decoding, so `API_URL:`/`Name:` behave like
     // their lowercase spellings, and unknown-key errors report the lowercased form. A
@@ -290,8 +286,8 @@ function weakString(value: unknown): string | undefined {
 }
 
 function valueTypeName(value: unknown): string {
-  if (Array.isArray(value)) return "[]interface {}";
-  if (typeof value === "object" && value !== null) return "map[string]interface {}";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "object" && value !== null) return "object";
   return typeof value;
 }
 

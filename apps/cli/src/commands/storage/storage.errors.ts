@@ -60,7 +60,7 @@ export class StorageUnsupportedOperationError extends Data.TaggedError(
 
 /**
  * Formats an invalid `-j, --jobs` value using the established
- * `invalid argument %q for %q flag: %v` message, with the raw (unnormalized) token
+ * `invalid argument "<value>" for "<flag>" flag: <reason>` message, with the raw (unnormalized) token
  * quoted and escaped so it never breaks onto a new line.
  */
 export function storageInvalidJobsMessage(token: string, cause: string): string {

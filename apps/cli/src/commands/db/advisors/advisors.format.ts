@@ -50,7 +50,7 @@ const asStringArray = (value: unknown): ReadonlyArray<string> =>
 function requireApiString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
-    throw new TypeError(`cannot unmarshal advisor ${field} into string`);
+    throw new TypeError(`invalid advisor ${field}: expected a string`);
   }
   return value;
 }
@@ -70,14 +70,14 @@ function requireApiString(value: unknown, field: string): string {
 function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value)) {
-    throw new TypeError("cannot unmarshal advisor categories into []string");
+    throw new TypeError("invalid advisor categories: expected an array of strings");
   }
   if (value.length === 0) return null;
   return value.map((element) => {
     // A null array element decodes to the zero string "".
     if (element === null || element === undefined) return "";
     if (typeof element !== "string") {
-      throw new TypeError("cannot unmarshal advisor categories element into string");
+      throw new TypeError("invalid advisor categories element: expected a string");
     }
     return element;
   });
@@ -133,7 +133,7 @@ export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
 function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("cannot unmarshal advisor metadata");
+    throw new TypeError("invalid advisor metadata: expected an object");
   }
   const record = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -144,7 +144,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
     const field = record[key];
     if (field === undefined || field === null) return;
     if (typeof field !== "string") {
-      throw new TypeError(`cannot unmarshal advisor metadata.${key} into string`);
+      throw new TypeError(`invalid advisor metadata.${key}: expected a string`);
     }
     out[key] = field;
   };
@@ -153,7 +153,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
   const fkeyColumns = record["fkey_columns"];
   if (fkeyColumns !== undefined && fkeyColumns !== null) {
     if (!Array.isArray(fkeyColumns)) {
-      throw new TypeError("cannot unmarshal advisor metadata.fkey_columns into []float32");
+      throw new TypeError("invalid advisor metadata.fkey_columns: expected an array of numbers");
     }
     const normalized: Array<number> = [];
     for (const element of fkeyColumns) {
@@ -163,7 +163,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
         continue;
       }
       if (typeof element !== "number") {
-        throw new TypeError("cannot unmarshal advisor metadata.fkey_columns element into float32");
+        throw new TypeError("invalid advisor metadata.fkey_columns element: expected a number");
       }
       normalized.push(element);
     }
@@ -191,12 +191,12 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
 export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new TypeError("cannot unmarshal advisors response");
+    throw new TypeError("invalid advisors response: expected an object");
   }
   const lintsRaw = (parsed as { lints?: unknown }).lints;
   if (lintsRaw === undefined || lintsRaw === null) return [];
   if (!Array.isArray(lintsRaw)) {
-    throw new TypeError("cannot unmarshal lints into []Lint");
+    throw new TypeError("invalid advisors lints: expected an array");
   }
   const lints: Array<AdvisorLint> = [];
   for (const entry of lintsRaw) {
@@ -217,7 +217,7 @@ export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<Adviso
       continue;
     }
     if (typeof entry !== "object" || Array.isArray(entry)) {
-      throw new TypeError("cannot unmarshal lint entry into Lint");
+      throw new TypeError("invalid advisor lint: expected an object");
     }
     const record = entry as Record<string, unknown>;
     const metadata = projectApiMetadata(record["metadata"]);

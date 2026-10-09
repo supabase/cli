@@ -40,9 +40,9 @@ function formatJsonValue(value: unknown): string {
 }
 
 /**
- * Formats a value the established way: `null`/`undefined` as `"NULL"`, JSON objects/arrays
- * (e.g. JSONB from the linked path) as `map[...]`/`[...]`, everything else via `%v`-style
- * formatting.
+ * Formats a cell value: `null`/`undefined` as `"NULL"`, strings as-is, JSON objects/arrays
+ * (e.g. JSONB) as `map[key:value ...]` / `[a b ...]` with sorted keys and space-separated
+ * entries, everything else via `String()`.
  */
 export function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";

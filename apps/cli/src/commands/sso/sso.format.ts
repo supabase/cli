@@ -82,7 +82,7 @@ export function toSsoProviderView(value: unknown): SsoProviderView {
 
 /**
  * Validates a positional provider-id argument as a canonical UUID.
- * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
+ * Failure message double-quotes the raw input via JSON.stringify.
  */
 export function validateUuid(input: string): Result.Result<string, SsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {

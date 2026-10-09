@@ -286,9 +286,7 @@ describe("loadProfile", () => {
       expect(message).toContain(
         "failed to parse profile: decoding failed due to the following error(s):",
       );
-      expect(message).toContain(
-        "'APIURL' expected type 'string', got unconvertible type '[]interface {}'",
-      );
+      expect(message).toContain("'APIURL' expected type 'string', got unconvertible type 'array'");
     }),
   );
 });

@@ -642,18 +642,18 @@ function expandEnv(value: string, lookup: (name: string) => string | undefined):
   return envRefValue(value, lookup(name));
 }
 
-/** `[db]` ports decode into `uint16`. */
+/** `[db]` ports are integers in 0-65535. */
 const MAX_PORT = 65535;
 
 /**
- * Resolve a `[db]` port field: the TOML value decodes into a `uint16`, and a
+ * Resolve a `[db]` port field: the TOML value must be an integer in 0-65535, and a
  * quoted `env(VAR)` reference is expanded first, then parsed as the port.
  * Resolution rules:
  *
  * - **Omitted** (`undefined`) → the schema default.
- * - **Present and resolves to a `uint16`** (a plain integer in range, or an
+ * - **Present and resolves to a valid port** (a plain integer in range, or an
  * `env(VAR)` string that expands to one) → that value.
- * - **Present but cannot unmarshal** (non-numeric, negative, out of range, or an
+ * - **Present but invalid** (non-numeric, negative, out of range, or an
  * unresolved `env(VAR)`) → `undefined`, signalling the caller to abort with
  * `DbConfigLoadError` rather than silently defaulting and running
  * against the default local database while hiding a broken config.
@@ -1220,7 +1220,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     );
   }
 
-  // A present-but-unmarshalable port aborts rather than defaulting, so a broken `[db]`
+  // A present-but-invalid port aborts rather than defaulting, so a broken `[db]`
   // config never silently targets the default local database.
   const port = resolvePort(
     (remoteWins("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ?? db?.["port"],
@@ -1241,7 +1241,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     );
   }
   // An explicit `db.port = 0` is a load error (an absent port is defaulted first);
-  // `resolvePort` accepts 0 as a valid uint16, so the zero check lives here. No
+  // `resolvePort` accepts 0 as a valid port, so the zero check lives here. No
   // equivalent check for `shadow_port`.
   if (port === 0) {
     return yield* Effect.fail(
@@ -1964,17 +1964,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // datetime to a `TomlDate` (a `Date` subclass), exposing the `isDate`/`isTime`/
   // `isLocal` discriminators needed to pick the right variant name.
   const tomlDateTypeName = (value: SmolToml.TomlDate): string => {
-    if (value.isDate()) return "toml.LocalDate";
-    if (value.isTime()) return "toml.LocalTime";
-    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+    if (value.isDate()) return "local date";
+    if (value.isTime()) return "local time";
+    return value.isLocal() ? "local date-time" : "offset date-time";
   };
   const unconvertibleTypeName = (value: unknown): string | undefined =>
     value instanceof SmolToml.TomlDate
       ? tomlDateTypeName(value)
       : Array.isArray(value)
-        ? "[]interface {}"
+        ? "array"
         : typeof value === "object" && value !== null
-          ? "map[string]interface {}"
+          ? "table"
           : undefined;
   // Returns the "unconvertible type" issue for each bad array element, without
   // failing — both `Glob` fields' issues are combined into one error afterward (see

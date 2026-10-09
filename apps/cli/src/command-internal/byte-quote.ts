@@ -1,17 +1,14 @@
 /**
- * Quotes a string (the `%q` verb) over raw UTF-8 bytes, shared by every error message that must
- * reproduce a `%q` interpolation byte-for-byte.
+ * Double-quotes a string over raw UTF-8 bytes for error messages.
  *
- * Operates on bytes, not JS strings: a byte slice can split a multibyte rune (rendered as `\xNN`
- * per orphan byte), and escaping decisions are made per decoded rune over those bytes. Callers
- * with a whole JS string encode it first; invalid UTF-8 in `process.argv` has already been
- * replaced with U+FFFD by then, so byte-identical output for invalid-UTF-8 argv is unattainable at
- * that boundary.
+ * Operates on bytes, not JS strings: a byte slice can split a multibyte code point (rendered as
+ * `\xNN` per orphan byte). Callers with a whole JS string encode it first; invalid UTF-8 in
+ * `process.argv` has already been replaced with U+FFFD by then.
  */
 
 /**
- * `utf8.DecodeRune` semantics over a byte slice: returns the code point and byte size at `i`, or
- * `cp: -1` with `size: 1` for an invalid byte — exactly the cases rendered as a lone `\xNN`.
+ * Decodes the UTF-8 code point at `i`, returning its value and byte length, or `cp: -1` with
+ * `size: 1` for an invalid or truncated sequence.
  */
 function decodeUtf8Rune(
   bytes: Uint8Array,
@@ -47,9 +44,9 @@ function decodeUtf8Rune(
   return { cp, size: extra + 1 };
 }
 
-// Printable runes ≥ 0x80: letters, marks, numbers, punctuation, symbols (ASCII is handled
+// Printable code points ≥ 0x80: letters, marks, numbers, punctuation, symbols (ASCII is handled
 // explicitly in quoteBytes). Unicode-table drift between engines only affects which escape a garbage
-// rune gets in one error message.
+// code point gets in one error message.
 const PRINTABLE_RE = /[\p{L}\p{M}\p{N}\p{P}\p{S}]/u;
 
 const ESCAPE_SHORTHANDS: Readonly<Record<number, string>> = {
@@ -63,8 +60,9 @@ const ESCAPE_SHORTHANDS: Readonly<Record<number, string>> = {
 };
 
 /**
- * `%q` over raw UTF-8 bytes. Valid printable runes print literally;
- * control/non-printable ones use the `\a…\v` shorthands then `\xNN`/`\uNNNN`/`\UNNNNNNNN`.
+ * Wraps the bytes in double quotes. Valid printable code points print literally, control
+ * characters use the `\a \b \f \n \r \t \v` shorthands, each invalid byte becomes `\xNN`, and
+ * other non-printable code points become `\uNNNN` or `\UNNNNNNNN`.
  */
 export function quoteBytes(bytes: Uint8Array): string {
   let out = '"';

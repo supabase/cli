@@ -56,7 +56,7 @@ describe("supabaseEnvBoolWithProjectFallback", () => {
     expect(supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
   });
 
-  it("treats an unparsable shell value as present and false (cast.ToBool swallows the error)", () => {
+  it("treats an unparsable shell value as present and false", () => {
     process.env[KEY] = "banana";
     expect(supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
   });

@@ -281,7 +281,7 @@ describe("fromConfigDocument", () => {
     expect(projected.auth?.email?.smtp?.port).toBe(25);
   });
 
-  test("an out-of-range smtp.port (past uint16) is omitted, matching the API arm's own bound", () => {
+  test("an out-of-range smtp.port (past 65535) is omitted, matching the API arm's own bound", () => {
     const projected = fromConfigDocument({
       auth: { email: { smtp: { enabled: true, host: "smtp.example.com", port: 70_000 } } },
     });

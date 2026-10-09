@@ -92,7 +92,7 @@ describe("parseSnippetUuid", () => {
       });
     });
 
-    it("slices the urn prefix by byte and %q-quotes it (printable rune prints literally)", () => {
+    it("slices the urn prefix by byte and quotes it (printable code point prints literally)", () => {
       // 2 (é) + 7 + 36 = 45 bytes → urn branch; first 9 bytes are "érn:uuid".
       expect(parseSnippetUuid(`érn:uuid${canonical}`)).toEqual({
         error: 'invalid urn prefix: "érn:uuid"',

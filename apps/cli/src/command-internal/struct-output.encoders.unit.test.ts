@@ -379,7 +379,7 @@ SUPABASE_ANON_KEY = "anon"
     expect(() => encodeStructToml({ default: [[null], "x"] }, spec)).toThrow(message);
   });
 
-  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
+  it("truncates time fractions to nanoseconds", () => {
     const spec = shapeStruct([["t", shapeTime, "T"]]);
     expect(encodeStructToml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.123456789Z\n",
@@ -848,7 +848,7 @@ t12: 1900-02-29
     );
   });
 
-  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
+  it("truncates time fractions to nanoseconds", () => {
     const spec = shapeStruct([["t", shapeTime, "T"]]);
     expect(encodeStructYaml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789Z\n",

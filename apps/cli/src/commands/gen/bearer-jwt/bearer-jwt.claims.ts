@@ -247,7 +247,7 @@ function jsonSyntaxErrorMessage(raw: string): string {
  * any number-overflow scan runs; only once the top level is an object does
  * an overflowing number anywhere inside it raise the float64-overflow error
  * from {@link findFirstNonFiniteJsonNumberLiteral}. Throws a bare `Error`,
- * which the caller wraps with a `"failed to parse payload: %w"` prefix.
+ * which the caller wraps with a `"failed to parse payload: <cause>"` prefix.
  */
 export function mergeBearerJwtPayload(
   claims: Record<string, unknown>,

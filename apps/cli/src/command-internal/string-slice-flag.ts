@@ -241,7 +241,7 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 }
 
 /**
- * Builds a repeatable CSV-split flag, including its `invalid argument %q for %q flag: %v`
+ * Builds a repeatable CSV-split flag, including its `invalid argument "<value>" for "<flag>" flag: <reason>`
  * diagnostic.
  *
  * `options.alias` must be registered here, not piped on afterwards: the

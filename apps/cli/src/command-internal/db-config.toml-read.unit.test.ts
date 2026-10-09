@@ -466,10 +466,10 @@ describe("readDbToml", () => {
   });
 
   it.effect.each([
-    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", typeName: "time.Time" },
-    { name: "local date-time", literal: "1979-05-27T07:32:00", typeName: "toml.LocalDateTime" },
-    { name: "local date", literal: "1979-05-27", typeName: "toml.LocalDate" },
-    { name: "local time", literal: "07:32:00", typeName: "toml.LocalTime" },
+    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", typeName: "offset date-time" },
+    { name: "local date-time", literal: "1979-05-27T07:32:00", typeName: "local date-time" },
+    { name: "local date", literal: "1979-05-27", typeName: "local date" },
+    { name: "local time", literal: "07:32:00", typeName: "local time" },
   ])(
     "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty",
     ({ literal, typeName }) => {
@@ -515,7 +515,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'time.Time'",
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'offset date-time'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -536,7 +536,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'time.Time'",
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'offset date-time'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -559,7 +559,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'table'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -599,7 +599,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+                "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'array'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -622,7 +622,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'table'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -643,7 +643,7 @@ describe("readDbToml", () => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               expect(JSON.stringify(exit.cause)).toContain(
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'array'",
               );
             }
             rmSync(dir, { recursive: true, force: true });
@@ -669,9 +669,9 @@ describe("readDbToml", () => {
             if (Exit.isFailure(exit)) {
               const message = JSON.stringify(exit.cause);
               const schemaIssue =
-                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'array'";
               const seedIssue =
-                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'array'";
               expect(message).toContain(schemaIssue);
               expect(message).toContain(seedIssue);
               expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
@@ -2178,7 +2178,7 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect("fails when a present shadow_port cannot unmarshal into a uint16", () => {
+  it.effect("fails when a present shadow_port is not a valid port number", () => {
     const dir = withConfig(["[db]", "port = 5000", 'shadow_port = "nope"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,

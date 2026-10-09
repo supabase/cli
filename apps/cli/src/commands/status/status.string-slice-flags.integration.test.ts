@@ -17,7 +17,7 @@ import {
 import { statusCommand } from "./status.command.ts";
 
 // `--override-name` and `--exclude` are string-slice flags, so malformed CSV aborts flag parsing
-// before the handler runs, with the exact `invalid argument %q for %q flag: %v` line on stderr.
+// before the handler runs, with the exact `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr.
 // These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-status-string-slice-int-");

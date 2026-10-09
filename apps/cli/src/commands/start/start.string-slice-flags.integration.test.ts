@@ -18,7 +18,7 @@ import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { startCommand } from "./start.command.ts";
 
 // Malformed CSV aborts flag parsing before the handler runs, with the exact
-// `invalid argument %q for %q flag: %v` line on stderr — a shorthand flag frames both spellings
+// `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr — a shorthand flag frames both spellings
 // (`-x, --exclude`). These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
