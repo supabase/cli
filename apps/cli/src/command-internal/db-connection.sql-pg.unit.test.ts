@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
-import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
+import { SqlError, SqlSyntaxError, UnknownError } from "effect/sql/SqlError";
 import type * as Pg from "pg";
 
 import { ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";

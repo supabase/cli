@@ -1,4 +1,4 @@
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { textCliOutputFormatter } from "./text-formatter.ts";

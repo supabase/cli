@@ -101,7 +101,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       };
     });
     /* Every id resolves before the prompt, so a missing one destroys nothing. */
-    const [unresolved, resolved] = yield* Effect.partition(
+    const [resolved, unresolved] = yield* Effect.partition(
       flags.stackId.length === 0 ? [undefined] : flags.stackId,
       (stackId) => select(stackId).pipe(Effect.mapError((error) => ({ stackId, error }))),
     );
@@ -147,7 +147,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         });
     }
     const batch = flags.stackId.length > 1;
-    const [failed, destroyed] = yield* Effect.partition(selected, ({ id, deleted }) =>
+    const [destroyed, failed] = yield* Effect.partition(selected, ({ id, deleted }) =>
       Effect.gen(function* () {
         const stack = Option.isSome(deleted)
           ? deleted.value

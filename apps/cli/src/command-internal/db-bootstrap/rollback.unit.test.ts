@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { Data, Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { HealthCheckTimeoutError } from "./health-check.ts";
 import { isUnhealthyStartError, rollbackStart } from "./rollback.ts";

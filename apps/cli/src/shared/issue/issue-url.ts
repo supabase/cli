@@ -137,14 +137,14 @@ function validInstallMethod(value: string): string {
 export const inferIssueInstallMethod = Effect.fnUntraced(function* (runtimeInfo: {
   readonly execPath: string;
 }) {
-  const explicit = (yield* Config.option(Config.string("SUPABASE_INSTALL_METHOD"))).pipe(
+  const explicit = (yield* Config.option(Config.String("SUPABASE_INSTALL_METHOD"))).pipe(
     Option.map((value) => value.trim()),
     Option.filter((value) => value.length > 0),
   );
   if (Option.isSome(explicit)) return validInstallMethod(explicit.value);
 
   const userAgent = Option.getOrUndefined(
-    yield* Config.option(Config.string("npm_config_user_agent")),
+    yield* Config.option(Config.String("npm_config_user_agent")),
   )?.toLowerCase();
   if (userAgent?.startsWith("pnpm/")) return "pnpm";
   if (userAgent?.startsWith("npm/")) return "npm";

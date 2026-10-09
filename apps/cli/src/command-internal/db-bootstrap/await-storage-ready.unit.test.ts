@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import { HealthCheckTimeoutError } from "./health-check.ts";

@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Buffer } from "node:buffer";
-import { Effect, Encoding, Schema } from "effect";
+import { Effect, Schema } from "effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import { importJWK, jwtVerify, SignJWT } from "jose";
 import {
   DEFAULT_LOCAL_DATABASE_PASSWORD,
@@ -107,7 +108,7 @@ it.effect("publishes a usable HMAC key for an empty signing-key file", () =>
     expect(resolved.anonKey).toBe(defaults.anonKey);
     expect(resolved.serviceRoleKey).toBe(defaults.serviceRoleKey);
     expect(resolved.jwks).toContain('"kty":"oct"');
-    expect(resolved.jwks).toContain(Encoding.encodeBase64Url(DEFAULT_LOCAL_JWT_SECRET));
+    expect(resolved.jwks).toContain(Base64Url.encode(DEFAULT_LOCAL_JWT_SECRET));
     expect(resolved.gotrueJwtKeys).toBe("[]");
     const jwks = yield* Schema.decodeEffect(PublishedJwks)(resolved.jwks);
     const hmacKey = jwks.keys.find((key) => key.kty === "oct");

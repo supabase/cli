@@ -17,7 +17,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { Headers, HttpTraceContext } from "effect/unstable/http";
+import { Headers, HttpTraceContext } from "effect/http";
 import { CLI_VERSION } from "../cli/version.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
@@ -52,7 +52,7 @@ export interface TraceSettings {
 }
 
 const optionalEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.map(Option.filter((value) => value.trim().length > 0)),
     Effect.mapError(() => `${name} could not be read`),
   );

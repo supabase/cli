@@ -2,10 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {

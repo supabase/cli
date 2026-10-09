@@ -24,11 +24,12 @@ import {
   Semaphore,
   Path,
 } from "effect";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as NetAddress from "effect/net/NetAddress";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as RpcServer from "effect/rpc/RpcServer";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
 import * as Http from "node:http";
 import {
@@ -39,7 +40,7 @@ import {
   type HostEndpoint,
   type ShutdownFailure,
 } from "./HostProcess.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
@@ -93,7 +94,7 @@ export const bindControl = Effect.fn("StackHost.bindControl")(function* () {
     },
     { host: "127.0.0.1", port: 0 },
   ).pipe(Effect.mapError((cause) => hostError("control", cause)));
-  if (server.address._tag !== "TcpAddress")
+  if (!NetAddress.isInetAddress(server.address))
     return yield* hostError("control", "Control listener has no TCP address");
   return {
     port: server.address.port,

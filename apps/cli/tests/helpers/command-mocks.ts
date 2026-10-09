@@ -16,14 +16,14 @@ import {
   Stream,
 } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
-import type { ChildProcess } from "effect/unstable/process";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import type { ChildProcess } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as UrlParams from "effect/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { CommandCredentials } from "../../src/auth/command-credentials.service.ts";

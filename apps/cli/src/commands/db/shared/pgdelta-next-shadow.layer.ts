@@ -38,9 +38,9 @@ import {
   shadowRunInputFromLocalContainerInputs,
   setupShadowDatabase,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
 
 import {
   PgDeltaNextShadow,

@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";

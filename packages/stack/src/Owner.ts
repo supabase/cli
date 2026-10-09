@@ -14,9 +14,9 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import type { Rpc, RpcGroup } from "effect/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";

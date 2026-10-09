@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, PlatformError } from "effect";
-import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
 import { ArtifactError } from "./Artifacts.ts";
 import { failureKind, type StackFailureKind } from "./FailureKind.ts";
 import { HostProcessError } from "./HostProcess.ts";

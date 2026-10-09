@@ -9,10 +9,10 @@ import {
   Semaphore,
 } from "effect";
 import type { Crypto, Scope, Tracer } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
+import * as OtlpExporter from "effect/observability/OtlpExporter";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 import { makeTraceSanitizer } from "./trace-sanitize.ts";
 
 const EXPORT_TIMEOUT_MS = 2_000;

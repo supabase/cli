@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Layer, ManagedRuntime, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as UrlParams from "effect/http/UrlParams";
 
 import { makeApiClient } from "../effect.ts";
 import { makePromiseClient } from "./promise-client.ts";

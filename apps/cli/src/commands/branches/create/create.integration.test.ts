@@ -1,7 +1,7 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import {
   mockAnalytics,

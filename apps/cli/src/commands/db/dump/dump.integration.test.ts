@@ -13,7 +13,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";

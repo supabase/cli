@@ -407,7 +407,7 @@ export const layeredParseEnv = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ParseEnv> {
   const shell = new Map<string, string>();
   for (const name of PARSE_ENV_NAMES) {
-    const value = yield* Config.option(Config.string(name)).pipe(Effect.orDie);
+    const value = yield* Config.option(Config.String(name)).pipe(Effect.orDie);
     if (Option.isSome(value)) shell.set(name, value.value);
   }
   return (name) => shell.get(name) ?? projectEnv[name];
