@@ -723,7 +723,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             declarativeDirAbsolute === path.resolve(cliSettings.workdir, "supabase", "schemas"));
         const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
         if (fileRequested) {
-          const nextSteps = declarativeNextSteps(suggestMigra, !cfg.pgDelta.enabled);
+          // `declarative sync` gates on the base config, which a `[remotes.<ref>]` override may
+          // contradict, so suggest the always-accepted flag whenever an override was applied.
+          const nextSteps = declarativeNextSteps(
+            suggestMigra,
+            !cfg.pgDelta.enabled || cfg.appliedRemote !== undefined,
+          );
           yield* output.raw(
             writesMigration
               ? declarativeBaselineNote(displayPath, nextSteps)

@@ -758,9 +758,9 @@ describe("db diff", () => {
     () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const absoluteSchemas = JSON.stringify(path.join(tmp.current, "supabase", "schemas"));
+        const absoluteSchemas = path.join(tmp.current, "supabase", "schemas");
         const err = yield* ignoredDeclarativeNote(
-          `[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = ${absoluteSchemas}\n`,
+          `[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = '${absoluteSchemas}'\n`,
           "supabase/schemas/public.sql",
         );
         expect(err).toContain("the configured declarative schema directory are not read");
@@ -776,7 +776,7 @@ describe("db diff", () => {
       );
       expect(err).toContain("declarative schema files in supabase/decl are not read");
       expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
-      expect(err).not.toContain("--use-migra");
+      expect(err).not.toContain("or pass --use-migra");
     }),
   );
 
@@ -787,7 +787,7 @@ describe("db diff", () => {
         "supabase/schemas/public.sql",
       );
       expect(err).toContain("declarative schema files in supabase/schemas are not read");
-      expect(err).not.toContain("--use-migra");
+      expect(err).not.toContain("or pass --use-migra");
     }),
   );
 
@@ -840,7 +840,7 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
       expect(stderr(s.out)).toContain("declarative sync` reads declarative_schema_path");
-      expect(stderr(s.out)).toContain("enabled = false to keep using schema_paths with migra");
+      expect(stderr(s.out)).toContain("still reads schema_paths, and only for local targets");
       expect(stderr(s.out)).not.toContain("are not read");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -962,6 +962,34 @@ describe("db diff", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("suggests sync --experimental when a remote block overrides the base gate", () => {
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+        "supabase/schemas/public.sql": "create table declared ();\n",
+      },
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ linked: Option.some(true), file: Option.some("declared") }));
+      expect(stderr(s.out)).toContain(
+        "Run supabase db schema declarative sync --experimental to generate",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("the base config (default local target) does not merge a remote block", () => {
     const s = setup(tmp.current, {
