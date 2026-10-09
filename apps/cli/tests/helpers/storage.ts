@@ -25,7 +25,7 @@ import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
-import { cliConfigValuesTestLayer } from "./config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "./config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import { unusedStackServices } from "./unused-stack.ts";
 import {

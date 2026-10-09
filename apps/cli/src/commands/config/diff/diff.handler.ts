@@ -26,8 +26,8 @@ import {
 } from "../../../command-internal/project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
-  loadConfigSnapshot,
-  loadTargetConfigSnapshot,
+  loadResolvedConfig,
+  loadTargetResolvedConfig,
   relativeConfigPath,
   resolveConfigProjectRoot,
 } from "../config.load.ts";
@@ -110,7 +110,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     // resolution so a missing file points at `supabase init` rather than a not-linked error, and
     // a malformed document doesn't burn a branch-resolution round trip.
     const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
-    const earlySnapshot = yield* loadConfigSnapshot(
+    const earlyResolvedConfig = yield* loadResolvedConfig(
       cliSettings,
       projectRoot,
       Option.none(),
@@ -130,22 +130,22 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     });
 
     // The view `config push` sends: the `[remotes.*]` block matched to `ref` and the env overlay.
-    const snapshot = yield* loadTargetConfigSnapshot(
+    const resolvedConfig = yield* loadTargetResolvedConfig(
       cliSettings,
       projectRoot,
-      earlySnapshot,
+      earlyResolvedConfig,
       ref,
       makeLoadError,
     );
-    const loaded = snapshot.loaded;
-    const originFor = configEnvOriginLookup(snapshot.origins, (file) =>
+    const loaded = resolvedConfig.loaded;
+    const originFor = configEnvOriginLookup(resolvedConfig.origins, (file) =>
       relativeConfigPath(projectRoot, file),
     );
 
     const context: ConfigDiffContext = {
       projectRef: ref,
       branch,
-      appliedRemote: Option.getOrUndefined(snapshot.appliedRemote),
+      appliedRemote: Option.getOrUndefined(resolvedConfig.appliedRemote),
       configSchema: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
     };
     yield* output.raw(configDiffComparisonLine(context), "stderr");

@@ -28,7 +28,7 @@ import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { ExperimentalFlag, YesFlag } from "./global-flags.ts";
 import { stackStart } from "../commands/experimental/stack/start/start.handler.ts";
 import { destroyTestStacks } from "../../tests/helpers/stack-cleanup.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 const projectConfig = `
 project_id = "stack-storage-native-integration"

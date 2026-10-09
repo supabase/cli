@@ -3,7 +3,7 @@ import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";

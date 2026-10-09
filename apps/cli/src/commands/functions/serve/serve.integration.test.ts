@@ -69,7 +69,7 @@ import {
   type FunctionsServeFlags,
   type FunctionsServeTimers,
 } from "../../../shared/functions/serve.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const deployMockState = vi.hoisted(() => ({
   runCalls: [] as Array<{

@@ -8,7 +8,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {

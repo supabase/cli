@@ -1,12 +1,12 @@
 import type { CliConfig } from "@supabase/config";
 import { Crypto, Effect, FileSystem, Option, Path } from "effect";
 
-import { CliConfigValues, type CliConfigSnapshot } from "../config/cli-config-values.service.ts";
+import { CliConfigValues, type ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
-  describeConfigSnapshotFailure,
-  loadLocalSnapshotContext,
-} from "./config-snapshot-context.ts";
+  describeConfigLoadFailure,
+  loadLocalResolvedConfigContext,
+} from "./resolved-config-context.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 
 /** Effective config, project env file values, hostname, and sanitized project id for a command. */
@@ -15,7 +15,7 @@ export interface LocalProjectContext {
   readonly config: CliConfig;
   /** Values from `supabase/.env*` files only; a name the shell sets is never in here. */
   readonly projectEnvValues: Readonly<Record<string, string>>;
-  readonly snapshot: CliConfigSnapshot;
+  readonly resolvedConfig: ResolvedCliConfig;
   readonly hostname: string;
   /** The project id sanitized for Docker resource names. */
   readonly projectId: string;
@@ -33,11 +33,11 @@ export const loadLocalProjectContext = <E>(
   FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CliConfigValues
 > =>
   Effect.gen(function* () {
-    const { snapshot, config, projectEnvValues, hostname, projectId } =
-      yield* loadLocalSnapshotContext(workdir, Option.fromNullishOr(projectRef)).pipe(
-        Effect.mapError((cause) => mapConfigLoadError(describeConfigSnapshotFailure(cause))),
+    const { resolvedConfig, config, projectEnvValues, hostname, projectId } =
+      yield* loadLocalResolvedConfigContext(workdir, Option.fromNullishOr(projectRef)).pipe(
+        Effect.mapError((cause) => mapConfigLoadError(describeConfigLoadFailure(cause))),
       );
-    const appliedRemote = Option.getOrUndefined(snapshot.appliedRemote);
+    const appliedRemote = Option.getOrUndefined(resolvedConfig.appliedRemote);
 
     yield* Effect.annotateCurrentSpan({
       "config.remote_applied": appliedRemote !== undefined,
@@ -45,7 +45,7 @@ export const loadLocalProjectContext = <E>(
     return {
       config,
       projectEnvValues,
-      snapshot,
+      resolvedConfig,
       hostname,
       projectId,
     };

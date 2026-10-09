@@ -6,7 +6,7 @@ import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { type CliConfigKeyOrigin } from "../config/cli-config-key.ts";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
-import { CliConfigValues, type CliConfigSnapshot } from "../config/cli-config-values.service.ts";
+import { CliConfigValues, type ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
@@ -205,7 +205,7 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
   return Option.none();
 });
 
-const noticedWithheldPassword = new WeakSet<CliConfigSnapshot>();
+const noticedWithheldPassword = new WeakSet<ResolvedCliConfig>();
 
 const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
   switch (origin.tier) {
@@ -257,21 +257,21 @@ export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")
     return explicit.value;
   }
   const output = yield* Output;
-  const snapshot = yield* (yield* CliConfigValues)
+  const resolvedConfig = yield* (yield* CliConfigValues)
     .load({ workdir, projectRef: Option.some(ref) })
     .pipe(Effect.mapError(loadFailureToDbConfigError));
-  const resolved = yield* snapshot
+  const resolved = yield* resolvedConfig
     .get(CliConfigKeys.linkedDb.password)
     .pipe(Effect.mapError(loadFailureToDbConfigError));
-  const withheld = snapshot.withheldEnv.find(
+  const withheld = resolvedConfig.withheldEnv.find(
     (entry) => entry.path === CliConfigKeys.linkedDb.password.path,
   );
   if (
     withheld !== undefined &&
     resolved.origin.tier !== "flag" &&
-    !noticedWithheldPassword.has(snapshot)
+    !noticedWithheldPassword.has(resolvedConfig)
   ) {
-    noticedWithheldPassword.add(snapshot);
+    noticedWithheldPassword.add(resolvedConfig);
     yield* output.warn(
       `Not sending ${withheld.envName} to ${withheld.targetRef}: this directory is linked to ${withheld.linkedRef}. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).${
         hasPasswordFlag ? ` Pass --password to use a password for ${withheld.targetRef}.` : ""

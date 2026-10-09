@@ -3,9 +3,9 @@ import { Effect, FileSystem, Option } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-} from "../../command-internal/config-snapshot-context.ts";
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+} from "../../command-internal/resolved-config-context.ts";
 import {
   resolveStorageCredentials,
   storageGatewayFetch,
@@ -39,7 +39,7 @@ interface LoadedStorageConfig {
 }
 
 /**
- * Loads the config through the snapshot (flags, env and the `[remotes.<name>]` block matching
+ * Loads the config through `CliConfigValues` (flags, env and the `[remotes.<name>]` block matching
  * `projectRef` applied), falling back to the embedded defaults when no project file exists —
  * except for a local target with an explicit `--workdir`, which raises
  * `StorageMissingProjectConfigError` instead (see that error's doc for why). A remote target
@@ -58,7 +58,7 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
       });
     }
   }
-  const context = yield* loadConfigSnapshotContext(
+  const context = yield* loadResolvedConfigContext(
     cliSettings.workdir,
     projectRef === "" ? Option.none() : Option.some(projectRef),
   ).pipe(
@@ -72,13 +72,13 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
     Effect.mapError((cause) =>
       cause instanceof StorageConfigError
         ? cause
-        : new StorageConfigError({ message: describeConfigSnapshotFailure(cause) }),
+        : new StorageConfigError({ message: describeConfigLoadFailure(cause) }),
     ),
   );
   return {
     config: context.config,
     document: context.document,
-    appliedRemote: Option.getOrUndefined(context.snapshot.appliedRemote),
+    appliedRemote: Option.getOrUndefined(context.resolvedConfig.appliedRemote),
   } satisfies LoadedStorageConfig;
 });
 

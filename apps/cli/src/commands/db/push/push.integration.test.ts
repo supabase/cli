@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
-import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
   mockCommandSettings,
@@ -1203,7 +1203,7 @@ describe("db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      // No config.toml written → the snapshot reports no config file → default config
+      // No config.toml written → the resolved config reports no config file → default config
       // (migrations enabled), and the vault document is absent.
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");

@@ -38,7 +38,7 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
-import { flagInput } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { TemplateService } from "./bootstrap.templates.ts";

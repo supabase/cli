@@ -13,7 +13,7 @@ import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts"
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
-import { configValuesLayer } from "./config-snapshot-layer.ts";
+import { configValuesLayer } from "./config-values-layer.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 

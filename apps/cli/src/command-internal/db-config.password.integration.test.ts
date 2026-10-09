@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
-import { flagInput } from "../../tests/helpers/config-snapshot-layer.ts";
+import { flagInput } from "../../tests/helpers/config-values-layer.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";

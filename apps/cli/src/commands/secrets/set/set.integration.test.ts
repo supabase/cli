@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -562,7 +562,7 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
-      // The snapshot load resolves `env(VAR)` references against `.env`/`.env.local` before
+      // The resolved config load resolves `env(VAR)` references against `.env`/`.env.local` before
       // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
       // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
       // read once a config.toml/.json is found, so one must exist here too.

@@ -11,7 +11,7 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
-import { configValuesLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { functionsNew } from "./new.handler.ts";
 import { FUNCTIONS_NEW_DENO_JSON, FUNCTIONS_NEW_NPMRC } from "./new.templates.ts";
 

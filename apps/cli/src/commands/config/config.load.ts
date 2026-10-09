@@ -5,7 +5,7 @@ import { isDocumentRecord } from "../../config/cli-config-document.ts";
 import { cliRemoteProjectIdEnvName } from "../../config/cli-config-keys.ts";
 import { selectCliConfigRemote } from "../../config/cli-config-remote.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
-import type { CliConfigSnapshot } from "../../config/cli-config-values.service.ts";
+import type { ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
@@ -53,36 +53,39 @@ export const mapConfigLoadError =
     );
 
 /**
- * Loads the config snapshot for the `config` family: the `[remotes.*]` block matched to
+ * Loads the resolved config for the `config` family: the `[remotes.*]` block matched to
  * `projectRef`, the env overlay and the `env()` values every command resolves. A missing file
  * suggests `supabase init` only for a defaulted workdir.
  */
-export const loadConfigSnapshot = Effect.fnUntraced(function* <E>(
+export const loadResolvedConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
   projectRoot: string,
   projectRef: Option.Option<string>,
   makeError: (message: string) => E,
 ) {
   const values = yield* CliConfigValues;
-  const snapshot = yield* values
+  const resolvedConfig = yield* values
     .load({ workdir: projectRoot, projectRef, tolerateUnreadableLinkedRef: true })
     .pipe(mapConfigLoadError(cliSettings, makeError));
-  if (!snapshot.hasConfigFile) {
+  if (!resolvedConfig.hasConfigFile) {
     return yield* Effect.fail(makeError(yield* missingProjectConfigMessageEffect(cliSettings)));
   }
-  yield* Effect.annotateCurrentSpan("config.remote_applied", Option.isSome(snapshot.appliedRemote));
-  return snapshot;
+  yield* Effect.annotateCurrentSpan(
+    "config.remote_applied",
+    Option.isSome(resolvedConfig.appliedRemote),
+  );
+  return resolvedConfig;
 });
 
 /**
- * The snapshot for the resolved target. A command loads once before it knows the target, to fail
- * on a missing or invalid config before any network call; that snapshot stands unless a
+ * The resolved config for the resolved target. A command loads once before it knows the target, to fail
+ * on a missing or invalid config before any network call; that resolved config stands unless a
  * `[remotes.*]` block selects `ref`, since loading again prints its warnings twice.
  */
-export const loadTargetConfigSnapshot = Effect.fnUntraced(function* <E>(
+export const loadTargetResolvedConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
   projectRoot: string,
-  early: CliConfigSnapshot,
+  early: ResolvedCliConfig,
   ref: string,
   makeError: (message: string) => E,
 ) {
@@ -92,7 +95,7 @@ export const loadTargetConfigSnapshot = Effect.fnUntraced(function* <E>(
   const selected = selectCliConfigRemote(remotes, Option.some(ref), (name) => overrides[name]);
   return selected === undefined
     ? early
-    : yield* loadConfigSnapshot(cliSettings, projectRoot, Option.some(ref), makeError);
+    : yield* loadResolvedConfig(cliSettings, projectRoot, Option.some(ref), makeError);
 });
 
 /** What the config file itself declares; `config pull` compares against it because it rewrites the file. */
@@ -102,7 +105,9 @@ export const loadDeclaredFileConfig = Effect.fnUntraced(function* <E>(
   projectRef: Option.Option<string>,
   makeError: (message: string) => E,
 ) {
-  const snapshot = yield* loadConfigSnapshot(cliSettings, projectRoot, projectRef, makeError);
-  const loaded = yield* snapshot.fileDeclared.pipe(mapConfigLoadError(cliSettings, makeError));
-  return { snapshot, loaded };
+  const resolvedConfig = yield* loadResolvedConfig(cliSettings, projectRoot, projectRef, makeError);
+  const loaded = yield* resolvedConfig.fileDeclared.pipe(
+    mapConfigLoadError(cliSettings, makeError),
+  );
+  return { resolvedConfig, loaded };
 });

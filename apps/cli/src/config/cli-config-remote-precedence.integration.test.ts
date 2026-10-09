@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 
-import { configValuesLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../tests/helpers/config-values-layer.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import { cliConfigFamilyKey, cliConfigRegistry, type AnyCliConfigKey } from "./cli-config-keys.ts";
@@ -106,10 +106,10 @@ const readKey = (scenario: Scenario, shell: Readonly<Record<string, string>>) =>
       { prefix: "supabase-cli-remote-precedence-", supabaseEnv: "GITHUB_SECRET=g\n" },
     );
     const layer = configValuesLayer({ env: shell });
-    const snapshot = yield* CliConfigValues.use((values) =>
+    const resolvedConfig = yield* CliConfigValues.use((values) =>
       values.load({ workdir: root, projectRef: Option.some(LINKED) }),
     ).pipe(Effect.provide(layer));
-    return yield* snapshot.get(scenario.key);
+    return yield* resolvedConfig.get(scenario.key);
   }).pipe(Effect.provide(BunServices.layer), Effect.scoped);
 
 describe("CliConfigValues env versus a matched remote", () => {

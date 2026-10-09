@@ -329,9 +329,9 @@ const parseErrorMessage = (cause: unknown): string => {
     : `failed to load config: ${detail}`;
 };
 
-type SnapshotLoadError = Effect.Error<ReturnType<CliConfigValues["Service"]["load"]>>;
+type ResolvedConfigLoadError = Effect.Error<ReturnType<CliConfigValues["Service"]["load"]>>;
 
-const toDbConfigLoadError = (error: SnapshotLoadError): DbConfigLoadError => {
+const toDbConfigLoadError = (error: ResolvedConfigLoadError): DbConfigLoadError => {
   switch (error._tag) {
     case "CliConfigParseError":
       return new DbConfigLoadError({ message: parseErrorMessage(error.cause) });
@@ -342,7 +342,11 @@ const toDbConfigLoadError = (error: SnapshotLoadError): DbConfigLoadError => {
   }
 };
 
-const loadDbTomlSnapshot = (workdir: string, ref: string | undefined, ignoreConfigFile: boolean) =>
+const loadDbTomlResolvedConfig = (
+  workdir: string,
+  ref: string | undefined,
+  ignoreConfigFile: boolean,
+) =>
   CliConfigValues.use((values) =>
     values.load({
       workdir,
@@ -352,7 +356,7 @@ const loadDbTomlSnapshot = (workdir: string, ref: string | undefined, ignoreConf
   ).pipe(Effect.mapError(toDbConfigLoadError));
 
 /**
- * Projects the `CliConfigValues` snapshot of `<workdir>/supabase/config.{toml,json}` (flags aside)
+ * Projects the `CliConfigValues` resolved config of `<workdir>/supabase/config.{toml,json}` (flags aside)
  * and the linked `<workdir>/supabase/.temp/pooler-url` onto {@link DbTomlValues}. `fs`/`path` are
  * passed in so the resolver can capture them once and keep its own `R` at `never`.
  *
@@ -373,27 +377,32 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   resolveVaultSecrets = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
-  const snapshot = yield* loadDbTomlSnapshot(workdir, ref, ignoreConfigFile);
-  const withheldNames = new Set(snapshot.withheldEnv.map((held) => held.envName));
+  const resolvedConfig = yield* loadDbTomlResolvedConfig(workdir, ref, ignoreConfigFile);
+  const withheldNames = new Set(resolvedConfig.withheldEnv.map((held) => held.envName));
   const projectEnv = Object.fromEntries(
-    Object.entries(snapshot.projectEnvValues).filter(([name]) => !withheldNames.has(name)),
+    Object.entries(resolvedConfig.projectEnvValues).filter(([name]) => !withheldNames.has(name)),
   );
-  const { config } = snapshot.materialized;
+  const { config } = resolvedConfig.materialized;
   const fail = (message: string) => Effect.fail(new DbConfigLoadError({ message }));
   const getKey = <A, X, F extends CliConfigFlagDeclaration>(key: CliConfigKey<A, X, F>) =>
-    snapshot.get(key).pipe(Effect.mapError(toDbConfigLoadError));
+    resolvedConfig.get(key).pipe(Effect.mapError(toDbConfigLoadError));
 
-  const declaredDocument = snapshot.loaded.document ?? {};
+  const declaredDocument = resolvedConfig.loaded.document ?? {};
   const secretDocument = Object.fromEntries(
     ["db", "auth", "studio", "edge_runtime", "remotes"].map((key) => [key, declaredDocument[key]]),
   );
-  const referenced = yield* snapshot
+  const referenced = yield* resolvedConfig
     .envValues(envReferenceNames(secretDocument))
     .pipe(Effect.mapError(toDbConfigLoadError));
   const lookup: EnvLookup = (name) => referenced[name];
-  const secretError = assertDecryptableSecrets(secretDocument, lookup, snapshot.dotenvPrivateKeys, {
-    includeVault: resolveVaultSecrets,
-  });
+  const secretError = assertDecryptableSecrets(
+    secretDocument,
+    lookup,
+    resolvedConfig.dotenvPrivateKeys,
+    {
+      includeVault: resolveVaultSecrets,
+    },
+  );
   if (secretError !== undefined) return yield* fail(secretError);
 
   const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
@@ -431,7 +440,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const denoVersion = config.edge_runtime.deno_version;
 
-  const webhooksPresent = snapshot.declares("experimental.webhooks");
+  const webhooksPresent = resolvedConfig.declares("experimental.webhooks");
   const webhooksEnabled = config.experimental.webhooks?.enabled ?? false;
   const pgDeltaConfig = config.experimental.pgdelta;
   const declarativeSchemaPath = nonEmptyString(pgDeltaConfig?.declarative_schema_path);
@@ -488,7 +497,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     if ((yield* getKey(CliConfigKeys.auth.passkey.enabled)).value) {
       const rpOrigins = (yield* getKey(CliConfigKeys.auth.webauthn.rpOrigins)).value;
       passkeyInput = {
-        webauthnPresent: snapshot.declares("auth.webauthn"),
+        webauthnPresent: resolvedConfig.declares("auth.webauthn"),
         rpId: (yield* getKey(CliConfigKeys.auth.webauthn.rpId)).value,
         rpOrigins: rpOrigins.length > 0 ? rpOrigins : undefined,
       };
@@ -569,7 +578,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       smtp === undefined
         ? undefined
         : {
-            enabled: resolveSmtpEnabled(snapshot),
+            enabled: resolveSmtpEnabled(resolvedConfig),
             host: smtp.host ?? "",
             port: smtp.port ?? 0,
             user: smtp.user ?? "",
@@ -710,7 +719,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         continue;
       }
       if (isEncryptedSecret(value)) {
-        const decrypted = decryptSecret(value, snapshot.dotenvPrivateKeys);
+        const decrypted = decryptSecret(value, resolvedConfig.dotenvPrivateKeys);
         if (!decrypted.ok) return yield* fail(`failed to parse config: ${decrypted.error}`);
         vault.push({ name, value: decrypted.value, resolved: true });
         continue;
@@ -752,7 +761,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     schemaPathPatterns: schemaPaths.unnormalized ?? schemaPaths.value,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
-    appliedRemote: Option.getOrUndefined(snapshot.appliedRemote),
+    appliedRemote: Option.getOrUndefined(resolvedConfig.appliedRemote),
   };
   return values;
 });

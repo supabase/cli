@@ -29,7 +29,7 @@ import {
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
-import { loadSnapshotSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
+import { loadResolvedConfigSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import {
   loadLocalProjectContext,
   recordLocalProjectOrioleDbTelemetry,
@@ -140,7 +140,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // 2. An absent config.toml is not a hard failure — only a malformed one is; a missing file
     // proceeds with template defaults. `loadLocalProjectContext` also resolves the sanitized
     // project id used below; see its own doc comment for the full rationale.
-    yield* loadSnapshotSurfacingValueErrors(
+    yield* loadResolvedConfigSurfacingValueErrors(
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
     );
@@ -160,7 +160,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
           context.hostname,
           cliSettings.workdir,
           context.projectEnvValues,
-          context.snapshot.loaded.document,
+          context.resolvedConfig.loaded.document,
         ),
       catch: (cause) =>
         cause instanceof CliConfigValueError

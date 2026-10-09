@@ -5,7 +5,7 @@ import { Effect, FileSystem, Option } from "effect";
 import { CliConfigKeys } from "../../src/config/cli-config-keys.ts";
 import { CliConfigValues } from "../../src/config/cli-config-values.service.ts";
 import { withConfigEnv, withEnvVar } from "./command-mocks.ts";
-import { cliConfigValuesTestLayer, configValuesLayer } from "./config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer, configValuesLayer } from "./config-values-layer.ts";
 import { mockOutput } from "./mocks.ts";
 
 const STRAY_PORT = "11111";
@@ -24,10 +24,10 @@ afterEach(() => {
 const readDbPort = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hermetic-layer-" });
-  const snapshot = yield* CliConfigValues.use((values) =>
+  const resolvedConfig = yield* CliConfigValues.use((values) =>
     values.load({ workdir, projectRef: Option.none() }),
   );
-  return yield* snapshot.get(CliConfigKeys.db.port);
+  return yield* resolvedConfig.get(CliConfigKeys.db.port);
 }).pipe(Effect.provide(BunServices.layer), Effect.scoped);
 
 describe("hermetic config test layers", () => {

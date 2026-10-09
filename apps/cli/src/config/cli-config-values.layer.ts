@@ -57,7 +57,7 @@ import { cliConfigRemoteFailure, selectCliConfigRemote } from "./cli-config-remo
 import {
   CliConfigValues,
   type CliConfigMaterialized,
-  type CliConfigSnapshot,
+  type ResolvedCliConfig,
   type CliConfigWithheldEnv,
 } from "./cli-config-values.service.ts";
 import { CliConfigValueError } from "./cli-config.errors.ts";
@@ -178,7 +178,7 @@ export const cliConfigValuesLayer = Layer.effect(
       },
     );
 
-    const loadSnapshot = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
+    const loadResolvedConfig = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
       const [conflict] = flagInputs.conflicts;
       if (conflict !== undefined) return yield* cliConfigFlagConflictError(conflict);
 
@@ -302,7 +302,7 @@ export const cliConfigValuesLayer = Layer.effect(
         context: { workdir: target.workdir, projectRef: target.projectRef, path, configAt },
       };
 
-      const familyNames: CliConfigSnapshot["familyNames"] = (id) => {
+      const familyNames: ResolvedCliConfig["familyNames"] = (id) => {
         const family = cliConfigRegistry.families.find((candidate) => candidate.id === id);
         if (family === undefined) return [];
         const table = getDocumentValue(document, family.prefix);
@@ -423,7 +423,7 @@ export const cliConfigValuesLayer = Layer.effect(
         },
       };
 
-      const get: CliConfigSnapshot["get"] = (key) =>
+      const get: ResolvedCliConfig["get"] = (key) =>
         Effect.gen(function* () {
           const picked = pickCliConfigKey(key, sources);
           if (Result.isFailure(picked)) return yield* picked.failure;
@@ -467,10 +467,10 @@ export const cliConfigValuesLayer = Layer.effect(
             }),
           );
         },
-      } satisfies CliConfigSnapshot;
+      } satisfies ResolvedCliConfig;
     });
 
-    const cache = yield* Cache.makeWith(loadSnapshot, {
+    const cache = yield* Cache.makeWith(loadResolvedConfig, {
       capacity: 32,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
     });

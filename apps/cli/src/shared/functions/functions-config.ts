@@ -1,7 +1,7 @@
 import { Crypto, Effect, type FileSystem, Option, type Path } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { CliConfigValues, type CliConfigSnapshot } from "../../config/cli-config-values.service.ts";
+import { CliConfigValues, type ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
 
 type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
 
@@ -12,7 +12,7 @@ type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
  */
 interface FunctionsCliConfigContext {
   readonly loaded: FunctionsLoadedConfig;
-  readonly snapshot: CliConfigSnapshot;
+  readonly resolvedConfig: ResolvedCliConfig;
   /** The config file's path; `undefined` when the project has none. */
   readonly configPath: string | undefined;
   /** Merged env with ambient values winning. */
@@ -33,7 +33,7 @@ export interface FunctionsLocalConfigLoader {
   }) => Effect.Effect<
     {
       readonly loaded: FunctionsLoadedConfig;
-      readonly snapshot: CliConfigSnapshot;
+      readonly resolvedConfig: ResolvedCliConfig;
       readonly configPath: string | undefined;
       readonly projectEnvValues: Readonly<Record<string, string>>;
       readonly projectId: string;
@@ -55,7 +55,7 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
 }) {
   const values = yield* CliConfigValues;
   // Loaded first so a config failure reaches the caller as its own typed error, not as the
-  // validation hook's message-only wrapper; the hook's own load reuses this memoised snapshot.
+  // validation hook's message-only wrapper; the hook's own load reuses this memoised resolved config.
   yield* values.load({
     workdir: input.projectRoot,
     projectRef: Option.fromNullishOr(input.projectRef),
@@ -67,7 +67,7 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
   });
   return {
     loaded: context.loaded,
-    snapshot: context.snapshot,
+    resolvedConfig: context.resolvedConfig,
     configPath: context.configPath,
     projectEnvValues: context.projectEnvValues,
     projectId: context.projectId,

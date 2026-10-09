@@ -50,15 +50,18 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: { readonly 
   const projectRoot = paths?.projectRoot ?? settings.workdir;
   const supabaseDir = path.join(projectRoot, "supabase");
 
-  const snapshot = yield* configValues.load({ workdir: projectRoot, projectRef: Option.none() });
+  const resolvedConfig = yield* configValues.load({
+    workdir: projectRoot,
+    projectRef: Option.none(),
+  });
 
   return {
     projectRoot,
     supabaseDir,
-    configPath: snapshot.hasConfigFile
-      ? snapshot.loaded.path
+    configPath: resolvedConfig.hasConfigFile
+      ? resolvedConfig.loaded.path
       : path.join(supabaseDir, "config.toml"),
-    section: readComputeSection(snapshot.materialized.config.compute),
+    section: readComputeSection(resolvedConfig.materialized.config.compute),
     computeDir: computeRootDir(path, projectRoot),
   } satisfies ComputeProject;
 });

@@ -8,7 +8,7 @@ import { envReferenceNames } from "../../../config/cli-config-document.ts";
 import { resolveCliSubtree } from "../../../config/cli-config-subtree.ts";
 import {
   CliConfigValues,
-  type CliConfigSnapshot,
+  type ResolvedCliConfig,
 } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -93,11 +93,11 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
 
 interface ConfigSecretSource {
   readonly edgeRuntime: CliConfig["edge_runtime"] | undefined;
-  /** The snapshot the edge runtime came from; none when it was salvaged from a failed load. */
-  readonly snapshot: CliConfigSnapshot | undefined;
+  /** The resolved config the edge runtime came from; none when it was salvaged from a failed load. */
+  readonly resolvedConfig: ResolvedCliConfig | undefined;
 }
 
-const noConfigSecrets: ConfigSecretSource = { edgeRuntime: undefined, snapshot: undefined };
+const noConfigSecrets: ConfigSecretSource = { edgeRuntime: undefined, resolvedConfig: undefined };
 
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
@@ -122,7 +122,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     const merged = new Map<string, string>();
     // A malformed config.toml (or sibling .env/.env.local) is swallowed here (logged, not
     // fatal) and proceeds with empty config-sourced secrets — env-file and positional-arg
-    // secrets still work. An invalid value in an unrelated key is left out of the snapshot
+    // secrets still work. An invalid value in an unrelated key is left out of the resolved config
     // rather than failing it.
     //
     // Passing `ref` merges a matching `[remotes.*]` block over the base config before decode,
@@ -132,28 +132,28 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       appliedRemote === undefined
         ? Effect.void
         : output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
-    const snapshot = yield* configValues
+    const secretSource = yield* configValues
       .load({
         workdir: cliSettings.workdir,
         projectRef: Option.some(ref),
         tolerateInvalid: true,
       })
       .pipe(
-        Effect.flatMap((loadedSnapshot) =>
+        Effect.flatMap((loadedResolvedConfig) =>
           // Printed unconditionally as soon as a matching `[remotes.*]` block is found, ahead of
           // the (possibly failing) decode — other handlers surface this the same way, so this
           // path must not silently drop it.
-          reportRemote(Option.getOrUndefined(loadedSnapshot.appliedRemote)).pipe(
+          reportRemote(Option.getOrUndefined(loadedResolvedConfig.appliedRemote)).pipe(
             Effect.andThen(
-              loadedSnapshot.invalid.length === 0
+              loadedResolvedConfig.invalid.length === 0
                 ? Effect.void
                 : debugLogger.debug(
                     "failed to parse supabase/config.toml: schema validation failed",
                   ),
             ),
             Effect.as<ConfigSecretSource>({
-              edgeRuntime: loadedSnapshot.materialized.config.edge_runtime,
-              snapshot: loadedSnapshot,
+              edgeRuntime: loadedResolvedConfig.materialized.config.edge_runtime,
+              resolvedConfig: loadedResolvedConfig,
             }),
           ),
         ),
@@ -176,7 +176,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
               ),
               Effect.as<ConfigSecretSource>({
                 edgeRuntime: recoverEdgeRuntimeConfig(cause)?.edge_runtime,
-                snapshot: undefined,
+                resolvedConfig: undefined,
               }),
             );
           },
@@ -193,10 +193,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
             debugLogger.debug(cause.message).pipe(Effect.as(noConfigSecrets)),
         }),
       );
-    const { edgeRuntime } = snapshot;
+    const { edgeRuntime } = secretSource;
     if (edgeRuntime !== undefined) {
-      const envSnapshot =
-        snapshot.snapshot ??
+      const envResolvedConfig =
+        secretSource.resolvedConfig ??
         (yield* configValues
           .load({
             workdir: cliSettings.workdir,
@@ -206,9 +206,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           })
           .pipe(Effect.orElseSucceed(() => undefined)));
       const values =
-        envSnapshot === undefined
+        envResolvedConfig === undefined
           ? {}
-          : yield* envSnapshot.envValues(envReferenceNames(edgeRuntime)).pipe(Effect.orDie);
+          : yield* envResolvedConfig.envValues(envReferenceNames(edgeRuntime)).pipe(Effect.orDie);
       const resolved = yield* resolveCliSubtree(edgeRuntime, values, "edge_runtime");
       const secrets = isRecord(resolved) ? resolved["secrets"] : undefined;
       for (const [name, value] of Object.entries(isRecord(secrets) ? secrets : {})) {

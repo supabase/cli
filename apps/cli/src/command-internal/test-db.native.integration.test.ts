@@ -27,7 +27,7 @@ import type { InitializationCommandOptions, PostgresCommandOptions } from "@supa
 import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));

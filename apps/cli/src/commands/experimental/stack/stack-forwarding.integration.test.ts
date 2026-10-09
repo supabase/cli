@@ -11,7 +11,7 @@ import { makeSpec as studioSpec } from "../../../../../../packages/stack/src/ser
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const layer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer);
 

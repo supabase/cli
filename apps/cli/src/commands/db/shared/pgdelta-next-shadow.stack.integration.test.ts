@@ -5,7 +5,7 @@ import { Effect, FileSystem, Layer, Option } from "effect";
 
 import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";

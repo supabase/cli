@@ -2,7 +2,7 @@
  * Resets the local database in-process — shared by `db reset`'s handler and the `db schema
  * declarative`/`sync` local-reset paths, so neither needs to shell out to a separate process.
  * `db reset`'s own handler is the only caller that ever passes a non-empty `version`; the
- * declarative callers always want the plain full reset. Seeding follows the config snapshot:
+ * declarative callers always want the plain full reset. Seeding follows the resolved config:
  * `--no-seed`, `--sql-paths` and `SUPABASE_DB_SEED_ENABLED` all arrive through it.
  *
  * Always prints its own two stderr lines via `output.raw`, regardless of `output.format`, but
@@ -231,7 +231,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         interactive: false,
         yes,
         credentials,
-        resolvedConfig: { config: context.config, document: context.snapshot.loaded.document },
+        resolvedConfig: {
+          config: context.config,
+          document: context.resolvedConfig.loaded.document,
+        },
         projectEnvValues: projectEnv,
         workdir,
       });
@@ -271,7 +274,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     debug,
   );
   const {
-    context: { projectId, hostname, config, snapshot },
+    context: { projectId, hostname, config, resolvedConfig },
     values,
     bootstrapConfig,
     networkId,
@@ -326,7 +329,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       // `SUPABASE_YES` set in `supabase/.env` auto-confirms the bucket overwrite/prune
       // prompts.
       yes,
-      resolvedConfig: { config, document: snapshot.loaded.document },
+      resolvedConfig: { config, document: resolvedConfig.loaded.document },
       // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
     }).pipe(

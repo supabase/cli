@@ -6,9 +6,9 @@ import {
 import { Effect, Result } from "effect";
 import { isConfigValueFailure } from "../../command-internal/config-value-passthrough.ts";
 import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-} from "../../command-internal/config-snapshot-context.ts";
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+} from "../../command-internal/resolved-config-context.ts";
 import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
@@ -24,12 +24,12 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   workdir: string,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ) {
-  const context = yield* loadConfigSnapshotContext(workdir).pipe(Effect.result);
+  const context = yield* loadResolvedConfigContext(workdir).pipe(Effect.result);
   let configError: string | undefined;
   let major: number | undefined;
   if (Result.isFailure(context)) {
     if (isConfigValueFailure(context.failure)) return yield* context.failure;
-    configError = describeConfigSnapshotFailure(context.failure);
+    configError = describeConfigLoadFailure(context.failure);
   } else {
     const value = context.success.config.db.major_version;
     if (value !== 15 && value !== 17)

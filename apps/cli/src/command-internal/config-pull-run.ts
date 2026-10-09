@@ -382,7 +382,7 @@ function configPullFamiliesForChangePaths(
  * Runs {@link decodeCliConfigDocumentForValidation}, capturing only its own
  * `CliConfigParseError` failure into a `Result`. A genuinely malformed `.env`/`.env.local`,
  * or a filesystem failure reading one, is not a decode-attribution failure, so those
- * propagate uncaught, matching how the config snapshot load handles them.
+ * propagate uncaught, matching how the resolved config load handles them.
  */
 function decodeConfigPullValidation(
   document: Record<string, unknown>,

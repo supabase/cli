@@ -36,7 +36,7 @@ export const flagInput = (path: string, flag: string, value: unknown): CliConfig
 });
 
 /**
- * The real `CliConfigValues` service over the real filesystem, rebuilt per provide so no snapshot
+ * The real `CliConfigValues` service over the real filesystem, rebuilt per provide so no resolved config
  * memo leaks. Its shell tier holds only `options.env` and the pins in scope at each load
  * (`withConfigEnv`, `withEnvVar`, `processEnvLayer`), never the ambient `process.env`.
  */

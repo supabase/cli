@@ -103,8 +103,8 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // This same `context` is passed into `buildLocalDbContainerInputs` below as
   // `preloadedContext`; that function returns the same context back verbatim.
   // `hostnameForValidation` here still feeds the discarded `resolveLocalConfigValues` call below.
-  const { config, snapshot, hostname: hostnameForValidation } = context;
-  const document = snapshot.loaded.document ?? {};
+  const { config, resolvedConfig, hostname: hostnameForValidation } = context;
+  const document = resolvedConfig.loaded.document ?? {};
 
   // Every duration config field is decoded in this same unconditional pass, before Docker is
   // touched or the already-running check runs. The parsed values are discarded; only the

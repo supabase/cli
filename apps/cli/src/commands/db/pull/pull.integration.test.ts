@@ -34,7 +34,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
-import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -1958,7 +1958,7 @@ describe("db pull", () => {
 
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // A project .env must select pg-delta even when the shell env doesn't set it.
-    // The handler reads it through the config snapshot, not process.env.
+    // The handler reads it through the resolved config, not process.env.
     const s = setup(tmp.current, {
       migrations: ["20240101000000"],
       files: {

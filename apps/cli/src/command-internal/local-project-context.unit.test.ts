@@ -31,7 +31,7 @@ function writeConfigToml(workdir: string, contents: string): void {
   writeFileSync(join(supabaseDir, "config.toml"), contents);
 }
 
-/** Runs against a shell environment of exactly `env`, with the real snapshot service. */
+/** Runs against a shell environment of exactly `env`, with the real config service. */
 const layerWithShellEnv = (env: Readonly<Record<string, string>> = {}) =>
   Layer.fresh(
     Layer.mergeAll(
@@ -62,7 +62,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.snapshot.appliedRemote).toEqual(Option.some("prod"));
+        expect(context.resolvedConfig.appliedRemote).toEqual(Option.some("prod"));
         expect(context.projectId).toBe("local");
       }),
       Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "local" })),
@@ -75,7 +75,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.snapshot.appliedRemote).toEqual(Option.none());
+        expect(context.resolvedConfig.appliedRemote).toEqual(Option.none());
         expect(context.projectId).toBe(sanitizeProjectId(basename(workdir)));
       }),
       Effect.provide(layerWithShellEnv()),
@@ -88,7 +88,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.snapshot.appliedRemote).toEqual(Option.none());
+        expect(context.resolvedConfig.appliedRemote).toEqual(Option.none());
         expect(context.projectId).toBe("env-project");
       }),
       Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "env-project" })),

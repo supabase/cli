@@ -17,7 +17,7 @@ validating those CSVs.
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file, an invalid value (including a non-string rule field) or an unknown rule key aborts
-the command. Rules and `env(VAR)` expansion come from the shared config snapshot
+the command. Rules and `env(VAR)` expansion come from the shared resolved config
 (flag > shell > project `.env*` > config).
 
 ## Files Written

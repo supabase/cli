@@ -91,11 +91,11 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
-    const snapshot = yield* configValues.load({
+    const resolvedConfig = yield* configValues.load({
       workdir,
       projectRef: projectRef !== "" ? Option.some(projectRef) : Option.none(),
     });
-    const seed = yield* resolveDbSeedInput(snapshot, { workdir, ref: projectRef });
+    const seed = yield* resolveDbSeedInput(resolvedConfig, { workdir, ref: projectRef });
     const includeSeed = Option.getOrElse(flags.includeSeed, () => false);
 
     const cfg = yield* resolver.resolve({

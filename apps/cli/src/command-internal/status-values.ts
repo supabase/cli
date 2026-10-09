@@ -227,7 +227,7 @@ export interface StatusLocalState {
  * Resolves local config values (URLs, keys — can throw, see {@link resolveLocalConfigValues})
  * and the per-service `.enabled` gates, with no reference to `excluded`/`containerIds` — see
  * {@link gateStatusState} for the Docker-dependent half this composes with. `config` must be
- * the snapshot's materialized config so env overrides are already applied to every gate.
+ * the resolved config's materialized config so env overrides are already applied to every gate.
  *
  * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its

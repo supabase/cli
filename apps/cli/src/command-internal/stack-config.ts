@@ -10,7 +10,7 @@ import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
-import { resolveSnapshotSubtree } from "../config/cli-config-subtree.ts";
+import { resolveConfigSubtree } from "../config/cli-config-subtree.ts";
 import type {
   CliConfigMaterialized,
   CliConfigValues,
@@ -18,10 +18,10 @@ import type {
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-  resolveSnapshotPasskeyWebauthn,
-} from "./config-snapshot-context.ts";
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+  resolvePasskeyWebauthn,
+} from "./resolved-config-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { parseDuration } from "./duration.ts";
@@ -227,19 +227,19 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
   (projectRoot: string, opts?: { readonly projectRef?: string }): StackConfigEffect =>
     Effect.gen(function* () {
       const {
-        snapshot,
+        resolvedConfig,
         config: validatedConfig,
         projectEnvValues,
         document,
-      } = yield* loadConfigSnapshotContext(
+      } = yield* loadResolvedConfigContext(
         projectRoot,
         Option.fromNullishOr(opts?.projectRef),
       ).pipe(
         Effect.mapError(
-          (cause) => new StackConfigError({ message: describeConfigSnapshotFailure(cause) }),
+          (cause) => new StackConfigError({ message: describeConfigLoadFailure(cause) }),
         ),
       );
-      const { originAt } = snapshot.materialized;
+      const { originAt } = resolvedConfig.materialized;
       yield* recordOrioleDbTelemetry(
         validatedConfig.db.orioledb_version,
         validatedConfig.db.major_version,
@@ -257,7 +257,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           }),
       });
       const authExternalUrl = Option.getOrUndefined(
-        (yield* snapshot
+        (yield* resolvedConfig
           .get(CliConfigKeys.auth.externalUrl)
           .pipe(Effect.mapError(toStackConfigError))).value,
       );
@@ -265,11 +265,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         validatedConfig.auth,
         validatedConfig.local_smtp,
         {
-          smtpEnabled: resolveSmtpEnabled(snapshot),
+          smtpEnabled: resolveSmtpEnabled(resolvedConfig),
           authExternalUrl,
           apiExternalUrl: validatedConfig.api.external_url,
           externalProviders,
-          ...(yield* resolveSnapshotPasskeyWebauthn(snapshot).pipe(
+          ...(yield* resolvePasskeyWebauthn(resolvedConfig).pipe(
             Effect.mapError(toStackConfigError),
           )),
         },
@@ -352,7 +352,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
-          resolveSnapshotSubtree(snapshot, config.env, `functions.${name}.env`).pipe(
+          resolveConfigSubtree(resolvedConfig, config.env, `functions.${name}.env`).pipe(
             Effect.mapError((error) => new StackConfigError({ message: error.message })),
             Effect.map(
               (env) =>
@@ -434,7 +434,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       });
       const jwtSecret =
         configuredJwtSecret === undefined ? undefined : Redacted.make(configuredJwtSecret);
-      const rootKey = yield* snapshot.get(CliConfigKeys.db.rootKey).pipe(
+      const rootKey = yield* resolvedConfig.get(CliConfigKeys.db.rootKey).pipe(
         Effect.map(({ value, origin }) =>
           origin.tier === "default" || value === "" ? undefined : value,
         ),

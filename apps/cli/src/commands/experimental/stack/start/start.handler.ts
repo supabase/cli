@@ -50,9 +50,9 @@ import {
   seedBucketsRun,
 } from "../../../../command-internal/seed-buckets.ts";
 import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-} from "../../../../command-internal/config-snapshot-context.ts";
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+} from "../../../../command-internal/resolved-config-context.ts";
 import type { CliConfigMaterialized } from "../../../../config/cli-config-values.service.ts";
 import {
   loadStackConfig,
@@ -905,9 +905,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (initialComposition) {
       const storage = members.find((instance) => instance.service === "storage");
       if (storage !== undefined) {
-        const context = yield* loadConfigSnapshotContext(target.projectRoot).pipe(
+        const context = yield* loadResolvedConfigContext(target.projectRoot).pipe(
           Effect.mapError(
-            (cause) => new SeedConfigLoadError({ message: describeConfigSnapshotFailure(cause) }),
+            (cause) => new SeedConfigLoadError({ message: describeConfigLoadFailure(cause) }),
           ),
         );
         if (hasConfiguredBuckets(context.config)) {

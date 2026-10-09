@@ -312,7 +312,7 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
  * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
  * classification) only when the Engine gives no definitive answer. The project id is a
- * best-effort read of the config snapshot unless the caller passes its already-resolved id: an
+ * best-effort read of the resolved config unless the caller passes its already-resolved id: an
  * unreadable config falls back to the workdir basename.
  */
 export function isLocalDbRunning(
@@ -328,7 +328,7 @@ export function isLocalDbRunning(
       const projectId =
         resolvedProjectId ??
         (yield* values.load({ workdir, projectRef: Option.none() }).pipe(
-          Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
+          Effect.flatMap((resolvedConfig) => resolvedConfig.get(CliConfigKeys.projectId)),
           Effect.map(({ value }) => value),
           Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
         ));

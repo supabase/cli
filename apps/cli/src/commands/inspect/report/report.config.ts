@@ -7,15 +7,15 @@ import type { InspectRule } from "./report.rules.ts";
 const RULE_FIELDS: ReadonlyArray<string> = ["query", "name", "pass", "fail"];
 
 /**
- * Reads `[experimental.inspect.rules]` from the config snapshot; when non-empty, these rules
+ * Reads `[experimental.inspect.rules]` from the resolved config; when non-empty, these rules
  * replace the embedded defaults. A missing field is the empty string, and an unknown key aborts
  * the load so a misspelled field is not silently dropped.
  */
 export const readInspectRules = Effect.fn("inspect.report.readRules")(function* (workdir: string) {
   const configValues = yield* CliConfigValues;
-  const snapshot = yield* configValues.load({ workdir, projectRef: Option.none() });
-  const rules = snapshot.materialized.config.experimental.inspect?.rules ?? [];
-  const rawRules = getDocumentValue(snapshot.loaded.document, "experimental.inspect.rules");
+  const resolvedConfig = yield* configValues.load({ workdir, projectRef: Option.none() });
+  const rules = resolvedConfig.materialized.config.experimental.inspect?.rules ?? [];
+  const rawRules = getDocumentValue(resolvedConfig.loaded.document, "experimental.inspect.rules");
 
   for (const [index, raw] of (Array.isArray(rawRules) ? rawRules : []).entries()) {
     const unknownKeys = isDocumentRecord(raw)

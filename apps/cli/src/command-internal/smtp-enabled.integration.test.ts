@@ -4,7 +4,7 @@ import { Effect, Option } from "effect";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
-import { configValuesLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../tests/helpers/config-values-layer.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
@@ -12,10 +12,10 @@ import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 const smtpEnabled = (config: string, shell: Record<string, string> = {}) =>
   Effect.gen(function* () {
     const root = yield* createStackConfigProject(config, { prefix: "supabase-smtp-enabled-" });
-    const snapshot = yield* CliConfigValues.use((values) =>
+    const resolvedConfig = yield* CliConfigValues.use((values) =>
       values.load({ workdir: root, projectRef: Option.none() }),
     ).pipe(Effect.provide(configValuesLayer()));
-    return resolveSmtpEnabled(snapshot);
+    return resolveSmtpEnabled(resolvedConfig);
   }).pipe(
     Effect.provide(BunServices.layer),
     (effect) => withConfigEnv(definedEnv(shell), effect),

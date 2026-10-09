@@ -28,7 +28,7 @@ import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError } from "./prepare.errors.ts";
-import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const id = "a".repeat(64);
 const flags = (overrides: Partial<StackPrepareFlags> = {}): StackPrepareFlags => ({

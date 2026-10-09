@@ -42,7 +42,7 @@ import {
   YesFlag,
   OutputFlag,
 } from "../../command-internal/global-flags.ts";
-import { flagInput } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";

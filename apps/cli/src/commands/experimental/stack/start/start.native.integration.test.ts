@@ -22,7 +22,7 @@ import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-f
 import { stackStart } from "./start.handler.ts";
 import { stackPrepare } from "../prepare/prepare.handler.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
-import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const excluded = [
   "rest",
@@ -470,7 +470,7 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
-            // The config snapshot is memoised per runtime, so the rewritten file needs a fresh service.
+            // The resolved config is memoised per runtime, so the rewritten file needs a fresh service.
             yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
             activeAttempt = 2;
             const invalidConfigStart = yield* Effect.scoped(

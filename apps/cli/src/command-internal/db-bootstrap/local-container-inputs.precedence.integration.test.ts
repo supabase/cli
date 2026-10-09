@@ -5,7 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { ConfigEnvPins } from "../../../tests/helpers/config-env-pins.ts";
@@ -185,7 +185,7 @@ describe("local container inputs precedence goldens", () => {
         const { context, setup, ...rest } = inputs;
         const golden = {
           ...rest,
-          appliedRemote: Option.getOrUndefined(context.snapshot.appliedRemote),
+          appliedRemote: Option.getOrUndefined(context.resolvedConfig.appliedRemote),
           projectEnvValues: configEnvOnly(context.projectEnvValues),
           projectId: context.projectId,
           setup: {

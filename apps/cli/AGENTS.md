@@ -84,10 +84,10 @@ Every applicable command must preserve these invariants:
 
 ## Config values
 
-Read config and `SUPABASE_*` values through `CliConfigValues` (`snapshot.get(CliConfigKeys.<path>)`),
+Read config and `SUPABASE_*` values through `CliConfigValues` (`resolvedConfig.get(CliConfigKeys.<path>)`),
 which resolves flag > shell env > project `.env*` > config > default. Bind a flag that sets a config
 key with `key.flag(...)` and pipe the command config through `withCliConfigFlags`. Use
-`snapshot.loaded`, `materialized` or `fileDeclared` for the whole document and `envValues(names)`
+`resolvedConfig.loaded`, `materialized` or `fileDeclared` for the whole document and `envValues(names)`
 for `env(NAME)` references; `projectEnvValues` is only for variables outside the registry.
 
 Never read `process.env`, `Bun.env`, `globalThis.process` or a registry env name directly, and

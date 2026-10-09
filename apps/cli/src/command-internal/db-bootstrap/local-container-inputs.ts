@@ -107,8 +107,8 @@ export const buildLocalDbContainerInputs = (
 
     const context =
       preloadedContext ?? (yield* loadLocalProjectContext(workdir, mapError, projectRef));
-    const { config, projectEnvValues, snapshot, hostname, projectId } = context;
-    const document = snapshot.loaded.document ?? {};
+    const { config, projectEnvValues, resolvedConfig, hostname, projectId } = context;
+    const document = resolvedConfig.loaded.document ?? {};
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
     const values = yield* Effect.try({

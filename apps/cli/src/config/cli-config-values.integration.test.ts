@@ -10,7 +10,7 @@ import {
   cliConfigValuesTestLayer,
   configValuesLayer,
   flagInput,
-} from "../../tests/helpers/config-snapshot-layer.ts";
+} from "../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { loadStackConfig } from "../command-internal/stack-config.ts";
@@ -91,14 +91,14 @@ describe("CliConfigValues credential scoping", () => {
           if (scenario.linkedTo !== undefined) yield* link(root, scenario.linkedTo);
           const layer = configValuesLayer();
 
-          const snapshot = yield* CliConfigValues.use((values) =>
+          const resolvedConfig = yield* CliConfigValues.use((values) =>
             values.load({ workdir: root, projectRef: scenario.target }),
           ).pipe(Effect.provide(layer));
-          const password = yield* snapshot.get(CliConfigKeys.linkedDb.password);
+          const password = yield* resolvedConfig.get(CliConfigKeys.linkedDb.password);
 
           if (scenario.withheld) {
             expect(password.value).toEqual(Option.none());
-            expect(snapshot.withheldEnv).toEqual([
+            expect(resolvedConfig.withheldEnv).toEqual([
               {
                 path: "linkedDb.password",
                 envName: "SUPABASE_DB_PASSWORD",
@@ -110,7 +110,7 @@ describe("CliConfigValues credential scoping", () => {
           } else {
             expect(password.value).toEqual(Option.some("from-shell"));
             expect(password.origin).toMatchObject({ tier: "shell" });
-            expect(snapshot.withheldEnv).toEqual([]);
+            expect(resolvedConfig.withheldEnv).toEqual([]);
           }
         }).pipe(
           Effect.provide(BunServices.layer),
@@ -128,11 +128,11 @@ describe("CliConfigValues credential scoping", () => {
       yield* link(root, LINKED);
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.withheldEnv).toMatchObject([
+      expect(resolvedConfig.withheldEnv).toMatchObject([
         { envName: "SUPABASE_DB_PASSWORD", tier: "projectEnv" },
       ]);
     }).pipe(
@@ -150,10 +150,10 @@ describe("CliConfigValues credential scoping", () => {
         flags: [flagInput("linkedDb.password", "password", "explicit")],
       });
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
-      const password = yield* snapshot.get(CliConfigKeys.linkedDb.password);
+      const password = yield* resolvedConfig.get(CliConfigKeys.linkedDb.password);
 
       expect(password).toMatchObject({ value: Option.some("explicit"), origin: { tier: "flag" } });
     }).pipe(
@@ -171,10 +171,10 @@ describe("CliConfigValues credential scoping", () => {
       yield* link(root, LINKED);
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
-      const secret = yield* snapshot.get(CliConfigKeys.auth.captcha.secret);
+      const secret = yield* resolvedConfig.get(CliConfigKeys.auth.captcha.secret);
 
       expect(secret).toMatchObject({
         value: Option.some("from-shell"),
@@ -205,21 +205,21 @@ major_version = 15
       const root = yield* project(remoteConfig);
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(LINKED) }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.appliedRemote).toEqual(Option.some("staging"));
-      expect((yield* snapshot.get(CliConfigKeys.db.majorVersion)).origin).toMatchObject({
+      expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.majorVersion)).origin).toMatchObject({
         tier: "config",
         remote: "staging",
         origin: { source: "remote" },
       });
-      expect(yield* snapshot.get(CliConfigKeys.db.seed.enabled)).toMatchObject({
+      expect(yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).toMatchObject({
         value: false,
         origin: { tier: "config", remote: "staging" },
       });
-      expect((yield* snapshot.get(CliConfigKeys.db.port)).origin).toMatchObject({
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.port)).origin).toMatchObject({
         tier: "config",
         origin: { source: "local" },
       });
@@ -233,15 +233,15 @@ major_version = 15
         flags: [flagInput("db.seed.enabled", "include-seed", true)],
       });
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(LINKED) }),
       ).pipe(Effect.provide(layer));
 
-      expect(yield* snapshot.get(CliConfigKeys.db.majorVersion)).toMatchObject({
+      expect(yield* resolvedConfig.get(CliConfigKeys.db.majorVersion)).toMatchObject({
         value: 17,
         origin: { tier: "shell" },
       });
-      expect(yield* snapshot.get(CliConfigKeys.db.seed.enabled)).toMatchObject({
+      expect(yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).toMatchObject({
         value: true,
         origin: { tier: "flag", flag: "include-seed" },
       });
@@ -305,11 +305,11 @@ major_version = 15
       const root = yield* project(remoteConfig);
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.appliedRemote).toEqual(Option.some("staging"));
+      expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SUPABASE_REMOTES_STAGING_PROJECT_ID: OTHER }, effect),
@@ -322,12 +322,12 @@ major_version = 15
       const root = yield* project(remoteConfig);
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.appliedRemote).toEqual(Option.none());
-      expect((yield* snapshot.get(CliConfigKeys.db.seed.enabled)).origin).toEqual({
+      expect(resolvedConfig.appliedRemote).toEqual(Option.none());
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).origin).toEqual({
         tier: "default",
       });
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
@@ -355,7 +355,7 @@ major_version = 15
   );
 });
 
-describe("CliConfigValues snapshots", () => {
+describe("CliConfigValues memoisation", () => {
   it.live("memoises a load per target and drops the memo after a write", () =>
     Effect.gen(function* () {
       const root = yield* project("[db]\nport = 54399\n");
@@ -392,10 +392,10 @@ describe("CliConfigValues snapshots", () => {
 
       yield* Effect.gen(function* () {
         const values = yield* CliConfigValues;
-        const snapshot = yield* values.load({ workdir: root, projectRef: Option.none() });
+        const resolvedConfig = yield* values.load({ workdir: root, projectRef: Option.none() });
         yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
-        const first = yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled);
-        yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled);
+        const first = yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
+        yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
 
         expect(first.value).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -485,11 +485,11 @@ describe("CliConfigValues snapshots", () => {
         ],
       });
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
 
-      expect((yield* snapshot.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -530,12 +530,12 @@ describe("CliConfigValues secrets", () => {
   const readCaptcha = (root: string) =>
     Effect.gen(function* () {
       const layer = configValuesLayer();
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
       return {
-        got: yield* snapshot.get(CliConfigKeys.auth.captcha.secret),
-        decoded: snapshot.materialized.config.auth.captcha?.secret,
+        got: yield* resolvedConfig.get(CliConfigKeys.auth.captcha.secret),
+        decoded: resolvedConfig.materialized.config.auth.captcha?.secret,
       };
     });
 
@@ -597,7 +597,7 @@ describe("CliConfigValues secrets", () => {
           values.load({ workdir: root, projectRef: Option.some(ref) }),
         ).pipe(
           Effect.provide(layer),
-          Effect.map((snapshot) => snapshot.materialized.config.auth.site_url),
+          Effect.map((resolvedConfig) => resolvedConfig.materialized.config.auth.site_url),
         );
 
       expect(yield* siteUrl(LINKED)).toBe("from-shell");
@@ -619,8 +619,8 @@ describe("CliConfigValues reads", () => {
       const layer = configValuesLayer();
       const read = (workdir: string) =>
         CliConfigValues.use((values) =>
-          Effect.flatMap(values.load({ workdir, projectRef: Option.none() }), (snapshot) =>
-            snapshot.get(CliConfigKeys.db.seed.sqlPaths),
+          Effect.flatMap(values.load({ workdir, projectRef: Option.none() }), (resolvedConfig) =>
+            resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths),
           ),
         ).pipe(Effect.provide(layer));
 
@@ -636,8 +636,9 @@ describe("CliConfigValues reads", () => {
       const layer = configValuesLayer();
 
       const read = yield* CliConfigValues.use((values) =>
-        Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
-          snapshot.get(CliConfigKeys.db.seed.sqlPaths),
+        Effect.flatMap(
+          values.load({ workdir: root, projectRef: Option.none() }),
+          (resolvedConfig) => resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths),
         ),
       ).pipe(Effect.provide(layer));
 
@@ -662,7 +663,7 @@ describe("CliConfigValues reads", () => {
       const read = yield* CliConfigValues.use((values) =>
         Effect.flatMap(
           values.load({ workdir: root, projectRef: Option.some(LINKED) }),
-          (snapshot) => snapshot.get(CliConfigKeys.projectId),
+          (resolvedConfig) => resolvedConfig.get(CliConfigKeys.projectId),
         ),
       ).pipe(Effect.provide(layer));
 
@@ -677,17 +678,17 @@ describe("CliConfigValues reads", () => {
       );
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.materialized.config.db.seed.enabled).toBe(true);
-      expect(snapshot.materialized.config.db.seed.sql_paths).toEqual([
+      expect(resolvedConfig.materialized.config.db.seed.enabled).toBe(true);
+      expect(resolvedConfig.materialized.config.db.seed.sql_paths).toEqual([
         "supabase/a.sql",
         "supabase/b.sql",
       ]);
-      expect((yield* snapshot.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
-      expect((yield* snapshot.get(CliConfigKeys.db.pooler.enabled)).value).toBe(true);
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.pooler.enabled)).value).toBe(true);
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ POOLER_ON: "true" }, effect),
@@ -700,8 +701,9 @@ describe("CliConfigValues reads", () => {
       const root = yield* project('project_id = "my app"\n');
       const layer = configValuesLayer();
       const read = CliConfigValues.use((values) =>
-        Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
-          snapshot.get(CliConfigKeys.projectId),
+        Effect.flatMap(
+          values.load({ workdir: root, projectRef: Option.none() }),
+          (resolvedConfig) => resolvedConfig.get(CliConfigKeys.projectId),
         ),
       ).pipe(Effect.provide(layer));
 
@@ -718,20 +720,20 @@ describe("CliConfigValues reads", () => {
       );
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
-      const { config } = snapshot.materialized;
+      const { config } = resolvedConfig.materialized;
 
-      expect((yield* snapshot.get(CliConfigKeys.api.port)).value).toBe(config.api.port);
-      expect((yield* snapshot.get(CliConfigKeys.db.port)).value).toBe(config.db.port);
-      expect((yield* snapshot.get(CliConfigKeys.auth.email.smtp.host)).value).toEqual(
+      expect((yield* resolvedConfig.get(CliConfigKeys.api.port)).value).toBe(config.api.port);
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.port)).value).toBe(config.db.port);
+      expect((yield* resolvedConfig.get(CliConfigKeys.auth.email.smtp.host)).value).toEqual(
         Option.some(config.auth.email.smtp?.host),
       );
-      expect((yield* snapshot.get(CliConfigKeys.auth.email.smtp.enabled)).value).toBe(
+      expect((yield* resolvedConfig.get(CliConfigKeys.auth.email.smtp.enabled)).value).toBe(
         config.auth.email.smtp?.enabled,
       );
-      expect((yield* snapshot.get(CliConfigKeys.projectId)).value).toBe(config.project_id);
+      expect((yield* resolvedConfig.get(CliConfigKeys.projectId)).value).toBe(config.project_id);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -742,7 +744,7 @@ describe("CliConfigValues reads", () => {
       );
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
 
@@ -751,13 +753,13 @@ describe("CliConfigValues reads", () => {
       for (const key of cliConfigRegistry.keys) {
         if (key.document === false || cliConfigDocumentOnlyPaths.has(key.path)) continue;
         compared += 1;
-        const resolved = key.toDocument((yield* snapshot.get(key)).value);
+        const resolved = key.toDocument((yield* resolvedConfig.get(key)).value);
         const materialized = key.path
           .split(".")
           .reduce<unknown>(
             (node, segment) =>
               typeof node === "object" && node !== null ? Reflect.get(node, segment) : undefined,
-            snapshot.materialized.config,
+            resolvedConfig.materialized.config,
           );
         if (JSON.stringify(resolved) !== JSON.stringify(materialized)) mismatches.push(key.path);
       }
@@ -774,15 +776,15 @@ describe("CliConfigValues reads", () => {
       );
       const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.familyNames("authEmailTemplate")).toEqual(["invite"]);
-      expect(snapshot.familyNames("authExternal")).toContain("github");
-      expect(snapshot.familyNames("authHook")).toContain("send_sms");
+      expect(resolvedConfig.familyNames("authEmailTemplate")).toEqual(["invite"]);
+      expect(resolvedConfig.familyNames("authExternal")).toContain("github");
+      expect(resolvedConfig.familyNames("authHook")).toContain("send_sms");
       expect(
-        (yield* snapshot.get(familyKey("authEmailTemplate", "invite", "subject"))).value,
+        (yield* resolvedConfig.get(familyKey("authEmailTemplate", "invite", "subject"))).value,
       ).toEqual(Option.some("Join"));
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
@@ -796,12 +798,12 @@ describe("CliConfigValues reads", () => {
         });
         const layer = configValuesLayer();
 
-        const snapshot = yield* CliConfigValues.use((values) =>
+        const resolvedConfig = yield* CliConfigValues.use((values) =>
           values.load({ workdir: root, projectRef: Option.none() }),
         ).pipe(Effect.provide(layer));
 
         expect(
-          yield* snapshot.envValues([
+          yield* resolvedConfig.envValues([
             "SUPABASE_UNOWNED_FROM_SHELL",
             "SUPABASE_UNOWNED_FROM_FILE",
             "SUPABASE_UNOWNED_UNSET",
@@ -944,7 +946,7 @@ policy = "per_worker"
       }),
     ).pipe(
       Effect.provide(layer),
-      Effect.map((snapshot) => snapshot.materialized),
+      Effect.map((resolvedConfig) => resolvedConfig.materialized),
     );
   };
 
@@ -1082,12 +1084,12 @@ describe("CliConfigValues loaded document", () => {
       const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
-      const { loaded } = snapshot;
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const { loaded } = resolvedConfig;
 
       expect(loaded.document).toEqual({ project_id: "declared", api: { max_rows: 10 } });
       expect(loaded.config.api.max_rows).toBe(10);
-      expect(snapshot.materialized.config.auth.hook?.send_email?.uri).toBe("");
+      expect(resolvedConfig.materialized.config.auth.hook?.send_email?.uri).toBe("");
       expect(loaded.config.auth.hook?.send_email?.uri).toBeUndefined();
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
@@ -1099,12 +1101,12 @@ describe("CliConfigValues loaded document", () => {
       );
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
       const packaged = yield* loadCliConfig(root, { cliCompat: true });
 
       expect(packaged).not.toBeNull();
-      expect(snapshot.loaded).toEqual(packaged);
-      expect(snapshot.loaded.document).not.toHaveProperty("project_id");
+      expect(resolvedConfig.loaded).toEqual(packaged);
+      expect(resolvedConfig.loaded.document).not.toHaveProperty("project_id");
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -1113,9 +1115,9 @@ describe("CliConfigValues loaded document", () => {
       const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
-      expect(snapshot.loaded.config.api.max_rows).toBe(25);
+      expect(resolvedConfig.loaded.config.api.max_rows).toBe(25);
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
@@ -1129,9 +1131,9 @@ describe("CliConfigValues loaded document", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-none-" });
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
-      expect(snapshot.hasConfigFile).toBe(false);
+      expect(resolvedConfig.hasConfigFile).toBe(false);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -1198,10 +1200,10 @@ project_id = "${LINKED}"
       const partial = yield* project('[auth.email.smtp]\npass = "env(SMTP_PASS)"\n');
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(partial, Option.none()).pipe(Effect.provide(layer));
+      const resolvedConfig = yield* load(partial, Option.none()).pipe(Effect.provide(layer));
 
-      expect(snapshot.materialized.config.auth.email.smtp?.enabled).toBe(false);
-      expect(snapshot.declares("auth.email.smtp")).toBe(true);
+      expect(resolvedConfig.materialized.config.auth.email.smtp?.enabled).toBe(false);
+      expect(resolvedConfig.declares("auth.email.smtp")).toBe(true);
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SMTP_PASS: "secret" }, effect),
@@ -1214,10 +1216,10 @@ project_id = "${LINKED}"
       const root = yield* project('project_id = "p"\n[api]\nmax_rows = "env(ROWS)"\n');
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
-      expect(snapshot.loaded.config.api.max_rows).toBe(40);
-      expect(snapshot.loaded.valueOrigins).toContainEqual({
+      expect(resolvedConfig.loaded.config.api.max_rows).toBe(40);
+      expect(resolvedConfig.loaded.valueOrigins).toContainEqual({
         path: ["api", "max_rows"],
         source: "environment",
         envVariables: ["ROWS"],
@@ -1234,10 +1236,10 @@ project_id = "${LINKED}"
       const root = yield* project('project_id = "p"\n[api]\nmax_rows = 10\n');
       const layer = configValuesLayer();
 
-      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
-      const declared = yield* snapshot.fileDeclared;
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const declared = yield* resolvedConfig.fileDeclared;
 
-      expect(snapshot.loaded.config.api.max_rows).toBe(25);
+      expect(resolvedConfig.loaded.config.api.max_rows).toBe(25);
       expect(declared.config.api.max_rows).toBe(10);
     }).pipe(
       Effect.provide(BunServices.layer),

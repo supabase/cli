@@ -5,7 +5,7 @@ import type {
   CliConfigValueError,
 } from "../config/cli-config.errors.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
-import { describeConfigSnapshotFailure } from "./config-snapshot-context.ts";
+import { describeConfigLoadFailure } from "./resolved-config-context.ts";
 
 type ConfigValueFailure = CliConfigValueError | CliConfigFlagConflictError;
 
@@ -17,11 +17,11 @@ export const isConfigValueFailure = (cause: unknown): cause is ConfigValueFailur
   (cause._tag === "CliConfigValueError" || cause._tag === "CliConfigFlagConflictError");
 
 /**
- * Loads the snapshot ahead of helpers that fold every load failure into one message, so an
+ * Loads the resolved config ahead of helpers that fold every load failure into one message, so an
  * invalid value or flag conflict surfaces as-is and only other failures take `toError`. The load
  * is memoised, so the helper that follows reuses it.
  */
-export const loadSnapshotSurfacingValueErrors = <E>(
+export const loadResolvedConfigSurfacingValueErrors = <E>(
   workdir: string,
   toError: (message: string) => E,
   projectRef: Option.Option<string> = Option.none(),
@@ -32,7 +32,7 @@ export const loadSnapshotSurfacingValueErrors = <E>(
       .load({ workdir, projectRef })
       .pipe(
         Effect.mapError((cause) =>
-          isConfigValueFailure(cause) ? cause : toError(describeConfigSnapshotFailure(cause)),
+          isConfigValueFailure(cause) ? cause : toError(describeConfigLoadFailure(cause)),
         ),
       );
   });

@@ -66,7 +66,7 @@ import {
 
 /**
  * Resolves local-dev config values (URLs, ports, keys) from the effective config the
- * `CliConfigValues` snapshot materializes: every flag, environment, project `.env*` and matched
+ * `CliConfigValues` resolved config materializes: every flag, environment, project `.env*` and matched
  * `[remotes.*]` winner is already in `config`, and `document` is the matching effective document
  * (see `effectiveConfigDocument`), so nothing here re-applies precedence.
  */

@@ -12,7 +12,7 @@ import {
   useShadowCacheDisabled,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { configValuesLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";

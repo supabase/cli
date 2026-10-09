@@ -2,7 +2,7 @@ import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect } from "effect";
 
 import { envReferenceNames } from "./cli-config-document.ts";
-import type { CliConfigSnapshot } from "./cli-config-values.service.ts";
+import type { ResolvedCliConfig } from "./cli-config-values.service.ts";
 
 /** Resolves `env()` references against `values` and wraps secret leaves in `Redacted` for a subtree the registry does not model. */
 export const resolveCliSubtree = <T>(
@@ -11,12 +11,12 @@ export const resolveCliSubtree = <T>(
   path: string,
 ) => resolveCliConfigSubtree(tree, { values }, path, { cliCompat: true });
 
-/** {@link resolveCliSubtree} with the values the snapshot's shell and project `.env*` supply. */
-export const resolveSnapshotSubtree = Effect.fn("CliConfigSubtree.resolve")(function* <T>(
-  snapshot: CliConfigSnapshot,
+/** {@link resolveCliSubtree} with the values the resolved config's shell and project `.env*` supply. */
+export const resolveConfigSubtree = Effect.fn("CliConfigSubtree.resolve")(function* <T>(
+  resolvedConfig: ResolvedCliConfig,
   tree: T,
   path: string,
 ) {
-  const values = yield* snapshot.envValues(envReferenceNames(tree));
+  const values = yield* resolvedConfig.envValues(envReferenceNames(tree));
   return yield* resolveCliSubtree(tree, values, path);
 });

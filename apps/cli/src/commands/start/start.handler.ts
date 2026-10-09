@@ -84,11 +84,11 @@ import {
   type ResolvedAuthEmail,
 } from "../../command-internal/local-config-values.ts";
 import {
-  describeConfigSnapshotFailure,
-  loadLocalSnapshotContext,
-  type LocalSnapshotContext,
-} from "../../command-internal/config-snapshot-context.ts";
-import { resolveSnapshotSubtree } from "../../config/cli-config-subtree.ts";
+  describeConfigLoadFailure,
+  loadLocalResolvedConfigContext,
+  type LocalResolvedConfigContext,
+} from "../../command-internal/resolved-config-context.ts";
+import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
@@ -186,7 +186,7 @@ const startConfigFailure = (cause: unknown) =>
     ? new StartInvalidConfigError({
         message: `invalid config for ${cause.path}: ${cause.message}`,
       })
-    : new StartConfigLoadError({ message: describeConfigSnapshotFailure(cause) });
+    : new StartConfigLoadError({ message: describeConfigLoadFailure(cause) });
 
 /**
  * Wraps a synchronous config resolver that throws on a malformed value into a typed
@@ -218,7 +218,7 @@ function wrapConfigOverride<T>(
  */
 
 function resolveGotrueEnvInput(params: {
-  readonly context: LocalSnapshotContext;
+  readonly context: LocalResolvedConfigContext;
   readonly values: LocalConfigValues;
   readonly workdir: string;
   readonly kongContainerName: string;
@@ -421,7 +421,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 2. Config load + validate — same config-load/env/project-id
     // resolution sequence as `stop`/`status`.
-    const context = yield* loadLocalSnapshotContext(cliSettings.workdir).pipe(
+    const context = yield* loadLocalResolvedConfigContext(cliSettings.workdir).pipe(
       Effect.mapError(startConfigFailure),
     );
     const values = yield* Effect.try({
@@ -730,10 +730,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // is enabled.
     //
     // `config.functions.<slug>.env.<VAR>` is schema-marked deferred and only gets its literal
-    // interpolated by `resolveSnapshotSubtree` — without this, a configured `env` entry reaches
+    // interpolated by `resolveConfigSubtree` — without this, a configured `env` entry reaches
     // Edge Runtime as the literal string `"env(API_KEY)"` instead of the real secret.
-    const resolvedFunctions = yield* resolveSnapshotSubtree(
-      context.snapshot,
+    const resolvedFunctions = yield* resolveConfigSubtree(
+      context.resolvedConfig,
       config.functions,
       "functions",
     );
@@ -1284,11 +1284,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
           // `config.edge_runtime.secrets` is still schema-decoded plain strings here —
           // `toPlainEdgeRuntimeConfig` only emits entries whose values are `Redacted`, which a
-          // value only becomes after `resolveSnapshotSubtree`'s env-interpolation and
+          // value only becomes after `resolveConfigSubtree`'s env-interpolation and
           // secret-path-redaction pass. Without this step every configured secret is silently
           // dropped.
-          const resolvedEdgeRuntime = yield* resolveSnapshotSubtree(
-            context.snapshot,
+          const resolvedEdgeRuntime = yield* resolveConfigSubtree(
+            context.resolvedConfig,
             config.edge_runtime,
             "edge_runtime",
           );
@@ -1299,7 +1299,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // `checkDbToml` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
-          const { dotenvPrivateKeys } = context.snapshot;
+          const { dotenvPrivateKeys } = context.resolvedConfig;
           const edgeRuntimeSecrets: Record<string, string> = {};
           for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
             if (!isEncryptedSecret(secretValue)) {

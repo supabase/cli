@@ -272,15 +272,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             new GenTypesParseConfigError({ message: cause.message }),
           CliConfigLoadError: (cause) => new GenTypesParseConfigError({ message: cause.message }),
         }),
-        Effect.tap((snapshot) => requireProjectConfigWhenExplicit(snapshot.hasConfigFile)),
-        Effect.tap((snapshot) =>
-          Effect.annotateCurrentSpan("config.found", snapshot.hasConfigFile),
+        Effect.tap((resolvedConfig) =>
+          requireProjectConfigWhenExplicit(resolvedConfig.hasConfigFile),
         ),
-        Effect.flatMap((snapshot) =>
-          snapshot.get(CliConfigKeys.api.schemas).pipe(
+        Effect.tap((resolvedConfig) =>
+          Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile),
+        ),
+        Effect.flatMap((resolvedConfig) =>
+          resolvedConfig.get(CliConfigKeys.api.schemas).pipe(
             // Without a project the embedded default applies, not the schema's default list.
             Effect.map(({ value, origin }) =>
-              origin.tier === "default" && !snapshot.hasConfigFile ? [] : value,
+              origin.tier === "default" && !resolvedConfig.hasConfigFile ? [] : value,
             ),
           ),
         ),

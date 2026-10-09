@@ -2527,7 +2527,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const configFunctions = yield* inferFunctionsManifest({
     cwd: dependencies.projectRoot,
     config: deployConfig,
-    // The config snapshot never searches ancestors, so manifest inference must not either.
+    // The resolved config never searches ancestors, so manifest inference must not either.
     search: false,
   });
   const configDeclaredFunctions = deployConfig.functions;

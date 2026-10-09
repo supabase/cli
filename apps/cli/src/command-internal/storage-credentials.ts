@@ -7,10 +7,7 @@ import { CliEnvNames } from "../config/cli-config-keys.ts";
 import { readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
 import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
-import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-} from "./config-snapshot-context.ts";
+import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
 import { generateLocalJwt } from "./local-jwt.ts";
 import { getHostname } from "./hostname.ts";
@@ -156,9 +153,9 @@ const toStorageConfigError = (cause: unknown) =>
   });
 
 const loadLocalStorageConfig = (workdir: string) =>
-  loadConfigSnapshotContext(workdir).pipe(
+  loadResolvedConfigContext(workdir).pipe(
     Effect.mapError(
-      (cause) => new StorageConfigError({ message: describeConfigSnapshotFailure(cause) }),
+      (cause) => new StorageConfigError({ message: describeConfigLoadFailure(cause) }),
     ),
   );
 

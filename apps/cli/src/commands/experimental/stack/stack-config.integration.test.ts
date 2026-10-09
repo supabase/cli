@@ -14,7 +14,7 @@ import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
 } from "../../../telemetry/command-telemetry-attributes.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(

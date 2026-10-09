@@ -8,10 +8,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
-import {
-  describeConfigSnapshotFailure,
-  loadConfigSnapshotContext,
-} from "./config-snapshot-context.ts";
+import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
 import { isConfigValueFailure } from "./config-value-passthrough.ts";
 import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
@@ -126,7 +123,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own config snapshot load in favor of a config the caller already
+   * Skips this function's own resolved config load in favor of a config the caller already
    * resolved through its own nested-env walk, so a fresh reload here can't drop an override
    * that exists only in the shell/dotenv, not in `config.toml`.
    */
@@ -173,7 +170,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const context =
     opts.resolvedConfig !== undefined
       ? undefined
-      : yield* loadConfigSnapshotContext(
+      : yield* loadResolvedConfigContext(
           workdir,
           projectRef === "" ? Option.none() : Option.some(projectRef),
         ).pipe(
@@ -187,7 +184,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
           Effect.mapError((cause) =>
             cause instanceof SeedConfigLoadError || isConfigValueFailure(cause)
               ? cause
-              : new SeedConfigLoadError({ message: describeConfigSnapshotFailure(cause) }),
+              : new SeedConfigLoadError({ message: describeConfigLoadFailure(cause) }),
           ),
         );
   const projectEnvValues =
@@ -203,7 +200,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const document = opts.resolvedConfig?.document ?? context?.document;
 
   // Printed whenever a `[remotes.*]` block matched the linked ref; stderr in all output modes.
-  const appliedRemote = Option.getOrUndefined(context?.snapshot.appliedRemote ?? Option.none());
+  const appliedRemote = Option.getOrUndefined(
+    context?.resolvedConfig.appliedRemote ?? Option.none(),
+  );
   if (appliedRemote !== undefined) {
     yield* output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
   }

@@ -270,7 +270,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
-    const snapshot = yield* configValues.load({
+    const resolvedConfig = yield* configValues.load({
       workdir: cliSettings.workdir,
       projectRef: Option.fromNullishOr(linkedRef),
     });
@@ -307,7 +307,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      projectId: (yield* snapshot.get(CliConfigKeys.projectId)).value,
+      projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
@@ -368,7 +368,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
       pgDeltaDefault:
         (yield* currentStackBackend).kind === "stack" ||
-        (yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled)).value,
+        (yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled)).value,
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
       yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");

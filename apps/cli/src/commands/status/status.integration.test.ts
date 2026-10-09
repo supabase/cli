@@ -23,7 +23,7 @@ import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { vi } from "vitest";
 
-import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
   statusCodeFailure,

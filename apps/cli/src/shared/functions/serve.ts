@@ -90,7 +90,7 @@ import {
   ServeLocalDbNotRunningError,
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
-import { resolveSnapshotSubtree } from "../../config/cli-config-subtree.ts";
+import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -706,16 +706,18 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
     ),
   );
   const context = yield* loadFunctionsCliConfig({ projectRoot, projectRef, localConfigLoader });
-  const { snapshot } = context;
+  const { resolvedConfig } = context;
   const baseConfig = context.loaded.config;
 
-  const auth = toPlainAuthConfig(yield* resolveSnapshotSubtree(snapshot, baseConfig.auth, "auth"));
-  const edgeRuntime = toPlainEdgeRuntimeConfig(
-    yield* resolveSnapshotSubtree(snapshot, baseConfig.edge_runtime, "edge_runtime"),
+  const auth = toPlainAuthConfig(
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.auth, "auth"),
   );
-  const apiPort = (yield* snapshot.get(CliConfigKeys.api.port)).value;
+  const edgeRuntime = toPlainEdgeRuntimeConfig(
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.edge_runtime, "edge_runtime"),
+  );
+  const apiPort = (yield* resolvedConfig.get(CliConfigKeys.api.port)).value;
   const configDeclaredFunctions = toPlainFunctionRecord(
-    yield* resolveSnapshotSubtree(snapshot, baseConfig.functions, "functions"),
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.functions, "functions"),
   );
   const configFunctions = yield* inferFunctionsManifest({
     cwd: projectRoot,

@@ -236,11 +236,11 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
     const vaultSecrets = toml.vault;
-    const snapshot = yield* configValues.load({
+    const resolvedConfig = yield* configValues.load({
       workdir,
       projectRef: Option.fromNullishOr(configRef),
     });
-    const seed = yield* resolveDbSeedInput(snapshot, { workdir, ref: linkedRef ?? "" });
+    const seed = yield* resolveDbSeedInput(resolvedConfig, { workdir, ref: linkedRef ?? "" });
     const seedEnabled = seed.enabled;
     const seedSqlPaths = seed.sqlPaths;
 

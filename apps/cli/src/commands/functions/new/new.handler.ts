@@ -95,14 +95,14 @@ const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(f
   slug: string,
 ) {
   const configValues = yield* CliConfigValues;
-  const snapshot = yield* configValues
+  const resolvedConfig = yield* configValues
     .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
     .pipe(Effect.option);
   yield* Effect.annotateCurrentSpan(
     "config.found",
-    Option.exists(snapshot, (s) => s.hasConfigFile),
+    Option.exists(resolvedConfig, (s) => s.hasConfigFile),
   );
-  const config = Option.map(snapshot, (loaded) => loaded.materialized.config);
+  const config = Option.map(resolvedConfig, (loaded) => loaded.materialized.config);
   const port = Option.match(config, {
     onNone: () => DEFAULT_LOCAL_API_PORT,
     onSome: (value) => value.api.port,

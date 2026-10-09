@@ -2,7 +2,7 @@ import { Effect, Option, Path } from "effect";
 
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { describeCliConfigOrigin } from "../config/cli-config-key.ts";
-import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
+import type { ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
@@ -31,8 +31,8 @@ const SEED_CONSENT_SUGGESTIONS: Record<SeedConsentCommand, string> = {
   reset: "Pass --yes to seed, or --no-seed to reset without seeding.",
 };
 
-const remoteDeclaresSeedEnabled = (snapshot: CliConfigSnapshot, remote: string): boolean => {
-  const block = snapshot.loaded.interpolatedRemotes?.[remote];
+const remoteDeclaresSeedEnabled = (resolvedConfig: ResolvedCliConfig, remote: string): boolean => {
+  const block = resolvedConfig.loaded.interpolatedRemotes?.[remote];
   if (typeof block !== "object" || block === null) return false;
   const seed = (block as { db?: { seed?: { enabled?: unknown } } }).db?.seed;
   const declared = seed?.enabled;
@@ -40,19 +40,19 @@ const remoteDeclaresSeedEnabled = (snapshot: CliConfigSnapshot, remote: string):
 };
 
 /**
- * Reads `[db.seed]` through the snapshot. Seeding needs consent only when the target matched a
+ * Reads `[db.seed]` through the resolved config. Seeding needs consent only when the target matched a
  * `[remotes.*]` block that does not itself turn seeding on.
  */
 export const resolveDbSeedInput = Effect.fn("DbSeedInput.resolve")(function* (
-  snapshot: CliConfigSnapshot,
+  resolvedConfig: ResolvedCliConfig,
   target: { readonly workdir: string; readonly ref: string },
 ) {
   const path = yield* Path.Path;
-  const enabled = yield* snapshot.get(CliConfigKeys.db.seed.enabled);
-  const sqlPaths = yield* snapshot.get(CliConfigKeys.db.seed.sqlPaths);
-  const remote = Option.getOrUndefined(snapshot.appliedRemote);
+  const enabled = yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled);
+  const sqlPaths = yield* resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths);
+  const remote = Option.getOrUndefined(resolvedConfig.appliedRemote);
   const consent: SeedConsentTarget | undefined =
-    remote === undefined || remoteDeclaresSeedEnabled(snapshot, remote)
+    remote === undefined || remoteDeclaresSeedEnabled(resolvedConfig, remote)
       ? undefined
       : {
           ref: target.ref,

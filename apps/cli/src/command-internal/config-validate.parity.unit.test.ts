@@ -14,7 +14,7 @@ import { readDbToml } from "./db-config.toml-read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
@@ -386,7 +386,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
     ),
   );
 
-  it.effect("undecryptable encrypted: auth.service_role_key fails S at snapshot load", () =>
+  it.effect("undecryptable encrypted: auth.service_role_key fails S at resolvedConfig load", () =>
     isolated(
       Effect.gen(function* () {
         yield* failsWithS(

@@ -75,11 +75,11 @@ an unrelated verb. CLI-2234 renamed all four to match.
 
 ## Overview
 
-The package itself has no global, fully-resolved config snapshot. Most `env(NAME)` references
+The package itself has no global, fully-resolved resolved config. Most `env(NAME)` references
 inside `CliConfig` are substituted automatically when the file is loaded (see "Raw Config Loading"
 below). A narrow set of fields are deliberately left as literal `env(NAME)` strings through decode,
 and are resolved by a caller later, on demand (see "Lazy `env(NAME)` Resolution" below). The CLI
-builds its own per-command snapshot on top of the package stages (see "CLI value precedence").
+builds its own per-command resolved config on top of the package stages (see "CLI value precedence").
 
 ## Project Discovery
 
@@ -413,10 +413,10 @@ The CLI's own loader (`shared/config/cli-config-env.ts`) reads `SUPABASE_ENV` (d
 of a key wins, and a key the shell sets is never taken from a file. This differs from the public
 `loadCliProjectEnvironment` described above.
 
-### The snapshot
+### The resolved config
 
-`CliConfigValues.load({ workdir, projectRef })` returns a snapshot memoised per workdir, project
-ref and flag set; `writeThrough` drops the memo around a write. The snapshot exposes:
+`CliConfigValues.load({ workdir, projectRef })` returns a resolved config memoised per workdir, project
+ref and flag set; `writeThrough` drops the memo around a write. The resolved config exposes:
 
 - `get(key)`: the value and its origin tier.
 - `loaded`: the document with every flag, env and secret winner written in, before defaults.
@@ -450,7 +450,7 @@ only `pass = "env(SMTP_PASS)"`, still loads.
 4. `decodeMergedCliConfig` expands `env()` references, strips deprecated external providers, then decodes and
    validates the overlaid document.
 
-The result is the `materialized` config on the snapshot; `get(key)` also reports the tier a value
+The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
 came from.
 
 ## CLI-owned Repo State

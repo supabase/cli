@@ -18,13 +18,13 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   base document), default. One pure function, `pickCliConfigKey`, implements it, and the tier order
   is a constant.
 - Commands read values through the `CliConfigValues` service. `load({ workdir, projectRef })`
-  returns a snapshot, memoised per workdir, project ref and flag set within a runtime. The snapshot
+  returns a resolved config, memoised per workdir, project ref and flag set within a runtime. The resolved config
   decodes the whole config eagerly, so an invalid value fails every command that loads config
   unless the caller passes `tolerateInvalid`. Load-time warnings (a deprecated alias, an env value
   overriding a remote, the `[inbucket]` deprecation) print once per runtime, however many
-  snapshots it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
+  resolved configs it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
   the memo.
-- The snapshot surface is:
+- The resolved config surface is:
   - `get(key)`: the value and the origin tier that supplied it.
   - `loaded`: what the project declares, with every flag, env and secret winner written in and no
     defaults. `fileDeclared`: what the config file alone declares, with `env()` resolved and no
@@ -72,7 +72,7 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     is not scoped to the linked project.
   - Flag ownership covers the names in `CLI_CONFIG_FLAGS` only. A command may declare any other
     flag, with or without a config key behind it.
-  - `snapshot.projectEnvValues` serves names outside the registry: Docker and registry resolution,
+  - `resolvedConfig.projectEnvValues` serves names outside the registry: Docker and registry resolution,
     the services hostname, Bitbucket detection, `SUPABASE_YES`, `SUPABASE_NETWORK_ID`, and the
     project env `functions serve` forwards to the edge runtime. A registry name read from it is a
     guard failure.
@@ -112,7 +112,7 @@ order stays the same for every key.
   default to the local database, `db reset --linked` can ask a second prompt, an invalid config
   value fails every command that loads config, `services` and `functions` read `config.json`
   first, and `config push` pushes env-overridden values.
-- The remote and credential rules are subtle enough that a reader must consult the snapshot's
+- The remote and credential rules are subtle enough that a reader must consult the resolved config's
   `origin` to know why a value won.
 
 ### Guardrails
@@ -158,7 +158,7 @@ order stays the same for every key.
   be listed in `CLI_CONFIG_SCHEMA_EXCLUDED` or registry construction throws.
 - To bind a flag, add it to `CLI_CONFIG_FLAGS`, declare it with `key.flag` in the command, and
   pipe the command config through `withCliConfigFlags`.
-- Read the value with `snapshot.get(CliConfigKeys.<path>)`. Never read the env name directly.
+- Read the value with `resolvedConfig.get(CliConfigKeys.<path>)`. Never read the env name directly.
 - A new exception to any rule above is a decision: record it in this ADR and in the guard's
   exemption list together.
 

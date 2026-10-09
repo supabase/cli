@@ -29,7 +29,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
-import { configValuesLayer } from "../../../../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../../../../../tests/helpers/config-values-layer.ts";
 import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,

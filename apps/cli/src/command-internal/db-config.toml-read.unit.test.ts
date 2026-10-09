@@ -17,7 +17,7 @@ import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import type { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { processEnvPinsLayer } from "../../tests/helpers/config-env-pins.ts";
 import { useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,

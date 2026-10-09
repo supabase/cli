@@ -34,7 +34,7 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { pinnedConfigProvider } from "../../tests/helpers/config-env-pins.ts";
-import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-snapshot-layer.ts";
+import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-values-layer.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,

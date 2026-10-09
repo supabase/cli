@@ -8,7 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { configValuesLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { DebugLogger } from "../../shared/output/debug-logger.service.ts";

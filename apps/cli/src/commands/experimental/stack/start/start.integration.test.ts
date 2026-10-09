@@ -59,7 +59,7 @@ import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/outpu
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
-import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const flags = (exclude: ReadonlyArray<string> = []) => ({
   exclude,

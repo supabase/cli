@@ -7,7 +7,7 @@ import { ConfigProvider, Effect, FileSystem, Path, Result } from "effect";
 import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { checkDbToml } from "./db-config.toml-read.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";

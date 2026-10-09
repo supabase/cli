@@ -16,7 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
 
-import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,

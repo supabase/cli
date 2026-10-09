@@ -317,12 +317,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
-      const explicitSnapshot = yield* configValues.load({
+      const explicitResolvedConfig = yield* configValues.load({
         workdir: cliSettings.workdir,
         projectRef: Option.fromNullishOr(mergedLinkedRef),
       });
       const explicitCtx: PgDeltaContext = {
-        projectId: (yield* explicitSnapshot.get(CliConfigKeys.projectId)).value,
+        projectId: (yield* explicitResolvedConfig.get(CliConfigKeys.projectId)).value,
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -408,7 +408,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
-    const snapshot = yield* configValues.load({
+    const resolvedConfig = yield* configValues.load({
       workdir: cliSettings.workdir,
       projectRef: Option.fromNullishOr(linkedRef),
     });
@@ -445,7 +445,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      projectId: (yield* snapshot.get(CliConfigKeys.projectId)).value,
+      projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
@@ -454,7 +454,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     const pgDeltaDefault =
       (yield* currentStackBackend).kind === "stack" ||
-      (yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled)).value;
+      (yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled)).value;
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
       usePgAdmin,

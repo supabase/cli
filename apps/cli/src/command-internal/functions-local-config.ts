@@ -27,14 +27,16 @@ export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
             context.config,
             context.hostname,
             projectRoot,
-            context.snapshot.loaded.document,
+            context.resolvedConfig.loaded.document,
           ),
         catch: toError,
       });
       return {
-        loaded: { config: context.config, document: context.snapshot.loaded.document },
-        snapshot: context.snapshot,
-        configPath: context.snapshot.hasConfigFile ? context.snapshot.loaded.path : undefined,
+        loaded: { config: context.config, document: context.resolvedConfig.loaded.document },
+        resolvedConfig: context.resolvedConfig,
+        configPath: context.resolvedConfig.hasConfigFile
+          ? context.resolvedConfig.loaded.path
+          : undefined,
         projectEnvValues: context.projectEnvValues,
         // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
         // exists only to feed `validateResolvedConfig`'s emptiness check.

@@ -155,40 +155,40 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
-/** Loads the snapshot once per push, so the load-time deprecation warnings print once. */
+/** Loads the resolved config once per push, so the load-time deprecation warnings print once. */
 const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRoot: string,
   ref: string,
 ) {
   const configValues = yield* CliConfigValues;
-  const snapshot = yield* configValues
+  const resolvedConfig = yield* configValues
     .load({
       workdir: projectRoot,
       projectRef: Option.some(ref),
       tolerateUnreadableLinkedRef: true,
     })
     .pipe(mapConfigLoadError(cliSettings, (message) => new ConfigPushLoadConfigError({ message })));
-  if (!snapshot.hasConfigFile) {
+  if (!resolvedConfig.hasConfigFile) {
     return yield* new ConfigPushLoadConfigError({
       message: yield* missingProjectConfigMessageEffect(cliSettings),
     });
   }
-  const loaded = snapshot.loaded;
+  const loaded = resolvedConfig.loaded;
   yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
-  const projectYes = snapshot.projectEnvValues["SUPABASE_YES"];
-  const referenced = yield* snapshot.envValues(
+  const projectYes = resolvedConfig.projectEnvValues["SUPABASE_YES"];
+  const referenced = yield* resolvedConfig.envValues(
     envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
   );
   return {
     loaded,
     lookup: (name: string) => referenced[name],
-    dotenvPrivateKeys: snapshot.dotenvPrivateKeys,
+    dotenvPrivateKeys: resolvedConfig.dotenvPrivateKeys,
     projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
       string,
       string
     >,
-    originFor: configEnvOriginLookup(snapshot.origins, (file) =>
+    originFor: configEnvOriginLookup(resolvedConfig.origins, (file) =>
       relativeConfigPath(projectRoot, file),
     ),
   };
@@ -251,7 +251,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // resolver still flushes telemetry and, once a ref is known, writes the linked-project cache.
     //
     // Runs before the config load below: a `[remotes.<name>]` overlay is merged inside
-    // the snapshot load before its one schema decode, so a base document that's invalid without its
+    // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
     const { ref, branch } = yield* resolveConfigTarget(

@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import type { CliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
-import { describeConfigSnapshotFailure } from "../../command-internal/config-snapshot-context.ts";
+import { describeConfigLoadFailure } from "../../command-internal/resolved-config-context.ts";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/local-jwt.ts";
 import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 
@@ -321,23 +321,23 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
 ) {
   const path = yield* Path.Path;
   const values = yield* CliConfigValues;
-  // `cwd` is already resolved (`CommandSettings.workdir`); the snapshot never climbs to an
+  // `cwd` is already resolved (`CommandSettings.workdir`); the resolved config never climbs to an
   // ancestor project when `--workdir` points below another project's root.
-  const snapshot = yield* values
+  const resolvedConfig = yield* values
     .load({ workdir: cwd, projectRef: Option.none() })
     .pipe(
       Effect.mapError((cause) =>
         onConfigParseError(
           cause._tag === "CliConfigParseError"
             ? `failed to parse ${cause.path}: ${String(cause.cause)}`
-            : describeConfigSnapshotFailure(cause),
+            : describeConfigLoadFailure(cause),
         ),
       ),
     );
   const read = <A, X>(key: CliConfigKey<A, X>) =>
-    snapshot.get(key).pipe(
+    resolvedConfig.get(key).pipe(
       Effect.map((resolved) => resolved.value),
-      Effect.mapError((cause) => onConfigParseError(describeConfigSnapshotFailure(cause))),
+      Effect.mapError((cause) => onConfigParseError(describeConfigLoadFailure(cause))),
     );
   const authEnabled = yield* read(CliConfigKeys.auth.enabled);
   const configuredPath = yield* read(CliConfigKeys.auth.signingKeysPath);

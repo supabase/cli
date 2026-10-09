@@ -190,7 +190,7 @@ const COMPAT_OPTION = ["cli", "Compat"].join("");
 const WHOLE_CONFIG_IMPORT =
   /\b(?:(?:import|export)\s+(?:type\s+)?\*\s*(?:as\s+\w+\s*)?from\s*|import\s*\(\s*)["']@supabase\/config(?:\/effect|\/internal)?["']/g;
 
-/** Imports of the package loaders that resolve config outside the `CliConfigValues` snapshot. */
+/** Imports of the package loaders that resolve config outside the `CliConfigValues` resolved config. */
 export function findConfigLoaderImports(
   source: string,
   loaders: ReadonlyArray<string> = CONFIG_LOADERS,
@@ -416,8 +416,8 @@ describe("config precedence guard rules", () => {
       'projectEnv["SUPABASE_DB_PORT"]',
       'supabaseEnvBool("SUPABASE_DB_SEED_ENABLED")',
       'supabaseEnvStringWithProjectFallback("SUPABASE_DB_PORT", env)',
-      'snapshot.sources.shell("SUPABASE_DB_PORT")',
-      'lookupCliConfigEnv(snapshot.sources, "SUPABASE_DB_PORT")',
+      'resolvedConfig.sources.shell("SUPABASE_DB_PORT")',
+      'lookupCliConfigEnv(resolvedConfig.sources, "SUPABASE_DB_PORT")',
       'values["SUPABASE_DB_PORT"]',
       'toml.projectEnv["SUPABASE_DB_PORT"]',
       "const { SUPABASE_DB_PORT } = env;",

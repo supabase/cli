@@ -22,7 +22,7 @@ interface CliConfigLoadTarget {
   readonly ignoreConfigFile?: true;
   /** Treats an unreadable `.temp/project-ref` as an unlinked workdir instead of failing the load. */
   readonly tolerateUnreadableLinkedRef?: true;
-  /** Leaves an invalid value out of the snapshot and lists it in `invalid`, instead of failing the load. */
+  /** Leaves an invalid value out of the resolved config and lists it in `invalid`, instead of failing the load. */
   readonly tolerateInvalid?: true;
 }
 
@@ -55,7 +55,7 @@ type CliConfigLoadFailure =
   | CliConfigFlagConflictError
   | ProjectRefReadError;
 
-export interface CliConfigSnapshot {
+export interface ResolvedCliConfig {
   readonly appliedRemote: Option.Option<string>;
   /** Whether a config file was found; without one `loaded` is decoded from the winners alone. */
   readonly hasConfigFile: boolean;
@@ -94,8 +94,8 @@ export interface CliConfigSnapshot {
 interface CliConfigValuesShape {
   readonly load: (
     target: CliConfigLoadTarget,
-  ) => Effect.Effect<CliConfigSnapshot, CliConfigLoadFailure>;
-  /** Runs a write to config or `.temp`, then drops the memoised snapshots it may have staled. */
+  ) => Effect.Effect<ResolvedCliConfig, CliConfigLoadFailure>;
+  /** Runs a write to config or `.temp`, then drops the memoised resolved configs it may have staled. */
   readonly writeThrough: <A, E, R>(write: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 

@@ -13,7 +13,7 @@ import {
   mockContextualAnalytics,
   mockOutput,
 } from "../../../tests/helpers/mocks.ts";
-import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
   buildTestRuntime,

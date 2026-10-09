@@ -15,7 +15,7 @@ import {
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
-import { loadSnapshotSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
+import { loadResolvedConfigSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
 import {
   loadLocalProjectContext,
@@ -52,7 +52,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     return flags.projectId.value;
   }
 
-  yield* loadSnapshotSurfacingValueErrors(
+  yield* loadResolvedConfigSurfacingValueErrors(
     cliSettings.workdir,
     (message) => new StopConfigLoadError({ message }),
   );
@@ -74,7 +74,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
         context.config,
         context.hostname,
         cliSettings.workdir,
-        context.snapshot.loaded.document,
+        context.resolvedConfig.loaded.document,
       ),
     catch: (cause) =>
       cause instanceof CliConfigValueError
