@@ -297,6 +297,45 @@ describe("classifyCliCauseActionability", () => {
     });
   });
 
+  it("names an unclassified defect by its source-owned tag and errno code, never instance data", () => {
+    const secret = "privateToken";
+    class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
+      readonly message: string;
+    }> {}
+    const cases: ReadonlyArray<readonly [unknown, string]> = [
+      [new UndeclaredError({ message: secret }), "error:Defect:UndeclaredError"],
+      [new NamespaceDefect({ message: secret }), "error:Defect:Namespace.NamespaceError"],
+      [Object.assign(new Error(secret), { code: "ENOENT" }), "error:Defect:Error:ENOENT"],
+      [Object.assign(new Error(secret), { code: "EAI_AGAIN" }), "error:Defect:Error:EAI_AGAIN"],
+      [new Error(secret), "error:Defect:Error"],
+      [Object.assign(new Error(secret), { name: secret, _tag: secret }), "error:Defect:Error"],
+      [
+        Object.assign(new Error(secret), { code: `E${secret.toUpperCase()}` }),
+        "error:Defect:Error",
+      ],
+      [{ _tag: secret }, "error:Defect:object"],
+      [
+        Object.defineProperty(new Error(secret), "code", {
+          get: () => {
+            throw new Error(secret);
+          },
+        }),
+        "error:Defect:Error",
+      ],
+      [secret, "error:Defect:string"],
+    ];
+
+    for (const [defect, fingerprint] of cases) {
+      const result = classifyCliCauseActionability(Cause.die(defect));
+      expect(result).toMatchObject({
+        error_kind: "internal_bug",
+        error_category: "panic",
+        error_fingerprint: fingerprint,
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    }
+  });
+
   it("does not leak details from cause chains", () => {
     const secret = "private-token";
     const cause = Cause.combine(Cause.die(new TypeError("boom")), Cause.die(new Error(secret)));
