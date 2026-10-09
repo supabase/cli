@@ -695,9 +695,7 @@ it.live(
         const backend = oneRequestPerConnectionBackend();
         const address = yield* backend.listen;
         const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-        yield* proxy.setRoutes([
-          { id: "studio", prefix: "/", target: Effect.succeed(address), freshWrites: true },
-        ]);
+        yield* proxy.setRoutes([{ id: "studio", prefix: "/", target: Effect.succeed(address) }]);
         const first = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
         expect(first.status).toBe(200);
         const second = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
