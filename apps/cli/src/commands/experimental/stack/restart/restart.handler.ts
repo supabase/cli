@@ -17,7 +17,7 @@ import type { StackRestartFlags } from "./restart.command.ts";
 const runtimeError = (cause: StackError) => {
   const detail = failedOutcomesDetail(cause);
   return new StackCommandRestartError({
-    reason: "unknown",
+    reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
     cause,

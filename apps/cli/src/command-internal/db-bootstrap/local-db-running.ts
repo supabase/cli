@@ -5,6 +5,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -26,12 +27,13 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
   readonly daemonDown?: boolean;
   /** Set when the failure is a daemon-connection error. */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.daemonDown === true) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
-    return actionability.startStack;
+    return causeDeclaration(this.cause) ?? actionability.startStack;
   }
 }
 

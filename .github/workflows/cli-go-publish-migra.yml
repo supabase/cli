@@ -23,7 +23,7 @@ jobs:
           docker run --rm -a STDOUT supabase/migra:builder pip show migra \
           | grep 'Version' \
           | sed -E 's/Version: (.*)/migra=\1/g' \
-          >> $GITHUB_OUTPUT
+          >> "$GITHUB_OUTPUT"
         shell: bash
 
   build_image:
@@ -83,6 +83,10 @@ jobs:
     needs:
       - settings
       - merge_manifest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     # Call workflow explicitly because events from actions cannot trigger more actions
     uses: ./.github/workflows/cli-go-mirror-image.yml
     with:

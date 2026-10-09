@@ -292,7 +292,9 @@ const makeAdapter = (client: Client) => {
 const creationJson = Schema.toCodecJson(CreationSchema);
 const decodeCreation = (operation: string, creation: unknown) =>
   Schema.decodeUnknownEffect(creationJson)(creation).pipe(
-    Effect.mapError((cause) => new StackError({ operation, message: cause.message })),
+    Effect.mapError(
+      (cause) => new StackError({ operation, message: cause.message, kind: "configuration" }),
+    ),
   );
 const decodeCreations = (operation: string, creations: ReadonlyArray<unknown>) =>
   Effect.forEach(creations, (creation) => decodeCreation(operation, creation));
@@ -331,6 +333,7 @@ export const stackAdapter = (client: Client) => {
                         new StackError({
                           operation: "restart",
                           message: "Service kind cannot change",
+                          kind: "configuration",
                         }),
                       ),
                 ),

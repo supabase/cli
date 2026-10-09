@@ -311,7 +311,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             })
             .pipe(
               Effect.mapError(
-                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+                (cause) =>
+                  new TestDbRunError({ message: `pg_prove run failed: ${cause.message}`, cause }),
               ),
             );
         }

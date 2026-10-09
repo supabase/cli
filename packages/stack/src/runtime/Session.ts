@@ -1,10 +1,15 @@
 import { Cause, Clock, Effect, Exit, Fiber, PubSub, Ref, Scope, Semaphore, Stream } from "effect";
+import type { StackFailureKind } from "../FailureKind.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { ServiceError, type RuntimeSession } from "../Service.ts";
 import type { ContainerProcess } from "./Container.ts";
 
 /** Wraps an arbitrary failure as a `ServiceError`, special-casing Effect timeouts for a clearer message. */
-export const mapToServiceError = (operation: string, cause: unknown): ServiceError =>
+export const mapToServiceError = (
+  operation: string,
+  cause: unknown,
+  kind?: StackFailureKind,
+): ServiceError =>
   cause instanceof ServiceError
     ? cause
     : new ServiceError({
@@ -13,6 +18,7 @@ export const mapToServiceError = (operation: string, cause: unknown): ServiceErr
           ? `Service ${operation} timed out`
           : failureMessage(cause),
         cause,
+        ...(kind === undefined ? {} : { kind }),
       });
 
 /** A descendant outside the process group can keep stderr open after the launcher exits. */

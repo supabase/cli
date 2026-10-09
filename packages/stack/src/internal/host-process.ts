@@ -1,6 +1,7 @@
 import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor, and the startup payload file predates any service layer.
 import { closeSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { failureKind } from "../FailureKind.ts";
 import { HostStartupPayload } from "../HostProcess.ts";
 import { findConflict } from "../Rpc.ts";
 import {
@@ -110,11 +111,13 @@ const program = (
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
         const conflict = findConflict(failure);
+        const kind = failureKind(cause);
         return report({
           type: "error",
           message: failure?.message ?? Cause.pretty(cause),
           ...(failure?.reason === undefined ? {} : { reason: failure.reason }),
           ...(conflict === undefined ? {} : { conflict }),
+          ...(kind === undefined ? {} : { kind }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );

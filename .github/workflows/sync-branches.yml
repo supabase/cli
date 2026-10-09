@@ -39,6 +39,8 @@ jobs:
       contents: read
     env:
       PAIR: ${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}
+    outputs:
+      conflict_pr: ${{ steps.sync.outputs.conflict_pr }}
     steps:
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -59,7 +61,8 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Sync
+      - id: sync
+        name: Sync
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}
@@ -67,3 +70,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           bun .github/scripts/sync-branches.ts "$PAIR"
+
+  # A main-into-develop conflict blocks the next production deploy, so the
+  # people who just shipped the hotfix hear about it where the release landed.
+  notify-conflict:
+    name: Announce back-merge conflict
+    needs: sync
+    if: |
+      needs.sync.outputs.conflict_pr != '' &&
+      (github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair) == 'main-into-develop'
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: Supabase CLI
+      status: sync-conflict
+      pull_request: ${{ needs.sync.outputs.conflict_pr }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}

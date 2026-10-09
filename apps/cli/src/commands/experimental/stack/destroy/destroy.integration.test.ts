@@ -464,7 +464,7 @@ describe("stack destroy", () => {
         Effect.flip,
       );
 
-      expect(error).toMatchObject({ reason: "unknown", message: "engine refused" });
+      expect(error).toMatchObject({ reason: "stack", message: "engine refused" });
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         f.stack.id,
       ]);
@@ -489,7 +489,7 @@ describe("stack destroy", () => {
         );
 
       expect(yield* destroyWith([f.stack.id])).toMatchObject({
-        reason: "unknown",
+        reason: "stack",
         suggestion: `Resolve each error, then run ${retry} to retry the stacks that failed.`,
       });
       expect(yield* destroyWith(ids)).toMatchObject({

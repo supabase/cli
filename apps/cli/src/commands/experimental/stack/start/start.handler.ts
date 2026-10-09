@@ -138,7 +138,7 @@ const stackError = (
   });
   const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
   return new StackCommandStartError({
-    reason: "unknown",
+    reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
     ...(suggestion === undefined ? {} : { suggestion }),

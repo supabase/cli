@@ -268,9 +268,15 @@ it.live("preserves composition outcomes over RPC", () =>
 
       expect("outcomes" in error).toBe(true);
       if (!("outcomes" in error)) return yield* Effect.die("Missing composition outcomes");
+      expect(error.kind).toBe("port-conflict");
       expect(error.outcomes).toEqual([
         { id: lazy.id, succeeded: true },
-        { id: blocked.id, succeeded: false, error: expect.stringContaining(String(port)) },
+        {
+          id: blocked.id,
+          succeeded: false,
+          error: expect.stringContaining(String(port)),
+          kind: "port-conflict",
+        },
       ]);
       yield* shutdownOwner(runtime.access, true);
     }),
