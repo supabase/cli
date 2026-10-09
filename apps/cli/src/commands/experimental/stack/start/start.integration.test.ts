@@ -499,14 +499,11 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         requested,
         { requestKind: "complete" },
       );
-      // A changed endpoint only re-plans when every other incompatible path on every member is
-      // also a pure endpoint reassignment; a changed database version (or any other non-endpoint
-      // path) blocks the whole re-plan, the way `planEndpointReplan` does.
+      // A changed endpoint only re-plans when every incompatible member differs in endpoint
+      // intents alone; a changed database version (or any other path) blocks the whole re-plan,
+      // the way `planEndpointReplan` does.
       const purelyEndpointChanges = planned.every(
-        (entry) =>
-          !entry.member ||
-          entry.change !== "incompatible" ||
-          entry.paths.every((path) => path === "endpoints" || path.startsWith("endpoints.")),
+        (entry) => !entry.member || entry.change !== "incompatible" || entry.endpointsOnly,
       );
       if (!purelyEndpointChanges) return;
       // The fake never resolves an automatic port for real, so it stands in the same canned
@@ -636,6 +633,26 @@ const jsonErrorLayers = (
   );
   return { layer, stdio, processControl };
 };
+
+const liveIdleOwner = (root: string, fixture: ReturnType<typeof fakeStack>) =>
+  Layer.merge(
+    Layer.succeed(StackApi, {
+      create: () => Effect.die("unused"),
+      open: () => Effect.succeed(fixture.stack),
+      discover: () => Effect.succeed([]),
+      find: () => Effect.die("identity not used"),
+      findDeleted: () => Effect.die("identity not used"),
+    }),
+    Layer.succeed(StackTargetResolver, {
+      resolve: () =>
+        Effect.succeed({
+          projectRoot: root,
+          id: fixture.stack.id,
+          runtime: "native" as const,
+          hostRunning: true,
+        }),
+    }),
+  );
 
 describe("experimental stack start", () => {
   it.live("rejects incompatible Functions env before changing composition", () =>
@@ -1680,24 +1697,7 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
 
       // A live owner keeps its startup state, so `open` never re-plans the requested creations.
-      const liveOwner = Layer.merge(
-        Layer.succeed(StackApi, {
-          create: () => Effect.die("unused"),
-          open: () => Effect.succeed(fixture.stack),
-          discover: () => Effect.succeed([]),
-          find: () => Effect.die("identity not used"),
-          findDeleted: () => Effect.die("identity not used"),
-        }),
-        Layer.succeed(StackTargetResolver, {
-          resolve: () =>
-            Effect.succeed({
-              projectRoot: root,
-              id: fixture.stack.id,
-              runtime: "native" as const,
-              hostRunning: true,
-            }),
-        }),
-      );
+      const liveOwner = liveIdleOwner(root, fixture);
       const error = yield* stackStart(flags()).pipe(
         Effect.provide(Layer.merge(layers(root, fixture), liveOwner)),
         Effect.flip,
@@ -1708,6 +1708,67 @@ describe("experimental stack start", () => {
         message: expect.stringContaining("[api] port: saved"),
         suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
       });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("omits recreate_command from the JSON envelope when a live idle owner meets a port", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-json-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-json"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "idle-json"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+
+      const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
+      yield* stackStart(flags()).pipe(
+        withJsonErrorHandling,
+        Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
+      );
+
+      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
+      expect(envelope._tag).toBe("Error");
+      expect(envelope.stack_changes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: "[api] port" })]),
+      );
+      expect(envelope).not.toHaveProperty("recreate_command");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("advises destroy and keeps recreate_command when a live idle owner meets a version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-version-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-version"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "idle-version"\n[db]\nmajor_version = 15\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+
+      const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
+      yield* stackStart(flags()).pipe(
+        withJsonErrorHandling,
+        Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
+      );
+
+      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
+      expect(envelope.error).toMatchObject({
+        suggestion: expect.stringContaining(
+          `supabase stack destroy --stack-id ${fixture.stack.id}`,
+        ),
+      });
+      expect(envelope.recreate_command).toBe(
+        `supabase stack destroy --stack-id ${fixture.stack.id}`,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

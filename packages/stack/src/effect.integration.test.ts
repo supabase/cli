@@ -1231,6 +1231,7 @@ it.live("plans requested creations against the saved composition and honours eag
             member: true,
             change: "incompatible",
             paths: ["config.version"],
+            endpointsOnly: false,
           },
           {
             id: restId,
@@ -1238,6 +1239,7 @@ it.live("plans requested creations against the saved composition and honours eag
             member: true,
             change: "incompatible",
             paths: ["endpoints.http.port"],
+            endpointsOnly: true,
           },
         ]);
 
@@ -1709,6 +1711,7 @@ it.live(
               member: true,
               change: "incompatible",
               paths: ["config.version"],
+              endpointsOnly: false,
             },
             {
               id: restId,
@@ -1716,6 +1719,7 @@ it.live(
               member: true,
               change: "incompatible",
               paths: ["endpoints.http.port"],
+              endpointsOnly: true,
             },
           ]);
         }),

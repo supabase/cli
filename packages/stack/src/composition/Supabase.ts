@@ -219,6 +219,11 @@ export type CreationChange =
       /** The instance cannot adopt the request: its endpoints, artifact or data version differ. */
       readonly change: "incompatible";
       readonly paths: ReadonlyArray<string>;
+      /**
+       * Only the intents of endpoints both sides declare differ, which a stopped stack's start
+       * re-plans instead of rejecting.
+       */
+      readonly endpointsOnly: boolean;
     };
 
 /** A saved instance of a requested service kind, compared with that request. */
@@ -297,20 +302,26 @@ const compareCreation = (
       .filter(([, source]) => !memberKinds.has(source))
       .map(([input]) => input),
   ]);
-  const paths = differences(
-    comparable(saved, undefined, compared),
-    comparable(requested, sharedPort, compared),
-    "",
-  );
+  const requestedComparable = comparable(requested, sharedPort, compared);
+  const paths = differences(comparable(saved, undefined, compared), requestedComparable, "");
+  const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
   const incompatible = paths.filter(
     (path) =>
       path === "version" ||
-      path === "endpoints" ||
-      path.startsWith("endpoints.") ||
+      isEndpointPath(path) ||
       (saved.service === "database" && path === "config.version"),
   );
+  const savedNames = endpointNames(saved);
+  const requestedNames = endpointNames({
+    service: requested.service,
+    endpoints: requestedComparable.endpoints,
+  });
+  const endpointsOnly =
+    incompatible.every(isEndpointPath) &&
+    savedNames.length === requestedNames.length &&
+    savedNames.every((name) => requestedNames.includes(name));
   return incompatible.length > 0
-    ? { change: "incompatible", paths: incompatible }
+    ? { change: "incompatible", paths: incompatible, endpointsOnly }
     : paths.length > 0
       ? { change: "changed", paths }
       : { change: "unchanged" };
@@ -419,24 +430,12 @@ const endpointRewrite = (
   const savedInstance = saved.instances.find(({ id }) => id === entry.id);
   const request = requested.find(({ service }) => service === entry.service);
   if (savedInstance === undefined || request === undefined) return undefined;
-  if (entry.change !== "incompatible") return undefined;
-  const nonEndpointPaths = entry.paths.filter(
-    (path) => path !== "endpoints" && !path.startsWith("endpoints."),
-  );
-  if (nonEndpointPaths.length > 0) return undefined;
+  if (entry.change !== "incompatible" || !entry.endpointsOnly) return undefined;
 
   const endpoints = withSharedApiPort(request, sharedPort);
   const requestedIntents = { service: request.service, endpoints };
-  const savedNames = endpointNames(savedInstance.creation);
-  const requestedNames = endpointNames(requestedIntents);
-  if (
-    savedNames.length !== requestedNames.length ||
-    !savedNames.every((name) => requestedNames.includes(name))
-  )
-    return undefined;
-
   const changes: Array<EndpointPortChange> = [];
-  for (const name of savedNames) {
+  for (const name of endpointNames(savedInstance.creation)) {
     const previous = endpointPort(savedInstance.creation, name);
     if (previous === endpointPort(requestedIntents, name)) continue;
     changes.push({

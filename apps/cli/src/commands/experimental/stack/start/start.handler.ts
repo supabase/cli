@@ -396,7 +396,8 @@ const incompatibleChange = (
   | {
       readonly error: StackCommandStartError;
       readonly changes: ReadonlyArray<StructuredSettingChange>;
-      readonly command: string;
+      /** The destroy invocation, when recreating the stack is among the remedies. */
+      readonly command: string | undefined;
     }
   | undefined => {
   const changes = incompatibleSettingChanges(planned, savedConfigById, requested, projectEnvValues);
@@ -409,18 +410,22 @@ const incompatibleChange = (
   );
   const nonEditable = dedupe(changes.filter((change) => !change.editable).map(({ key }) => key));
   const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
-  // A live idle owner never re-plans, but a fresh owner applies endpoint port changes, so a
-  // stop and start resolves them without deleting data.
-  const portsOnly = ownerLive && changes.every(({ path }) => path.startsWith("endpoints."));
+  // A live idle owner never re-plans, but a fresh owner's start re-plans the members the planner
+  // marks endpoints-only, so a stop and start resolves them without deleting data.
+  const replannable =
+    ownerLive &&
+    planned.every(
+      (entry) => !entry.member || entry.change !== "incompatible" || entry.endpointsOnly,
+    );
   // A non-editable change blocks start whatever else changed, so destroy is the only way out.
-  const suggestion = portsOnly
+  const suggestion = replannable
     ? `Run \`supabase stack stop --stack-id ${stackIdentity.id}\`, then \`supabase stack start --stack-id ${stackIdentity.id}\` to apply the new ports.`
     : nonEditable.length > 0 || revert === undefined
       ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
       : `${revert} to keep the stack and its data, or run ${destroyClause}`;
   return {
     changes,
-    command,
+    command: replannable ? undefined : command,
     error: new StackCommandStartError({
       reason: "invalid-config",
       message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
@@ -861,7 +866,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       if (Option.isSome(machineErrorContext))
         yield* machineErrorContext.value.set({
           stack_changes: rejected.changes,
-          recreate_command: rejected.command,
+          ...(rejected.command === undefined ? {} : { recreate_command: rejected.command }),
         });
       return yield* rejected.error;
     }

@@ -1709,6 +1709,7 @@ describe("db start stack backend", () => {
                           member: members.includes(database),
                           change: "incompatible" as const,
                           paths: ["config.version"],
+                          endpointsOnly: false,
                         },
                   ]
                 : [],

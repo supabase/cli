@@ -452,6 +452,7 @@ it.live("reports the planned differences of composition members as drift", () =>
             member: true,
             change: "incompatible",
             paths: ["endpoints.sql.port"],
+            endpointsOnly: true,
           },
           {
             id: "standalone-rest",
