@@ -3,7 +3,7 @@
  *
  * Two roots:
  * - {@link pgDeltaTempPath}: project-local (`supabase/.temp/pgdelta`) — catalog
- *   snapshots and debug bundles (Go-shared, workspace-mounted).
+ *   snapshots and debug bundles (workspace-mounted).
  * - {@link shadowBaselineCacheDir}: global under `SUPABASE_HOME` — the shadow
  *   baseline PGDATA tars, shared across worktrees with the same settings.
  */

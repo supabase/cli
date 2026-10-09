@@ -3,7 +3,7 @@
 Single shared side-effect document for all 13 active `inspect db` subcommands and
 their 12 deprecated aliases. Every subcommand has the same surface — it resolves a
 Postgres connection from `--db-url` / `--linked` / `--local`, runs one read-only
-`SELECT`, and renders the result as a Glamour ASCII table. They differ only in the
+`SELECT`, and renders the result as an ASCII table. They differ only in the
 SQL run and the columns rendered (see the per-subcommand `<name>.query.ts`).
 
 ## Files Read
@@ -15,8 +15,8 @@ SQL run and the columns rendered (see the per-subcommand `<name>.query.ts`).
 | `.pgpass` / `pg_service.conf`    | libpq      | only if referenced by a `--db-url` connection string                                |
 | `$PGSSLROOTCERT` CA bundle       | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                           |
 
-Connection resolution and all of the above are handled inside the already-ported
-`DbConfigResolver` (`command-internal/db-config.layer.ts`); this port adds
+Connection resolution and all of the above are handled inside
+`DbConfigResolver` (`command-internal/db-config.layer.ts`); the command adds
 no new config reads.
 
 ## Files Written
@@ -45,7 +45,7 @@ no new config reads.
 
 ## Database Queries
 
-Each subcommand runs one read-only `SELECT` (the embedded Go `<name>.sql`). The
+Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 5 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
 `db-stats` additionally takes `$2` = the database name.
 
@@ -69,8 +69,7 @@ Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`total-index-size`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
 `table-sizes`/`table-index-sizes`/`total-table-sizes`→table-stats;
 `role-configs`/`role-connections`→role-stats. (`table-record-counts` warns
-"table-stats" but runs index-stats — an inconsistency inherited from the old
-Go CLI, preserved verbatim.)
+"table-stats" but runs index-stats — an inconsistency that is preserved.)
 
 ## Exit Codes
 
@@ -92,7 +91,7 @@ No custom telemetry events beyond `cli_command_executed`.
 
 ### `--output-format text`
 
-A Glamour ASCII table (byte-exact using `glamour.RenderTable(..., AsciiStyle)`):
+An ASCII table:
 a leading blank line, a decorative line, the header row, a dashes separator, then one
 row per result. Statement/query cells (locks, blocking, outliers, calls) have their
 whitespace runs collapsed to single spaces (long-running-queries' query is NOT
@@ -121,11 +120,10 @@ Emit one extra stderr line before the table:
   from the absence of `--db-url` / `--local` while keeping the mutual-exclusivity check
   keyed off explicitly-set flags.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution `DbConfigResolver` performs
+- **`--project-ref`** overrides ONLY the linked-ref resolution `DbConfigResolver` performs
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
-  error rather than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  error rather than a silently discarded flag (stricter than
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target). Shared verbatim by every `inspect db` subcommand via
   `INSPECT_DB_FLAGS`.

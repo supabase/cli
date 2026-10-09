@@ -511,7 +511,7 @@ describe("inspect report", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("invalid keys: typo");
+        expect(causeText).toContain("unknown keys: typo");
       }
       // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);

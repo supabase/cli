@@ -6,7 +6,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { kongAuthHeaders } from "./kong-auth.ts";
 import { StorageGatewayNetworkError, StorageGatewayStatusError } from "./storage-gateway.errors.ts";
-import { goPathSplit } from "./storage-url.ts";
+import { splitDirAndFile } from "./storage-url.ts";
 
 /**
  * Client for the Supabase Storage service gateway (Kong). See
@@ -424,7 +424,7 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
         Effect.flatMap((body) => decodeFieldResponse(body, "message")),
       ),
     listObjects: (bucket, prefix, page) => {
-      const [dir, name] = goPathSplit(prefix);
+      const [dir, name] = splitDirAndFile(prefix);
       const query: Record<string, unknown> = { prefix: dir };
       if (name.length > 0) query["search"] = name;
       query["limit"] = PAGE_LIMIT;

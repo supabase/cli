@@ -12,7 +12,7 @@ describe("formatTimestamp", () => {
   });
 
   it("falls back to the original value for already-formatted timestamps", () => {
-    // Go's time.Parse(time.RFC3339, ...) rejects "2026-02-08 16:44:07" (space, not T).
+    // RFC3339 parsing rejects "2026-02-08 16:44:07" (space, not T).
     expect(formatTimestamp("2026-02-08 16:44:07")).toBe("2026-02-08 16:44:07");
   });
 

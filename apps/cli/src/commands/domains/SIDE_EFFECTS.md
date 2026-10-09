@@ -13,10 +13,10 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Files Written
 
-| Path                                             | Format | When                                               |
-| ------------------------------------------------ | ------ | -------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (PersistentPostRun), after the ref resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | always (PersistentPostRun), success or failure     |
+| Path                                             | Format | When                                      |
+| ------------------------------------------------ | ------ | ----------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (post-run), after the ref resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (post-run), success or failure     |
 
 ## API Routes
 
@@ -59,7 +59,7 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 In `pretty`/text mode the `PrintStatus` text is written to **stderr** and nothing
 to stdout. In a structured `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
 response goes to **stdout** and the human status is suppressed on stderr (see the
-divergence note below). `delete` only prints a fixed success line to stderr and
+notes below). `delete` only prints a fixed success line to stderr and
 ignores `-o`.
 
 ### `--output-format text`
@@ -93,9 +93,9 @@ suppressed on stderr. `delete` ignores `-o`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
 - All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file.
 - The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
-- **Documented divergences from the old Go CLI (intentional):**
-  - `--include-raw-output` is declared as a normal boolean **on each subcommand** (the old Go CLI declared it as a persistent flag on the `domains` group). Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it cannot reproduce the old help-hiding or the `Flag --include-raw-output has been deprecated` stderr warning, which Effect CLI has no hook for. It still reproduces the behavioral effect (forces `-o json` when `-o` is unset/pretty); on `delete` it is inert.
-  - The degenerate `validation_records != 1` status message approximates a Go-style `%+v` struct dump (which embeds a non-deterministic pointer address).
-  - Text-mode status output is newline-terminated even where the old CLI's output wasn't. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
-  - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean and matching the parity contract.
+- **Notes:**
+  - `--include-raw-output` is declared as a normal boolean **on each subcommand**. Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it is not hidden from help and emits no `Flag --include-raw-output has been deprecated` stderr warning, since Effect CLI has no hook for either. It forces `-o json` when `-o` is unset/pretty; on `delete` it is inert.
+  - The degenerate `validation_records != 1` status message is an approximate struct dump (the exact text is not stable).
+  - Text-mode status output is newline-terminated. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
+  - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean.
   - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers, rather than an uncapped decimal byte-value array — see `domains.cname.ts`'s comment at the failure site for detail.

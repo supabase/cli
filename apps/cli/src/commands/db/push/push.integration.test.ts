@@ -436,30 +436,27 @@ describe("db push", () => {
     });
   });
 
-  it.live(
-    "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
-    () => {
-      // `simulateInitialisingLoginRole` stands in for the real resolver's stderr line
-      // (the fake resolver is otherwise silent), so this asserts on actual stderr
-      // ordering, not internal call timing.
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        simulateInitialisingLoginRole: true,
-      });
-      return Effect.gen(function* () {
-        yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
-        const loginRoleIndex = out.stderrText.indexOf("Initialising login role...");
-        const dryRunIndex = out.stderrText.indexOf(
-          "DRY RUN: migrations will *not* be pushed to the database.",
-        );
-        expect(loginRoleIndex).toBeGreaterThanOrEqual(0);
-        expect(dryRunIndex).toBeGreaterThan(loginRoleIndex);
-        // ...and, in turn, before the connect step's own progress line.
-        const connectingIndex = out.stderrText.indexOf("Connecting to local database...");
-        expect(connectingIndex).toBeGreaterThan(dryRunIndex);
-      });
-    },
-  );
+  it.live("prints the DRY RUN heads-up line after the connection resolves, not before", () => {
+    // `simulateInitialisingLoginRole` stands in for the real resolver's stderr line
+    // (the fake resolver is otherwise silent), so this asserts on actual stderr
+    // ordering, not internal call timing.
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      simulateInitialisingLoginRole: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
+      const loginRoleIndex = out.stderrText.indexOf("Initialising login role...");
+      const dryRunIndex = out.stderrText.indexOf(
+        "DRY RUN: migrations will *not* be pushed to the database.",
+      );
+      expect(loginRoleIndex).toBeGreaterThanOrEqual(0);
+      expect(dryRunIndex).toBeGreaterThan(loginRoleIndex);
+      // ...and, in turn, before the connect step's own progress line.
+      const connectingIndex = out.stderrText.indexOf("Connecting to local database...");
+      expect(connectingIndex).toBeGreaterThan(dryRunIndex);
+    });
+  });
 
   it.live("fails with a repair suggestion when remote has versions missing locally", () => {
     const { layer, out } = setup(tmp.current, {
@@ -593,7 +590,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("hashes a non-UTF-8 seed file by its raw bytes (Go's io.Copy parity)", () => {
+  it.live("hashes a non-UTF-8 seed file by its raw bytes", () => {
     // Writing invalid UTF-8 and pre-seeding the remote with the raw-byte sha256 proves
     // the push hashes bytes, not a UTF-8 decode (which would replace invalid bytes and
     // mark the seed dirty).
@@ -888,7 +885,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("renders Go's caret, Detail line, and 42704 extension hint on a failed migration", () => {
+  it.live("renders the caret, Detail line, and 42704 extension hint on a failed migration", () => {
     // Established failure-rendering format: caret under the error position, Detail
     // line, and undefined-object extension hint.
     const stat = "CREATE TABLE test (path ltree NOT NULL)";
@@ -1001,7 +998,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("loads a Go-style env() boolean in config (no CliConfigParseError)", () => {
+  it.live("loads an env() boolean in config (no CliConfigParseError)", () => {
     // env-expansion + boolean parsing must resolve `env(VAR)` so the config loads and
     // the migration proceeds.
     const { layer, out } = setup(tmp.current, {

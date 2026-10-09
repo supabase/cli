@@ -187,7 +187,7 @@ describe("compute delete", () => {
         workdir: repo.dir,
         routes,
         yes: true,
-        goOutput: "env",
+        outputFlag: "env",
       });
 
       return yield* Effect.gen(function* () {
@@ -591,7 +591,7 @@ describe("compute delete", () => {
         workdir: repo.dir,
         routes: { [getRoute]: notDeployed },
         yes: true,
-        goOutput: "json",
+        outputFlag: "json",
       });
 
       return yield* Effect.gen(function* () {
@@ -683,7 +683,7 @@ describe("compute delete", () => {
       const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes,
-        goOutput: "json",
+        outputFlag: "json",
         promptTextResponses: ["api"],
       });
 

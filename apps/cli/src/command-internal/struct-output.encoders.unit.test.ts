@@ -1,52 +1,46 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GoTomlEncodeError,
-  encodeGoToml,
-  encodeGoYaml,
-  goAny,
-  goBool,
-  goFieldName,
-  goFloat32,
-  goFloat64,
-  goFormatFloat,
-  goInt,
-  goMap,
-  goNullable,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-  goTime,
-  goTomlListWrapper,
-  goUuid,
-} from "./go-struct-output.encoders.ts";
-
-/**
- * Golden byte strings in this file were captured from a scratch Go program calling
- * `utils.EncodeOutput`, using the same BurntSushi toml and yaml.v3 versions pinned in the
- * reference `go.mod`.
- */
+  TomlEncodeError,
+  encodeStructToml,
+  encodeStructYaml,
+  shapeAny,
+  shapeBool,
+  pascalCaseFieldName,
+  shapeFloat32,
+  shapeFloat64,
+  formatStructFloat,
+  shapeInt,
+  shapeMap,
+  shapeNullable,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTime,
+  shapeTomlListWrapper,
+  shapeUuid,
+} from "./struct-output.encoders.ts";
 
 // Mirrors the branch response struct.
-const BRANCH_RESPONSE = goStruct([
-  ["created_at", goTime],
-  ["deletion_scheduled_at", goPtr(goTime)],
-  ["git_branch", goPtr(goString)],
-  ["id", goUuid],
-  ["is_default", goBool],
-  ["latest_check_run_id", goPtr(goFloat32)],
-  ["name", goString],
-  ["notify_url", goPtr(goString)],
-  ["parent_project_ref", goString],
-  ["persistent", goBool],
-  ["pr_number", goPtr(goInt)],
-  ["preview_project_status", goPtr(goString)],
-  ["project_ref", goString],
-  ["review_requested_at", goPtr(goTime)],
-  ["status", goString],
-  ["updated_at", goTime],
-  ["with_data", goBool],
+const BRANCH_RESPONSE = shapeStruct([
+  ["created_at", shapeTime],
+  ["deletion_scheduled_at", shapePtr(shapeTime)],
+  ["git_branch", shapePtr(shapeString)],
+  ["id", shapeUuid],
+  ["is_default", shapeBool],
+  ["latest_check_run_id", shapePtr(shapeFloat32)],
+  ["name", shapeString],
+  ["notify_url", shapePtr(shapeString)],
+  ["parent_project_ref", shapeString],
+  ["persistent", shapeBool],
+  ["pr_number", shapePtr(shapeInt)],
+  ["preview_project_status", shapePtr(shapeString)],
+  ["project_ref", shapeString],
+  ["review_requested_at", shapePtr(shapeTime)],
+  ["status", shapeString],
+  ["updated_at", shapeTime],
+  ["with_data", shapeBool],
 ]);
 
 const SAMPLE_BRANCH = {
@@ -63,7 +57,7 @@ const SAMPLE_BRANCH = {
   with_data: true,
 };
 
-// All pointer fields absent — Go zero-fills the value fields.
+// All pointer fields absent — the value fields are zero-filled.
 const ZERO_BRANCH = {
   name: "Production",
   is_default: true,
@@ -72,10 +66,10 @@ const ZERO_BRANCH = {
   status: "FUNCTIONS_DEPLOYED",
 };
 
-describe("encodeGoToml", () => {
-  it("matches Go byte-for-byte for a branches list wrapper (PascalCase, nil pointers omitted, native datetimes)", () => {
-    const wrapper = goTomlListWrapper("branches", BRANCH_RESPONSE);
-    expect(encodeGoToml({ branches: [SAMPLE_BRANCH, ZERO_BRANCH] }, wrapper)).toBe(
+describe("encodeStructToml", () => {
+  it("matches the golden output for a branches list wrapper (PascalCase, nil pointers omitted, native datetimes)", () => {
+    const wrapper = shapeTomlListWrapper("branches", BRANCH_RESPONSE);
+    expect(encodeStructToml({ branches: [SAMPLE_BRANCH, ZERO_BRANCH] }, wrapper)).toBe(
       `[[branches]]
   CreatedAt = 2026-05-27T01:02:03Z
   GitBranch = "feat-1"
@@ -105,7 +99,7 @@ describe("encodeGoToml", () => {
   });
 
   it("emits a top-level struct without a table header (branches create)", () => {
-    expect(encodeGoToml(SAMPLE_BRANCH, BRANCH_RESPONSE)).toBe(
+    expect(encodeStructToml(SAMPLE_BRANCH, BRANCH_RESPONSE)).toBe(
       `CreatedAt = 2026-05-27T01:02:03Z
 GitBranch = "feat-1"
 Id = "11111111-2222-3333-4444-555555555555"
@@ -122,60 +116,60 @@ WithData = true
   });
 
   it("emits nothing for a nil list and `key = []` for a decoded empty list", () => {
-    const wrapper = goTomlListWrapper("branches", BRANCH_RESPONSE);
-    // Go: `var result []api.BranchResponse` stays nil when empty → no output.
-    expect(encodeGoToml({ branches: undefined }, wrapper)).toBe("");
-    // Go: a decoded `[]` is a non-nil empty slice → `branches = []`.
-    expect(encodeGoToml({ branches: [] }, wrapper)).toBe("branches = []\n");
+    const wrapper = shapeTomlListWrapper("branches", BRANCH_RESPONSE);
+    // An absent list → no output.
+    expect(encodeStructToml({ branches: undefined }, wrapper)).toBe("");
+    // A decoded `[]` is an empty list → `branches = []`.
+    expect(encodeStructToml({ branches: [] }, wrapper)).toBe("branches = []\n");
   });
 
   it("nests sub-tables after primitives with 2-space indentation (hostnames shape)", () => {
     // Mirrors the custom-hostname update response struct.
-    const spec = goStruct([
-      ["custom_hostname", goString],
+    const spec = shapeStruct([
+      ["custom_hostname", shapeString],
       [
         "data",
-        goStruct([
-          ["errors", goSlice(goAny)],
-          ["messages", goSlice(goAny)],
+        shapeStruct([
+          ["errors", shapeSlice(shapeAny)],
+          ["messages", shapeSlice(shapeAny)],
           [
             "result",
-            goStruct([
-              ["custom_origin_server", goString],
-              ["hostname", goString],
-              ["id", goString],
+            shapeStruct([
+              ["custom_origin_server", shapeString],
+              ["hostname", shapeString],
+              ["id", shapeString],
               [
                 "ownership_verification",
-                goStruct([
-                  ["name", goString],
-                  ["type", goString],
-                  ["value", goString],
+                shapeStruct([
+                  ["name", shapeString],
+                  ["type", shapeString],
+                  ["value", shapeString],
                 ]),
               ],
               [
                 "ssl",
-                goStruct([
-                  ["status", goString],
-                  ["validation_errors", goPtr(goSlice(goAny))],
+                shapeStruct([
+                  ["status", shapeString],
+                  ["validation_errors", shapePtr(shapeSlice(shapeAny))],
                   [
                     "validation_records",
-                    goSlice(
-                      goStruct([
-                        ["txt_name", goString],
-                        ["txt_value", goString],
+                    shapeSlice(
+                      shapeStruct([
+                        ["txt_name", shapeString],
+                        ["txt_value", shapeString],
                       ]),
                     ),
                   ],
                 ]),
               ],
-              ["status", goString],
-              ["verification_errors", goPtr(goSlice(goString))],
+              ["status", shapeString],
+              ["verification_errors", shapePtr(shapeSlice(shapeString))],
             ]),
           ],
-          ["success", goBool],
+          ["success", shapeBool],
         ]),
       ],
-      ["status", goString],
+      ["status", shapeString],
     ]);
     const payload = {
       custom_hostname: "custom.example.com",
@@ -198,7 +192,7 @@ WithData = true
         },
       },
     };
-    expect(encodeGoToml(payload, spec)).toBe(
+    expect(encodeStructToml(payload, spec)).toBe(
       `CustomHostname = "custom.example.com"
 Status = "2_initiated"
 
@@ -223,35 +217,35 @@ Status = "2_initiated"
     );
   });
 
-  it("escapes strings like BurntSushi and quotes string-typed timestamps (sso provider)", () => {
-    const spec = goStruct([
-      ["created_at", goPtr(goString)],
+  it("escapes TOML strings and quotes string-typed timestamps (sso provider)", () => {
+    const spec = shapeStruct([
+      ["created_at", shapePtr(shapeString)],
       [
         "domains",
-        goPtr(
-          goSlice(
-            goStruct([
-              ["created_at", goPtr(goString)],
-              ["domain", goPtr(goString)],
-              ["updated_at", goPtr(goString)],
+        shapePtr(
+          shapeSlice(
+            shapeStruct([
+              ["created_at", shapePtr(shapeString)],
+              ["domain", shapePtr(shapeString)],
+              ["updated_at", shapePtr(shapeString)],
             ]),
           ),
         ),
       ],
-      ["id", goString],
+      ["id", shapeString],
       [
         "saml",
-        goPtr(
-          goStruct([
-            ["attribute_mapping", goPtr(goStruct([["keys", goMap(goAny)]]))],
-            ["entity_id", goString],
-            ["metadata_url", goPtr(goString)],
-            ["metadata_xml", goPtr(goString)],
-            ["name_id_format", goPtr(goString)],
+        shapePtr(
+          shapeStruct([
+            ["attribute_mapping", shapePtr(shapeStruct([["keys", shapeMap(shapeAny)]]))],
+            ["entity_id", shapeString],
+            ["metadata_url", shapePtr(shapeString)],
+            ["metadata_xml", shapePtr(shapeString)],
+            ["name_id_format", shapePtr(shapeString)],
           ]),
         ),
       ],
-      ["updated_at", goPtr(goString)],
+      ["updated_at", shapePtr(shapeString)],
     ]);
     const payload = {
       id: "8b64a95d-6e29-4c58-8f04-1d0ac6bcda31",
@@ -264,7 +258,7 @@ Status = "2_initiated"
           '<?xml version="1.0"?>\n<EntityDescriptor entityID="https://example.com">&amp;</EntityDescriptor>',
       },
     };
-    expect(encodeGoToml(payload, spec)).toBe(
+    expect(encodeStructToml(payload, spec)).toBe(
       `CreatedAt = "2026-05-27T01:02:03.123456Z"
 Id = "8b64a95d-6e29-4c58-8f04-1d0ac6bcda31"
 UpdatedAt = "2026-05-27T01:02:03.123456Z"
@@ -280,17 +274,17 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("keeps hand-written Go struct declaration order (services imageVersion)", () => {
-    const spec = goTomlListWrapper(
+  it("keeps hand-written struct declaration order (services imageVersion)", () => {
+    const spec = shapeTomlListWrapper(
       "services",
-      goStruct([
-        ["name", goString],
-        ["local", goString],
-        ["remote", goString],
+      shapeStruct([
+        ["name", shapeString],
+        ["local", shapeString],
+        ["remote", shapeString],
       ]),
     );
     expect(
-      encodeGoToml(
+      encodeStructToml(
         { services: [{ name: "supabase/postgres", local: "17.4.1.037", remote: "" }] },
         spec,
       ),
@@ -304,33 +298,33 @@ UpdatedAt = "2026-05-27T01:02:03.123456Z"
   });
 
   it("renders inline primitive arrays (network bans wrapper)", () => {
-    const spec = goStruct([["banned_ips", goSlice(goString), "banned_ips"]]);
-    expect(encodeGoToml({ banned_ips: ["1.2.3.4", "5.6.7.8"] }, spec)).toBe(
+    const spec = shapeStruct([["banned_ips", shapeSlice(shapeString), "banned_ips"]]);
+    expect(encodeStructToml({ banned_ips: ["1.2.3.4", "5.6.7.8"] }, spec)).toBe(
       'banned_ips = ["1.2.3.4", "5.6.7.8"]\n',
     );
   });
 
-  it("skips nil nullable fields and fails like Go on populated ones", () => {
-    const spec = goStruct([
-      ["desc", goNullable(goString)],
-      ["name", goString],
+  it("skips nil nullable fields and fails on populated ones", () => {
+    const spec = shapeStruct([
+      ["desc", shapeNullable(shapeString)],
+      ["name", shapeString],
     ]);
-    expect(encodeGoToml({ name: "x" }, spec)).toBe('Name = "x"\n');
-    expect(() => encodeGoToml({ name: "x", desc: null }, spec)).toThrow(
-      new GoTomlEncodeError().message,
+    expect(encodeStructToml({ name: "x" }, spec)).toBe('Name = "x"\n');
+    expect(() => encodeStructToml({ name: "x", desc: null }, spec)).toThrow(
+      new TomlEncodeError().message,
     );
-    expect(() => encodeGoToml({ name: "x", desc: "d" }, spec)).toThrow(
-      "toml: cannot encode a map with non-string key type",
+    expect(() => encodeStructToml({ name: "x", desc: "d" }, spec)).toThrow(
+      "cannot encode a map with non-string keys",
     );
   });
 
-  it("renders floats with a decimal point and Go's exponent form", () => {
-    const spec = goStruct([
-      ["f1", goFloat32],
-      ["f2", goFloat64],
-      ["f6", goFloat64],
+  it("renders floats with a decimal point and the exponent form", () => {
+    const spec = shapeStruct([
+      ["f1", shapeFloat32],
+      ["f2", shapeFloat64],
+      ["f6", shapeFloat64],
     ]);
-    expect(encodeGoToml({ f1: 1, f2: 1000000, f6: 1234567 }, spec)).toBe(
+    expect(encodeStructToml({ f1: 1, f2: 1000000, f6: 1234567 }, spec)).toBe(
       `F1 = 1.0
 F2 = 1e+06
 F6 = 1.234567e+06
@@ -339,9 +333,9 @@ F6 = 1.234567e+06
   });
 
   it("sorts map keys and quotes non-bare keys (branches get envs)", () => {
-    const spec = goMap(goString);
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoToml(
+      encodeStructToml(
         { SUPABASE_ANON_KEY: "anon", POSTGRES_URL: "postgres://u:p@h:6543/postgres" },
         spec,
       ),
@@ -352,95 +346,95 @@ SUPABASE_ANON_KEY = "anon"
     );
   });
 
-  it("renders map elements of mixed interface{} arrays as inline tables like BurntSushi", () => {
-    const spec = goStruct([["default", goAny, "Default"]]);
+  it("renders map elements of mixed untyped arrays as inline tables", () => {
+    const spec = shapeStruct([["default", shapeAny, "Default"]]);
     // Sorted byte order, non-table values before table values.
-    expect(encodeGoToml({ default: [{ b: 2, a: 1, C: 3 }, "x"] }, spec)).toBe(
+    expect(encodeStructToml({ default: [{ b: 2, a: 1, C: 3 }, "x"] }, spec)).toBe(
       'Default = [{C = 3.0, a = 1.0, b = 2.0}, "x"]\n',
     );
-    expect(encodeGoToml({ default: [{ a: { b: 1 }, z: 2 }, "x"] }, spec)).toBe(
+    expect(encodeStructToml({ default: [{ a: { b: 1 }, z: 2 }, "x"] }, spec)).toBe(
       'Default = [{z = 2.0, a = {b = 1.0}}, "x"]\n',
     );
-    expect(encodeGoToml({ default: [{ a: [{ b: 1 }], z: 2 }, "x"] }, spec)).toBe(
+    expect(encodeStructToml({ default: [{ a: [{ b: 1 }], z: 2 }, "x"] }, spec)).toBe(
       'Default = [{z = 2.0, a = [{b = 1.0}]}, "x"]\n',
     );
     // Non-bare keys are quoted; empty and all-nil tables collapse to {}.
-    expect(encodeGoToml({ default: [{ "a b": 1 }, "x"] }, spec)).toBe(
+    expect(encodeStructToml({ default: [{ "a b": 1 }, "x"] }, spec)).toBe(
       'Default = [{"a b" = 1.0}, "x"]\n',
     );
-    expect(encodeGoToml({ default: [{}, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
-    expect(encodeGoToml({ default: [{ a: null }, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
+    expect(encodeStructToml({ default: [{}, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
+    expect(encodeStructToml({ default: [{ a: null }, "x"] }, spec)).toBe('Default = [{}, "x"]\n');
     // eMap decides the ", " separator by group position before skipping nil
     // entries, so a nil in the final position leaves a dangling separator.
-    expect(encodeGoToml({ default: [{ "10": 78797, b: null }, false] }, spec)).toBe(
+    expect(encodeStructToml({ default: [{ "10": 78797, b: null }, false] }, spec)).toBe(
       "Default = [{10 = 78797.0, }, false]\n",
     );
   });
 
-  it("fails like Go on nil elements inside interface{} arrays", () => {
-    const spec = goStruct([["default", goAny, "Default"]]);
-    const message = "toml: cannot encode array with nil element";
-    expect(() => encodeGoToml({ default: [null, "x"] }, spec)).toThrow(message);
-    expect(() => encodeGoToml({ default: [null] }, spec)).toThrow(message);
-    expect(() => encodeGoToml({ default: [[null], "x"] }, spec)).toThrow(message);
+  it("fails on null elements inside untyped arrays", () => {
+    const spec = shapeStruct([["default", shapeAny, "Default"]]);
+    const message = "cannot encode an array with a null element";
+    expect(() => encodeStructToml({ default: [null, "x"] }, spec)).toThrow(message);
+    expect(() => encodeStructToml({ default: [null] }, spec)).toThrow(message);
+    expect(() => encodeStructToml({ default: [[null], "x"] }, spec)).toThrow(message);
   });
 
-  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
-    const spec = goStruct([["t", goTime, "T"]]);
-    expect(encodeGoToml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
+  it("truncates time fractions to nanoseconds", () => {
+    const spec = shapeStruct([["t", shapeTime, "T"]]);
+    expect(encodeStructToml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.123456789Z\n",
     );
-    expect(encodeGoToml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
+    expect(encodeStructToml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.1Z\n",
     );
   });
 
-  it("quotes comma-fraction timestamp-shaped STRINGS like yaml.v3's resolver", () => {
-    const spec = goStruct([["s", goString, "S"]]);
-    expect(encodeGoYaml({ s: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
+  it("quotes comma-fraction timestamp-shaped strings", () => {
+    const spec = shapeStruct([["s", shapeString, "S"]]);
+    expect(encodeStructYaml({ s: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       's: "2026-01-01T00:00:00,123Z"\n',
     );
   });
 
-  it("leaves overflowing float-shaped strings plain like yaml.v3's ParseFloat gate", () => {
-    const spec = goStruct([["s", goString, "S"]]);
-    expect(encodeGoYaml({ s: "1e999" }, spec)).toBe("s: 1e999\n");
-    expect(encodeGoYaml({ s: "-1e999" }, spec)).toBe("s: -1e999\n");
-    expect(encodeGoYaml({ s: ".5e999" }, spec)).toBe("s: .5e999\n");
-    expect(encodeGoYaml({ s: "1e-999" }, spec)).toBe('s: "1e-999"\n');
-    expect(encodeGoYaml({ s: "1e10" }, spec)).toBe('s: "1e10"\n');
+  it("leaves overflowing float-shaped strings plain", () => {
+    const spec = shapeStruct([["s", shapeString, "S"]]);
+    expect(encodeStructYaml({ s: "1e999" }, spec)).toBe("s: 1e999\n");
+    expect(encodeStructYaml({ s: "-1e999" }, spec)).toBe("s: -1e999\n");
+    expect(encodeStructYaml({ s: ".5e999" }, spec)).toBe("s: .5e999\n");
+    expect(encodeStructYaml({ s: "1e-999" }, spec)).toBe('s: "1e-999"\n');
+    expect(encodeStructYaml({ s: "1e10" }, spec)).toBe('s: "1e10"\n');
   });
 
-  it("wraps 19+-digit numeric key runs like Go's unchecked int64 accumulation", () => {
-    const spec = goStruct([["default", goAny, "Default"]]);
+  it("wraps 19+-digit numeric key runs via unchecked int64 accumulation", () => {
+    const spec = shapeStruct([["default", shapeAny, "Default"]]);
     expect(
-      encodeGoYaml({ default: { a9000000000000000000: 1, a10000000000000000000: 2 } }, spec),
+      encodeStructYaml({ default: { a9000000000000000000: 1, a10000000000000000000: 2 } }, spec),
     ).toBe("default:\n    a10000000000000000000: 2\n    a9000000000000000000: 1\n");
   });
 
-  it("orders Unicode-digit map keys with yaml.v3's naive rune arithmetic", () => {
-    const spec = goStruct([["default", goAny, "Default"]]);
-    expect(encodeGoYaml({ default: { a٢: 1, a3: 2, a10: 3, a9: 4 } }, spec)).toBe(
+  it("orders Unicode-digit map keys by code point, with numeric runs compared by ASCII digits only", () => {
+    const spec = shapeStruct([["default", shapeAny, "Default"]]);
+    expect(encodeStructYaml({ default: { a٢: 1, a3: 2, a10: 3, a9: 4 } }, spec)).toBe(
       "default:\n    a3: 2\n    a9: 4\n    a10: 3\n    a٢: 1\n",
     );
   });
 
-  it("normalizes Go's accepted comma fractional separator to the dot Go re-emits", () => {
-    const spec = goStruct([["t", goTime, "T"]]);
-    expect(encodeGoToml({ t: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
+  it("normalizes a comma fractional separator to a dot", () => {
+    const spec = shapeStruct([["t", shapeTime, "T"]]);
+    expect(encodeStructToml({ t: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.123Z\n",
     );
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00,1234567895Z" }, spec)).toBe(
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00,1234567895Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789Z\n",
     );
   });
 
-  it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
+  it("sorts map keys by UTF-8 byte order", () => {
     // U+E000/U+FF21 sort before the astral U+1D400/U+1F600 in UTF-8 byte order; JS `<` on UTF-16
     // units would sort both astral keys first.
-    const spec = goMap(goString);
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoToml(
+      encodeStructToml(
         {
           "\u{1F600}": "emoji",
           "\uE000": "private-use",
@@ -463,9 +457,9 @@ SUPABASE_ANON_KEY = "anon"
   });
 });
 
-describe("encodeGoYaml", () => {
-  it("matches Go byte-for-byte for a branches list (lowercased keys, explicit nulls)", () => {
-    expect(encodeGoYaml([SAMPLE_BRANCH, ZERO_BRANCH], goSlice(BRANCH_RESPONSE))).toBe(
+describe("encodeStructYaml", () => {
+  it("matches the golden output for a branches list (lowercased keys, explicit nulls)", () => {
+    expect(encodeStructYaml([SAMPLE_BRANCH, ZERO_BRANCH], shapeSlice(BRANCH_RESPONSE))).toBe(
       `- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
   gitbranch: feat-1
@@ -505,39 +499,39 @@ describe("encodeGoYaml", () => {
   });
 
   it("renders an empty list as [] regardless of nil-ness", () => {
-    expect(encodeGoYaml([], goSlice(BRANCH_RESPONSE))).toBe("[]\n");
-    expect(encodeGoYaml(undefined, goSlice(BRANCH_RESPONSE))).toBe("[]\n");
+    expect(encodeStructYaml([], shapeSlice(BRANCH_RESPONSE))).toBe("[]\n");
+    expect(encodeStructYaml(undefined, shapeSlice(BRANCH_RESPONSE))).toBe("[]\n");
   });
 
   it("uses 4-column indentation, block literals, and quoted string timestamps (sso show)", () => {
-    const spec = goStruct([
-      ["created_at", goPtr(goString)],
+    const spec = shapeStruct([
+      ["created_at", shapePtr(shapeString)],
       [
         "domains",
-        goPtr(
-          goSlice(
-            goStruct([
-              ["created_at", goPtr(goString)],
-              ["domain", goPtr(goString)],
-              ["updated_at", goPtr(goString)],
+        shapePtr(
+          shapeSlice(
+            shapeStruct([
+              ["created_at", shapePtr(shapeString)],
+              ["domain", shapePtr(shapeString)],
+              ["updated_at", shapePtr(shapeString)],
             ]),
           ),
         ),
       ],
-      ["id", goString],
+      ["id", shapeString],
       [
         "saml",
-        goPtr(
-          goStruct([
-            ["attribute_mapping", goPtr(goStruct([["keys", goMap(goAny)]]))],
-            ["entity_id", goString],
-            ["metadata_url", goPtr(goString)],
-            ["metadata_xml", goPtr(goString)],
-            ["name_id_format", goPtr(goString)],
+        shapePtr(
+          shapeStruct([
+            ["attribute_mapping", shapePtr(shapeStruct([["keys", shapeMap(shapeAny)]]))],
+            ["entity_id", shapeString],
+            ["metadata_url", shapePtr(shapeString)],
+            ["metadata_xml", shapePtr(shapeString)],
+            ["name_id_format", shapePtr(shapeString)],
           ]),
         ),
       ],
-      ["updated_at", goPtr(goString)],
+      ["updated_at", shapePtr(shapeString)],
     ]);
     const payload = {
       id: "8b64a95d-6e29-4c58-8f04-1d0ac6bcda31",
@@ -550,7 +544,7 @@ describe("encodeGoYaml", () => {
           '<?xml version="1.0"?>\n<EntityDescriptor entityID="https://example.com">&amp;</EntityDescriptor>',
       },
     };
-    expect(encodeGoYaml(payload, spec)).toBe(
+    expect(encodeStructYaml(payload, spec)).toBe(
       `createdat: "2026-05-27T01:02:03.123456Z"
 domains:
     - createdat: "2026-05-27T01:02:03Z"
@@ -570,27 +564,27 @@ updatedat: "2026-05-27T01:02:03.123456Z"
     );
   });
 
-  it("renders nullable fields the way yaml.v3 renders map[bool]T (api keys)", () => {
+  it("renders nullable fields as a mapping with a plain bool key (api keys)", () => {
     // Mirror of api.ApiKeyResponse.
-    const spec = goSlice(
-      goStruct([
-        ["api_key", goNullable(goString)],
-        ["description", goNullable(goString)],
-        ["hash", goNullable(goString)],
-        ["id", goNullable(goString)],
-        ["inserted_at", goNullable(goTime)],
-        ["name", goString],
-        ["prefix", goNullable(goString)],
-        ["secret_jwt_template", goNullable(goMap(goAny))],
-        ["type", goNullable(goString)],
-        ["updated_at", goNullable(goTime)],
+    const spec = shapeSlice(
+      shapeStruct([
+        ["api_key", shapeNullable(shapeString)],
+        ["description", shapeNullable(shapeString)],
+        ["hash", shapeNullable(shapeString)],
+        ["id", shapeNullable(shapeString)],
+        ["inserted_at", shapeNullable(shapeTime)],
+        ["name", shapeString],
+        ["prefix", shapeNullable(shapeString)],
+        ["secret_jwt_template", shapeNullable(shapeMap(shapeAny))],
+        ["type", shapeNullable(shapeString)],
+        ["updated_at", shapeNullable(shapeTime)],
       ]),
     );
     const payload = [
       { name: "anon", api_key: "anon-key-value", id: "key-id-1", type: "legacy" },
       { name: "service_role" },
     ];
-    expect(encodeGoYaml(payload, spec)).toBe(
+    expect(encodeStructYaml(payload, spec)).toBe(
       `- apikey:
     true: anon-key-value
   description: {}
@@ -619,11 +613,11 @@ updatedat: "2026-05-27T01:02:03.123456Z"
   });
 
   it("renders an explicit JSON null nullable as a false-keyed zero (snippets description)", () => {
-    const spec = goStruct([
-      ["desc", goNullable(goString)],
-      ["name", goString],
+    const spec = shapeStruct([
+      ["desc", shapeNullable(shapeString)],
+      ["name", shapeString],
     ]);
-    expect(encodeGoYaml({ desc: null, name: "x" }, spec)).toBe(
+    expect(encodeStructYaml({ desc: null, name: "x" }, spec)).toBe(
       `desc:
     false: ""
 name: x
@@ -632,28 +626,28 @@ name: x
   });
 
   it("renders nil and empty slices as [] and nested maps at +4 (backups list)", () => {
-    const spec = goStruct([
+    const spec = shapeStruct([
       [
         "backups",
-        goSlice(
-          goStruct([
-            ["id", goInt],
-            ["inserted_at", goString],
-            ["is_physical_backup", goBool],
-            ["status", goString],
+        shapeSlice(
+          shapeStruct([
+            ["id", shapeInt],
+            ["inserted_at", shapeString],
+            ["is_physical_backup", shapeBool],
+            ["status", shapeString],
           ]),
         ),
       ],
       [
         "physical_backup_data",
-        goStruct([
-          ["earliest_physical_backup_date_unix", goPtr(goInt)],
-          ["latest_physical_backup_date_unix", goPtr(goInt)],
+        shapeStruct([
+          ["earliest_physical_backup_date_unix", shapePtr(shapeInt)],
+          ["latest_physical_backup_date_unix", shapePtr(shapeInt)],
         ]),
       ],
-      ["pitr_enabled", goBool],
-      ["region", goString],
-      ["walg_enabled", goBool],
+      ["pitr_enabled", shapeBool],
+      ["region", shapeString],
+      ["walg_enabled", shapeBool],
     ]);
     const payload = {
       backups: [],
@@ -662,7 +656,7 @@ name: x
       region: "us-east-1",
       walg_enabled: true,
     };
-    expect(encodeGoYaml(payload, spec)).toBe(
+    expect(encodeStructYaml(payload, spec)).toBe(
       `backups: []
 physicalbackupdata:
     earliestphysicalbackupdateunix: 1687279254
@@ -674,8 +668,8 @@ walgenabled: true
     );
   });
 
-  it("quotes strings exactly like yaml.v3's resolver and emitter", () => {
-    const spec = goMap(goString);
+  it("quotes strings that would resolve to a non-string YAML tag", () => {
+    const spec = shapeMap(shapeString);
     const payload = {
       k01: "yes",
       k04: "~",
@@ -708,7 +702,7 @@ walgenabled: true
       k52: "2001-12-14 21:59:43.10 -5",
       k53: "2001-12-15 2:59:43.10",
     };
-    expect(encodeGoYaml(payload, spec)).toBe(
+    expect(encodeStructYaml(payload, spec)).toBe(
       `k01: "yes"
 k04: "~"
 k07: ' leading-space'
@@ -743,10 +737,13 @@ k53: "2001-12-15 2:59:43.10"
     );
   });
 
-  it("renders block literal chomping indicators like yaml.v3", () => {
-    const spec = goMap(goString);
+  it("renders block literal chomping indicators", () => {
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoYaml({ k27: "line1\nline2\n", k28: "line1\nline2\n\n", k29: "with\rcarriage" }, spec),
+      encodeStructYaml(
+        { k27: "line1\nline2\n", k28: "line1\nline2\n\n", k29: "with\rcarriage" },
+        spec,
+      ),
     ).toBe(
       `k27: |
     line1
@@ -760,9 +757,11 @@ k29: "with\\rcarriage"
     );
   });
 
-  it("renders floats with Go's g-format exponent switch", () => {
-    const spec = goMap(goAny);
-    expect(encodeGoYaml({ f2: 1000000, f3: 78125, f4: 0.5, f5: 0.000001, f6: 1234567 }, spec)).toBe(
+  it("renders floats with the g-format exponent switch", () => {
+    const spec = shapeMap(shapeAny);
+    expect(
+      encodeStructYaml({ f2: 1000000, f3: 78125, f4: 0.5, f5: 0.000001, f6: 1234567 }, spec),
+    ).toBe(
       `f2: 1e+06
 f3: 78125
 f4: 0.5
@@ -772,9 +771,9 @@ f6: 1.234567e+06
     );
   });
 
-  it("sorts plain map keys with yaml.v3's natural ordering", () => {
-    const spec = goMap(goString);
-    expect(encodeGoYaml({ z: "1", a: "2", "10": "3", "2": "4", B: "5", b: "6" }, spec)).toBe(
+  it("sorts plain map keys in natural order", () => {
+    const spec = shapeMap(shapeString);
+    expect(encodeStructYaml({ z: "1", a: "2", "10": "3", "2": "4", B: "5", b: "6" }, spec)).toBe(
       `"2": "4"
 "10": "3"
 B: "5"
@@ -785,12 +784,12 @@ z: "1"
     );
   });
 
-  it("sorts unicode map keys by rune and escapes astral keys like yaml.v3", () => {
-    // keyList.Less compares runes, so the astral U+1F600/U+1D400 sort after U+E000/U+FF21; the
-    // emitter double-quotes astral characters as \U-escapes (not printable to libyaml).
-    const spec = goMap(goString);
+  it("sorts unicode map keys by code point and double-quotes astral keys with \\U escapes", () => {
+    // Keys compare by code point, so the astral U+1F600/U+1D400 sort after U+E000/U+FF21; the
+    // emitter double-quotes astral characters as \U-escapes (not printable in YAML).
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoYaml(
+      encodeStructYaml(
         {
           "\u{1F600}": "emoji",
           "\uE000": "private-use",
@@ -813,9 +812,9 @@ z: ascii
   });
 
   it("validates calendar dates and zone offsets like time.Parse before quoting timestamps", () => {
-    const spec = goMap(goString);
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoYaml(
+      encodeStructYaml(
         {
           t01: "2025-02-31",
           t02: "2024-02-29",
@@ -849,29 +848,29 @@ t12: 1900-02-29
     );
   });
 
-  it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
-    const spec = goStruct([["t", goTime, "T"]]);
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
+  it("truncates time fractions to nanoseconds", () => {
+    const spec = shapeStruct([["t", shapeTime, "T"]]);
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789Z\n",
     );
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00.12345678901234Z" }, spec)).toBe(
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00.12345678901234Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789Z\n",
     );
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00.9999999999Z" }, spec)).toBe(
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00.9999999999Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.999999999Z\n",
     );
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00.1000000005Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.1Z\n",
     );
-    expect(encodeGoYaml({ t: "2026-01-01T00:00:00.1234567895+07:00" }, spec)).toBe(
+    expect(encodeStructYaml({ t: "2026-01-01T00:00:00.1234567895+07:00" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789+07:00\n",
     );
   });
 
-  it("escapes non-printable scalars with \\x/\\u/\\U like yaml.v3's emitter", () => {
-    const spec = goMap(goString);
+  it("escapes non-printable scalars with \\x/\\u/\\U", () => {
+    const spec = shapeMap(shapeString);
     expect(
-      encodeGoYaml(
+      encodeStructYaml(
         {
           e1: "a\uFEFFb",
           e2: "a\uFFFEb",
@@ -892,50 +891,50 @@ e5: "nel\\Nbreak"
   });
 });
 
-describe("goFieldName", () => {
+describe("pascalCaseFieldName", () => {
   it("capitalizes snake_case tokens like oapi-codegen", () => {
-    expect(goFieldName("api_key")).toBe("ApiKey");
-    expect(goFieldName("metadata_xml")).toBe("MetadataXml");
-    expect(goFieldName("parent_project_ref")).toBe("ParentProjectRef");
-    expect(goFieldName("ezbr_sha256")).toBe("EzbrSha256");
+    expect(pascalCaseFieldName("api_key")).toBe("ApiKey");
+    expect(pascalCaseFieldName("metadata_xml")).toBe("MetadataXml");
+    expect(pascalCaseFieldName("parent_project_ref")).toBe("ParentProjectRef");
+    expect(pascalCaseFieldName("ezbr_sha256")).toBe("EzbrSha256");
   });
 
   it("capitalizes the first letter of camelCase tags", () => {
-    expect(goFieldName("appliedSuccessfully")).toBe("AppliedSuccessfully");
-    expect(goFieldName("currentConfig")).toBe("CurrentConfig");
+    expect(pascalCaseFieldName("appliedSuccessfully")).toBe("AppliedSuccessfully");
+    expect(pascalCaseFieldName("currentConfig")).toBe("CurrentConfig");
   });
 });
 
-describe("goFormatFloat", () => {
-  it("matches strconv.FormatFloat(f, 'g', -1, 64)", () => {
-    expect(goFormatFloat(1, 64)).toBe("1");
-    expect(goFormatFloat(123456, 64)).toBe("123456");
-    expect(goFormatFloat(1000000, 64)).toBe("1e+06");
-    expect(goFormatFloat(1234567, 64)).toBe("1.234567e+06");
-    expect(goFormatFloat(0.5, 64)).toBe("0.5");
-    expect(goFormatFloat(0.000001, 64)).toBe("1e-06");
-    expect(goFormatFloat(0, 64)).toBe("0");
-    expect(goFormatFloat(-2.5, 64)).toBe("-2.5");
+describe("formatStructFloat", () => {
+  it("formats shortest round-trip digits for 64-bit floats", () => {
+    expect(formatStructFloat(1, 64)).toBe("1");
+    expect(formatStructFloat(123456, 64)).toBe("123456");
+    expect(formatStructFloat(1000000, 64)).toBe("1e+06");
+    expect(formatStructFloat(1234567, 64)).toBe("1.234567e+06");
+    expect(formatStructFloat(0.5, 64)).toBe("0.5");
+    expect(formatStructFloat(0.000001, 64)).toBe("1e-06");
+    expect(formatStructFloat(0, 64)).toBe("0");
+    expect(formatStructFloat(-2.5, 64)).toBe("-2.5");
   });
 
-  it("rounds through float32 like Go's typed fields", () => {
-    expect(goFormatFloat(16777217, 32)).toBe("1.6777216e+07");
-    expect(goFormatFloat(78125, 32)).toBe("78125");
-    expect(goFormatFloat(0.5, 32)).toBe("0.5");
+  it("rounds through float32 for typed fields", () => {
+    expect(formatStructFloat(16777217, 32)).toBe("1.6777216e+07");
+    expect(formatStructFloat(78125, 32)).toBe("78125");
+    expect(formatStructFloat(0.5, 32)).toBe("0.5");
   });
 
   it("breaks exact shortest-digit ties to even like Ryu, not half-up", () => {
     // 4249.03125 sits exactly between the two shortest 8-digit candidates, rounding to the even
     // final digit both ways.
-    expect(goFormatFloat(4249.03125, 32)).toBe("4249.0312");
-    expect(goFormatFloat(4249.09375, 32)).toBe("4249.0938");
-    expect(goFormatFloat(123456789, 32)).toBe("1.2345679e+08");
-    expect(goFormatFloat(1048575.5, 32)).toBe("1.0485755e+06");
-    expect(goFormatFloat(8388607.5, 32)).toBe("8.3886075e+06");
+    expect(formatStructFloat(4249.03125, 32)).toBe("4249.0312");
+    expect(formatStructFloat(4249.09375, 32)).toBe("4249.0938");
+    expect(formatStructFloat(123456789, 32)).toBe("1.2345679e+08");
+    expect(formatStructFloat(1048575.5, 32)).toBe("1.0485755e+06");
+    expect(formatStructFloat(8388607.5, 32)).toBe("8.3886075e+06");
     // Boundaries: smallest subnormal, subnormal→normal edge, and max finite.
-    expect(goFormatFloat(1.401298464324817e-45, 32)).toBe("1e-45");
-    expect(goFormatFloat(1.1754943508222875e-38, 32)).toBe("1.1754944e-38");
-    expect(goFormatFloat(3.4028234663852886e38, 32)).toBe("3.4028235e+38");
-    expect(goFormatFloat(-4249.03125, 32)).toBe("-4249.0312");
+    expect(formatStructFloat(1.401298464324817e-45, 32)).toBe("1e-45");
+    expect(formatStructFloat(1.1754943508222875e-38, 32)).toBe("1.1754944e-38");
+    expect(formatStructFloat(3.4028234663852886e38, 32)).toBe("3.4028235e+38");
+    expect(formatStructFloat(-4249.03125, 32)).toBe("-4249.0312");
   });
 });

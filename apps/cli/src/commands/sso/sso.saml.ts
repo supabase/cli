@@ -19,8 +19,8 @@ function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
 /**
  * The `--name-id-format` value set, shared by `sso add` and `sso update`.
  * Order matters: it drives the CLI help text and is joined verbatim into
- * pflag's `invalid argument … must be one of [ … ]` error (`pflagEnumValue`),
- * which must byte-match pflag's format.
+ * the `invalid argument … must be one of [ … ]` error (`argvEnumValue`),
+ * whose format is byte-exact.
  */
 export const SSO_NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",

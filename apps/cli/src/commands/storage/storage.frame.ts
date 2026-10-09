@@ -1,5 +1,8 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
+import {
+  loadCliConfig,
+  type CliConfigLoadOptions,
+} from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -10,7 +13,7 @@ import {
 import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
 import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
 import {
-  GoUrlParseError,
+  UrlParseError,
   StorageUrlPatternError,
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
@@ -50,10 +53,10 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
-  const loadOptions: InternalLoadCliConfigOptions =
+  const loadOptions: CliConfigLoadOptions =
     projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
+      ? { projectRef, search: shouldSearchAncestors(cliSettings) }
+      : { search: shouldSearchAncestors(cliSettings) };
   const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
     Effect.catchTag(
       "CliConfigParseError",
@@ -131,7 +134,7 @@ export const parseStorageUrlEffect = (objectUrl: string) =>
       if (cause instanceof StorageUrlPatternError) {
         return new StorageInvalidUrlError();
       }
-      const message = cause instanceof GoUrlParseError ? cause.message : String(cause);
+      const message = cause instanceof UrlParseError ? cause.message : String(cause);
       return new StorageUrlParseError({ message: `failed to parse storage url: ${message}` });
     },
   });

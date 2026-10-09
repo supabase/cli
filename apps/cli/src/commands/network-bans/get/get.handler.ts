@@ -6,7 +6,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeYaml } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson, encodeYaml } from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { encodeBannedIpsToml } from "../network-bans.encoders.ts";
 import {
@@ -43,11 +43,14 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
       );
       yield* fetching?.clear ?? Effect.void;
 
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
       // Skips the stderr heading for json/stream-json output, but only when -o/--output
       // is unset, since that flag takes priority.
-      if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
+      if (
+        outputFlagFormat === undefined &&
+        (output.format === "json" || output.format === "stream-json")
+      ) {
         yield* output.success("", response);
         return;
       }
@@ -55,22 +58,22 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
       // Emitted here so --output env still prints this heading before erroring below.
       yield* output.raw("DB banned IPs:\n", "stderr");
 
-      if (goOutput === "env") {
+      if (outputFlagFormat === "env") {
         return yield* new NetworkBansEnvNotSupportedError({
           message: "--output env flag is not supported",
         });
       }
-      if (goOutput === "yaml") {
+      if (outputFlagFormat === "yaml") {
         yield* output.raw(encodeYaml(response.banned_ipv4_addresses));
         return;
       }
-      if (goOutput === "toml") {
+      if (outputFlagFormat === "toml") {
         yield* output.raw(encodeBannedIpsToml(response.banned_ipv4_addresses));
         return;
       }
 
       // Default output, and `--output pretty`, which aliases to json.
-      yield* output.raw(encodeGoJson(response.banned_ipv4_addresses));
+      yield* output.raw(encodeSortedJson(response.banned_ipv4_addresses));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

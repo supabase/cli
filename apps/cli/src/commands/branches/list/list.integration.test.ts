@@ -73,7 +73,7 @@ function writeLinkedProjectCacheFile(workdir: string, ref: string) {
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: Branches;
   readonly status?: number;
   readonly network?: "fail";
@@ -94,7 +94,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, workdir: tempRoot.current };
 }
@@ -136,7 +136,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in branch fields (Go parity)", () => {
+  it.live("renders literal `|` characters in branch fields", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH_PIPE] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -172,8 +172,8 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_BRANCH] });
+  it.live("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
@@ -182,7 +182,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact YAML for --output yaml", () => {
+  it.live("emits byte-exact YAML for --output yaml", () => {
     // Omits every optional field to assert how absent values render.
     const zeroBranch: Branches[number] = {
       id: "00000000-0000-0000-0000-000000000000",
@@ -196,7 +196,7 @@ describe("branches list integration", () => {
       updated_at: "0001-01-01T00:00:00Z",
       with_data: false,
     };
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
+    const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
@@ -237,8 +237,8 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [] });
+  it.live("emits nothing for --output toml when the branch list is empty", () => {
+    const { layer, out } = setup({ outputFlag: "toml", response: [] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe("");
@@ -246,7 +246,7 @@ describe("branches list integration", () => {
   });
 
   it.live("wraps result as { branches = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
+    const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(`[[branches]]
@@ -266,7 +266,7 @@ describe("branches list integration", () => {
   });
 
   it.live("fails with BranchesEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: [SAMPLE_BRANCH] });
+    const { layer } = setup({ outputFlag: "env", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -279,7 +279,7 @@ describe("branches list integration", () => {
   });
 
   it.live("treats --output pretty as identical to text mode (table render)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_BRANCH] });
+    const { layer, out } = setup({ outputFlag: "pretty", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("STATUS");
@@ -289,7 +289,7 @@ describe("branches list integration", () => {
   it.live("--output flag wins over --output-format", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: [SAMPLE_BRANCH],
     });
     return Effect.gen(function* () {
@@ -476,10 +476,10 @@ describe("branches list integration", () => {
     });
 
     it.live(
-      "omits the marker entirely for --output json (Go machine format, byte-identical to before)",
+      "omits the marker entirely for --output json (machine format, byte-identical to before)",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: "json",
+          outputFlag: "json",
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });

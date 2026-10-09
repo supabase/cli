@@ -3,7 +3,7 @@ import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { VALUE_CONSUMING_LONG_FLAGS, VALUE_CONSUMING_SHORT_FLAGS } from "./db-target-flags.ts";
-import { viperEnvBool, viperEnvBoolWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvBool, supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
 
 // The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to
 // vary its allowed values; this models it as the union of every command's accepted values, and
@@ -39,7 +39,7 @@ export const OutputFlag = GlobalFlag.setting("output")({
  * The TS-only `--output-format` global, accepted on any subcommand.
  *
  * A value-taking global flag must also be registered in `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/cobra-flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
+ * (`shared/cli/flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
  */
 export const OutputFormatFlag = GlobalFlag.setting("output-format")({
   flag: Flag.choice("output-format", ["text", "json", "stream-json"]).pipe(
@@ -120,7 +120,7 @@ export const AgentFlag = GlobalFlag.setting("agent")({
  * Every global/persistent flag declared above.
  *
  * A value-taking flag added here must also be added to `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/cobra-flag-groups.ts`), which the handler-side pflag scans and pre-parse token
+ * (`shared/cli/flag-groups.ts`), which the handler-side argv scans and pre-parse token
  * scanners both derive their token set from. A flag missed there fails silently: an unregistered
  * value flag won't consume its following token, so that token gets misread as positional.
  */
@@ -165,7 +165,7 @@ export const globalFlagValues = Effect.gen(function* () {
   return values;
 });
 
-const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
+const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
 /**
  * Raw argv truncated at the first bare `--` operand terminator. This CLI's own lexer stops parsing
@@ -180,7 +180,7 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
 };
 
 /**
- * Drops tokens that pflag would consume as a value-consuming flag's value in space-separated form
+ * Drops tokens consumed as a value-consuming flag's value in space-separated form
  * (`--flag value` / `-f value`), so the `--yes`/`--experimental`/`--debug` argv scanners below
  * don't mistake a consumed value token for an explicit occurrence of the global flag — e.g.
  * `db pull --password --experimental=false` treats `--experimental=false` as `--password`'s
@@ -214,7 +214,7 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
  */
 const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
   nonValueConsumedTokens(argsBeforeOperandTerminator(args)).some(
-    (arg) => arg.startsWith("--yes=") && PFLAG_FALSE_VALUES.has(arg.slice("--yes=".length)),
+    (arg) => arg.startsWith("--yes=") && FALSE_VALUES.has(arg.slice("--yes=".length)),
   );
 
 /**
@@ -228,14 +228,14 @@ export const resolveYes = Effect.gen(function* () {
   if (yesFlagExplicitlyFalse(cliArgs.args)) {
     return false;
   }
-  return flag || viperEnvBool("SUPABASE_YES");
+  return flag || supabaseEnvBool("SUPABASE_YES");
 });
 
 /**
  * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
  * project env before prompting (`migration down`, `migration repair --all`). Shell env
  * *presence* (any value) suppresses the file value entirely (see
- * {@link viperEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
+ * {@link supabaseEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
  * the loaded map from `loadProjectEnv`.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
@@ -245,7 +245,7 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     if (yesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
   });
 
 /**
@@ -261,7 +261,7 @@ const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefi
     if (arg === "--experimental") {
       result = true;
     } else if (arg.startsWith("--experimental=")) {
-      result = !PFLAG_FALSE_VALUES.has(arg.slice("--experimental=".length));
+      result = !FALSE_VALUES.has(arg.slice("--experimental=".length));
     }
   }
   return result;
@@ -279,12 +279,12 @@ export const resolveExperimental = Effect.gen(function* () {
   if (explicit !== undefined) {
     return explicit;
   }
-  return flag || viperEnvBool("SUPABASE_EXPERIMENTAL");
+  return flag || supabaseEnvBool("SUPABASE_EXPERIMENTAL");
 });
 
 /**
  * `--experimental` with project `.env` fallback. Shell-env presence wins over the file;
- * an explicit flag wins over both. See {@link viperEnvBoolWithProjectFallback}.
+ * an explicit flag wins over both. See {@link supabaseEnvBoolWithProjectFallback}.
  */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -294,7 +294,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     if (explicit !== undefined) {
       return explicit;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
   });
 
 /**
@@ -310,7 +310,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
     if (arg === "--debug") {
       lastExplicitlyFalse = false;
     } else if (arg.startsWith("--debug=")) {
-      lastExplicitlyFalse = PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length));
+      lastExplicitlyFalse = FALSE_VALUES.has(arg.slice("--debug=".length));
     }
   }
   return lastExplicitlyFalse;
@@ -330,5 +330,5 @@ export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =
     if (debugFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || viperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
   });

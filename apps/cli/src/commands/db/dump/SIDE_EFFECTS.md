@@ -1,6 +1,6 @@
 # `supabase db dump`
 
-Native TypeScript port (`dump.handler.ts`). Streams a `pg_dump`/`pg_dumpall`
+Implemented in `dump.handler.ts`. Streams a `pg_dump`/`pg_dumpall`
 script run inside the compose Postgres image, or catalog `pg_dump` /
 `pg_dumpall` on the stack backend (native artifact or a one-shot of the same
 image), to stdout or `--file`.
@@ -33,15 +33,15 @@ image), to stdout or `--file`.
 
 ## Environment Variables
 
-| Variable                                                                      | Purpose                                                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
-| `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                    |
-| `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
-| `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
-| `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                             |
-| `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
+| Variable                                             | Purpose                                                                                                                                                                                                                            |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
+| `SUPABASE_ACCESS_TOKEN`                              | `--linked` auth                                                                                                                                                                                                                    |
+| `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
+| `SUPABASE_USE_SLIM_IMAGES`                           | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
+| `DOCKER_HOST`                                        | docker daemon endpoint                                                                                                                                                                                                             |
+| `MSYSTEM`, `TERM_PROGRAM`                            | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
 
 ## Exit Codes
 
@@ -49,7 +49,7 @@ image), to stdout or `--file`.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                                |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                              |
 
 ## Output
 
@@ -79,19 +79,17 @@ shell inherits the suppressing variables and is missed.
 > password) is printed **in cleartext** to stdout. Operators piping `--dry-run`
 > output to logs or CI artifacts should treat that output as a secret.
 
-## Notes / Divergences
+## Notes
 
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution used for the connection and
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and
   the linked-project cache (flag > `SUPABASE_PROJECT_ID`/config.toml
   `project_id` > `.temp/project-ref`) — it does not affect any local container
   id. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
-  env var simply leaves unused on a non-linked target).
+  flag (stricter than `SUPABASE_PROJECT_ID`, which is simply left unused on a non-linked target).
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is

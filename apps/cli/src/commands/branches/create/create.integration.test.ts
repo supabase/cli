@@ -76,7 +76,7 @@ const tempRoot = useTempWorkdir("supabase-branches-create-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: CreatedBranch;
   readonly status?: number;
   readonly network?: "fail";
@@ -132,7 +132,7 @@ function setup(opts: SetupOpts = {}) {
       analytics,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
   );
@@ -278,7 +278,7 @@ describe("branches create integration", () => {
     );
   });
 
-  it.live("non-TTY with piped `n` declines the git-branch name like Go", () => {
+  it.live("non-TTY with piped `n` declines the git-branch name", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return withGitBranch(
       Effect.gen(function* () {
@@ -328,8 +328,8 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.live("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
       expect(out.stdoutText).toContain("Created preview branch:");
@@ -409,7 +409,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
+  it.live("does NOT fire upgrade suggested on 500", () => {
     const { layer, analytics } = setup({ status: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
@@ -435,7 +435,7 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.live("rejects --size nano at flag-parse time", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([branchesCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),

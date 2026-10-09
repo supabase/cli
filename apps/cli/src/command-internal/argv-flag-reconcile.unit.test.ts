@@ -10,12 +10,12 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { ProfileFlag } from "./global-flags.ts";
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import {
-  pflagBoolValue,
-  pflagEnumValue,
-  pflagProfileValue,
-  pflagWorkdirValue,
-  resolvePflagProfile,
-} from "./pflag-reconcile.ts";
+  argvBoolValue,
+  argvEnumValue,
+  argvProfileValue,
+  argvWorkdirValue,
+  resolveArgvProfile,
+} from "./argv-flag-reconcile.ts";
 
 // Sample enum values for the generic enum-reconciliation helper under test.
 const NAME_ID_FORMATS = [
@@ -28,76 +28,70 @@ const NAME_ID_FORMATS = [
 const occ = (entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>) =>
   new Map(entries.map(([name, values]) => [name, [...values]]));
 
-describe("pflagBoolValue", () => {
-  it("is false when the flag never occurs (Go default)", () => {
-    expect(pflagBoolValue(occ([]), "skip-url-validation")).toEqual(Result.succeed(false));
+describe("argvBoolValue", () => {
+  it("is false when the flag never occurs", () => {
+    expect(argvBoolValue(occ([]), "skip-url-validation")).toEqual(Result.succeed(false));
   });
 
-  it('treats a bare occurrence (recorded as pflag\'s NoOptDefVal "true") as true', () => {
-    expect(pflagBoolValue(occ([["skip-url-validation", ["true"]]]), "skip-url-validation")).toEqual(
+  it('treats a bare occurrence (recorded as "true") as true', () => {
+    expect(argvBoolValue(occ([["skip-url-validation", ["true"]]]), "skip-url-validation")).toEqual(
       Result.succeed(true),
     );
   });
 
-  it("resolves repeats last-wins, not first-wins (pflag Sets every occurrence)", () => {
+  it("resolves repeats last-wins, not first-wins", () => {
     // --skip-url-validation=false --skip-url-validation
     expect(
-      pflagBoolValue(occ([["skip-url-validation", ["false", "true"]]]), "skip-url-validation"),
+      argvBoolValue(occ([["skip-url-validation", ["false", "true"]]]), "skip-url-validation"),
     ).toEqual(Result.succeed(true));
     // --skip-url-validation --skip-url-validation=false
     expect(
-      pflagBoolValue(occ([["skip-url-validation", ["true", "false"]]]), "skip-url-validation"),
+      argvBoolValue(occ([["skip-url-validation", ["true", "false"]]]), "skip-url-validation"),
     ).toEqual(Result.succeed(false));
   });
 
-  it("fails on an inline-empty occurrence exactly like Go's ParseBool", () => {
+  it("fails on an inline-empty occurrence", () => {
     // --skip-url-validation=false --skip-url-validation=
     expect(
-      pflagBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
+      argvBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
     ).toEqual(
-      Result.fail(
-        `invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax`,
-      ),
+      Result.fail(`invalid argument "" for "--skip-url-validation" flag: expected a boolean`),
     );
   });
 
-  it("accepts exactly Go's strconv.ParseBool literal set", () => {
+  it("accepts exactly the boolean literal set", () => {
     for (const raw of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(pflagBoolValue(occ([["f", [raw]]]), "f")).toEqual(Result.succeed(true));
+      expect(argvBoolValue(occ([["f", [raw]]]), "f")).toEqual(Result.succeed(true));
     }
     for (const raw of ["0", "f", "F", "FALSE", "false", "False"]) {
-      expect(pflagBoolValue(occ([["f", [raw]]]), "f")).toEqual(Result.succeed(false));
+      expect(argvBoolValue(occ([["f", [raw]]]), "f")).toEqual(Result.succeed(false));
     }
   });
 
-  it("fails with pflag's byte-exact invalid-argument message on the first bad occurrence", () => {
-    expect(pflagBoolValue(occ([["skip-url-validation", ["yes"]]]), "skip-url-validation")).toEqual(
-      Result.fail(
-        `invalid argument "yes" for "--skip-url-validation" flag: strconv.ParseBool: parsing "yes": invalid syntax`,
-      ),
+  it("fails with the invalid-argument message on the first bad occurrence", () => {
+    expect(argvBoolValue(occ([["skip-url-validation", ["yes"]]]), "skip-url-validation")).toEqual(
+      Result.fail(`invalid argument "yes" for "--skip-url-validation" flag: expected a boolean`),
     );
     expect(
-      pflagBoolValue(occ([["skip-url-validation", ["true", "no"]]]), "skip-url-validation"),
+      argvBoolValue(occ([["skip-url-validation", ["true", "no"]]]), "skip-url-validation"),
     ).toEqual(
-      Result.fail(
-        `invalid argument "no" for "--skip-url-validation" flag: strconv.ParseBool: parsing "no": invalid syntax`,
-      ),
+      Result.fail(`invalid argument "no" for "--skip-url-validation" flag: expected a boolean`),
     );
   });
 });
 
-describe("pflagEnumValue", () => {
+describe("argvEnumValue", () => {
   it("is none when the flag never occurs", () => {
-    expect(pflagEnumValue(occ([]), "name-id-format", NAME_ID_FORMATS)).toEqual(
+    expect(argvEnumValue(occ([]), "name-id-format", NAME_ID_FORMATS)).toEqual(
       Result.succeed(Option.none()),
     );
   });
 
-  it("resolves repeats last-wins, matching pflag", () => {
+  it("resolves repeats last-wins", () => {
     const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
     const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient";
     expect(
-      pflagEnumValue(
+      argvEnumValue(
         occ([["name-id-format", [transient, persistent]]]),
         "name-id-format",
         NAME_ID_FORMATS,
@@ -105,10 +99,10 @@ describe("pflagEnumValue", () => {
     ).toEqual(Result.succeed(Option.some(persistent)));
   });
 
-  it("fails with the Go enum Set message when any occurrence is invalid", () => {
+  it("fails with the enum message when any occurrence is invalid", () => {
     const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
     expect(
-      pflagEnumValue(
+      argvEnumValue(
         occ([["name-id-format", [persistent, "bogus"]]]),
         "name-id-format",
         NAME_ID_FORMATS,
@@ -120,14 +114,14 @@ describe("pflagEnumValue", () => {
     );
   });
 
-  it("names the flag with its shorthand when a label is given (pflag errors.go:39-41)", () => {
-    expect(pflagEnumValue(occ([["type", ["bogus"]]]), "type", ["saml"], "-t, --type")).toEqual(
+  it("names the flag with its shorthand when a label is given", () => {
+    expect(argvEnumValue(occ([["type", ["bogus"]]]), "type", ["saml"], "-t, --type")).toEqual(
       Result.fail(`invalid argument "bogus" for "-t, --type" flag: must be one of [ saml ]`),
     );
   });
 });
 
-describe("pflagWorkdirValue", () => {
+describe("argvWorkdirValue", () => {
   const scan = (
     entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
     consumed: ReadonlyArray<string> = [],
@@ -138,10 +132,10 @@ describe("pflagWorkdirValue", () => {
     prePathOccurrences: occ(prePath),
   });
 
-  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+  it("resolves pre-path repeats last-wins (the parser is first-wins)", () => {
     // --workdir /existing --workdir /missing sso add …
     expect(
-      pflagWorkdirValue(
+      argvWorkdirValue(
         scan([], [], [["workdir", ["/existing", "/missing"]]]),
         Option.some("/existing"),
         undefined,
@@ -151,17 +145,13 @@ describe("pflagWorkdirValue", () => {
 
   it("keeps a pre-path occurrence when the only post-path workdir token was consumed", () => {
     expect(
-      pflagWorkdirValue(
-        scan([], ["workdir"], [["workdir", ["/pre"]]]),
-        Option.some("/pre"),
-        "/env",
-      ),
+      argvWorkdirValue(scan([], ["workdir"], [["workdir", ["/pre"]]]), Option.some("/pre"), "/env"),
     ).toEqual(Option.some("/pre"));
   });
 
   it("post-path occurrences still win over pre-path ones (argv-order last-wins)", () => {
     expect(
-      pflagWorkdirValue(
+      argvWorkdirValue(
         scan([["workdir", ["/post"]]], [], [["workdir", ["/pre"]]]),
         Option.some("/pre"),
         undefined,
@@ -169,57 +159,57 @@ describe("pflagWorkdirValue", () => {
     ).toEqual(Option.some("/post"));
   });
 
-  it("resolves nothing when no flag, parsed value, or env var is present (Go walks up)", () => {
-    expect(pflagWorkdirValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
+  it("resolves nothing when no flag, parsed value, or env var is present", () => {
+    expect(argvWorkdirValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
   });
 
   it("prefers the scan's occurrence over the parsed flag and the env var", () => {
     // --workdir --metadata-file …
     expect(
-      pflagWorkdirValue(scan([["workdir", ["--metadata-file"]]]), Option.none(), "/env"),
+      argvWorkdirValue(scan([["workdir", ["--metadata-file"]]]), Option.none(), "/env"),
     ).toEqual(Option.some("--metadata-file"));
   });
 
-  it("resolves repeats last-wins, matching pflag StringVar", () => {
+  it("resolves repeats last-wins", () => {
     expect(
-      pflagWorkdirValue(scan([["workdir", ["/a", "/b"]]]), Option.some("/a"), undefined),
+      argvWorkdirValue(scan([["workdir", ["/a", "/b"]]]), Option.some("/a"), undefined),
     ).toEqual(Option.some("/b"));
   });
 
   it("falls back to the parsed flag when the anchored scan saw no occurrence (pre-path --workdir)", () => {
-    expect(pflagWorkdirValue(scan([]), Option.some("/pre-path"), "/env")).toEqual(
+    expect(argvWorkdirValue(scan([]), Option.some("/pre-path"), "/env")).toEqual(
       Option.some("/pre-path"),
     );
   });
 
   it("ignores the parsed flag when the --workdir token was consumed by another flag, falling to the env var", () => {
     // --domains --workdir /x
-    expect(pflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
+    expect(argvWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
       Option.some("/env"),
     );
-    expect(pflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), undefined)).toEqual(
+    expect(argvWorkdirValue(scan([], ["workdir"]), Option.some("/x"), undefined)).toEqual(
       Option.none(),
     );
   });
 
   it("uses the env var when neither the scan nor the parser saw the flag", () => {
-    expect(pflagWorkdirValue(scan([]), Option.none(), "/env")).toEqual(Option.some("/env"));
+    expect(argvWorkdirValue(scan([]), Option.none(), "/env")).toEqual(Option.some("/env"));
   });
 
-  it("treats a changed-but-empty flag as the walk-up default, shadowing the env var (viper precedence)", () => {
+  it("treats a changed-but-empty flag as the walk-up default, shadowing the env var", () => {
     // --workdir=
-    expect(pflagWorkdirValue(scan([["workdir", [""]]]), Option.none(), "/env")).toEqual(
+    expect(argvWorkdirValue(scan([["workdir", [""]]]), Option.none(), "/env")).toEqual(
       Option.none(),
     );
-    expect(pflagWorkdirValue(scan([]), Option.some(""), "/env")).toEqual(Option.none());
+    expect(argvWorkdirValue(scan([]), Option.some(""), "/env")).toEqual(Option.none());
   });
 
   it("treats an empty env var as unset", () => {
-    expect(pflagWorkdirValue(scan([]), Option.none(), "")).toEqual(Option.none());
+    expect(argvWorkdirValue(scan([]), Option.none(), "")).toEqual(Option.none());
   });
 });
 
-describe("pflagProfileValue", () => {
+describe("argvProfileValue", () => {
   const scan = (
     entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>,
     consumed: ReadonlyArray<string> = [],
@@ -233,7 +223,7 @@ describe("pflagProfileValue", () => {
   it("keeps a pre-path occurrence when the only post-path profile token was consumed", () => {
     // --profile A sso add --type saml --domains --profile
     expect(
-      pflagProfileValue(
+      argvProfileValue(
         scan([], ["profile"], [["profile", ["a.yml"]]]),
         Option.some("a.yml"),
         "env.yml",
@@ -241,9 +231,9 @@ describe("pflagProfileValue", () => {
     ).toEqual(Option.some("a.yml"));
   });
 
-  it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
+  it("resolves pre-path repeats last-wins (the parser is first-wins)", () => {
     expect(
-      pflagProfileValue(
+      argvProfileValue(
         scan([], [], [["profile", ["a.yml", "b.yml"]]]),
         Option.some("a.yml"),
         undefined,
@@ -253,7 +243,7 @@ describe("pflagProfileValue", () => {
 
   it("post-path occurrences still win over pre-path ones (argv-order last-wins)", () => {
     expect(
-      pflagProfileValue(
+      argvProfileValue(
         scan([["profile", ["post.yml"]]], [], [["profile", ["pre.yml"]]]),
         Option.some("pre.yml"),
         undefined,
@@ -261,37 +251,37 @@ describe("pflagProfileValue", () => {
     ).toEqual(Option.some("post.yml"));
   });
 
-  it("resolves nothing when no flag, parsed value, or env var is present (Go falls to the file/default)", () => {
-    expect(pflagProfileValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
+  it("resolves nothing when no flag, parsed value, or env var is present (falls to the file/default)", () => {
+    expect(argvProfileValue(scan([]), Option.none(), undefined)).toEqual(Option.none());
   });
 
   it("prefers the scan's occurrence over the parsed flag and the env var", () => {
     // --profile --metadata-url …
     expect(
-      pflagProfileValue(scan([["profile", ["--metadata-url"]]]), Option.none(), "env.yml"),
+      argvProfileValue(scan([["profile", ["--metadata-url"]]]), Option.none(), "env.yml"),
     ).toEqual(Option.some("--metadata-url"));
   });
 
-  it("resolves repeats last-wins, matching pflag StringVar (the parser is first-wins)", () => {
+  it("resolves repeats last-wins (the parser is first-wins)", () => {
     expect(
-      pflagProfileValue(scan([["profile", ["a.yml", "b.yml"]]]), Option.some("a.yml"), undefined),
+      argvProfileValue(scan([["profile", ["a.yml", "b.yml"]]]), Option.some("a.yml"), undefined),
     ).toEqual(Option.some("b.yml"));
   });
 
-  it("keeps an explicit scanned `supabase` — pflag marks it changed, shadowing the env var", () => {
-    expect(pflagProfileValue(scan([["profile", ["supabase"]]]), Option.none(), "env.yml")).toEqual(
+  it("keeps an explicit scanned `supabase` — it counts as set, shadowing the env var", () => {
+    expect(argvProfileValue(scan([["profile", ["supabase"]]]), Option.none(), "env.yml")).toEqual(
       Option.some("supabase"),
     );
   });
 
-  it("keeps a changed-but-empty occurrence — Go fails LoadProfile on it, never falling to the env", () => {
-    expect(pflagProfileValue(scan([["profile", [""]]]), Option.none(), "env.yml")).toEqual(
+  it("keeps a changed-but-empty occurrence — profile loading fails on it, never falling to the env", () => {
+    expect(argvProfileValue(scan([["profile", [""]]]), Option.none(), "env.yml")).toEqual(
       Option.some(""),
     );
   });
 
   it("falls back to the parsed flag when the anchored scan saw no occurrence (pre-path --profile)", () => {
-    expect(pflagProfileValue(scan([]), Option.some("pre.yml"), "env.yml")).toEqual(
+    expect(argvProfileValue(scan([]), Option.some("pre.yml"), "env.yml")).toEqual(
       Option.some("pre.yml"),
     );
   });
@@ -299,23 +289,23 @@ describe("pflagProfileValue", () => {
   it("ignores the parsed flag when the --profile token was consumed by another flag, falling to the env var", () => {
     // --domains --profile alternate.yml
     expect(
-      pflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),
+      argvProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),
     ).toEqual(Option.some("env.yml"));
     expect(
-      pflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), undefined),
+      argvProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), undefined),
     ).toEqual(Option.none());
   });
 
   it("uses the env var when neither the scan nor the parser saw the flag", () => {
-    expect(pflagProfileValue(scan([]), Option.none(), "env.yml")).toEqual(Option.some("env.yml"));
+    expect(argvProfileValue(scan([]), Option.none(), "env.yml")).toEqual(Option.some("env.yml"));
   });
 
   it("treats an empty env var as unset", () => {
-    expect(pflagProfileValue(scan([]), Option.none(), "")).toEqual(Option.none());
+    expect(argvProfileValue(scan([]), Option.none(), "")).toEqual(Option.none());
   });
 });
 
-describe("resolvePflagProfile", () => {
+describe("resolveArgvProfile", () => {
   const withEnvProfile = <A, E, R>(value: string, effect: Effect.Effect<A, E, R>) => {
     const prev = process.env["SUPABASE_PROFILE"];
     process.env["SUPABASE_PROFILE"] = value;
@@ -343,7 +333,7 @@ describe("resolvePflagProfile", () => {
   it.effect(
     "re-loads the env profile when the layer's scan wrongly shadowed a consumed token",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
+      const dir = mkdtempSync(join(tmpdir(), "supabase-argv-flag-reconcile-"));
       const profilePath = join(dir, "env.yml");
       writeFileSync(
         profilePath,
@@ -357,7 +347,7 @@ describe("resolvePflagProfile", () => {
       return withEnvProfile(
         profilePath,
         Effect.gen(function* () {
-          const resolved = yield* resolvePflagProfile({
+          const resolved = yield* resolveArgvProfile({
             occurrences: new Map(),
             consumedFlagNames: new Set(["profile"]),
             prePathOccurrences: new Map(),
@@ -378,11 +368,11 @@ describe("resolvePflagProfile", () => {
   );
 
   it.effect("returns none when the scan and the layer agree on an explicit supabase", () => {
-    const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
+    const dir = mkdtempSync(join(tmpdir(), "supabase-argv-flag-reconcile-"));
     return withEnvProfile(
       "rogue-profile",
       Effect.gen(function* () {
-        const resolved = yield* resolvePflagProfile({
+        const resolved = yield* resolveArgvProfile({
           occurrences: new Map([["profile", ["supabase"]]]),
           consumedFlagNames: new Set<string>(),
           prePathOccurrences: new Map(),

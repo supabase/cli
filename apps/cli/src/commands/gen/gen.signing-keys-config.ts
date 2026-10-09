@@ -1,8 +1,8 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../command-internal/cli-config-load.ts";
 import { Config, Effect, FileSystem, Option, Path } from "effect";
-import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
-import { goJsonKindName } from "../../command-internal/go-json.ts";
+import { assertDecodableJwkAlgorithm } from "../../command-internal/local-jwt.ts";
+import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
 
 /**
@@ -36,26 +36,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Extends `goJsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
+/** Extends `jsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
 function jwkFieldKindName(value: unknown): string {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     return "object";
   }
-  return goJsonKindName(value);
+  return jsonKindName(value);
 }
 
-/** Reproduces `encoding/json`'s struct-field type-mismatch text: `"json: cannot unmarshal <kind> into Go struct field JWK.<field> of type <goType>"`. */
-function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
-  return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
+/** Builds the field type-mismatch text: `invalid JWK field <field>: expected <typeName>, got <kind>`. */
+function jwkStructFieldTypeMismatch(field: string, value: unknown, typeName: string): string {
+  return `invalid JWK field ${field}: expected ${typeName}, got ${jwkFieldKindName(value)}`;
 }
 
-/** `null` is treated as absent, not a type mismatch, matching `encoding/json`'s zero-value semantics for a null field. */
+/** `null` is treated as absent, not a type mismatch. */
 function isAbsentJwkField(value: unknown): boolean {
   return value === undefined || value === null;
 }
 
 /**
- * Looks up a JWK field case-insensitively, matching `encoding/json`'s struct-field matching.
+ * Looks up a JWK field case-insensitively.
  * When multiple case-variant keys are present, the last one in source order wins.
  */
 export function resolveJwkFieldValue(record: Record<string, unknown>, field: string): unknown {
@@ -83,7 +83,7 @@ export function readOptionalString(
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a string"));
   }
   return value;
 }
@@ -91,7 +91,7 @@ export function readOptionalString(
 /**
  * Reads the optional `key_ops` field, throwing {@link jwkStructFieldTypeMismatch} when present
  * but not an array or containing a non-string, non-null element. A `null` element decodes to
- * `""` (its zero value) instead, matching `encoding/json`'s slice-element decoding.
+ * `""` (its zero value) instead.
  */
 export function readOptionalStringArray(
   record: Record<string, unknown>,
@@ -102,14 +102,14 @@ export function readOptionalStringArray(
     return undefined;
   }
   if (!Array.isArray(value)) {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "[]string"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "an array of strings"));
   }
   return value.map((entry) => {
     if (entry === null) {
       return "";
     }
     if (typeof entry !== "string") {
-      throw new Error(jwkStructFieldTypeMismatch(field, entry, "string"));
+      throw new Error(jwkStructFieldTypeMismatch(field, entry, "a string"));
     }
     return entry;
   });
@@ -125,7 +125,7 @@ export function readOptionalBoolean(
     return undefined;
   }
   if (typeof value !== "boolean") {
-    throw new Error(jwkStructFieldTypeMismatch(field, value, "bool"));
+    throw new Error(jwkStructFieldTypeMismatch(field, value, "a boolean"));
   }
   return value;
 }
@@ -273,8 +273,7 @@ function findTopLevelObjectFieldOccurrences(
 
 /**
  * Rejects an earlier malformed duplicate JWK field even though `JSON.parse` keeps only
- * the last occurrence, matching `encoding/json`'s first-mismatch-wins duplicate-key
- * handling; `alg` also fails on an earlier disallowed value even if a later one is valid.
+ * the last occurrence (first mismatch wins); `alg` also fails on an earlier disallowed value even if a later one is valid.
  */
 export function assertNoMalformedDuplicateJwkField(objectText: string): void {
   const occurrences = findTopLevelObjectFieldOccurrences(objectText);
@@ -346,7 +345,6 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   });
   const loaded = yield* loadCliConfig(cwd, {
     cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
-    goViperCompat: true,
     // `cwd` is already resolved (`CommandSettings.workdir`); `search: false` avoids climbing
     // again, which would otherwise find an ancestor project's config when `--workdir` points
     // below another project's root. `tomlOnly: true` because there is no JSON config format.
@@ -416,7 +414,7 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     );
   }
   // A `null` array element normalizes to `{}` (every field absent) rather than being
-  // rejected here, matching `encoding/json`'s zero-value decoding of a `null` struct element.
+  // rejected here.
   // Downstream signing may still fail on an all-absent key; this step never rejects it.
   for (const item of decoded) {
     if (item !== null && !isRecord(item)) {

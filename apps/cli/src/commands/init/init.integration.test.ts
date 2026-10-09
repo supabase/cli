@@ -117,7 +117,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 }
 
 describe("init", () => {
-  it.live("creates config.toml natively without the Go proxy", () => {
+  it.live("creates config.toml natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -166,7 +166,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails with Go's exact error when config.toml already exists", () => {
+  it.live("fails with the exact error when config.toml already exists", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -291,7 +291,7 @@ describe("init", () => {
     withIntellijSettings: false,
   } as const;
 
-  it.live("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
+  it.live("init -i --yes writes VS Code settings instead of prompting", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -328,7 +328,7 @@ describe("init", () => {
     );
   });
 
-  it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
+  it.live("init -i --yes writes VS Code settings even when stdout is piped", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {

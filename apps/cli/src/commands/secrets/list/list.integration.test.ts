@@ -22,7 +22,7 @@ const SAMPLE_SECRETS: SecretsResponse = [
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: SecretsResponse;
   status?: number;
   network?: "fail";
@@ -45,7 +45,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -82,7 +82,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in secret names without escaping (Go parity)", () => {
+  it.live("renders literal `|` characters in secret names without escaping", () => {
     const { layer, out } = setup({
       response: [{ name: "with|pipe", value: "digest" }],
     });
@@ -117,8 +117,8 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON to stdout for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
+  it.live("emits byte-exact indented JSON to stdout for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
@@ -138,7 +138,7 @@ describe("secrets list integration", () => {
   });
 
   it.live("emits a YAML array to stdout for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ outputFlag: "yaml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("- name: BAR");
@@ -148,7 +148,7 @@ describe("secrets list integration", () => {
   });
 
   it.live("wraps the array as { secrets = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ outputFlag: "toml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[secrets]]");
@@ -158,7 +158,7 @@ describe("secrets list integration", () => {
   });
 
   it.live("fails with SecretsEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: SAMPLE_SECRETS });
+    const { layer } = setup({ outputFlag: "env", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -171,7 +171,7 @@ describe("secrets list integration", () => {
   });
 
   it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ outputFlag: "pretty", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("DIGEST");
@@ -181,7 +181,7 @@ describe("secrets list integration", () => {
   it.live("--output flag value wins over --output-format when both provided", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: SAMPLE_SECRETS,
     });
     return Effect.gen(function* () {

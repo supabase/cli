@@ -79,6 +79,6 @@ NDJSON `success` event with the same full payload as `--output-format json`.
 
 ## Notes
 
-- The `--output` flag has **no effect** on this command — Go-style `--output` values (`pretty|json|yaml|toml|env`) do not change text-mode rendering. Only the TS-extension `--output-format json|stream-json` produces a structured payload.
+- The `--output` flag has **no effect** on this command — `--output` values (`pretty|json|yaml|toml|env`) do not change text-mode rendering. Only the TS-extension `--output-format json|stream-json` produces a structured payload.
 - UUID validation runs **after** project-ref resolution but **before** the API call. Error messages: `invalid snippet ID: invalid UUID length: N` for malformed lengths, `invalid snippet ID: invalid UUID format` for length-36 inputs with wrong dash positions or hex chars.
 - The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path — including invalid-UUID early-exit — via the two `Effect.ensuring` blocks in the handler.

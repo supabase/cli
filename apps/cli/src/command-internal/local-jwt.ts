@@ -1,5 +1,5 @@
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
-import { encodeGoJsonCompact } from "./go-json.ts";
+import { encodeHtmlSafeJsonCompact } from "./html-safe-json.ts";
 
 export { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
 
@@ -33,7 +33,7 @@ export interface Jwk {
 
 /**
  * HS256 signer for the default local-dev `anon`/`service_role` keys. {@link
- * generateAsymmetricGoJwt} below covers the RS256/ES256 branch, taken when
+ * generateAsymmetricLocalJwt} below covers the RS256/ES256 branch, taken when
  * `auth.signing_keys_path` is configured.
  *
  * Does not reuse `@supabase/stack`'s `generateJwt`: that helper uses a different issuer, a
@@ -42,17 +42,17 @@ export interface Jwk {
  * "now".
  */
 
-const GO_JWT_ISSUER = "supabase-demo";
-const GO_JWT_FIXED_EXP = 1983812996;
+const LOCAL_JWT_ISSUER = "supabase-demo";
+const LOCAL_JWT_FIXED_EXP = 1983812996;
 
 function base64UrlEncode(input: string): string {
   return Buffer.from(input).toString("base64url");
 }
 
-export function generateGoJwt(secret: string, role: "anon" | "service_role"): string {
+export function generateLocalJwt(secret: string, role: "anon" | "service_role"): string {
   const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64UrlEncode(
-    JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: GO_JWT_FIXED_EXP }),
+    JSON.stringify({ iss: LOCAL_JWT_ISSUER, role, exp: LOCAL_JWT_FIXED_EXP }),
   );
   const data = `${header}.${payload}`;
   const signature = createHmac("sha256", secret).update(data).digest("base64url");
@@ -60,7 +60,7 @@ export function generateGoJwt(secret: string, role: "anon" | "service_role"): st
 }
 
 /** Asymmetric-JWT expiry: 10 years from now. */
-const GO_JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;
+const LOCAL_JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;
 
 function base64UrlToBigInt(value: string): bigint {
   const hex = Buffer.from(value, "base64url").toString("hex");
@@ -87,7 +87,7 @@ function modInverse(a: bigint, m: bigint): bigint {
 
 /**
  * Backfills the RSA CRT parameters (`dp`, `dq`, `qi`) when absent: Node's `createPrivateKey`
- * rejects an RSA JWK without them, unlike Go, which derives them lazily from `p`/`q`/`d` before
+ * rejects an RSA JWK without them, so they are derived from `p`/`q`/`d` before
  * signing. Returns the key unchanged if all three are already present, or if `d`/`p`/`q` are
  * missing (an invalid key either way).
  */
@@ -140,13 +140,11 @@ function assertSupportedKty(jwk: Jwk): void {
 }
 
 /**
- * Reproduces `encoding/base64`'s `CorruptInputError` message for each numeric field, since Go's
- * unpadded base64 decoder rejects input Node's own JWK importer would silently accept (e.g. a
- * `=`-padded coordinate) and sign a token Go could never have produced.
+ * Produces a `CorruptInputError` message for each numeric field, since unpadded base64 decoding
+ * rejects input Node's own JWK importer would silently accept (e.g. a `=`-padded coordinate).
  *
- * Checks fields in Go's exact order (EC: x, y, d; RSA: n, e, d, p, q) so the first invalid field
- * matches Go's first-failure-wins order. An absent field is skipped, matching Go's zero value
- * decoding to zero bytes.
+ * Checks fields in a fixed order (EC: x, y, d; RSA: n, e, d, p, q) so the first invalid field
+ * is reported. An absent field is skipped and decodes to zero bytes.
  */
 function assertDecodableJwkNumericFields(jwk: Jwk): void {
   const assertField = (label: string, value: string | undefined): void => {
@@ -196,8 +194,8 @@ function assertKeyMatchesAlgorithm(jwk: Jwk, algorithm: SupportedJwtAlgorithm): 
  *
  * `dsaEncoding: "ieee-p1363"` is required for ES256: Node's default ECDSA signature is
  * DER-encoded, not the raw (r‖s) format JWS requires. The header is serialized with
- * {@link encodeGoJsonCompact}, not `JSON.stringify`, since a `kid` containing `<`/`>`/`&` must
- * HTML-escape to sign the same bytes Go would.
+ * {@link encodeHtmlSafeJsonCompact}, not `JSON.stringify`, since a `kid` containing `<`/`>`/`&` must
+ * HTML-escape so the signed bytes are stable.
  */
 export function signJwtWithJwk(jwk: Jwk, payloadJson: string): string {
   try {
@@ -226,7 +224,7 @@ export function signJwtWithJwk(jwk: Jwk, payloadJson: string): string {
     jwk.kid !== undefined && jwk.kid.length > 0
       ? { alg: algorithm, kid: jwk.kid, typ: "JWT" }
       : { alg: algorithm, typ: "JWT" };
-  const headerEncoded = base64UrlEncode(encodeGoJsonCompact(header));
+  const headerEncoded = base64UrlEncode(encodeHtmlSafeJsonCompact(header));
   const payloadEncoded = base64UrlEncode(payloadJson);
   const data = `${headerEncoded}.${payloadEncoded}`;
 
@@ -248,9 +246,9 @@ export function signJwtWithJwk(jwk: Jwk, payloadJson: string): string {
 /**
  * The RS256/ES256 signing path, used when `auth.signing_keys_path` resolves to a non-empty JWK
  * array — the first key in the file signs both the anon and service_role tokens. Same claim
- * shape as {@link generateGoJwt} (`iss`/`role`/`exp`), except the expiry is 10 years from now.
+ * shape as {@link generateLocalJwt} (`iss`/`role`/`exp`), except the expiry is 10 years from now.
  */
-export function generateAsymmetricGoJwt(jwk: Jwk, role: "anon" | "service_role"): string {
-  const expiresAt = Math.floor(Date.now() / 1000) + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
-  return signJwtWithJwk(jwk, JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: expiresAt }));
+export function generateAsymmetricLocalJwt(jwk: Jwk, role: "anon" | "service_role"): string {
+  const expiresAt = Math.floor(Date.now() / 1000) + LOCAL_JWT_ASYMMETRIC_EXPIRY_SECONDS;
+  return signJwtWithJwk(jwk, JSON.stringify({ iss: LOCAL_JWT_ISSUER, role, exp: expiresAt }));
 }

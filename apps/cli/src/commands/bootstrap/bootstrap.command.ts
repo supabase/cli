@@ -26,7 +26,7 @@ export const bootstrapCommand = Command.make("bootstrap", config).pipe(
   Command.withDescription("Bootstrap a Supabase project from a starter template."),
   Command.withShortDescription("Bootstrap a Supabase project from a starter template"),
   Command.withHandler((flags) =>
-    // Go marks no bootstrap flag `markFlagTelemetrySafe`, so no `safeFlags`.
+    // No bootstrap flag is telemetry-safe, so no `safeFlags`.
     bootstrap(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(bootstrapRuntimeLayer.pipe(Layer.provideMerge(cliConfigProviderLayer))),

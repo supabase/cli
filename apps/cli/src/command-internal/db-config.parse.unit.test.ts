@@ -40,7 +40,7 @@ describe("parseConnectionString (URL form)", () => {
     });
   });
 
-  it("defaults the user to the OS account when userinfo is omitted (libpq/pgconn parity)", () => {
+  it("defaults the user to the OS account when userinfo is omitted (libpq parity)", () => {
     expect(parseConnectionString("postgresql://localhost/mydb")).toEqual({
       host: "localhost",
       port: 5432,
@@ -92,7 +92,7 @@ describe("parseConnectionString (URL form)", () => {
     }
   });
 
-  it("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () => {
+  it("honors libpq query params (host/dbname) over the structural URL", () => {
     expect(parseConnectionString("postgresql:///postgres?host=/var/run/postgresql")).toEqual({
       host: "/var/run/postgresql",
       port: 5432,
@@ -111,7 +111,7 @@ describe("parseConnectionString (URL form)", () => {
     });
   });
 
-  it("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () => {
+  it("strips the brackets from an IPv6 literal host", () => {
     expect(parseConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
       host: "::1",
       port: 5432,
@@ -135,7 +135,7 @@ describe("parseConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("options");
   });
 
-  it("collects non-structural query settings as runtimeParams (pgconn parity)", () => {
+  it("collects non-structural query settings as runtimeParams", () => {
     const parsed = parseConnectionString(
       "postgres://u:pw@h/db?search_path=tenant&statement_timeout=5000&sslmode=require&options=reference%3Dabc",
     );
@@ -149,13 +149,13 @@ describe("parseConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("runtimeParams");
   });
 
-  it("merges PGAPPNAME into runtimeParams as application_name (pgconn env merge)", () => {
+  it("merges PGAPPNAME into runtimeParams as application_name (env merge)", () => {
     const env = (name: string): string | undefined => (name === "PGAPPNAME" ? "myapp" : undefined);
     const parsed = parseConnectionString("postgres://u:pw@h/db", env);
     expect(parsed?.runtimeParams).toEqual({ application_name: "myapp" });
   });
 
-  it("lets a connection-string application_name override PGAPPNAME (pgconn precedence)", () => {
+  it("lets a connection-string application_name override PGAPPNAME (precedence)", () => {
     const env = (name: string): string | undefined =>
       name === "PGAPPNAME" ? "from-env" : undefined;
     const parsed = parseConnectionString("postgres://u:pw@h/db?application_name=from-url", env);
@@ -185,7 +185,7 @@ describe("parseConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("runtimeParams");
   });
 
-  it("resolves client certs from PGSSLCERT/PGSSLKEY env (pgconn precedence)", () => {
+  it("resolves client certs from PGSSLCERT/PGSSLKEY env (precedence)", () => {
     const env = (name: string): string | undefined =>
       name === "PGSSLCERT" ? "/e/c.crt" : name === "PGSSLKEY" ? "/e/c.key" : undefined;
     const parsed = parseConnectionString("postgres://u:pw@h/db", env);
@@ -193,7 +193,7 @@ describe("parseConnectionString (URL form)", () => {
     expect(parsed?.sslkey).toBe("/e/c.key");
   });
 
-  it("rejects a client cert with sslcert but no sslkey (pgconn both-or-neither)", () => {
+  it("rejects a client cert with sslcert but no sslkey (both or neither)", () => {
     expect(parseConnectionString("postgres://u:pw@h/db?sslcert=/c/client.crt")).toBeUndefined();
     expect(parseConnectionString("host=h user=u sslkey=/c/client.key")).toBeUndefined();
   });
@@ -206,7 +206,7 @@ describe("parseConnectionString (URL form)", () => {
     expect(parseConnectionString("postgres://user:p%zz@example.com/db")).toBeUndefined();
   });
 
-  it("rejects a non-numeric or empty ?port= query override (pgconn parsePort error)", () => {
+  it("rejects a non-numeric or empty ?port= query override (invalid port)", () => {
     expect(parseConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
     expect(parseConnectionString("postgresql://db.example.com/app?port=")).toBeUndefined();
   });
@@ -223,7 +223,7 @@ describe("parseConnectionString (URL form)", () => {
     }
   });
 
-  it("rejects an invalid sslmode value (pgconn 'sslmode is invalid')", () => {
+  it("rejects an invalid sslmode value ('sslmode is invalid')", () => {
     expect(parseConnectionString("postgres://h/db?sslmode=verifyfull")).toBeUndefined();
     expect(parseConnectionString("host=h sslmode=bogus")).toBeUndefined();
   });
@@ -237,7 +237,7 @@ describe("parseConnectionString (URL form)", () => {
     });
   });
 
-  it("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () => {
+  it("fills sslmode from PGSSLMODE when the URL omits it (env default)", () => {
     const prev = process.env["PGSSLMODE"];
     process.env["PGSSLMODE"] = "verify-full";
     try {
@@ -292,7 +292,7 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
     });
   });
 
-  it("prefers PGUSER over the OS account for the default user (pgconn env precedence)", () => {
+  it("prefers PGUSER over the OS account for the default user (env precedence)", () => {
     const prev = process.env["PGUSER"];
     process.env["PGUSER"] = "pg_role";
     try {
@@ -311,7 +311,7 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
     }
   });
 
-  it("fills omitted DSN fields from PG* env vars (pgconn env defaults)", () => {
+  it("fills omitted DSN fields from PG* env vars (env defaults)", () => {
     const prev = {
       PGHOST: process.env["PGHOST"],
       PGPORT: process.env["PGPORT"],
@@ -365,7 +365,7 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
   });
 });
 
-describe("empty-password precedence (pgconn parity)", () => {
+describe("empty-password precedence", () => {
   // Points PGPASSFILE at a temp file we control and sets PGPASSWORD, to prove which one wins.
   let tmp: string;
   let pgpassPath: string;
@@ -425,7 +425,7 @@ describe("empty-password precedence (pgconn parity)", () => {
   });
 });
 
-describe("multi-host failover (pgconn parity)", () => {
+describe("multi-host failover", () => {
   it("parses a comma-separated multi-host URL into primary + fallbacks", () => {
     expect(parseConnectionString("postgres://u:pw@h1:5432,h2:5433/db")).toEqual({
       host: "h1",
@@ -448,7 +448,7 @@ describe("multi-host failover (pgconn parity)", () => {
     });
   });
 
-  it("zips hosts to the (compacted) port list exactly as pgconn does", () => {
+  it("zips hosts to the (compacted) port list positionally", () => {
     // Empty ports are dropped before zipping, so a host that omits a port takes the next entry
     // in the compacted port list rather than inheriting the previous host's port; only a host
     // past the end reuses `ports[0]`. For `h1:5432,h2,h3:5544` the port list is `[5432, 5544]`:
@@ -477,7 +477,7 @@ describe("multi-host failover (pgconn parity)", () => {
     ).toMatchObject({ host: "h1", sslmode: "require", fallbacks: [{ host: "h2", port: 5433 }] });
   });
 
-  it("rejects a multi-host URL with a non-numeric port (pgconn parsePort error)", () => {
+  it("rejects a multi-host URL with a non-numeric port (invalid port)", () => {
     expect(parseConnectionString("postgres://u:pw@h1:5432,h2:bad/db")).toBeUndefined();
   });
 
@@ -494,7 +494,7 @@ describe("multi-host failover (pgconn parity)", () => {
   });
 });
 
-describe("passfile= DSN setting (pgconn parity)", () => {
+describe("passfile= DSN setting", () => {
   // Points PGPASSFILE at one file and `passfile=` at a different one, to prove the
   // connection-string setting wins.
   let tmp: string;
@@ -591,7 +591,7 @@ describe("injected env lookup (project dotenv parity)", () => {
   });
 });
 
-describe("pgservice resolution (pgconn parity)", () => {
+describe("pgservice resolution", () => {
   // A `service=`/`PGSERVICE` resolves against the service file and merges its settings between
   // env and the explicit connection-string fields. `dbname` is remapped to `database`. An
   // unresolvable service is a hard parse error.
@@ -669,7 +669,7 @@ describe("pgservice resolution (pgconn parity)", () => {
   });
 });
 
-describe("keyword/value DSN backslash handling (pgconn parity)", () => {
+describe("keyword/value DSN backslash handling", () => {
   it("preserves backslashes before ordinary chars (Windows cert paths)", () => {
     expect(
       parseConnectionString("host=h dbname=d user=u sslrootcert=C:\\certs\\root.pem")?.sslrootcert,
@@ -693,7 +693,7 @@ describe("keyword/value DSN backslash handling (pgconn parity)", () => {
     ).toBe("C:\\certs\\root.pem");
   });
 
-  it("rejects an unquoted value ending in a lone backslash (pgconn 'invalid backslash')", () => {
+  it("rejects an unquoted value ending in a lone backslash ('invalid backslash')", () => {
     expect(parseConnectionString("host=h user=u password=secret\\")).toBeUndefined();
     // A complete trailing `\\` escape pair is still accepted (→ single backslash).
     expect(parseConnectionString("host=h user=u dbname=d sslrootcert=C:\\\\")?.sslrootcert).toBe(
@@ -702,7 +702,7 @@ describe("keyword/value DSN backslash handling (pgconn parity)", () => {
   });
 });
 
-describe("connect_timeout (pgconn parity)", () => {
+describe("connect_timeout", () => {
   it("parses connect_timeout from a URL query into connectTimeoutSeconds", () => {
     expect(parseConnectionString("postgres://u:p@h/db?connect_timeout=15")).toMatchObject({
       connectTimeoutSeconds: 15,
@@ -723,7 +723,7 @@ describe("connect_timeout (pgconn parity)", () => {
     });
   });
 
-  it("omits connectTimeoutSeconds when unset or zero (driver applies Go's default)", () => {
+  it("omits connectTimeoutSeconds when unset or zero (driver applies its default)", () => {
     expect(parseConnectionString("postgres://u:p@h/db")).not.toHaveProperty(
       "connectTimeoutSeconds",
     );
@@ -738,7 +738,7 @@ describe("connect_timeout (pgconn parity)", () => {
   });
 });
 
-describe("empty URL query overrides (pgconn parity)", () => {
+describe("empty URL query overrides", () => {
   it("an empty ?dbname= overrides the path with an empty database", () => {
     expect(parseConnectionString("postgres://u:p@host/production?dbname=")).toMatchObject({
       database: "",
@@ -757,7 +757,7 @@ describe("empty URL query overrides (pgconn parity)", () => {
   });
 });
 
-describe("pgconn parse refinements", () => {
+describe("DSN parse refinements", () => {
   it("accepts a comma-separated ?port= list for a multi-host URL", () => {
     expect(parseConnectionString("postgres://h1,h2/db?port=5432,5433")).toMatchObject({
       host: "h1",
@@ -799,7 +799,7 @@ describe("pgconn parse refinements", () => {
   });
 });
 
-describe("database= alias and empty service values (pgconn parity)", () => {
+describe("database= alias and empty service values", () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -821,7 +821,7 @@ describe("database= alias and empty service values (pgconn parity)", () => {
     });
   });
 
-  it("uses last-wins for dbname/database aliases in a DSN (pgconn remaps at parse time)", () => {
+  it("uses last-wins for dbname/database aliases in a DSN (remapped at parse time)", () => {
     expect(parseConnectionString("host=h user=u dbname=template1 database=appdb")).toMatchObject({
       database: "appdb",
     });
@@ -862,7 +862,7 @@ describe("database= alias and empty service values (pgconn parity)", () => {
   });
 });
 
-describe("more pgconn parse refinements", () => {
+describe("more DSN parse refinements", () => {
   it("honors a present-but-empty ?host= as a literal empty host (overrides structural)", () => {
     expect(parseConnectionString("postgres://remote.example.com/postgres?host=")).toMatchObject({
       host: "",
@@ -879,7 +879,7 @@ describe("more pgconn parse refinements", () => {
     });
   });
 
-  it("does not dial hostaddr as the host (pgconn ignores hostaddr)", () => {
+  it("does not dial hostaddr as the host (hostaddr is ignored)", () => {
     const env = (name: string): string | undefined => (name === "PGHOST" ? "envhost" : undefined);
     const parsed = parseConnectionString("hostaddr=10.0.0.5 user=u", env);
     expect(parsed?.host).toBe("envhost");

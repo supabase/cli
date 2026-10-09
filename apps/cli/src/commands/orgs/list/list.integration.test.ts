@@ -30,7 +30,7 @@ const tempRoot = useTempWorkdir("supabase-orgs-list-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: Organizations;
   readonly status?: number;
   readonly network?: "fail";
@@ -47,7 +47,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -90,7 +90,7 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal | characters in organization names (Go parity)", () => {
+  it.live("renders literal | characters in organization names", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG_PIPE] });
     return Effect.gen(function* () {
       yield* orgsList({});
@@ -116,8 +116,8 @@ describe("orgs list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_ORG] });
+  it.live("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
@@ -127,7 +127,7 @@ describe("orgs list integration", () => {
   });
 
   it.live("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_ORG] });
+    const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("name: Test Org");
@@ -135,17 +135,17 @@ describe("orgs list integration", () => {
   });
 
   it.live("wraps result as { organizations = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_ORG] });
+    const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("[[organizations]]");
-      // PascalCase field names with BurntSushi's 2-space indent.
+      // PascalCase field names with a 2-space indent.
       expect(out.stdoutText).toContain('  Name = "Test Org"');
     }).pipe(Effect.provide(layer));
   });
 
   it.live("fails with OrgsEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: [SAMPLE_ORG] });
+    const { layer } = setup({ outputFlag: "env", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -158,7 +158,7 @@ describe("orgs list integration", () => {
   });
 
   it.live("treats --output pretty as identical to text mode (table render)", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_ORG] });
+    const { layer, out } = setup({ outputFlag: "pretty", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
       yield* orgsList({});
       expect(out.stdoutText).toContain("NAME");
@@ -169,7 +169,7 @@ describe("orgs list integration", () => {
   it.live("--output flag wins over --output-format", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       response: [SAMPLE_ORG],
     });
     return Effect.gen(function* () {

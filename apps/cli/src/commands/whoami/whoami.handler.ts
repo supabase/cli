@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
-import { unsupportedOutputFlagMessage } from "../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import {
   AUTHENTICATION_FAILED_STATUS_MESSAGE,
   mapHttpError,
@@ -47,12 +47,12 @@ const emitMachineProfile = Effect.fnUntraced(function* (profile: Profile) {
 
 export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new WhoamiOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("whoami"),
       });

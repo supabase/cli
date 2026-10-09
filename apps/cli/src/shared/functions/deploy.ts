@@ -30,14 +30,14 @@ import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts"
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { bold } from "../../command-internal/colors.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
@@ -68,7 +68,7 @@ import {
   toDockerPath,
   toSlash,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
@@ -103,11 +103,10 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
   /**
-   * `undefined` for library callers; the CLI injects
-   * `functionsGoConfigCompat` so this file never imports the command tree
-   * directly — see {@link FunctionsGoConfigCompat}.
+   * The CLI injects `functionsLocalConfigLoader` so this file never imports the
+   * command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
@@ -300,7 +299,7 @@ function isDenoConfigFile(path: Path.Path, pathname: string) {
 
 /**
  * Presence-based `Option.some(value)` when `--<flagName>` was passed
- * explicitly after `commandPath`, matching cobra's `Changed()`;
+ * explicitly after `commandPath`;
  * `Option.none()` otherwise. Used only by `deployFunctions`'s
  * `--no-verify-jwt` override below — kept private per this file's own
  * "used by one command only -> keep it in the command's own directory" rule.
@@ -318,8 +317,7 @@ function explicitBooleanFlag(
  * Must stay in sync with `CLI_WORKDIR_LABEL`
  * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported so `shared/` does not depend on the
- * command tree (this file has no Go equivalent for the other two
- * labels either). Read back by `cleanupStartSecrets` so a later
+ * command tree. Read back by `cleanupStartSecrets` so a later
  * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
  */
@@ -1581,8 +1579,8 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
     .makeTempDirectory({ directory: outputRoot, prefix: outputPrefix })
     .pipe(Effect.mapError(unknownHostError(path.join(outputRoot, outputPrefix))));
   try {
-    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
-    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    // Windows ignores the 0777 mode on mkdir; calling chmod separately
+    // would add an NTFS WRITE_ATTRIBUTES requirement.
     if (shouldChmodBundleOutputDirectory(process.platform)) {
       yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(hostError(outputDir)));
     }
@@ -2476,10 +2474,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
   if (changedModes.length > 1) {
     return yield* new ConflictingFunctionDeployFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage(
-        FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP,
-        changedModes,
-      ),
+      message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP, changedModes),
     });
   }
 
@@ -2505,7 +2500,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
 
   if (flags.functionNames.length > 0) {
@@ -2534,7 +2529,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
     // past `dependencies.projectRoot` for either load, so they can never resolve two
     // different projects.
-    search: dependencies.goConfigCompat === undefined,
+    search: false,
   });
   const configDeclaredFunctions = deployConfig?.functions ?? {};
   const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
@@ -2600,14 +2595,13 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
         // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
         // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
-        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
-        // callers.
+        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only.
         const networkMode = resolveDockerNetworkMode({
           explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride:
-            context.projectEnvValues === undefined
-              ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
+          envOverride: supabaseEnvStringWithProjectFallback(
+            "SUPABASE_NETWORK_ID",
+            context.projectEnvValues,
+          ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

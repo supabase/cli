@@ -500,7 +500,7 @@ describe("db dump integration", () => {
   });
 
   it.live(
-    "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
+    "allows --use-copy with an explicit --data-only=false (the required check is presence)",
     () => {
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
@@ -575,7 +575,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
+  it.live("rejects --linked=false --local as a target conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -588,7 +588,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --data-only=false --role-only as a conflict (Go flag.Changed)", () => {
+  it.live("rejects --data-only=false --role-only as a conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -601,7 +601,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
+  it.live("treats --local=false as an explicit local target", () => {
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -635,7 +635,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
+  it.live("treats an explicit --file '' as stdout on --dry-run", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -645,7 +645,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
+  it.live("validates the merged config before the --dry-run print", () => {
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -847,7 +847,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
+  it.live("caches the linked project even when connection resolution fails", () => {
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward. So an
     // IPv6/pooler/login-role failure during resolution still refreshes the

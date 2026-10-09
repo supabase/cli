@@ -11,7 +11,7 @@ import {
 import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -462,7 +462,7 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      const serviceRoleJwt = generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role");
+      const serviceRoleJwt = generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role");
       expect(requests[0]?.headers["apikey"]).toBe(serviceRoleJwt);
       expect(requests[0]?.headers["authorization"]).toBe(`Bearer ${serviceRoleJwt}`);
     });
@@ -493,7 +493,7 @@ describe("stack backend", () => {
         expect(url).not.toContain("legacy.invalid");
         expect(url.startsWith("http://127.0.0.1:59999")).toBe(true);
         expect(requests[0]?.headers["apikey"]).toBe(
-          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+          generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
         );
       });
     },
@@ -593,7 +593,7 @@ describe("stack backend", () => {
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(requests).toHaveLength(1);
         expect(requests[0]?.headers["apikey"]).toBe(
-          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+          generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
         );
       });
     },

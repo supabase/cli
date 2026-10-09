@@ -7,7 +7,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { goQuote } from "../../../command-internal/go-quote.ts";
+import { quoteBytes } from "../../../command-internal/byte-quote.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -41,8 +41,8 @@ function readHexRange(s: Uint8Array, start: number, end: number): string | undef
 
 /**
  * Case-insensitive match against "urn:uuid:" over raw bytes. ASCII-only
- * folding is exact here: no non-ASCII rune case-folds to any rune of
- * "urn:uuid:", and multibyte runes can never byte-match an ASCII target.
+ * folding is exact here: no non-ASCII character case-folds to any character of
+ * "urn:uuid:", and multibyte characters can never byte-match an ASCII target.
  */
 function isUrnUuidPrefix(bytes: Uint8Array): boolean {
   const expected = "urn:uuid:";
@@ -72,7 +72,7 @@ export function parseSnippetUuid(
     // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     case 45: {
       if (!isUrnUuidPrefix(s)) {
-        return { error: `invalid urn prefix: ${goQuote(s.subarray(0, 9))}` };
+        return { error: `invalid urn prefix: ${quoteBytes(s.subarray(0, 9))}` };
       }
       s = s.subarray(9);
       break;

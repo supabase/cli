@@ -1,7 +1,7 @@
 import { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson, encodeToml, encodeYaml } from "./output.encoders.ts";
 
 // Shaped like the backups response because the `nullForEmptyArrays` byte-parity assertions were
 // extracted from that port; see the `{ items, name }` fixtures below for plain-object coverage.
@@ -23,9 +23,9 @@ const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   },
 };
 
-describe("encodeGoJson", () => {
-  it("emits Go's alphabetical struct-field order and trailing newline for a populated response", () => {
-    const out = encodeGoJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
+describe("encodeSortedJson", () => {
+  it("emits alphabetical struct-field order and trailing newline for a populated response", () => {
+    const out = encodeSortedJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
     expect(out).toBe(
       `{
   "backups": [
@@ -49,7 +49,7 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    const out = encodeGoJson(
+    const out = encodeSortedJson(
       {
         region: "ap-southeast-1",
         walg_enabled: false,
@@ -72,7 +72,7 @@ describe("encodeGoJson", () => {
   });
 
   it("leaves arrays intact when nullForEmptyArrays is not provided", () => {
-    const out = encodeGoJson({ items: [], name: "x" });
+    const out = encodeSortedJson({ items: [], name: "x" });
     expect(out).toBe(
       `{
   "items": [],
@@ -83,7 +83,7 @@ describe("encodeGoJson", () => {
   });
 
   it("does not substitute null for non-empty arrays even when listed in nullForEmptyArrays", () => {
-    const out = encodeGoJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
+    const out = encodeSortedJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
     expect(out).toBe(
       `{
   "items": [
@@ -96,8 +96,8 @@ describe("encodeGoJson", () => {
     );
   });
 
-  it("keeps Go's true lexicographic order for numeric-looking keys (CLI-1961 Codex review finding)", () => {
-    const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
+  it("keeps true lexicographic order for numeric-looking keys", () => {
+    const out = encodeSortedJson({ 10: "a", 2: "b", role: "anon" });
     expect(out).toBe(
       `{
   "10": "a",
@@ -108,10 +108,10 @@ describe("encodeGoJson", () => {
     );
   });
 
-  it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
+  it("sorts keys by byte/code-point order, not JS's UTF-16 code-unit order", () => {
     const highBmp = String.fromCodePoint(0xe000);
     const astral = String.fromCodePoint(0x10000);
-    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    const out = encodeSortedJson({ [astral]: 2, [highBmp]: 1 });
     expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
   });
 });
@@ -145,21 +145,21 @@ describe("encodeEnv", () => {
     expect(lines).toContain('PITR_ENABLED="true"');
   });
 
-  it("emits integer-parseable values unquoted (matches godotenv strconv.Atoi branch)", () => {
+  it("emits integer-parseable values unquoted", () => {
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain("PHYSICAL_BACKUP_DATA_EARLIEST_PHYSICAL_BACKUP_DATE_UNIX=1700000000");
     expect(lines).toContain("PHYSICAL_BACKUP_DATA_LATEST_PHYSICAL_BACKUP_DATE_UNIX=1700001000");
   });
 
-  it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
+  it("collapses arrays to a single empty leaf", () => {
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('BACKUPS=""');
     expect(lines.some((line) => line.startsWith("BACKUPS_0_"))).toBe(false);
   });
 
-  it("matches Go's full env output for the sample backup response", () => {
+  it("emits the full env output for the sample backup response", () => {
     expect(encodeEnv(SAMPLE_RESPONSE)).toBe(
       [
         'BACKUPS=""',
@@ -177,7 +177,7 @@ describe("encodeEnv", () => {
     expect(out).toBe('MESSAGE="with \\"quotes\\" and \\\\backslash"');
   });
 
-  it("escapes embedded newlines, carriage returns, and tabs (Go %q parity)", () => {
+  it("escapes embedded newlines, carriage returns, and tabs", () => {
     const out = encodeEnv({ description: "line one\nline two\rwith\ttab" });
     expect(out).toBe('DESCRIPTION="line one\\nline two\\rwith\\ttab"');
   });
@@ -187,11 +187,11 @@ describe("encodeEnv", () => {
     expect(out.split("\n")).toEqual(["A=2", "M=3", "Z=1"]);
   });
 
-  it("omits empty nested maps entirely (Go viper parity)", () => {
+  it("omits empty nested maps entirely", () => {
     expect(encodeEnv({ physical_backup_data: {} })).toBe("");
   });
 
-  it("matches Go for the PITR-only response shape with empty physical_backup_data", () => {
+  it("handles the PITR-only response shape with empty physical_backup_data", () => {
     expect(
       encodeEnv({
         region: "ap-southeast-1",

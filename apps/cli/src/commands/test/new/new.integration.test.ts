@@ -84,7 +84,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("pins the created test file to Go's exact 0644 mode under a permissive umask", () => {
+  it.live("pins the created test file to the exact 0644 mode under a permissive umask", () => {
     const { layer, workdir } = setup();
     return Effect.acquireUseRelease(
       Effect.sync(() => process.umask(0)),

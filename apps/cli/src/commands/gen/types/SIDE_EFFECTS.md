@@ -45,8 +45,7 @@ No files are written.
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
-project-ref paths — a sanctioned intentional divergence, see Notes
-(CLI-1988) — the project endpoint is probed first: a `404` means the ref is a
+project-ref paths (see Notes, CLI-1988), the project endpoint is probed first: a `404` means the ref is a
 preview branch (any 404 body), so the branch endpoint supplies the branch database
 host/port and credentials for the direct connection. Otherwise the database
 connection is resolved for the ref and the login-role endpoint supplies temporary
@@ -97,7 +96,7 @@ way `--db-url` does.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — types printed to stdout                                                                                                                                                                     |
 | `1`  | no target specified (must use one flag) (`GenTypesFlagUsageError`)                                                                                                                                    |
-| `1`  | mutually exclusive flags combined (all four Go flag groups) (`GenTypesFlagUsageError`)                                                                                                                |
+| `1`  | mutually exclusive flags combined (all four flag groups) (`GenTypesFlagUsageError`)                                                                                                                   |
 | `1`  | `--postgrest-v9-compat` used without `--db-url` (`GenTypesFlagUsageError`)                                                                                                                            |
 | `1`  | a positional language other than `typescript` passed without `--lang` (`GenTypesFlagUsageError`)                                                                                                      |
 | `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                                                                                                                              |
@@ -150,15 +149,12 @@ Not applicable.
     other host — including a loopback target where the DSN sets neither — uses the
     connection resolver's default, which is plaintext for a local target.
   - `--local` uses no TLS.
-- **Sanctioned intentional divergence (CLI-1988 parity ruling):**
+- **Project-ref language support:**
   `--lang` accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref paths
   (`--linked`, `--project-id`, and the implicit linked fallback) use the Management API
   for TypeScript, and connect directly to the project database (temporary
-  login-role credentials, preview-branch fallback) for the other languages. The old Go
-  CLI instead hard-errored with `Unable to generate <lang> types for selected project.
-Try using --db-url flag instead.` and never generated types locally for a project ref.
-  This permissiveness is deliberate — it resolves the user-filed CLI-1623 complaint — and
-  was blessed in the CLI-1988 ruling; do not revert it to a hard error. The mutex groups
+  login-role credentials, preview-branch fallback) for the other languages. Do not revert this to a hard error
+  (CLI-1623, CLI-1988). The mutex groups
   only block `--swift-access-control` / `--query-timeout` when `--linked`/`--project-id`
   is passed _explicitly_ on the command line — that combination still always generates
   with defaults (`internal` access control, one-to-one detection on, 15s timeout). On the
@@ -172,7 +168,7 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   over any of these three flags.
 - **Output compatibility with the previous pg-meta-based generator.** Measured against
   pg-meta's reference generators on the same schema:
-  - Go and Swift output are byte-identical.
+  - Go and Swift output is byte-identical to the reference generators.
   - TypeScript: a `NOT NULL` jsonb column now generates `NonNullable<Json>` instead of
     `Json` — the old type wrongly admitted `null` on a column the schema declares
     non-nullable.

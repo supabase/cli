@@ -20,7 +20,7 @@ import { DbConfigLoadError } from "../db-config.errors.ts";
 import { InvalidServiceVersionTagError } from "../service-version-overrides.ts";
 import { localDbContainerId } from "../docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../supabase-env.ts";
 import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
 import {
   resolveAuthExternalUrl,
@@ -136,7 +136,7 @@ export const buildLocalDbContainerInputs = (
     // See {@link resolveDockerNetworkMode} for the full flag/env/fallback precedence.
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
       projectId,
     });
     // Only needed on Linux; Docker Desktop already resolves `host.docker.internal` elsewhere.

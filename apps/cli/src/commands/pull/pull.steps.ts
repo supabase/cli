@@ -3,7 +3,7 @@ import { Effect, Option, Path, Stdio } from "effect";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { aqua, bold, yellow } from "../../command-internal/colors.ts";
-import { functionsGoConfigCompat } from "../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../command-internal/functions-local-config.ts";
 import {
   downloadFunctions,
   type DownloadFunctionsResult,
@@ -144,7 +144,7 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       api,
       projectRoot: cliSettings.workdir,
       rawArgs,
-      goConfigCompat: functionsGoConfigCompat,
+      localConfigLoader: functionsLocalConfigLoader,
       edgeRuntimeVersion,
       styleEmphasis: (text) => bold(text),
       styleAqua: (text) => aqua(text),

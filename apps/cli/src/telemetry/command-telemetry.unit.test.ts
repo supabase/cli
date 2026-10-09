@@ -34,7 +34,7 @@ import { stackBackendLayer } from "../command-internal/stack-backend.ts";
 import {
   QUERY_OUTPUT_FORMATS,
   InvalidOutputFormatError,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { mockTelemetryStateTracked } from "../../tests/helpers/command-mocks.ts";
 import {
   mockContextualAnalytics,
@@ -191,7 +191,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("reports legacy Go machine output formats emitted through the text layer", () => {
+  it.live("reports machine output formats emitted through the text layer", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -573,7 +573,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("passes Flag.choice values through verbatim (Go parity: isEnumFlag)", () => {
+  it.live("passes Flag.choice values through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {
       lang: Flag.choice("lang", ["typescript", "go", "python"] as const),
@@ -635,34 +635,31 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  it.live(
-    "resolves a Flag.choice's shorthand alias to its canonical name (Go parity: pflag.Visit)",
-    () => {
-      const analytics = mockContextualAnalytics();
-      const config = {
-        type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
-      };
+  it.live("resolves a Flag.choice's shorthand alias to its canonical name", () => {
+    const analytics = mockContextualAnalytics();
+    const config = {
+      type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+    };
 
-      return Effect.void.pipe(
-        withCommandTelemetry({
-          flags: { type: "saml" },
-          config,
-          aliases: { t: "type" },
+    return Effect.void.pipe(
+      withCommandTelemetry({
+        flags: { type: "saml" },
+        config,
+        aliases: { t: "type" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
+      Effect.provide(commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ type: "saml" });
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
-        Effect.provide(commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer))),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ type: "saml" });
-          }),
-        ),
-      );
-    },
-  );
+      ),
+    );
+  });
 
   it.live("passes an Optional-wrapped Flag.choice value through verbatim", () => {
     const analytics = mockContextualAnalytics();
@@ -1064,7 +1061,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("sorts flag names alphabetically to match Go", () => {
+  it.live("sorts flag names alphabetically", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1396,7 +1393,7 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live(
-    "still redacts a changed global string flag like --workdir (Go never marks it telemetry-safe)",
+    "still redacts a changed global string flag like --workdir (it is never marked telemetry-safe)",
     () => {
       const analytics = mockContextualAnalytics();
 
@@ -1424,66 +1421,56 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  it.live(
-    "passes a changed global choice flag like --dns-resolver through verbatim (Go parity: isEnumFlag, CLI-1904)",
-    () => {
-      const analytics = mockContextualAnalytics();
+  it.live("passes a changed global choice flag like --dns-resolver through verbatim", () => {
+    const analytics = mockContextualAnalytics();
 
-      return Effect.void.pipe(
-        withCommandTelemetry({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
-          }),
-        ),
-        Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-        ),
-        Effect.provide(Layer.succeed(DnsResolverFlag, "https" as const)),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ "dns-resolver": "https" });
-          }),
-        ),
-      );
-    },
-  );
+    return Effect.void.pipe(
+      withCommandTelemetry({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(Layer.succeed(DnsResolverFlag, "https" as const)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ "dns-resolver": "https" });
+        }),
+      ),
+    );
+  });
 
-  it.live(
-    "passes a changed global choice flag like --agent through verbatim (Go parity: isEnumFlag, CLI-1904)",
-    () => {
-      const analytics = mockContextualAnalytics();
+  it.live("passes a changed global choice flag like --agent through verbatim", () => {
+    const analytics = mockContextualAnalytics();
 
-      return Effect.void.pipe(
-        withCommandTelemetry({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--agent", "yes"]),
-          }),
-        ),
-        Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-        ),
-        Effect.provide(Layer.succeed(AgentFlag, "yes" as const)),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ agent: "yes" });
-          }),
-        ),
-      );
-    },
-  );
+    return Effect.void.pipe(
+      withCommandTelemetry({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["backups", "list", "--agent", "yes"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(Layer.succeed(AgentFlag, "yes" as const)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ agent: "yes" });
+        }),
+      ),
+    );
+  });
 
   it.live(
-    "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output, Go parity)",
+    "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output)",
     () => {
       // `db diff` declares its own local `output: Flag.string("output")` (a file path) rather
       // than a `Flag.choice`. Simulated here: `output` is in the handler's own `flags` record

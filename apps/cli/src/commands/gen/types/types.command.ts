@@ -7,7 +7,7 @@ import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import {
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+} from "../../../shared/cli/flag-groups.ts";
 import { genTypes } from "./types.handler.ts";
 import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";
@@ -42,7 +42,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
+  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints the deprecation line.
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withHidden,

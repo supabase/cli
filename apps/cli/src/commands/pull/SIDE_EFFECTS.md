@@ -159,7 +159,7 @@ functions) — `pull` does not read or override any of these itself, it only sup
 | `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                  |
 | `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                      |
 
-**Deliberate divergence from standalone `db pull`:** when the db step finds the remote already in
+**Difference from standalone `db pull`:** when the db step finds the remote already in
 sync with local migrations (`DbPullInSyncError`), `pull` reports it as `status: "unchanged"`
 — a finding, not a failure — rather than the non-zero exit standalone `db pull` gives that same
 condition. Every other step's failure still counts as a `pull` failure.
@@ -260,7 +260,7 @@ above.
 
 ### `-o`/`--output` (machine formats)
 
-Not supported. `pull` is a net-new TS command with no Go parity contract (CLI-2156). Any
+Not supported. `pull` does not accept `-o`/`--output` (CLI-2156). Any
 `-o`/`--output` value — every machine-format value AND `pretty` — is rejected outright before any
 config load, target resolution, or network call:
 

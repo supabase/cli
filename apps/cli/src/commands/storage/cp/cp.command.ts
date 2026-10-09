@@ -41,8 +41,8 @@ const config = {
     // `withMetavar` keeps the `--jobs, -j integer` help token.
     Flag.withMetavar("integer"),
     Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
-    // `--jobs` is a pflag-style uint: a non-uint token must fail at parse time, before the
-    // experimental gate, the handler, or any telemetry, with pflag's exact message and original
+    // `--jobs` is a uint: a non-uint token must fail at parse time, before the
+    // experimental gate, the handler, or any telemetry, with the exact message and original
     // spelling preserved. `Flag.integer` loses that fidelity (`-0` normalizes to negative zero,
     // which a `value < 0` check would wrongly accept), so this parses the raw token with
     // `parseUintBase0` instead; it must sit before `Flag.optional`, which passes `InvalidValue`

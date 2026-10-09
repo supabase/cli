@@ -8,14 +8,14 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   explicitBooleanLongFlag,
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
-} from "../cli/cobra-flag-groups.ts";
+} from "../cli/flag-groups.ts";
 import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   buildFunctionsDockerRunArgs,
   edgeRuntimeCacheVolume,
@@ -28,7 +28,7 @@ import {
   resolveFunctionsDockerImage,
   runChildProcess,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
@@ -98,10 +98,10 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
+   * The CLI injects this so this file never imports the command tree directly —
+   * see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   /**
    * Fallback edge-runtime image tag used when the project config doesn't
    * pin `edge_runtime.deno_version` to `1`. Mirrors `deploy.ts`'s own
@@ -199,10 +199,7 @@ function validateDownloadFlags(
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
-            changed,
-          ),
+          message: mutuallyExclusiveFlagsMessage(FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }
@@ -535,7 +532,7 @@ function decodeMultipartForm(
           try: () => parseDownloadMetadata(rawMetadata),
           catch: (cause) =>
             new InvalidFunctionDownloadResponseError({
-              message: `failed to unmarshal metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
+              message: `failed to parse metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });
       }
@@ -873,7 +870,7 @@ const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntime
   const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
+    localConfigLoader: dependencies.localConfigLoader,
   });
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,
@@ -895,7 +892,7 @@ interface EdgeRuntimeImage {
   readonly denoVersion: number | undefined;
   /** Not yet registry-mapped/pull-resolved — see {@link resolveFunctionsDockerImage}. */
   readonly rawImage: string;
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  readonly projectEnvValues: Readonly<Record<string, string>>;
 }
 
 /**
@@ -978,14 +975,10 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   // `--network-id` is a persistent root flag, not registered on `functions
   // download` itself. `lastExplicitLongFlagValue` preserves the "explicitly
   // cleared" vs "never touched" distinction `resolveDockerNetworkMode` needs
-  // — see that function's own doc comment. `SUPABASE_NETWORK_ID` is CLI-only,
-  // like `projectEnvValues` (`undefined` for library callers).
+  // — see that function's own doc comment.
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-    envOverride:
-      projectEnvValues === undefined
-        ? undefined
-        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+    envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 

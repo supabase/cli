@@ -274,7 +274,7 @@ describe("db test (alias) integration", () => {
   });
 
   it.live(
-    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing (Go's stdout-safety)",
+    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing",
     () => {
       const { layer, out, processControl } = setup({ format: "json", exitCode: 1 });
       return Effect.gen(function* () {

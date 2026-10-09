@@ -75,7 +75,7 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -502,7 +502,7 @@ const RESET_STACK_CREDENTIALS: StackCredentials = {
   publishableKey: "publishable-key",
   secretKey: "secret-key",
   anonKey: "anon-key",
-  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  serviceRoleKey: generateLocalJwt(RESET_JWT, "service_role"),
   jwks: '{"keys":[]}',
   gotrueJwtKeys: "[]",
   remoteJwks: "[]",
@@ -1363,7 +1363,7 @@ describe("db reset", () => {
         expect(
           requests.some(
             (request) =>
-              request.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              request.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1469,7 +1469,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
       });
@@ -1567,7 +1567,7 @@ describe("db reset", () => {
           );
           expect(
             client.requests.some(
-              (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+              (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
             ),
           ).toBe(true);
         });
@@ -1593,7 +1593,7 @@ describe("db reset", () => {
         );
         expect(
           client.requests.some(
-            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
@@ -2079,32 +2079,29 @@ describe("db reset", () => {
       },
     );
 
-    it.live(
-      "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
-      () => {
-        // Built as a migration file and run through a batch executor, so a failure gets the same
-        // rich context (`At statement: <index>` + statement text) a real migration failure would.
-        const { layer } = setup(tmp.current, {
-          toml: PG14_TOML,
-          args: ["db", "reset", "--local"],
-          isLocal: true,
-          failStatement: {
-            sql: "CREATE DATABASE postgres WITH OWNER postgres",
-            message: "permission denied to create database",
-          },
-        });
-        return Effect.gen(function* () {
-          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const causeText = Cause.pretty(exit.cause);
-            expect(causeText).toContain("permission denied to create database");
-            expect(causeText).toContain("At statement: 1");
-            expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
-          }
-        });
-      },
-    );
+    it.live("attaches the batch error context to a failed DROP/CREATE DATABASE statement", () => {
+      // Built as a migration file and run through a batch executor, so a failure gets the same
+      // rich context (`At statement: <index>` + statement text) a real migration failure would.
+      const { layer } = setup(tmp.current, {
+        toml: PG14_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        failStatement: {
+          sql: "CREATE DATABASE postgres WITH OWNER postgres",
+          message: "permission denied to create database",
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("permission denied to create database");
+          expect(causeText).toContain("At statement: 1");
+          expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+        }
+      });
+    });
 
     it.live("swallows a disconnect-clients failure when the code is invalid_catalog_name", () => {
       const { layer, conn } = setup(tmp.current, {
@@ -2423,7 +2420,7 @@ describe("db reset", () => {
       });
     });
 
-    it.live("loads a Go-style env() boolean in config for a remote reset", () => {
+    it.live("loads an env() boolean in config for a remote reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
@@ -2846,7 +2843,7 @@ describe("db reset", () => {
     );
 
     it.live(
-      "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
+      "silently applies nothing when schema_paths is unset on an experimental remote reset",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[experimental.pgdelta]\nenabled = false\n',
@@ -2961,7 +2958,7 @@ describe("db reset", () => {
     });
 
     it.live(
-      "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
+      "attaches the schema-file suggestion when a schema file fails to apply on an experimental remote reset",
       () => {
         const { layer } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
@@ -3138,7 +3135,7 @@ describe("db reset", () => {
       },
     );
 
-    it.live("attaches the Go seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
+    it.live("attaches the seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* dbReset({
@@ -3321,7 +3318,7 @@ describe("db reset", () => {
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).toContain("invalid argument");
-          expect(causeText).toContain("strconv.ParseUint");
+          expect(causeText).toContain("expected an unsigned integer");
         }
       });
     });

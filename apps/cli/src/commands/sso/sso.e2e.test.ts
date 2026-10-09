@@ -48,7 +48,7 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "show with invalid UUID exits 1 with Go-format message",
+    "show with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -64,7 +64,7 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "remove with invalid UUID exits 1 with Go-format message",
+    "remove with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -80,7 +80,7 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "update with invalid UUID exits 1 with Go-format message",
+    "update with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -100,7 +100,7 @@ describe("supabase sso", () => {
   // `Flag.choice` validation runs during parsing, before that point, so an
   // invalid `--type` value still shows a usage block.
   it.live(
-    "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
+    "add without --type: stdout stays clean, stderr is a single line (no usage block)",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

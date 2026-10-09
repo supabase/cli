@@ -90,7 +90,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // accepts it, so reject it explicitly rather than silently resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
       return yield* new DbResetLastFlagError({
-        message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
+        message: `invalid argument "${flags.last.value}" for "--last" flag: expected an unsigned integer`,
       });
     }
     // Mutually-exclusive version/last group.

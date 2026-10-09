@@ -1203,7 +1203,7 @@ describe("pins", () => {
           const environment = yield* Environment.confine(fs, path, `${root}/home`);
           const pidPath = path.join(root, "descendant.pid");
           const readyPath = path.join(root, "ready");
-          const goPath = path.join(root, "go");
+          const releasePath = path.join(root, "go");
           const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
           // The descendant ignores SIGTERM and records its own pid, then the leader signals
           // readiness and waits for the test's own release file before exiting: only the
@@ -1310,7 +1310,7 @@ describe("pins", () => {
 
           expect(yield* isPinBusy).toBe(true);
 
-          yield* fs.writeFileString(goPath, "");
+          yield* fs.writeFileString(releasePath, "");
 
           // Polls the lock's own availability, not a fixed delay, bounded by a guard timeout.
           yield* pollUntil(isPinBusy, (busy) => !busy, "10 seconds");

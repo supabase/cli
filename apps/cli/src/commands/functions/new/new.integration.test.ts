@@ -232,7 +232,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
-  it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
+  it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings", () => {
     // Scans one piped line per question, so "n\ny\n" answers VS Code=no,
     // IntelliJ=yes.
     const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });

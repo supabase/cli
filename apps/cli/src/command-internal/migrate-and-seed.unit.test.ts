@@ -426,38 +426,35 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
     },
   );
 
-  it.effect(
-    "attaches the failing schema file as Go's CmdSuggestion (See schema file: <fp>)",
-    () => {
-      const workdir = makeWorkdir();
-      const schemaPath = "supabase/schemas/broken.sql";
-      writeFile(workdir, schemaPath, "totally not valid sql;");
-      const { session } = failingExecSession();
-      const out = mockOutput();
-      return run(
-        workdir,
-        "",
-        {
-          ...baseConfig,
-          experimental: true,
-          schemaPaths: [schemaPath],
-        },
-        session,
-        out,
-      ).pipe(
-        Effect.flip,
-        Effect.tap((error) =>
-          Effect.sync(() => {
-            expect(error).toBeInstanceOf(MigrationApplyError);
-            const suggestion = (error as MigrationApplyError).suggestion;
-            expect(suggestion).toBeDefined();
-            expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("attaches the failing schema file as a suggestion (See schema file: <fp>)", () => {
+    const workdir = makeWorkdir();
+    const schemaPath = "supabase/schemas/broken.sql";
+    writeFile(workdir, schemaPath, "totally not valid sql;");
+    const { session } = failingExecSession();
+    const out = mockOutput();
+    return run(
+      workdir,
+      "",
+      {
+        ...baseConfig,
+        experimental: true,
+        schemaPaths: [schemaPath],
+      },
+      session,
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(MigrationApplyError);
+          const suggestion = (error as MigrationApplyError).suggestion;
+          expect(suggestion).toBeDefined();
+          expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("migrateAndSeed local pg_net remediation", () => {

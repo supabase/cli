@@ -41,7 +41,7 @@ import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { genSigningKeyCommand } from "./signing-key.command.ts";
 import { genSigningKey } from "./signing-key.handler.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-signing-key-int-");
 

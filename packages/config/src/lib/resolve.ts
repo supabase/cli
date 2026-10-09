@@ -30,9 +30,9 @@ export function toPathSegments(path: string): ReadonlyArray<string> {
 function interpolateLeafValue(
   value: string,
   env: Readonly<Record<string, string>>,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ): string {
-  const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
+  const match = (cliCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   const envName = match?.[1];
 
   if (envName === undefined) {
@@ -45,8 +45,8 @@ function interpolateLeafValue(
   // `./env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
   // `edge_runtime.secrets.FOO = "env(EMPTY)"`) resolves to `""` here, gets
   // redacted by `redactValue` as a real value instead of skipped as an
-  // unresolved literal, and `secrets set` uploads a blank secret Go would
-  // never send.
+  // unresolved literal, and `secrets set` uploads a blank secret that
+  // is never meant to be sent.
   if (resolved === undefined || resolved === "") {
     return value;
   }
@@ -57,45 +57,45 @@ function interpolateLeafValue(
 function interpolateValue(
   value: unknown,
   env: Readonly<Record<string, string>>,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => interpolateValue(item, env, goViperCompat));
+    return value.map((item) => interpolateValue(item, env, cliCompat));
   }
 
   if (typeof value === "object" && value !== null) {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      result[key] = interpolateValue(child, env, goViperCompat);
+      result[key] = interpolateValue(child, env, cliCompat);
     }
 
     return result;
   }
 
   if (typeof value === "string") {
-    return interpolateLeafValue(value, env, goViperCompat);
+    return interpolateLeafValue(value, env, cliCompat);
   }
 
   return value;
 }
 
-function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat: boolean): unknown {
+function redactValue(value: unknown, path: ReadonlyArray<string>, cliCompat: boolean): unknown {
   if (Array.isArray(value)) {
-    return value.map((item, index) => redactValue(item, [...path, String(index)], goViperCompat));
+    return value.map((item, index) => redactValue(item, [...path, String(index)], cliCompat));
   }
 
   if (typeof value === "object" && value !== null) {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      result[key] = redactValue(child, [...path, key], goViperCompat);
+      result[key] = redactValue(child, [...path, key], cliCompat);
     }
 
     return result;
   }
 
-  if (typeof value === "string" && isSecretPath(path) && !isEnvReference(value, goViperCompat)) {
+  if (typeof value === "string" && isSecretPath(path) && !isEnvReference(value, cliCompat)) {
     return Redacted.make(value, { label: path.join(".") });
   }
 
@@ -111,21 +111,21 @@ export function resolveCliConfigValueAtPath<T>(
   value: T,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   path: ReadonlyArray<string>,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ): ResolvedCliConfigValue<T>;
 export function resolveCliConfigValueAtPath(
   value: unknown,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   path: ReadonlyArray<string>,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ): unknown {
-  const interpolated = interpolateValue(value, cliProjectEnv.values, goViperCompat);
-  return redactValue(interpolated, path, goViperCompat);
+  const interpolated = interpolateValue(value, cliProjectEnv.values, cliCompat);
+  return redactValue(interpolated, path, cliCompat);
 }
 
 /**
  * Plain synchronous counterpart to the Effect-typed `resolveCliConfigValue` in `../project.ts`;
- * has no options parameter, since this package's only resolver knob (`goViperCompat`) is
+ * has no options parameter, since this package's only resolver knob (`cliCompat`) is
  * internal-only.
  */
 export function resolveCliConfigValue<T>(

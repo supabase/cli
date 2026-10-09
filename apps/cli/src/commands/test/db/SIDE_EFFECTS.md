@@ -64,7 +64,7 @@ Managed stack `--local` prove runs the catalog `pg_prove` tool through the ownin
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | all pgTAP tests pass                                                                                                                                            |
 | `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a managed stack or native external client |
-| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here                                                              |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`                                                                                 |
 | `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                                                                           |
 | `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors                                                            |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                        |
@@ -104,10 +104,9 @@ command (exit 1).
 
 ## Notes
 
-- Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
+- Hidden command.
 - Stack `test db` runs catalog `pg_prove` through the owning stack runtime with runtime credentials for native and container runtimes. External targets use the catalog Postgres client. Compose stays on `supabase/pg_prove:3.36`. There is no PATH fallback or host major-version check.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
-  shared verbatim by `db test` via `testDbConfig`) overrides ONLY the
+- **`--project-ref`** (shared by `db test` via `testDbConfig`) overrides ONLY the
   linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >
   `.temp/project-ref`). It never implies `--linked`: passing it with a
   resolved `--local`/`--db-url` target is a hard error rather than a silently
@@ -118,18 +117,17 @@ command (exit 1).
   connections honor the URL's `sslmode` —
   `disable` → plaintext, `verify-ca` / `verify-full` → TLS **with** certificate
   verification, and everything else (`prefer` / `require` / unset) → TLS **without**
-  verification (mirroring pgx's default for `prefer`/`require`, non-TLS fallbacks stripped).
+  verification (non-TLS fallbacks stripped).
 - `--db-url` accepts both the WHATWG `postgres(ql)://…` URL form and the libpq
-  keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), matching
-  pgconn's parsing. The `sslmode` and libpq `options` (Supavisor
+  keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), following libpq parsing. The `sslmode` and libpq `options` (Supavisor
   `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or
   percent escape surfaces as a redacted `failed to parse connection string` error, never
   an unhandled defect.
 - Multi-host failover connection strings (`postgres://h1:5432,h2:5433/db`,
-  `host=h1,h2 port=5432,5433`) are supported on both forms, matching pgconn's
+  `host=h1,h2 port=5432,5433`) are supported on both forms, following libpq's
   connection-string handling: the primary host is dialed first, then each fallback in order,
   reusing the first port when a host omits one.
-- Password precedence matches pgconn/libpq semantics: a password supplied by
+- Password precedence matches libpq semantics: a password supplied by
   the connection string — **even an explicit empty one** (`user:@host`, `?password=`,
   `password=`) — overrides `PGPASSWORD`; an empty resolved value then falls through to
   `.pgpass`. A connection string with no password key at all uses `PGPASSWORD` then
@@ -139,16 +137,15 @@ command (exit 1).
   before dialing. TLS verification still targets the original hostname (via
   `ssl.servername`). The native resolver is used for local connections and when the
   flag is `native` (the default).
-- Postgres access uses `@effect/sql-pg`. The old Go CLI detected "pgTAP already
-  installed" via a `pgx` `OnNotice` (code 42710 `duplicate_object`) callback,
-  which `@effect/sql-pg` does not expose; the port instead checks `pg_extension`
-  by extension name (any schema) before enabling — same observable drop-skip
-  behavior, including when the user pre-installed pgTAP in a non-`extensions`
+- Postgres access uses `@effect/sql-pg`, which does not expose server notices (such as
+  code 42710 `duplicate_object`), so "pgTAP already installed" is detected by checking
+  `pg_extension` by extension name (any schema) before enabling — including when the user pre-installed pgTAP in a non-`extensions`
   schema such as `public`.
 - The linked connection pooler URL is read from `supabase/.temp/pooler-url` (written by
   `supabase link`) rather than from config.toml — the `[db.pooler]` config.toml field
   is intentionally ignored. The pooler's `?options=reference=<ref>` startup param is
   carried through to the connection for the legacy pooler-URL format.
-- Compose pg_prove image is fixed at `supabase/pg_prove:3.36`; the old Go CLI's `[images] pgprove`
-  config override is not modeled by the TS config schema (documented divergence).
-- The old Go CLI's hidden `--network-id` override is not declared on the TS command (documented divergence).
+- Compose pg_prove image is fixed at `supabase/pg_prove:3.36`; there is no `[images] pgprove`
+  config override in the TS config schema.
+- There is no command-local `--network-id` flag; the global `--network-id` flag selects the
+  tool container's network.

@@ -1,16 +1,16 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "../../../shared/cli/flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
   ProjectRefResolver,
@@ -128,7 +128,7 @@ const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
   "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
 
 /**
- * Every value-taking flag `gen types` parses, telling `pflagArgvScan` which bare tokens
+ * Every value-taking flag `gen types` parses, telling `scanArgvFlags` which bare tokens
  * consume the next argv token as their value. Boolean flags (`--local`, `--linked`,
  * `--postgrest-v9-compat`) are excluded since they never consume a following token.
  */
@@ -235,10 +235,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const generator = yield* GenTypesGenerator;
   const backend = yield* currentStackBackend;
 
-  // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
+  // "Set" means the flag appeared in argv at all (set at all), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
   // `-s --linked` consumes `--linked` as `-s`'s value, not as its own boolean flag.
-  const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
+  const scan = scanArgvFlags(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
   const occurrences = scan.occurrences;
 
   // Parsed before the telemetry context is installed, so an invalid `--query-timeout` wins
@@ -256,7 +256,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const loadConfig = (projectRef?: string) =>
     loadCliConfig(cliSettings.workdir, {
       ...(projectRef === undefined ? {} : { projectRef }),
-      goViperCompat: true,
       search: shouldSearchAncestors(cliSettings),
     }).pipe(
       // `cause.path` names the actual failed file; `loadCliConfig` probes `config.json`
@@ -595,7 +594,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
       if (set.length > 1) {
         return yield* new GenTypesFlagUsageError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }

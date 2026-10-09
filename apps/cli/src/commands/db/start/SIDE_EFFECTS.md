@@ -1,8 +1,6 @@
 # `supabase db start`
 
-Fully native. CLI-1954 removed the last Go delegation — the hidden `db __db-bootstrap
---mode start` case no longer exists; CLI-1955 removed the REST of that hidden command too
-— see `db reset --local`'s own `SIDE_EFFECTS.md`. This is `db start`,
+Fully native — see `db reset --local`'s own `SIDE_EFFECTS.md`. This is `db start`,
 **not** the top-level `supabase start`: no status table, no `cli_stack_started` event, no
 `Finished` line, no `--exclude`, no `--ignore-health-check`.
 
@@ -31,8 +29,8 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `command-internal/db-bootstrap/start-database.ts`).
 5. Resolve the Postgres image (version-pin-aware) and create + start the container.
    `--from-backup` set: a THIRD entrypoint variant (`buildPostgresStartContainerSpec`'s
-   `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a ported
-   `migrate.sh` (`templates/db-restore.sh.ts`, transcribed from Go's `templates/restore.sh`)
+   `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a
+   `migrate.sh` (`templates/db-restore.sh.ts`)
    that restores roles then schema from the bind-mounted backup file, and
    `cron.launch_active_jobs = off` appended to `postgresql.conf` — applies regardless of
    `db.major_version`. The backup file itself is bind-mounted `:ro` at `/etc/backup.sql`
@@ -97,7 +95,7 @@ volume was confirmed fresh this run).
 ## Subprocesses
 
 Every step below shells out to `docker` (falling back to `podman`), matching every other
-native container command in this codebase — never `supabase-go` — except the
+native container command in this codebase, except the
 already-running probe, which prefers a direct Engine-API request (see "API Routes") and
 only spawns on fallback.
 

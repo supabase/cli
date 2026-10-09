@@ -1,6 +1,6 @@
 /**
  * Content-type sniffer for the `seed buckets` upload path: Storage's `Content-Type` metadata is
- * byte-driven, not extension-driven, matching Go's `net/http.DetectContentType` byte-for-byte so
+ * byte-driven, not extension-driven, so
  * stored metadata stays reproducible. Signature order matters: first match wins.
  */
 

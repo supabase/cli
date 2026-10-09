@@ -3,9 +3,8 @@
 Deprecated wrapper around native `db pull`. Commits remote schema changes as
 `<timestamp>_remote_commit.sql` using the in-process pg-delta (or migra) engine.
 `--experimental` / `SUPABASE_EXPERIMENTAL` take the same in-process declarative
-export as `db pull --experimental` (Go's `pull.Run` honored that gate for
-commit too). Does not print `Finished supabase db pull.` Every invocation
-prints cobra's `Command "commit" is deprecated, use "db pull" instead.` to
+export as `db pull --experimental` (the same gate applies to commit). Does not print `Finished supabase db pull.` Every invocation
+prints `Command "commit" is deprecated, use "db pull" instead.` to
 stderr.
 
 See [`db/pull/SIDE_EFFECTS.md`](../../pull/SIDE_EFFECTS.md) for the shared
@@ -15,9 +14,9 @@ from `db pull`:
 - Migration stem is always `remote_commit` (not `remote_schema` or a `--name`).
 - No `--declarative` / `--use-pg-delta` / `--diff-engine` / `--local` / `--project-ref`.
 - `--linked` defaults to false in the TS flag parser; omitting it still targets
-  the linked project (same as Go's `--linked` default true). Passing `--linked`
+  the linked project. Passing `--linked`
   is explicit.
-- No Go proxy, no edge-runtime pg-delta, no `pgdelta-version` / `PGDELTA_NPM_REGISTRY`.
+- No edge-runtime pg-delta, no `pgdelta-version` / `PGDELTA_NPM_REGISTRY`.
 
 ## Files Read
 
@@ -55,7 +54,7 @@ declarative export.
 
 ### `--output-format text`
 
-Prints the cobra deprecation line, then `Schema written to <path>` (or the
+Prints the deprecation line, then `Schema written to <path>` (or the
 declarative export lines) to stderr on success. No stdout confirmation and no
 `Finished supabase db pull.` PostRun line.
 

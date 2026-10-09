@@ -96,7 +96,7 @@ No custom storage telemetry events.
 - Default path is `ss:///` (all buckets root) → remotePath `/`; recursive file paths
   then carry a leading slash, while an empty bucket is reported bare as `<bucket>/`.
 - `--recursive`/`-r` walks the tree (BFS).
-- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+- **`--project-ref`** overrides ONLY the linked-ref
   resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.

@@ -232,7 +232,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a version outside Go's int range before any DB mutation", () => {
+  it.live("rejects a version outside the int range before any DB mutation", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -327,20 +327,17 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
   });
 
-  it.live(
-    "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
-    () => {
-      // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
-      const { layer, execs, queries } = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-        yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
-        yield* migrationRepair(input({ versions: [], status: "applied" }));
-        expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
-        expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("auto-confirms repair-all via SUPABASE_YES in the project .env", () => {
+    // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
+    const { layer, execs, queries } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
+      yield* migrationRepair(input({ versions: [], status: "applied" }));
+      expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
@@ -372,7 +369,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints multiple repaired versions using Go's %v slice format", () => {
+  it.live("prints multiple repaired versions using the `[a b]` slice format", () => {
     // The established format is space-separated and bracketed, with no commas; a
     // `.join(", ")` cleanup would silently change established output.
     const { layer, out } = setup(tmp.current);

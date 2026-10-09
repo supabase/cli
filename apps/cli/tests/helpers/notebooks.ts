@@ -249,8 +249,8 @@ export interface NotebooksSetupOptions {
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly routes?: NotebooksHttpRoutes;
-  /** The Go `-o`/`--output` flag, which every command family here honours. */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  /** The `-o`/`--output` flag, which every command family here honours. */
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
 }
@@ -289,7 +289,7 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       commandRuntimeLayer(["notebooks", command]).pipe(Layer.provide(BunServices.layer)),
       Layer.succeed(
         OutputFlag,
-        options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
+        options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       BunServices.layer,
       Stdio.layerTest({ args: Effect.succeed(options.args ?? ["notebooks", command]) }),

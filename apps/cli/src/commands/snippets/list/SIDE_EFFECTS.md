@@ -51,9 +51,9 @@
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Literal `|` characters in `name`, `visibility`, or `owner.username` are passed through verbatim in the final ASCII bytes (escaped internally during markdown rendering, then decoded back).
+styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Literal `|` characters in `name`, `visibility`, or `owner.username` are passed through verbatim in the final ASCII bytes (escaped internally during markdown rendering, then decoded back).
 
-API-supplied strings are not stripped of ANSI / terminal control sequences before rendering (inherited from the old Go CLI's glamour pass-through).
+API-supplied strings are not stripped of ANSI / terminal control sequences before rendering.
 
 ```
   ID           | NAME         | VISIBILITY | OWNER    | CREATED AT (UTC)    | UPDATED AT (UTC)

@@ -9,7 +9,7 @@
 
 interface State {
   /** Returns the next state, or `null` to emit a token (statement boundary). */
-  next(rune: string, data: string): State | null;
+  next(char: string, data: string): State | null;
 }
 
 const BEGIN_ATOMIC = "ATOMIC";
@@ -17,17 +17,17 @@ const END_ATOMIC = "END";
 
 // PostgreSQL's scan.l treats every code point at or above 0x80 as an identifier/dollar-tag
 // character (`ident_cont`/`dolq_cont`), whatever its Unicode category.
-const isIdentifierRune = (rune: string): boolean => {
-  const codePoint = rune.codePointAt(0);
-  return codePoint !== undefined && (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(rune));
+const isIdentifierChar = (char: string): boolean => {
+  const codePoint = char.codePointAt(0);
+  return codePoint !== undefined && (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(char));
 };
 
 // A code point spans at most two UTF-16 units, so the last one before `offset` lies within
 // the preceding two.
-const hasIdentifierRuneBefore = (data: string, offset: number): boolean => {
+const hasIdentifierCharBefore = (data: string, offset: number): boolean => {
   if (offset <= 0) return false;
-  const rune = Array.from(data.slice(Math.max(0, offset - 2), offset)).at(-1);
-  return rune !== undefined && isIdentifierRune(rune);
+  const char = Array.from(data.slice(Math.max(0, offset - 2), offset)).at(-1);
+  return char !== undefined && isIdentifierChar(char);
 };
 
 const asciiUpper = (text: string): string => text.replace(/[a-z]/g, (c) => c.toUpperCase());
@@ -35,13 +35,13 @@ const asciiUpper = (text: string): string => text.replace(/[a-z]/g, (c) => c.toU
 function endsWithKeyword(data: string, keyword: string): boolean {
   const offset = data.length - keyword.length;
   if (offset < 0 || asciiUpper(data.slice(offset)) !== keyword) return false;
-  return !hasIdentifierRuneBefore(data, offset);
+  return !hasIdentifierCharBefore(data, offset);
 }
 
-const isSqlWhitespace = (rune: string): boolean => " \t\n\r\f\v".includes(rune);
+const isSqlWhitespace = (char: string): boolean => " \t\n\r\f\v".includes(char);
 
 // scan.l `newline`: a `--` comment ends at either.
-const isNewline = (rune: string): boolean => rune === "\n" || rune === "\r";
+const isNewline = (char: string): boolean => char === "\n" || char === "\r";
 
 function isBeginAtomic(data: string): boolean {
   if (!endsWithKeyword(data, BEGIN_ATOMIC)) return false;
@@ -78,22 +78,22 @@ function isCommentsAndWhitespace(text: string): boolean {
 }
 
 class ReadyState implements State {
-  next(rune: string, data: string): State | null {
-    switch (rune) {
+  next(char: string, data: string): State | null {
+    switch (char) {
       case "$": {
-        // A `$` after an identifier rune continues the identifier (`pending$$foo$`), not a
+        // A `$` after an identifier char continues the identifier (`pending$$foo$`), not a
         // dollar quote. A digit counts too (`1$$`), unlike PostgreSQL; valid SQL never has that.
-        const offset = data.length - rune.length;
-        if (hasIdentifierRuneBefore(data, offset)) return this;
+        const offset = data.length - char.length;
+        if (hasIdentifierCharBefore(data, offset)) return this;
         return new TagState(offset);
       }
       case "'":
         // `E'…'` is an escape string constant only when the `E` starts a token (scan.l
         // `xestart`); in `type'…'` it ends an identifier. A digit or `$` before the `E`
         // counts as one too, unlike PostgreSQL; valid SQL never has that.
-        return new QuoteState(rune, endsWithKeyword(data.slice(0, -1), "E"));
+        return new QuoteState(char, endsWithKeyword(data.slice(0, -1), "E"));
       case '"':
-        return new QuoteState(rune, false);
+        return new QuoteState(char, false);
       case "-":
         return new CommentState();
       case "/":
@@ -115,27 +115,27 @@ class ReadyState implements State {
 }
 
 class CommentState implements State {
-  next(rune: string, data: string): State | null {
-    if (rune === "-") return new LineCommentState();
-    return new ReadyState().next(rune, data);
+  next(char: string, data: string): State | null {
+    if (char === "-") return new LineCommentState();
+    return new ReadyState().next(char, data);
   }
 }
 
 class LineCommentState implements State {
-  next(rune: string): State {
-    return isNewline(rune) ? new ReadyState() : this;
+  next(char: string): State {
+    return isNewline(char) ? new ReadyState() : this;
   }
 }
 
 class BlockState implements State {
   private depth = 0;
-  next(rune: string, data: string): State | null {
+  next(char: string, data: string): State | null {
     const window = data.slice(-2);
     if (window === "/*") {
       this.depth += 1;
       return this;
     }
-    if (this.depth === 0) return new ReadyState().next(rune, data);
+    if (this.depth === 0) return new ReadyState().next(char, data);
     if (window === "*/") {
       this.depth -= 1;
       if (this.depth === 0) return new ReadyState();
@@ -151,26 +151,26 @@ class QuoteState implements State {
     private readonly delimiter: string,
     private readonly backslashEscapes: boolean,
   ) {}
-  next(rune: string, data: string): State | null {
+  next(char: string, data: string): State | null {
     if (this.escape) {
       // Preserve a doubled quote ('' or "").
-      if (rune === this.delimiter) {
+      if (char === this.delimiter) {
         this.escape = false;
         return this;
       }
-      if (this.backslashEscapes) return new QuoteContinueState().next(rune, data);
-      return new ReadyState().next(rune, data);
+      if (this.backslashEscapes) return new QuoteContinueState().next(char, data);
+      return new ReadyState().next(char, data);
     }
     if (this.backslash) {
-      // Preserve the rune after a backslash (\' or \\).
+      // Preserve the char after a backslash (\' or \\).
       this.backslash = false;
       return this;
     }
-    if (this.backslashEscapes && rune === "\\") {
+    if (this.backslashEscapes && char === "\\") {
       this.backslash = true;
       return this;
     }
-    if (rune === this.delimiter) this.escape = true;
+    if (char === this.delimiter) this.escape = true;
     return this;
   }
 }
@@ -180,32 +180,32 @@ class QuoteState implements State {
 class QuoteContinueState implements State {
   private newline = false;
   private dashes = 0;
-  next(rune: string, data: string): State | null {
+  next(char: string, data: string): State | null {
     if (this.dashes === 2) {
-      if (isNewline(rune)) {
+      if (isNewline(char)) {
         this.dashes = 0;
         this.newline = true;
       }
       return this;
     }
-    if (rune === "-") {
+    if (char === "-") {
       this.dashes += 1;
       return this;
     }
     if (this.dashes === 0) {
-      if (isSqlWhitespace(rune)) {
-        this.newline ||= isNewline(rune);
+      if (isSqlWhitespace(char)) {
+        this.newline ||= isNewline(char);
         return this;
       }
-      if (this.newline && rune === "'") return new QuoteState(rune, true);
+      if (this.newline && char === "'") return new QuoteState(char, true);
     }
-    return new ReadyState().next(rune, data);
+    return new ReadyState().next(char, data);
   }
 }
 
 class DollarState implements State {
   constructor(private readonly delimiter: string) {}
-  next(_rune: string, data: string): State | null {
+  next(_char: string, data: string): State | null {
     if (data.slice(-this.delimiter.length) === this.delimiter) return new ReadyState();
     return this;
   }
@@ -213,10 +213,10 @@ class DollarState implements State {
 
 class TagState implements State {
   constructor(private readonly offset: number) {}
-  next(rune: string, data: string): State | null {
-    if (rune === "$") return new DollarState(data.slice(this.offset));
-    if (isIdentifierRune(rune)) return this;
-    return new ReadyState().next(rune, data);
+  next(char: string, data: string): State | null {
+    if (char === "$") return new DollarState(data.slice(this.offset));
+    if (isIdentifierChar(char)) return this;
+    return new ReadyState().next(char, data);
   }
 }
 
@@ -228,15 +228,15 @@ class EscapeState implements State {
 
 class ParenState implements State {
   constructor(private prev: State) {}
-  next(rune: string, data: string): State | null {
-    const curr = this.prev.next(rune, data);
+  next(char: string, data: string): State | null {
+    const curr = this.prev.next(char, data);
     if (curr === null) {
       this.prev = new ReadyState();
       return this;
     }
     this.prev = curr;
     if (!(this.prev instanceof ReadyState)) return this;
-    return rune === ")" ? new ReadyState() : this;
+    return char === ")" ? new ReadyState() : this;
   }
 }
 
@@ -250,12 +250,12 @@ class AtomicState implements State {
   ) {
     this.statementStart = start;
   }
-  next(rune: string, data: string): State | null {
+  next(char: string, data: string): State | null {
     const pendingEnd = this.pendingEnd;
     this.pendingEnd = false;
-    if (pendingEnd && !isIdentifierRune(rune)) return new ReadyState().next(rune, data);
+    if (pendingEnd && !isIdentifierChar(char)) return new ReadyState().next(char, data);
     // An `END` inside a nested quote/comment doesn't count.
-    const curr = this.prev.next(rune, data);
+    const curr = this.prev.next(char, data);
     if (curr === null) {
       this.prev = new ReadyState();
       this.statementStart = data.length;
@@ -294,14 +294,14 @@ function splitRaw(sql: string): RawToken[] {
   let state: State = new ReadyState();
   const tokens: RawToken[] = [];
   // Slice each token from `sql` instead of growing it with `+=`: states read the token's tail every
-  // rune, which would rebuild the whole string each time and go quadratic on large tokens. `data`
+  // char, which would rebuild the whole string each time and go quadratic on large tokens. `data`
   // starts at the token, so offsets held by states are token-relative.
   let start = 0;
   let end = 0;
-  for (const rune of sql) {
-    end += rune.length;
+  for (const char of sql) {
+    end += char.length;
     const data = sql.slice(start, end);
-    const next = state.next(rune, data);
+    const next = state.next(char, data);
     if (next === null) {
       tokens.push({ text: data, terminated: true });
       start = end;

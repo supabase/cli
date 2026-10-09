@@ -80,7 +80,7 @@ const tempRoot = useTempWorkdir("supabase-branches-update-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly patchStatus?: number;
 }
 
@@ -110,7 +110,7 @@ function setup(opts: SetupOpts = {}) {
     api,
     cliSettings,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics };
 }

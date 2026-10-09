@@ -164,7 +164,7 @@ describe("compute new", () => {
   it.live.each([
     { label: "not interactive", setup: { interactive: false } },
     // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
-    { label: "-o json", setup: { goOutput: "json" as const } },
+    { label: "-o json", setup: { outputFlag: "json" as const } },
     // `printf 'orders\n' | supabase compute new`: stdout is still a
     // terminal, so `output.interactive` on its own would have fed the pipe
     // straight into the name prompt instead of taking this documented path.
@@ -691,7 +691,7 @@ describe("compute new", () => {
   it.live("keeps stdout parseable under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(flags({ runtime: Option.some("node") }));
@@ -721,7 +721,7 @@ describe("compute new", () => {
   it.live("reports the chosen exposure and count under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(
@@ -1080,7 +1080,7 @@ describe("compute new", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         // Answers are available, so a prompt would succeed and corrupt stdout
         // rather than fail the test some other way.
         promptSelectResponses: ["node", "4gb"],
