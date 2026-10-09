@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
 import { mockCommandSettings, withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";

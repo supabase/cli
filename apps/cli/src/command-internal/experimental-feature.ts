@@ -80,7 +80,7 @@ export const experimentalFeatureEnv = (
   Effect.gen(function* () {
     const envName = `SUPABASE_EXPERIMENTAL_${feature.toUpperCase()}`;
     const provider = yield* ConfigProvider.ConfigProvider;
-    const override = yield* Config.option(Config.string(envName))
+    const override = yield* Config.option(Config.String(envName))
       .parse(provider)
       .pipe(Effect.orElseSucceed(() => Option.none<string>()));
     return { [envName]: Option.getOrUndefined(override) };

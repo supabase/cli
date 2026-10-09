@@ -342,8 +342,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       runtimeInfo.platform === "win32" &&
       tty.stdoutIsPipe &&
       Option.isNone(resolvedFile) &&
-      Option.getOrElse(yield* Config.option(Config.string("MSYSTEM")), () => "") === "" &&
-      Option.getOrUndefined(yield* Config.option(Config.string("TERM_PROGRAM"))) !== "mintty";
+      Option.getOrElse(yield* Config.option(Config.String("MSYSTEM")), () => "") === "" &&
+      Option.getOrUndefined(yield* Config.option(Config.String("TERM_PROGRAM"))) !== "mintty";
     let sawNonAscii = false;
 
     // Open (create + truncate) the output file up front so an unwritable

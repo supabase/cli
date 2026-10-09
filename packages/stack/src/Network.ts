@@ -23,6 +23,8 @@ export interface NetworkEndpoint {
    * claiming the shared port itself. Installed when the shared listener exists, queued otherwise.
    */
   readonly join?: ReadonlyArray<RouteContribution>;
+  /** Sends each write to this endpoint, on every route, over a fresh upstream connection. */
+  readonly freshWrites?: boolean;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -112,11 +114,11 @@ const makeNetwork = (options: {
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
-    /** Maps one endpoint's route contributions to the shared listener's `HttpRoute` shape. */
+    /** Maps one endpoint's route contributions to `HttpRoute`s on a dedicated, shared or joined listener. */
     const toHttpRoutes = (
       id: string,
       contributions: ReadonlyArray<RouteContribution>,
-      backend: NetworkEndpoint["backend"],
+      endpoint: Pick<NetworkEndpoint, "backend" | "freshWrites">,
     ): ReadonlyArray<HttpRoute> =>
       contributions.map((route) => ({
         id,
@@ -124,16 +126,17 @@ const makeNetwork = (options: {
         upstreamPrefix: route.upstreamPrefix,
         upstreamHost: route.upstreamHost,
         ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
-        target: backend,
+        ...(endpoint.freshWrites === true ? { freshWrites: true } : {}),
+        target: endpoint.backend,
       }));
 
     /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
     const installJoin = Effect.fn("Network.installJoin")(function* (
       routeId: string,
       join: NonNullable<NetworkEndpoint["join"]>,
-      backend: NetworkEndpoint["backend"],
+      endpoint: NetworkEndpoint,
     ) {
-      const routes = toHttpRoutes(routeId, join, backend);
+      const routes = toHttpRoutes(routeId, join, endpoint);
       const ownKeys = new Set(routes.map(routeKey));
       const current = yield* Ref.get(shared);
       if (current === undefined) {
@@ -197,9 +200,9 @@ const makeNetwork = (options: {
                                 if (endpoint.protocol === "http") {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
-                                  yield* proxy.setRoutes([
-                                    { id, prefix: "/", target: endpoint.backend },
-                                  ]);
+                                  yield* proxy.setRoutes(
+                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint),
+                                  );
                                   return { proxy };
                                 }
                                 yield* probe(key, host, port);
@@ -237,7 +240,7 @@ const makeNetwork = (options: {
                     else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
                     const routes = [
                       ...current.routes,
-                      ...toHttpRoutes(id, endpoint.shared, endpoint.backend),
+                      ...toHttpRoutes(id, endpoint.shared, endpoint),
                     ];
                     yield* current.proxy.setRoutes(routes);
                     yield* Ref.set(shared, { ...current, routes });
@@ -246,8 +249,7 @@ const makeNetwork = (options: {
                       new Map(current).set(name, endpointScope),
                     );
                   }
-                  if (endpoint.join !== undefined)
-                    yield* installJoin(id, endpoint.join, endpoint.backend);
+                  if (endpoint.join !== undefined) yield* installJoin(id, endpoint.join, endpoint);
                   yield* Ref.update(bound, (current) =>
                     new Map(current).set(name, {
                       name,

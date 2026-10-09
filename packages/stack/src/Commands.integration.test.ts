@@ -8,13 +8,13 @@ import {
   Fiber,
   FileSystem,
   Layer,
-  Predicate,
   Redacted,
   Ref,
   Scope,
   Schedule,
   Stream,
 } from "effect";
+import * as NetAddress from "effect/net/NetAddress";
 import { randomUUID } from "node:crypto";
 import { postgres } from "./Commands.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
@@ -109,7 +109,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
           yield* service.ready;
           const endpoint = yield* database.endpoint;
           const listener = yield* bindTcp(runtime === "native" ? "127.0.0.1" : "0.0.0.0", 0);
-          if (!Predicate.isTagged(listener.address, "TcpAddress"))
+          if (!NetAddress.isInetAddress(listener.address))
             return yield* Effect.die("Expected TCP listener");
           yield* serveTcp(
             listener,
@@ -260,7 +260,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             yield* service.ready;
             const endpoint = yield* database.endpoint;
             const listener = yield* bindTcp(runtime === "native" ? "127.0.0.1" : "0.0.0.0", 0);
-            if (!Predicate.isTagged(listener.address, "TcpAddress"))
+            if (!NetAddress.isInetAddress(listener.address))
               return yield* Effect.die("Expected TCP listener");
             yield* serveTcp(
               listener,

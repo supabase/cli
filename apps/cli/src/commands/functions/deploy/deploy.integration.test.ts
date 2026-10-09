@@ -12,7 +12,7 @@ import {
   Path,
   Stdio,
 } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";

@@ -43,7 +43,7 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
 
 /** The slim-image flag from the process environment, never the active `ConfigProvider`. */
 export const slimImagesEnabled = Effect.suspend(() =>
-  Config.option(Config.string(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
+  Config.option(Config.String(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
 ).pipe(Effect.map(Option.exists((value) => value === "true" || value === "1")), Effect.orDie);
 
 /** Catalog tag: `v`-prefixed for application services; postgres, studio, and vector stay bare. */
@@ -60,20 +60,11 @@ export interface SlimCatalogPin {
   readonly version: string;
 }
 
-/** OrioleDB tags are docker.io-only; slim-services does not publish them. */
-function isOrioleImage(image: string): boolean {
-  const tag = imageTag(image);
-  return tag !== undefined && tag.toLowerCase().includes("orioledb");
-}
-
 /**
  * Slim service and tag for a Dockerfile alias. Absent when that alias has no
- * slim build (kong, the one-shot job images, and OrioleDB tags).
+ * slim build (kong and the one-shot job images).
  */
 export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | undefined {
-  if (isOrioleImage(image)) {
-    return undefined;
-  }
   const service = SLIM_SERVICE_LOOKUP[alias];
   if (service === undefined) {
     return undefined;

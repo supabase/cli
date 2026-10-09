@@ -1,7 +1,7 @@
 import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS, ExperimentalFlag } from "../../../command-internal/global-flags.ts";

@@ -3,7 +3,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { homedir } from "node:os";
 
 import { makeTempHome, runSupabaseEffect } from "../../../../tests/helpers/cli.ts";

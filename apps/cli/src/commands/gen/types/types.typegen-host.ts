@@ -7,7 +7,7 @@ import {
   type SpawnResult,
 } from "@supabase/typegen";
 import { Effect, Predicate, Stream } from "effect";
-import { ChildProcess, type ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 
 import { collectText } from "../../../command-internal/container-cli.ts";
 import { withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
