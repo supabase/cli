@@ -306,6 +306,8 @@ const connectInterruptibly = Effect.fn("HttpProxy.connect")((address: BackendAdd
   }),
 );
 
+const earlyResponseDrain = "2 seconds";
+
 // Mirrors nginx `proxy_next_upstream error`: a backend that drops a connection before answering
 // gets one more attempt, but only when nothing sent to the client or upstream would need replaying.
 const isRetryable =
@@ -316,108 +318,113 @@ const isRetryable =
     !response.destroyed &&
     isReplayable(request);
 
-const forward = Effect.fn("HttpProxy.forward")(
-  (
-    request: IncomingMessage,
-    response: ServerResponse,
-    route: HttpRoute,
-    backend: BackendAddress,
-    agent: Agent | false,
-    sent: Sent,
-  ) =>
-    Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
-      let outgoing: ReturnType<typeof upstreamRequest> | undefined;
-      let incoming: IncomingMessage | undefined;
-      let settled = false;
-      // Error listeners remain until collection because destroy may emit errors asynchronously.
-      const cleanup = () => {
-        request.off("aborted", onClientGone);
-        request.off("end", endResponse);
-        response.off("close", onResponseClose);
-        response.off("finish", onFinish);
+const forward = Effect.fn("HttpProxy.forward")(function* (
+  request: IncomingMessage,
+  response: ServerResponse,
+  route: HttpRoute,
+  backend: BackendAddress,
+  agent: Agent | false,
+  sent: Sent,
+) {
+  const draining = yield* Deferred.make<void>();
+  yield* Deferred.await(draining).pipe(
+    Effect.andThen(Effect.sleep(earlyResponseDrain)),
+    Effect.andThen(Effect.sync(() => response.end())),
+    Effect.forkChild,
+  );
+  return yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
+    let outgoing: ReturnType<typeof upstreamRequest> | undefined;
+    let incoming: IncomingMessage | undefined;
+    let settled = false;
+    // Error listeners remain until collection because destroy may emit errors asynchronously.
+    const cleanup = () => {
+      request.off("aborted", onClientGone);
+      request.off("end", endResponse);
+      response.off("close", onResponseClose);
+      response.off("finish", onFinish);
 
-        incoming?.off("aborted", onError);
-      };
-      const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resume(result);
-      };
-      // Settling first keeps the outcome: destroying a partial upstream response emits
-      // `aborted` synchronously, which would otherwise resettle as a proxy failure.
-      const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-        if (settled) return;
-        finish(result);
-        outgoing?.destroy();
-        incoming?.destroy();
-      };
-      const onError = (cause: Error) =>
-        abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
-      const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
-      const onFinish = () => finish(Effect.void);
-      const endResponse = () => {
-        if (!settled) response.end();
-      };
-      // Bun resets a `Connection: close` client when the response completes before its request body
-      // is fully read, so the response ends only once the rest of that body has been drained.
-      const onUpstreamEnd = () => {
-        if (outgoing !== undefined) request.unpipe(outgoing);
-        if (request.readableEnded) endResponse();
-        else {
-          request.once("end", endResponse);
-          request.resume();
+      incoming?.off("aborted", onError);
+    };
+    const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(result);
+    };
+    // Settling first keeps the outcome: destroying a partial upstream response emits
+    // `aborted` synchronously, which would otherwise resettle as a proxy failure.
+    const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+      if (settled) return;
+      finish(result);
+      outgoing?.destroy();
+      incoming?.destroy();
+    };
+    const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
+    const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
+    const onFinish = () => finish(Effect.void);
+    const endResponse = () => {
+      if (!settled) response.end();
+    };
+    // Bun resets a `Connection: close` client when the response completes before its request body
+    // is fully read, so the response waits, like nginx's lingering close, for a bounded drain.
+    const onUpstreamEnd = () => {
+      if (outgoing !== undefined) request.unpipe(outgoing);
+      if (request.readableEnded) endResponse();
+      else {
+        request.once("end", endResponse);
+        Deferred.doneUnsafe(draining, Effect.void);
+        request.resume();
+      }
+    };
+    // A close after `end()` but before `finish` means the client reset with writes still queued.
+    const onResponseClose = () => {
+      if (!response.writableFinished) onClientGone();
+    };
+    outgoing = upstreamRequest(
+      {
+        host: "path" in backend ? undefined : backend.host,
+        port: "path" in backend ? undefined : backend.port,
+        socketPath: "path" in backend ? backend.path : undefined,
+        agent,
+        method: request.method,
+        path: pathFor(request, route),
+        // Bun ends a streamed upstream response early when the request says Connection: close.
+        headers: { ...upstreamHeadersFor(request.headers, route), connection: "keep-alive" },
+      },
+      (value) => {
+        incoming = value;
+        value.once("aborted", onError);
+        value.on("error", onError);
+        value.on("data", (chunk: Buffer) => {
+          sent.bytes += chunk.length;
+        });
+        response.once("finish", onFinish);
+        setCors(response, request);
+        response.statusCode = value.statusCode ?? 502;
+        for (const [name, header] of Object.entries(value.headers)) {
+          if (header !== undefined && !hopByHop.has(name.toLowerCase()))
+            response.setHeader(name, header);
         }
-      };
-      // A close after `end()` but before `finish` means the client reset with writes still queued.
-      const onResponseClose = () => {
-        if (!response.writableFinished) onClientGone();
-      };
-      outgoing = upstreamRequest(
-        {
-          host: "path" in backend ? undefined : backend.host,
-          port: "path" in backend ? undefined : backend.port,
-          socketPath: "path" in backend ? backend.path : undefined,
-          agent,
-          method: request.method,
-          path: pathFor(request, route),
-          // Bun ends a streamed upstream response early when the request says Connection: close.
-          headers: { ...upstreamHeadersFor(request.headers, route), connection: "keep-alive" },
-        },
-        (value) => {
-          incoming = value;
-          value.once("aborted", onError);
-          value.on("error", onError);
-          value.on("data", (chunk: Buffer) => {
-            sent.bytes += chunk.length;
-          });
-          response.once("finish", onFinish);
-          setCors(response, request);
-          response.statusCode = value.statusCode ?? 502;
-          for (const [name, header] of Object.entries(value.headers)) {
-            if (header !== undefined && !hopByHop.has(name.toLowerCase()))
-              response.setHeader(name, header);
-          }
-          response.flushHeaders();
-          value.pipe(response, { end: false });
-          value.once("end", onUpstreamEnd);
-        },
-      );
-      outgoing.on("error", onError);
-      request.once("aborted", onClientGone);
-      response.once("close", onResponseClose);
-      // A retried bodyless request was already drained by the first attempt and emits no
-      // further `end`, so pipe would never finish the upstream request.
-      if (request.readableEnded) outgoing.end();
-      else request.pipe(outgoing);
-      return Effect.sync(() => {
-        settled = true;
-        cleanup();
-        outgoing?.destroy();
-        incoming?.destroy();
-      });
-    }),
-);
+        response.flushHeaders();
+        value.pipe(response, { end: false });
+        value.once("end", onUpstreamEnd);
+      },
+    );
+    outgoing.on("error", onError);
+    request.once("aborted", onClientGone);
+    response.once("close", onResponseClose);
+    // A retried bodyless request was already drained by the first attempt and emits no
+    // further `end`, so pipe would never finish the upstream request.
+    if (request.readableEnded) outgoing.end();
+    else request.pipe(outgoing);
+    return Effect.sync(() => {
+      settled = true;
+      cleanup();
+      outgoing?.destroy();
+      incoming?.destroy();
+    });
+  });
+});
 
 const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (
