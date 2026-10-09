@@ -84,7 +84,7 @@ const featureKeys = {
 } as const;
 
 /**
- * Resolves one experimental boolean: a strict `0`/`1` shell override, else the project
+ * Resolves one experimental boolean: a shell boolean override, else the project
  * config. Remotes and project `.env*` files do not apply.
  */
 export const resolveExperimentalFeature = <E, R>(input: {

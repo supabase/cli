@@ -1248,14 +1248,17 @@ describe("tryComplete", () => {
       root: undefined,
       routingFailure: Cause.fail(
         new StackRoutingError({
-          message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+          message:
+            'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
         }),
       ),
     });
     expect(await tryComplete(deps)).toBe(true);
     expect(stdoutWrites).toEqual([]);
     expect(stderrWrites).toHaveLength(1);
-    expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+    expect(stderrWrites[0]).toContain(
+      'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+    );
     expect(stderrWrites[0]).toContain(
       "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
     );

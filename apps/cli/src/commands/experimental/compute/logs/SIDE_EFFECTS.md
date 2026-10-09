@@ -4,7 +4,7 @@
 
 This command is registered only when `experimental.compute` is enabled. Set
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
-or empty variable uses the project configuration. Any other non-empty value
+or empty variable uses the project configuration. Any non-boolean value
 reports an invalid feature-flag value before command parsing. When disabled, this command has
 no discovery or side effects.
 
@@ -106,14 +106,14 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 
 ## Environment Variables
 
-| Variable                        | Purpose                                                                                                                    | Required?                                                        |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values are errors) | no                                                               |
-| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                       | no (falls back to keyring → `~/.supabase/access-token`)          |
-| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                    | no (falls back to `~/.supabase/profile` -> `supabase`)           |
-| `SUPABASE_PROJECT_ID`           | project ref, consulted after `--project-ref`                                                                               | no (falls back to `supabase/.temp/project-ref`, then the picker) |
-| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                      | no (falls back to `--workdir`, then the ancestor walk)           |
-| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                         | no (falls back to `~/.supabase`)                                 |
+| Variable                        | Purpose                                                                                                                                         | Required?                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (boolean `1`/`true` enables, `0`/`false` disables; unset/empty uses `experimental.compute`; non-boolean values are errors) | no                                                               |
+| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                                            | no (falls back to keyring → `~/.supabase/access-token`)          |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                                         | no (falls back to `~/.supabase/profile` -> `supabase`)           |
+| `SUPABASE_PROJECT_ID`           | project ref, consulted after `--project-ref`                                                                                                    | no (falls back to `supabase/.temp/project-ref`, then the picker) |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                                           | no (falls back to `--workdir`, then the ancestor walk)           |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                                              | no (falls back to `~/.supabase`)                                 |
 
 ## Telemetry Events Fired
 

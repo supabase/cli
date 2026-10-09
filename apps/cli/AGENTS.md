@@ -100,8 +100,8 @@ against the command tree. To add a key, a flag or an exception, see
 
 ## Experimental feature registration
 
-Resolve opt-in booleans with `command-internal/experimental-feature.ts`: environment `1`/`0`
-overrides the project setting, and an unset or empty value uses the config. Invalid environment
+Resolve opt-in booleans with `command-internal/experimental-feature.ts`: a shell boolean
+(`1`/`0`, `true`/`false`, `t`/`f`, any case) overrides the project setting, and an unset or empty value uses the config. Invalid environment
 values are typed failures on applicable command paths. Disabled families are absent from the
 command tree, help, and completion; enabled help is marked experimental and stays out of stable
 generated command documentation. Environment opt-ins do not write project configuration, except
