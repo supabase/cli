@@ -90,7 +90,7 @@ export interface CliConfigCodec<X> {
 export const decodingFailedMessage = (issues: ReadonlyArray<string>): string =>
   `failed to parse config:\n${issues.join("\n")}`;
 
-const UINT_MAX = 18446744073709551615n;
+const MAX_UINT = BigInt(Number.MAX_SAFE_INTEGER);
 const MAX_PORT = 65535;
 
 /** Base-0 unsigned integer literal grammar: base prefixes, bare-zero octal, `_` separators. */
@@ -145,10 +145,10 @@ export const boolCodec: CliConfigCodec<boolean> = {
 
 export const uintCodec: CliConfigCodec<number> = {
   kind: "uint",
-  parse: parseUintUpTo(UINT_MAX),
+  parse: parseUintUpTo(MAX_UINT),
   fromConfig: (value) =>
     typeof value === "string"
-      ? parseUintUpTo(UINT_MAX)(value)
+      ? parseUintUpTo(MAX_UINT)(value)
       : integerUpTo(Number.MAX_SAFE_INTEGER)(value),
   expected: "a non-negative integer",
 };

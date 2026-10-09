@@ -387,6 +387,27 @@ describe("pickCliConfigKey failure text", () => {
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "1_000" } }).value).toBe(1000);
   });
 
+  it("caps a uint at the largest safe integer instead of rounding", () => {
+    const jwtExpiry = requiredCliConfigKey({
+      path: "auth.jwt_expiry",
+      env: ["SUPABASE_AUTH_JWT_EXPIRY"],
+      codec: uintCodec,
+      default: 3600,
+    });
+
+    expect(
+      valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "9007199254740991" } }).value,
+    ).toBe(Number.MAX_SAFE_INTEGER);
+    expect(
+      failureOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "9007199254740993" } }).message,
+    ).toBe(
+      'Invalid SUPABASE_AUTH_JWT_EXPIRY="9007199254740993" (sets auth.jwt_expiry): expected a non-negative integer.',
+    );
+    expect(
+      failureOf(jwtExpiry, { config: { "auth.jwt_expiry": "9007199254740993" } }).message,
+    ).toBe('Invalid auth.jwt_expiry: "9007199254740993" is not a non-negative integer.');
+  });
+
   it("lists the allowed values of an enum", () => {
     const backend = requiredCliConfigKey({
       path: "analytics.backend",
