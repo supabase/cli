@@ -2,10 +2,10 @@ import { Effect, Option } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
 
 /**
@@ -17,21 +17,21 @@ import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
  */
 const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
 
-function emitsPayloadFor(goFormat: string | undefined): boolean {
-  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
+function emitsPayloadFor(outputFlagFormat: string | undefined): boolean {
+  return outputFlagFormat !== undefined && PAYLOAD_FORMATS.has(outputFlagFormat);
 }
 
 export const emitComputeMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* OutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
 
-  if (!emitsPayloadFor(goFormat)) {
+  if (!emitsPayloadFor(outputFlagFormat)) {
     return false;
   }
 
-  if (goFormat === "env") {
+  if (outputFlagFormat === "env") {
     // Unreachable when the command called `rejectComputeEnvOutput` first,
     // which is where the refusal belongs; here as the backstop that stops a new
     // command silently emitting TOML for `-o env`.
@@ -40,11 +40,11 @@ export const emitComputeMachineOutput = Effect.fnUntraced(function* (
     });
   }
 
-  if (goFormat === "json") {
-    yield* output.raw(encodeGoJson(payload));
+  if (outputFlagFormat === "json") {
+    yield* output.raw(encodeSortedJson(payload));
     return true;
   }
-  if (goFormat === "yaml") {
+  if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeYaml(payload));
     return true;
   }
@@ -72,8 +72,8 @@ export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
  */
 export const computeRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* OutputFlag);
-  const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
+  const forcesText = outputFlagFormat !== undefined && !emitsPayloadFor(outputFlagFormat);
   return forcesText ? ("text" as const) : output.format;
 });
 

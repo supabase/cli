@@ -1,6 +1,6 @@
 import { Clock, Effect, Option } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { signJwtWithJwk } from "../../../command-internal/go-jwt.ts";
+import { signJwtWithJwk } from "../../../command-internal/local-jwt.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { GenBearerJwtFlags } from "./bearer-jwt.command.ts";

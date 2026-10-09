@@ -46,7 +46,7 @@ describe("contentTypeForUpload", () => {
 });
 
 describe("refineUploadContentType", () => {
-  it("refines an explicit text/plain content-type by extension (Go refines the flag too)", () => {
+  it("refines an explicit text/plain content-type by extension", () => {
     expect(refineUploadContentType("text/plain", "/x/a.json")).toBe("application/json");
   });
 

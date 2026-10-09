@@ -5,7 +5,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   BackupRestoreNetworkError,
@@ -23,7 +23,7 @@ const mapRestoreError = mapHttpError({
 
 export const backupsRestore = Effect.fn("backups.restore")(function* (flags: BackupsRestoreFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -43,16 +43,19 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
       );
     yield* restoring?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
     // --output is ignored for restore except `json`, a TS-only structured payload; every other
     // value (including unset) writes the text line to stderr.
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson({ message: "Started PITR restore", project_ref: ref }));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson({ message: "Started PITR restore", project_ref: ref }));
       return;
     }
 
-    if (goFmt === undefined && (output.format === "json" || output.format === "stream-json")) {
+    if (
+      outputFlagFormat === undefined &&
+      (output.format === "json" || output.format === "stream-json")
+    ) {
       yield* output.success("Started PITR restore", { project_ref: ref });
       return;
     }

@@ -3,7 +3,7 @@ import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -33,7 +33,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       api,
       projectRoot: cliSettings.workdir,
       rawArgs,
-      goConfigCompat: functionsGoConfigCompat,
+      localConfigLoader: functionsLocalConfigLoader,
       edgeRuntimeVersion,
       // Written to stderr, matching `bold`'s default TTY gate.
       styleEmphasis: (text) => bold(text),

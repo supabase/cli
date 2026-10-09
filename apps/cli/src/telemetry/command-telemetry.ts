@@ -39,7 +39,7 @@ import {
   RESOURCE_OUTPUT_FORMATS,
   InvalidOutputFormatError,
   invalidOutputFormatMessage,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { TelemetryOutputFormat } from "./telemetry-output-format.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import {
@@ -83,7 +83,7 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // The `-o`/`--output` values this command accepts. Defaults to the resource-command set; `db
   // query` overrides with `json|table|csv`. The shared global `OutputFlag` accepts the union of
   // every command's values, so this re-validates against the command's own narrower set. See
-  // `go-output-flag.ts`.
+  // `output-formats.ts`.
   readonly outputFormats?: ReadonlyArray<string>;
   // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`) for this command's own flags,
   // so a `-s public` invocation records the `schema` flag rather than `s`. Global shorthands
@@ -116,14 +116,14 @@ const REDACTED_VALUE = "<redacted>";
 // `TelemetryOutputFormat` (`db query` does, so its `json|table|csv` reports correctly there
 // instead); this set only governs the fallback, where a non-machine `-o` (`table`/`pretty`)
 // collapses to the resolved text format.
-const GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
-const GO_OUTPUT_FORMATS = new Set([...GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
+const MACHINE_OUTPUT_FLAG_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
+const OUTPUT_FLAG_FORMATS = new Set([...MACHINE_OUTPUT_FLAG_FORMATS, "pretty"]);
 
 function toCliFlagName(key: string): string {
   return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
 }
 
-function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined {
+function extractOutputFlagFormat(args: ReadonlyArray<string>): string | undefined {
   let format: string | undefined;
 
   for (let index = 0; index < args.length; index++) {
@@ -132,7 +132,7 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 
     if (arg === "--output" || arg === "-o") {
       const value = args[index + 1];
-      if (value !== undefined && GO_OUTPUT_FORMATS.has(value)) {
+      if (value !== undefined && OUTPUT_FLAG_FORMATS.has(value)) {
         format = value;
       }
       index++;
@@ -141,7 +141,7 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 
     if (arg.startsWith("--output=") || arg.startsWith("-o=")) {
       const value = arg.slice(arg.indexOf("=") + 1);
-      if (GO_OUTPUT_FORMATS.has(value)) {
+      if (OUTPUT_FLAG_FORMATS.has(value)) {
         format = value;
       }
     }
@@ -151,9 +151,9 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 }
 
 function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputFormat: string) {
-  const goOutputFormat = extractGoOutputFormat(args);
-  if (goOutputFormat !== undefined && GO_MACHINE_OUTPUT_FORMATS.has(goOutputFormat)) {
-    return goOutputFormat;
+  const outputFlagFormat = extractOutputFlagFormat(args);
+  if (outputFlagFormat !== undefined && MACHINE_OUTPUT_FLAG_FORMATS.has(outputFlagFormat)) {
+    return outputFlagFormat;
   }
   return outputFormat;
 }
@@ -170,13 +170,13 @@ function extractChangedFlagNames(
     if (arg === undefined) continue;
 
     // Skip a token that was consumed as the value of the previous flag — even
-    // when that token is `--` (pflag lets a value-taking flag consume `--`).
+    // when that token is `--` (a value-taking flag consumes `--`).
     if (skipNext) {
       skipNext = false;
       continue;
     }
 
-    // End-of-options sentinel: pflag-style parsing stops at a bare `--`, so everything after it
+    // End-of-options sentinel: parsing stops at a bare `--`, so everything after it
     // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag). Mirrors
     // `resolveDbTargetFlags`'s `--` handling.
     if (arg === "--") break;
@@ -188,7 +188,7 @@ function extractChangedFlagNames(
       const isBare = eqIdx === -1;
       if (flagName.length === 0) continue;
       used.add(flagName);
-      // A bare value-consuming flag's next token is its value (pflag space-separated form) —
+      // A bare value-consuming flag's next token is its value (space-separated form) —
       // skip it so only the flag name itself is recorded, not the value that follows.
       if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(flagName)) {
         skipNext = true;

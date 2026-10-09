@@ -68,7 +68,7 @@ describe("resolveDbImage", () => {
     });
   });
 
-  it.effect("rewrites to the OrioleDB image on a 15/17 project (Go config.Validate)", () => {
+  it.effect("rewrites to the OrioleDB image on a 15/17 project", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
       // > 15.1.1.13 → `<ver>-orioledb`

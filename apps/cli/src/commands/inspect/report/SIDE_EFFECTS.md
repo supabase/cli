@@ -1,7 +1,7 @@
 # `supabase inspect report`
 
 Runs every inspect query against the target Postgres database, writes one CSV per
-query into `<output-dir>/<YYYY-MM-DD>/`, then prints a Glamour "rules" summary table
+query into `<output-dir>/<YYYY-MM-DD>/`, then prints a "rules" summary table
 validating those CSVs.
 
 ## Files Read
@@ -40,22 +40,15 @@ against the process CWD, not `--workdir`; an absolute path is used as-is.
 Re-running on the same day reuses the existing dated folder (mkdir is recursive /
 idempotent) and **overwrites** the previous run's CSVs silently — no `--force`.
 If a `COPY` fails partway through, the CSVs from queries that already
-completed remain on disk (both sides write each file before running the next query),
+completed remain on disk (each file is written before the next query runs),
 the command aborts with exit code 1, and the rules summary is not printed.
 
-**Divergence on the query that was in flight when `COPY` failed:** the old Go
-CLI's `copyToCSV` opened the output file
-with `O_TRUNC` _before_ running the query, then streamed `COPY ... TO STDOUT` directly
-into it — so a failing/erroring `COPY` still left that query's `<name>.csv` on disk,
-empty or partially written. TS buffers the `COPY` result in memory
+**The query that was in flight when `COPY` failed:** TS buffers the `COPY` result in memory
 (`session.copyToCsv`) and only calls `fs.writeFile` after it succeeds
-(`report.handler.ts`) — so on a fresh run, TS leaves **no file at all** for the query
-that failed, where the old CLI left an empty (or partial) one. On a same-day
-**re-run**, the difference is the opposite way round: the old CLI's `O_TRUNC`
-destroyed that query's previous CSV (leaving it empty), while TS never touches
-the file at all, so the **previous run's stale CSV is left in place** — a user
-re-reading that file gets old data with no indication it wasn't refreshed this
-run, where the old CLI at least made the failure visible as an empty file.
+(`report.handler.ts`) — so on a fresh run, a failed query leaves **no file at all**. On a
+same-day **re-run**, TS never touches the failed query's file, so the **previous run's stale
+CSV is left in place** — a user re-reading that file gets old data with no indication it
+wasn't refreshed this run.
 
 ## API Routes
 
@@ -104,8 +97,7 @@ Reports saved to <output-dir>/<date>    (path bolded when stdout is a TTY)
 Loading default rules...                (only when no custom config.toml rules)
 ```
 
-stdout: the Glamour `RULE | STATUS | MATCHES` summary table (byte-exact using
-`utils.RenderTable`, `AsciiStyle`, `WordWrap(-1)`).
+stdout: the `RULE | STATUS | MATCHES` summary table.
 
 When a rule's csvq query cannot be evaluated (unsupported grammar, unknown table,
 or unknown column — e.g. a typo in a custom `config.toml` rule), the **error
@@ -126,10 +118,9 @@ instead a structured result is emitted:
 
 ## Notes
 
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution `DbConfigResolver` performs
+- **`--project-ref`** overrides ONLY the linked-ref resolution `DbConfigResolver` performs
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
-  error rather than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  error rather than a silently discarded flag (stricter than
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target).

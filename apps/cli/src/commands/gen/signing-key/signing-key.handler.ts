@@ -9,7 +9,7 @@ import { findGitRootPath } from "../../../shared/git/git-root.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { loadCliProjectEnvFiles } from "../../../shared/config/cli-config-env.ts";
 import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";

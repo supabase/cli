@@ -209,7 +209,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
             agentDefaultOutputFormat: agentDefaultOutputFormatFor(options, cliArgs.args),
-            goOutputFormat: resourceOutput,
+            outputFlagFormat: resourceOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),

@@ -7,7 +7,7 @@ import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.t
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import { settleFeedbackTask } from "../feedback-task.ts";
@@ -29,13 +29,13 @@ const UUID_PATTERN = BRANCH_UUID_PATTERN;
 
 export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: FeedbackDeleteArgs) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const telemetryRuntime = yield* TelemetryRuntime;
   const client = yield* FeedbackClient;
   const telemetryState = yield* TelemetryState;
 
-  const goFmt = Option.getOrUndefined(goOutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
   // Persist the telemetry state file (`~/.supabase/telemetry.json`) whether
   // the delete succeeds or fails — the telemetry-state finalizer every
@@ -86,7 +86,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     const yes = yield* resolveYes;
     if (!yes) {
       const stdin = yield* Stdin;
-      if (goFmt === "json") {
+      if (outputFlagFormat === "json") {
         return yield* new NonInteractiveError({
           detail: "Cannot prompt for confirmation with -o json",
           suggestion: "Pass --yes to delete without confirmation",
@@ -119,8 +119,8 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
 
     // `-o json` takes priority over `--output-format` (CLI Agent Guide invariant 6):
     // stdout carries the machine payload only. `pretty` (or unset) falls through.
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson({ deleted: true }));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson({ deleted: true }));
       return;
     }
 

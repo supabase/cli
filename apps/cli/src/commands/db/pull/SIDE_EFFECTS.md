@@ -1,15 +1,13 @@
 # `supabase db pull`
 
-Native Effect port. Pulls the remote schema into either a new timestamped
+Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, bundled pg-delta or
 migra) or declarative files (`--declarative`, or the deprecated `--experimental`
 gate without `--declarative`). Both export modes run the native pg-delta
 export. The initial-migra pull (no local migrations) seeds the migration file
 with a native `pg_dump` of the remote schema (a Docker `pg_dump` container,
 with IPv4 transaction-pooler fallback) and then appends the migra diff.
-`--experimental` without `--declarative` used to dump remote SQL as a split
-schemas + cluster AST. That path now
-runs the same in-process declarative export (`supabase/schemas` plus
+`--experimental` without `--declarative` runs the same in-process declarative export (`supabase/schemas` plus
 `.pgdelta-export.json`) and prints a deprecation line pointing at
 `--declarative`. `--experimental --declarative` does not print that line:
 `--declarative` already selected the export.

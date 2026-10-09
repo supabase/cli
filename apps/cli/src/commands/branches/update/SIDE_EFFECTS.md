@@ -2,7 +2,7 @@
 
 ## Files Read
 
-Same auth fallback chain as every Management-API command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
+Same auth fallback chain as every Management-API command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
@@ -45,7 +45,7 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 Honors both `--output {pretty,json,yaml,toml,env}` and `--output-format {text,json,stream-json}`.
 
-In **text mode**, the header `Updated preview branch:` writes to **stderr** followed by the single-row Glamour list-table on stdout.
+In **text mode**, the header `Updated preview branch:` writes to **stderr** followed by the single-row list-table on stdout.
 
 For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the encoded payload on stdout. In `--output-format json` / `stream-json`, a `success` event carries the payload.
 

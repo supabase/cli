@@ -81,7 +81,7 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly v2?: { status: number; body: unknown } | "fail";
   readonly branchByName?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
@@ -147,7 +147,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     projectFiles,
@@ -996,10 +996,10 @@ describe("config diff integration", () => {
     // Iterates every value the global `-o`/`--output` flag can carry, so a value added there
     // automatically extends this coverage.
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -1340,7 +1340,7 @@ describe("config diff -o/--output wrapper wiring", () => {
   // without it, `-o table` would hit the wrapper's own generic rejection before reaching this
   // command's specific one. Uses the real configDiffHandler wiring so this exercises that override.
   it.live("-o table reaches this command's own message, not the wrapper's generic one", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
+    const { layer, api } = setup({ toml: 'project_id = "test"\n', outputFlag: "table" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(configDiffHandler(noFlags));
       expect(Exit.isFailure(exit)).toBe(true);

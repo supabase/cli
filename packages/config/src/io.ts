@@ -489,7 +489,7 @@ export interface DecodeCliConfigDocumentForValidationEffectOptions {
    */
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
   /**
    * When set, merges the `[remotes.<remoteName>]` block over the root before decoding, so it's
    * checked against the root's full business rules instead of the relaxed treatment an
@@ -542,7 +542,7 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     cwd: projectRoot,
     baseEnv: process.env,
   });
-  const goViperCompat = options.goViperCompat ?? false;
+  const cliCompat = options.cliCompat ?? false;
 
   const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
     document,
@@ -553,7 +553,7 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     documentForDecode,
     cliProjectEnv?.values ?? {},
     CliConfigSchema,
-    { goViperCompat },
+    { cliCompat },
   );
   const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
   return yield* parseCliConfig(normalizedForDecode, options.format, options.path, appliedRemote);
@@ -630,7 +630,7 @@ export interface ParseMergeCliConfigOptions {
   readonly selectRemote: (remotes: Record<string, unknown>) => string | undefined;
   /**
    * Run the duplicate and format checks on every `[remotes.*]` `project_id`, as `loadCliConfig`
-   * does with `goViperCompat`. They read the literal values, so a caller that resolves
+   * does with `cliCompat`. They read the literal values, so a caller that resolves
    * `project_id` another way, such as an env override, leaves this off and validates itself.
    */
   readonly validateRemotes?: boolean;
@@ -668,7 +668,7 @@ const mergeRemoteForLoad = (
  */
 export interface DecodeMergedCliConfigOptions {
   readonly envValues: Readonly<Record<string, string>>;
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
   readonly document?: Record<string, unknown>;
   /** Skips the deprecation warnings, for a caller that decodes the same document twice. */
   readonly silent?: boolean;
@@ -678,13 +678,13 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   merged: MergedCliConfigDocument,
   options: DecodeMergedCliConfigOptions,
 ) {
-  const goViperCompat = options.goViperCompat ?? false;
+  const cliCompat = options.cliCompat ?? false;
   const interpolateDocument = (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, options.envValues, CliConfigSchema, {
-      goViperCompat,
+      cliCompat,
       onResolvedEnv,
     });
 
@@ -719,7 +719,7 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     removedProviders,
   } = normalizeDeprecatedExternalProviders(documentForDecode);
   // Pinned to the real console, same as the `[inbucket]` warning above.
-  if (goViperCompat && options.silent !== true) {
+  if (cliCompat && options.silent !== true) {
     for (const ext of deprecatedProviders) {
       yield* Console.error(
         `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
@@ -790,7 +790,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       baseEnv: process.env,
       search: options?.search,
     }));
-  const goViperCompat = options?.goViperCompat ?? false;
+  const cliCompat = options?.cliCompat ?? false;
   const envValues = cliProjectEnv?.values ?? {};
 
   // Interpolated once here purely to give `applyRemoteOverride`'s format check (not its
@@ -799,7 +799,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
     normalized,
     envValues,
     CliConfigSchema,
-    { goViperCompat },
+    { cliCompat },
   );
   const interpolatedRemotes =
     isObject(interpolatedForValidation) && isObject(interpolatedForValidation["remotes"])
@@ -808,12 +808,12 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
 
   // Merge the matching `[remotes.*]` override over the raw, pre-`env()` document (see
   // `applyRemoteOverride`). The match/merge always runs; the duplicate-`project_id`/format
-  // checks only run when `goViperCompat` is set.
+  // checks only run when `cliCompat` is set.
   const resolved = yield* mergeRemoteForLoad(
     normalized,
     interpolatedRemotes,
     options?.projectRef,
-    goViperCompat,
+    cliCompat,
   );
 
   return yield* decodeMergedCliConfig(
@@ -829,7 +829,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       remoteLeafPaths: resolved.remoteLeafPaths,
       ...(interpolatedRemotes === undefined ? {} : { interpolatedRemotes }),
     },
-    { envValues, goViperCompat },
+    { envValues, cliCompat },
   );
 });
 

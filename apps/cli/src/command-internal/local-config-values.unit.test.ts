@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { CliConfigValueError } from "../config/cli-config.errors.ts";
-import { DEFAULT_SIGNING_KEY } from "./go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "./local-jwt.ts";
 import {
   POSTGRES_DEFAULT_ROOT_KEY,
   InvalidJwtSecretError,
@@ -247,7 +247,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig();
       const document = { db: { root_key: 12345 } };
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
+        "failed to parse config:\ndb.root_key: expected a table",
       );
     });
   });
@@ -331,7 +331,7 @@ describe("resolveLocalConfigValues", () => {
         external: { my_custom: { enabled: "not-a-bool", client_id: "custom-client-id" } },
       };
       expect(() => resolveAuthExternalProviders(authDocument, baseConfig().auth.external)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -356,7 +356,7 @@ describe("resolveLocalConfigValues", () => {
         external: { my_custom: { enabled: [1, 2], client_id: "custom-client-id" } },
       };
       expect(() => resolveAuthExternalProviders(authDocument, baseConfig().auth.external)).toThrow(
-        'cannot parse "1,2" as a bool',
+        '"1,2" is not a valid boolean',
       );
     });
   });
@@ -385,7 +385,7 @@ describe("resolveLocalConfigValues", () => {
 
     it("throws on an unparsable string instead of silently disabling it", () => {
       expect(() => rawUnmodeledBool("not-a-bool", "auth.passkey.enabled")).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -535,7 +535,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig();
       const document = { auth: { passkey: { enabled: "not-a-bool" } } };
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
   });
@@ -835,8 +835,7 @@ describe("narrowConfigEnum", () => {
       new CliConfigValueError({
         path: "realtime.ip_version",
         tier: "config",
-        message:
-          'Invalid config for realtime.ip_version: cannot parse "v9" as one of "IPv4", "IPv6"',
+        message: 'Invalid config for realtime.ip_version: "v9" must be one of "IPv4", "IPv6"',
       }),
     );
   });

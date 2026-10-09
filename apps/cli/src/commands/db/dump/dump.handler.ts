@@ -21,7 +21,7 @@ import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import {
@@ -52,7 +52,7 @@ import {
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
@@ -65,7 +65,7 @@ import {
  * Mutually-exclusive flag groups, in the established check order (the group
  * keys are sorted alphabetically). Each group's flags are in registration
  * order, matching the `[group]` in the error text; the set of violating
- * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
+ * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
   ["db-url", "linked", "local"],
@@ -141,7 +141,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* new DbDumpMutuallyExclusiveFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }
@@ -213,7 +213,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = yield* viperEnvStringWithProjectFallback(
+    const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
       "SUPABASE_NETWORK_ID",
       projectEnv,
     );

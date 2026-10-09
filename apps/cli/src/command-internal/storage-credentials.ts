@@ -12,7 +12,7 @@ import {
   loadConfigSnapshotContext,
 } from "./config-snapshot-context.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
-import { generateGoJwt } from "./go-jwt.ts";
+import { generateLocalJwt } from "./local-jwt.ts";
 import { getHostname } from "./hostname.ts";
 import { resolveJwtSecret } from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
@@ -187,7 +187,7 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: StorageCon
   const configuredKey = auth.service_role_key;
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
-    : generateGoJwt(jwtSecret, "service_role");
+    : generateLocalJwt(jwtSecret, "service_role");
 });
 
 /**

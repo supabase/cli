@@ -25,7 +25,7 @@ function joinSupabaseSeedPath(pattern: string): string {
  * relative and joins under `supabase/` — unlike Node's win32 `isAbsolute`,
  * which treats it as rooted at the current drive.
  */
-const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
+const isAbsolutePattern = (pathSvc: Path.Path, pattern: string): boolean => {
   if (process.platform !== "win32") {
     return pathSvc.isAbsolute(pattern);
   }
@@ -48,4 +48,6 @@ const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
  * override — all three feed the glob the same resolved paths.
  */
 export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
-  pattern.length === 0 || goIsAbs(pathSvc, pattern) ? pattern : joinSupabaseSeedPath(pattern);
+  pattern.length === 0 || isAbsolutePattern(pathSvc, pattern)
+    ? pattern
+    : joinSupabaseSeedPath(pattern);

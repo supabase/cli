@@ -43,7 +43,7 @@ import {
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
 import { parseDotEnv } from "../config/dotenv.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
@@ -79,7 +79,7 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
@@ -174,10 +174,10 @@ export interface FunctionsServeDependencies {
   readonly networkId: Option.Option<string>;
   readonly projectIdOverride: Option.Option<string>;
   /**
-   * `undefined` for library callers; the CLI injects this so this file
-   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
+   * The CLI injects this so this file never imports the command tree directly —
+   * see {@link FunctionsLocalConfigLoader}.
    */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  readonly localConfigLoader: FunctionsLocalConfigLoader;
   /** Overrides the shutdown-grace and log-retry timers; production leaves this unset. */
   readonly timers?: FunctionsServeTimers;
 }
@@ -215,8 +215,8 @@ interface ServeResolvedConfig {
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly configPath?: string;
-  /** Merged env with ambient values winning; `undefined` for library callers. */
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+  /** Merged env with ambient values winning. */
+  readonly projectEnvValues: Readonly<Record<string, string>>;
 }
 
 interface ServeFunctionContainerConfig {
@@ -697,7 +697,7 @@ const finalizeAuthArtifacts = Effect.fn("functions.serve.finalizeAuthArtifacts")
 const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
-  goConfigCompat: FunctionsGoConfigCompat | undefined,
+  localConfigLoader: FunctionsLocalConfigLoader,
 ) {
   const projectRef = Option.getOrUndefined(
     Option.filter(
@@ -705,7 +705,7 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
       (value) => value.length > 0,
     ),
   );
-  const context = yield* loadFunctionsCliConfig({ projectRoot, projectRef, goConfigCompat });
+  const context = yield* loadFunctionsCliConfig({ projectRoot, projectRef, localConfigLoader });
   const { snapshot } = context;
   const baseConfig = context.loaded.config;
 
@@ -1095,7 +1095,7 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
  * (<OP>)` line. RENAME and CHMOD are unreachable here: `fs.watch` folds
  * renames into create/delete pairs and doesn't report metadata-only changes.
  */
-const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
+const fileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
 
 const waitForRestartSignal = Effect.fn("functions.serve.waitForRestart")(function* (
   watchSpecs: ReadonlyArray<WatchSpec>,
@@ -1123,10 +1123,7 @@ const waitForRestartSignal = Effect.fn("functions.serve.waitForRestart")(functio
   ).pipe(
     Stream.tap((events) =>
       Effect.forEach(events, (event) =>
-        output.raw(
-          `File change detected: ${event.path} (${goFileEventOp[event.type]})\n`,
-          "stderr",
-        ),
+        output.raw(`File change detected: ${event.path} (${fileEventOp[event.type]})\n`, "stderr"),
       ).pipe(Effect.asVoid),
     ),
     Stream.debounce(Duration.millis(500)),
@@ -1863,24 +1860,19 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,
-    input.dependencies.goConfigCompat,
+    input.dependencies.localConfigLoader,
   );
   const projectId = resolved.projectId;
   const containerId = localDockerId("edge_runtime", projectId);
   let ownsRuntime = false;
   let startedRuntime: StartedRuntime | undefined;
   return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` is CLI-only, like `resolved.projectEnvValues`
-    // (`undefined` for library callers).
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
-      envNetworkId:
-        resolved.projectEnvValues === undefined
-          ? undefined
-          : yield* viperEnvStringWithProjectFallback(
-              "SUPABASE_NETWORK_ID",
-              resolved.projectEnvValues,
-            ),
+      envNetworkId: yield* supabaseEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        resolved.projectEnvValues,
+      ),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);

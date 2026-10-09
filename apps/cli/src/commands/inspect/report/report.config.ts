@@ -23,7 +23,7 @@ export const readInspectRules = Effect.fn("inspect.report.readRules")(function* 
       : [];
     if (unknownKeys.length > 0) {
       return yield* new DbConfigLoadError({
-        message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
+        message: `failed to load config: experimental.inspect.rules[${index}] has unknown keys: ${unknownKeys.join(", ")}`,
       });
     }
   }

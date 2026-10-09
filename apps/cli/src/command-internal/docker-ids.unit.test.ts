@@ -11,10 +11,10 @@ import {
 } from "./docker-ids.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 
 describe("serviceContainerIds", () => {
-  it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
+  it("returns the 13 service container ids in order", () => {
     expect(serviceContainerIds("my-app")).toEqual([
       "supabase_kong_my-app",
       "supabase_auth_my-app",
@@ -39,7 +39,7 @@ describe("serviceContainerIds", () => {
 });
 
 describe("cliProjectFilterValue", () => {
-  it("returns the bare label when the project id is empty (Go's --all path)", () => {
+  it("returns the bare label when the project id is empty (the --all path)", () => {
     expect(cliProjectFilterValue("")).toBe(CLI_PROJECT_LABEL);
   });
 
@@ -54,7 +54,7 @@ describe("cliProjectFilterValue", () => {
   });
 });
 
-describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallback (start/db start call shape)", () => {
+describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFallback (start/db start call shape)", () => {
   const KEY = "SUPABASE_NETWORK_ID";
 
   function resolve(
@@ -65,7 +65,7 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
     return Effect.runSync(
       withConfigEnv(
         shell === undefined ? {} : { [KEY]: shell },
-        Effect.map(viperEnvStringWithProjectFallback(KEY, projectEnv), (envNetworkId) =>
+        Effect.map(supabaseEnvStringWithProjectFallback(KEY, projectEnv), (envNetworkId) =>
           resolveDockerNetworkMode({ explicit: flagValue, envNetworkId, projectId: "my-app" }),
         ),
       ),

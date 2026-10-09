@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { renderGlamourTable } from "./glamour-table.ts";
 
 describe("renderGlamourTable", () => {
-  it("matches the Go PITR-backup table fixture", () => {
+  it("matches the PITR-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "WALG", "PITR", "EARLIEST TIMESTAMP", "LATEST TIMESTAMP"],
       [["Southeast Asia (Singapore)", "true", "true", "0", "0"]],
@@ -20,7 +20,7 @@ describe("renderGlamourTable", () => {
     expect(out).toBe(expected);
   });
 
-  it("matches the Go logical-backup table fixture", () => {
+  it("matches the logical-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "BACKUP TYPE", "STATUS", "CREATED AT (UTC)"],
       [["Southeast Asia (Singapore)", "PHYSICAL", "COMPLETED", "2026-02-08 16:44:07"]],

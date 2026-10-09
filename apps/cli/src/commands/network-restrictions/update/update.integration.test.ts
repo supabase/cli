@@ -66,7 +66,7 @@ const PATCH_APPLIED: typeof V1PatchNetworkRestrictionsOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   postResponse?: typeof V1UpdateNetworkRestrictionsOutput.Type;
   postStatus?: number;
   patchResponse?: typeof V1PatchNetworkRestrictionsOutput.Type;
@@ -94,7 +94,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -125,7 +125,7 @@ const baseFlags = {
 describe("network-restrictions update integration", () => {
   // Replace mode (POST /apply)
 
-  it.live("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
+  it.live("POSTs /apply with partitioned v4/v6 lists and prints the formatted block", () => {
     const { layer, out, api } = setup({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
@@ -172,7 +172,7 @@ describe("network-restrictions update integration", () => {
     },
   );
 
-  it.live("routes an IPv4-mapped IPv6 input into the v4 request bucket (Go To4 parity)", () => {
+  it.live("routes an IPv4-mapped IPv6 input into the v4 request bucket", () => {
     const { layer, api } = setup({
       postResponse: {
         ...POST_EMPTY_APPLIED,
@@ -191,7 +191,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("allows every CIDR in a comma-separated --db-allow-cidr value (pflag CSV parity)", () => {
+  it.live("allows every CIDR in a comma-separated --db-allow-cidr value", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24"]);
@@ -299,7 +299,7 @@ describe("network-restrictions update integration", () => {
 
   // CIDR validation
 
-  it.live("rejects an input missing the /mask suffix with Go's verbatim message", () => {
+  it.live("rejects an input missing the /mask suffix with the verbatim message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -317,7 +317,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an RFC-1918 private IPv4 input with Go's verbatim message", () => {
+  it.live("rejects an RFC-1918 private IPv4 input with the verbatim message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -392,7 +392,7 @@ describe("network-restrictions update integration", () => {
 
   // HTTP error mapping
 
-  it.live("reports a Go-compatible error message when the POST network is unreachable", () => {
+  it.live("reports an error message when the POST network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
@@ -405,7 +405,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the POST returns 503", () => {
+  it.live("reports an error message when the POST returns 503", () => {
     const { layer } = setup({ postStatus: 503, postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
@@ -418,7 +418,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the PATCH network is unreachable", () => {
+  it.live("reports an error message when the PATCH network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
@@ -431,7 +431,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a Go-compatible error message when the PATCH returns a non-200 status", () => {
+  it.live("reports an error message when the PATCH returns a non-200 status", () => {
     const { layer } = setup({ patchStatus: 500, patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
@@ -469,8 +469,8 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON when --output=json after POST", () => {
-    const { layer, out } = setup({ goOutput: "json", postResponse: POST_APPLIED });
+  it.live("emits JSON when --output=json after POST", () => {
+    const { layer, out } = setup({ outputFlag: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -478,24 +478,24 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible YAML when --output=yaml after POST", () => {
-    const { layer, out } = setup({ goOutput: "yaml", postResponse: POST_APPLIED });
+  it.live("emits YAML when --output=yaml after POST", () => {
+    const { layer, out } = setup({ outputFlag: "yaml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible TOML when --output=toml after POST", () => {
-    const { layer, out } = setup({ goOutput: "toml", postResponse: POST_APPLIED });
+  it.live("emits TOML when --output=toml after POST", () => {
+    const { layer, out } = setup({ outputFlag: "toml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status = ");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible env output when --output=env after POST", () => {
-    const { layer, out } = setup({ goOutput: "env", postResponse: POST_EMPTY_APPLIED });
+  it.live("emits env output when --output=env after POST", () => {
+    const { layer, out } = setup({ outputFlag: "env", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain('STATUS="applied"');
@@ -503,7 +503,7 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("treats --output pretty identically to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", postResponse: POST_EMPTY_APPLIED });
+    const { layer, out } = setup({ outputFlag: "pretty", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toBe(
@@ -514,10 +514,10 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format after POST when both are set", () => {
+  it.live("--output wins over --output-format after POST when both are set", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       postResponse: POST_APPLIED,
     });
     return Effect.gen(function* () {
@@ -543,8 +543,8 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON when --output=json after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "json", patchResponse: PATCH_APPLIED });
+  it.live("emits JSON when --output=json after PATCH", () => {
+    const { layer, out } = setup({ outputFlag: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -552,25 +552,25 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible YAML when --output=yaml after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "yaml", patchResponse: PATCH_APPLIED });
+  it.live("emits YAML when --output=yaml after PATCH", () => {
+    const { layer, out } = setup({ outputFlag: "yaml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible TOML when --output=toml after PATCH", () => {
-    const { layer, out } = setup({ goOutput: "toml", patchResponse: PATCH_APPLIED });
+  it.live("emits TOML when --output=toml after PATCH", () => {
+    const { layer, out } = setup({ outputFlag: "toml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status = ");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible env output when --output=env after PATCH", () => {
+  it.live("emits env output when --output=env after PATCH", () => {
     const { layer, out } = setup({
-      goOutput: "env",
+      outputFlag: "env",
       patchResponse: {
         entitlement: "allowed",
         config: {},
@@ -583,10 +583,10 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format after PATCH when both are set", () => {
+  it.live("--output wins over --output-format after PATCH when both are set", () => {
     const { layer, out } = setup({
       format: "json",
-      goOutput: "yaml",
+      outputFlag: "yaml",
       patchResponse: PATCH_APPLIED,
     });
     return Effect.gen(function* () {

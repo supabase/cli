@@ -15,7 +15,7 @@ describe("parseFileSizeLimit", () => {
     expect(() => parseFileSizeLimit("not-a-size")).toThrow();
   });
 
-  it("accepts Go-valid numeral forms (strconv.ParseFloat parity)", () => {
+  it("accepts valid numeral forms", () => {
     expect(parseFileSizeLimit(".5MiB")).toBe(Math.trunc(0.5 * 1024 * 1024));
     expect(parseFileSizeLimit("1.MiB")).toBe(1024 * 1024);
     expect(parseFileSizeLimit("1e6")).toBe(1_000_000);
@@ -23,7 +23,7 @@ describe("parseFileSizeLimit", () => {
     expect(parseFileSizeLimit("1_0MiB")).toBe(10 * 1024 * 1024);
   });
 
-  it("rejects badly-placed underscores (Go literal rule)", () => {
+  it("rejects badly-placed underscores", () => {
     expect(() => parseFileSizeLimit("_1000MiB")).toThrow("invalid size");
     expect(() => parseFileSizeLimit("1__0MiB")).toThrow("invalid size");
   });
@@ -34,7 +34,7 @@ describe("parseFileSizeLimit", () => {
     expect(() => parseFileSizeLimit("-5MiB")).toThrow("invalid size");
   });
 
-  it("rejects an overflowing numeral (Go ParseFloat range error)", () => {
+  it("rejects an overflowing numeral", () => {
     expect(() => parseFileSizeLimit("1e309")).toThrow("invalid size");
   });
 });

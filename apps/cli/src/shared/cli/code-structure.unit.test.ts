@@ -178,7 +178,17 @@ export function findRawConfigFlags(source: string): Array<string> {
   );
 }
 
-const CONFIG_LOADERS = ["loadCliConfig", "resolveCliConfigSubtree", "loadCliProjectEnvironment"];
+const CONFIG_LOADERS = [
+  "loadCliConfig",
+  "resolveCliConfigValue",
+  "resolveCliConfigSubtree",
+  "decodeCliConfigDocumentForValidationEffect",
+  "loadCliProjectEnvironment",
+];
+
+const COMPAT_OPTION = ["cli", "Compat"].join("");
+const WHOLE_CONFIG_IMPORT =
+  /\b(?:(?:import|export)\s+(?:type\s+)?\*\s*(?:as\s+\w+\s*)?from\s*|import\s*\(\s*)["']@supabase\/config(?:\/effect|\/internal)?["']/g;
 
 /** Imports of the package loaders that resolve config outside the `CliConfigValues` snapshot. */
 export function findConfigLoaderImports(
@@ -190,6 +200,16 @@ export function findConfigLoaderImports(
     "g",
   );
   return Array.from(stripComments(source).matchAll(pattern), (m) => m[0]);
+}
+
+/** Every way to reach the package loaders: named imports, whole-module imports, or the compat option. */
+function findConfigLoaderBypasses(source: string): Array<string> {
+  const code = stripComments(source);
+  return [
+    ...findConfigLoaderImports(source),
+    ...Array.from(code.matchAll(WHOLE_CONFIG_IMPORT), (m) => m[0]),
+    ...(code.includes(COMPAT_OPTION) ? [COMPAT_OPTION] : []),
+  ];
 }
 
 const allSpecifiers = (source: string): Array<string> =>
@@ -365,7 +385,7 @@ layer(BunServices.layer)("code structure", (it) => {
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isSourceFile);
       const violations = yield* scanSource(files, (relativePath, source) =>
-        CONFIG_FOUNDATION_FILE.test(relativePath) ? [] : findConfigLoaderImports(source),
+        CONFIG_FOUNDATION_FILE.test(relativePath) ? [] : findConfigLoaderBypasses(source),
       );
       expect(violations).toEqual([]);
     }),
@@ -394,8 +414,8 @@ describe("config precedence guard rules", () => {
       'ambientEnvironment()["SUPABASE_REMOTES_STAGING_PROJECT_ID"]',
       "ambientEnvironment().SUPABASE_DB_PORT",
       'projectEnv["SUPABASE_DB_PORT"]',
-      'viperEnvBool("SUPABASE_DB_SEED_ENABLED")',
-      'viperEnvStringWithProjectFallback("SUPABASE_DB_PORT", env)',
+      'supabaseEnvBool("SUPABASE_DB_SEED_ENABLED")',
+      'supabaseEnvStringWithProjectFallback("SUPABASE_DB_PORT", env)',
       'snapshot.sources.shell("SUPABASE_DB_PORT")',
       'lookupCliConfigEnv(snapshot.sources, "SUPABASE_DB_PORT")',
       'values["SUPABASE_DB_PORT"]',
@@ -491,6 +511,15 @@ describe("config precedence guard rules", () => {
       ).toHaveLength(1);
     }
     expect(findConfigLoaderImports('import { other } from "@supabase/config";')).toEqual([]);
+  });
+
+  it("flags whole-module imports of the config package and the compat option", () => {
+    expect(
+      findConfigLoaderBypasses('import * as config from "@supabase/config/internal";'),
+    ).toHaveLength(1);
+    expect(findConfigLoaderBypasses('const c = await import("@supabase/config");')).toHaveLength(1);
+    expect(findConfigLoaderBypasses(`load(cwd, { ${COMPAT_OPTION}: true });`)).toHaveLength(1);
+    expect(findConfigLoaderBypasses('import { other } from "@supabase/config";')).toEqual([]);
   });
 
   it("resolves static and dynamic relative specifiers", () => {

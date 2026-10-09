@@ -376,7 +376,7 @@ function inRanges(cp: number, ranges: ReadonlyArray<Range>): boolean {
 }
 
 /** Display width of a single code point (0, 1, or 2). */
-function runeWidth(cp: number): number {
+function codePointWidth(cp: number): number {
   // C0/C1 controls (except those handled by the caller) have no print width.
   if (cp === 0) return 0;
   if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) return 0;
@@ -388,6 +388,6 @@ function runeWidth(cp: number): number {
 /** Display width of a string, summing per-code-point widths. */
 export function stringWidth(text: string): number {
   let width = 0;
-  for (const ch of text) width += runeWidth(ch.codePointAt(0)!);
+  for (const ch of text) width += codePointWidth(ch.codePointAt(0)!);
   return width;
 }

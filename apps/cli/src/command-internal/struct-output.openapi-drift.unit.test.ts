@@ -1,23 +1,23 @@
 import { describe, expect, it } from "vitest";
 import openApiSpec from "@supabase/api/openapi.json";
 
-import { GO_BRANCH_RESPONSE } from "../commands/branches/branches.go-payload.ts";
-import { GO_ORGANIZATION_RESPONSE } from "../commands/orgs/orgs.go-payload.ts";
-import { GO_SSL_ENFORCEMENT_RESPONSE } from "../commands/ssl-enforcement/ssl-enforcement.go-payload.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../commands/sso/sso.go-payload.ts";
-import type { GoType } from "./go-struct-output.encoders.ts";
+import { BRANCH_RESPONSE_SHAPE } from "../commands/branches/branches.response-shape.ts";
+import { ORGANIZATION_RESPONSE_SHAPE } from "../commands/orgs/orgs.response-shape.ts";
+import { SSL_ENFORCEMENT_RESPONSE_SHAPE } from "../commands/ssl-enforcement/ssl-enforcement.response-shape.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../commands/sso/sso.response-shape.ts";
+import type { OutputShape } from "./struct-output.encoders.ts";
 
 /**
- * Mechanical drift check for the `*.go-payload.ts` specs against the live OpenAPI schemas they
- * mirror — field-name set, `goPtr` vs `required`, field order, and value type/kind must all
+ * Mechanical drift check for the `*.response-shape.ts` specs against the live OpenAPI schemas they
+ * mirror — field-name set, `shapePtr` vs `required`, field order, and value type/kind must all
  * match, or a future spec edit silently changes `-o yaml`/`-o toml` bytes instead of failing a
  * test.
  *
- * oapi-codegen names its Go struct fields from the schema's JSON keys and declares them in
- * alphabetical order, not the schema's own `properties` order, so field order here is compared
- * against an ASCII sort of `properties` keys. That assumption holds for every schema below;
- * `KNOWN_ORDER_EXCEPTIONS` records the real order for any future schema where oapi-codegen's
- * Go-identifier sort diverges from a plain JSON-key sort.
+ * Struct fields are named from the schema's JSON keys and declared in alphabetical order, not
+ * the schema's own `properties` order, so field order here is compared against an ASCII sort of
+ * `properties` keys. That assumption holds for every schema below; `KNOWN_ORDER_EXCEPTIONS`
+ * records the real order for any future schema where the field-name sort diverges from a plain
+ * JSON-key sort.
  */
 
 interface JsonSchema {
@@ -51,23 +51,23 @@ function resolveSchema(schema: JsonSchema): JsonSchema {
   return resolved;
 }
 
-interface GoStructField {
+interface OutputShapeField {
   readonly json: string;
-  readonly type: GoType;
+  readonly type: OutputShape;
 }
 
-function structFieldsOf(spec: GoType): ReadonlyArray<GoStructField> {
+function structFieldsOf(spec: OutputShape): ReadonlyArray<OutputShapeField> {
   if (spec.kind !== "struct") {
-    throw new Error(`expected a struct GoType, got "${spec.kind}"`);
+    throw new Error(`expected a struct OutputShape, got "${spec.kind}"`);
   }
   return spec.fields;
 }
 
-function isPointerType(type: GoType): boolean {
+function isPointerType(type: OutputShape): boolean {
   return type.kind === "ptr" || type.kind === "nullable";
 }
 
-function unwrapPointer(type: GoType): GoType {
+function unwrapPointer(type: OutputShape): OutputShape {
   return type.kind === "ptr" || type.kind === "nullable" ? type.elem : type;
 }
 
@@ -79,7 +79,7 @@ interface DriftMismatch {
 }
 
 function compareFieldSet(
-  fields: ReadonlyArray<GoStructField>,
+  fields: ReadonlyArray<OutputShapeField>,
   schema: JsonSchema,
   path: string,
 ): ReadonlyArray<DriftMismatch> {
@@ -108,15 +108,15 @@ function compareFieldSet(
 }
 
 function comparePointerRequired(
-  fields: ReadonlyArray<GoStructField>,
+  fields: ReadonlyArray<OutputShapeField>,
   schema: JsonSchema,
   path: string,
 ): ReadonlyArray<DriftMismatch> {
   const required = new Set(schema.required ?? []);
   const mismatches: Array<DriftMismatch> = [];
   for (const field of fields) {
-    // oapi-codegen never pointer-wraps a Go map regardless of the schema's `required` list, so
-    // this is the one field kind the goPtr/required rule doesn't hold for.
+    // A map field is never pointer-wrapped regardless of the schema's `required` list, so
+    // this is the one field kind the shapePtr/required rule doesn't hold for.
     if (unwrapPointer(field.type).kind === "map") {
       continue;
     }
@@ -126,8 +126,8 @@ function comparePointerRequired(
       mismatches.push({
         path: `${path}.${field.json}`,
         message: isPointer
-          ? `spec marks "${field.json}" as goPtr, but the schema marks it required`
-          : `spec does not mark "${field.json}" as goPtr, but the schema marks it optional`,
+          ? `spec marks "${field.json}" as shapePtr, but the schema marks it required`
+          : `spec does not mark "${field.json}" as shapePtr, but the schema marks it optional`,
       });
     }
   }
@@ -135,7 +135,7 @@ function comparePointerRequired(
 }
 
 function compareValueType(
-  type: GoType,
+  type: OutputShape,
   schema: JsonSchema,
   path: string,
 ): ReadonlyArray<DriftMismatch> {
@@ -162,7 +162,7 @@ function compareValueType(
         return [
           {
             path,
-            message: `expected type=string format=date-time (Go time.Time), got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
+            message: `expected type=string format=date-time (timestamp), got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
           },
         ];
       }
@@ -232,7 +232,7 @@ function compareValueType(
 }
 
 function compareValueTypes(
-  fields: ReadonlyArray<GoStructField>,
+  fields: ReadonlyArray<OutputShapeField>,
   schema: JsonSchema,
   path: string,
 ): ReadonlyArray<DriftMismatch> {
@@ -248,7 +248,7 @@ function compareValueTypes(
 }
 
 function compareFieldOrder(
-  fields: ReadonlyArray<GoStructField>,
+  fields: ReadonlyArray<OutputShapeField>,
   schema: JsonSchema,
   schemaKey: string,
   path: string,
@@ -269,13 +269,13 @@ function compareFieldOrder(
 }
 
 /**
- * Walks a {@link GoType} struct spec and the corresponding OpenAPI schema in lockstep, returning
+ * Walks a {@link OutputShape} struct spec and the corresponding OpenAPI schema in lockstep, returning
  * every mismatch found. Recurses into a struct field, and into a slice field whose element is a
  * struct, so both `saml`'s nested fields and `domains`' array elements get the same field-set,
  * pointer/required, order, and value-type checks as the top-level struct.
  */
-function compareGoStructToSchema(
-  spec: GoType,
+function compareShapeToSchema(
+  spec: OutputShape,
   schema: JsonSchema,
   schemaName: string,
   path: string,
@@ -298,7 +298,7 @@ function compareGoStructToSchema(
     }
     if (inner.kind === "struct") {
       mismatches.push(
-        ...compareGoStructToSchema(inner, nestedSchema, schemaName, `${path}.${field.json}`),
+        ...compareShapeToSchema(inner, nestedSchema, schemaName, `${path}.${field.json}`),
       );
       continue;
     }
@@ -312,7 +312,7 @@ function compareGoStructToSchema(
         continue;
       }
       mismatches.push(
-        ...compareGoStructToSchema(elem, itemsSchema, schemaName, `${path}.${field.json}[]`),
+        ...compareShapeToSchema(elem, itemsSchema, schemaName, `${path}.${field.json}[]`),
       );
     }
   }
@@ -320,40 +320,44 @@ function compareGoStructToSchema(
   return mismatches;
 }
 
-interface GoPayloadSpecEntry {
+interface PayloadShapeEntry {
   readonly specName: string;
-  readonly spec: GoType;
+  readonly spec: OutputShape;
   readonly schemaName: string;
 }
 
-const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
-  { specName: "GO_BRANCH_RESPONSE", spec: GO_BRANCH_RESPONSE, schemaName: "BranchResponse_Output" },
+const PAYLOAD_SHAPE_REGISTRY: ReadonlyArray<PayloadShapeEntry> = [
   {
-    specName: "GO_ORGANIZATION_RESPONSE",
-    spec: GO_ORGANIZATION_RESPONSE,
+    specName: "BRANCH_RESPONSE_SHAPE",
+    spec: BRANCH_RESPONSE_SHAPE,
+    schemaName: "BranchResponse_Output",
+  },
+  {
+    specName: "ORGANIZATION_RESPONSE_SHAPE",
+    spec: ORGANIZATION_RESPONSE_SHAPE,
     schemaName: "OrganizationResponseV1_Output",
   },
   {
-    specName: "GO_SSL_ENFORCEMENT_RESPONSE",
-    spec: GO_SSL_ENFORCEMENT_RESPONSE,
+    specName: "SSL_ENFORCEMENT_RESPONSE_SHAPE",
+    spec: SSL_ENFORCEMENT_RESPONSE_SHAPE,
     schemaName: "SslEnforcementResponse_Output",
   },
   {
-    specName: "GO_SSO_PROVIDER_RESPONSE",
-    spec: GO_SSO_PROVIDER_RESPONSE,
+    specName: "SSO_PROVIDER_RESPONSE_SHAPE",
+    spec: SSO_PROVIDER_RESPONSE_SHAPE,
     schemaName: "GetProviderResponse_Output",
   },
 ];
 
-describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
-  it.each(GO_PAYLOAD_SPEC_REGISTRY)(
+describe("response-shape specs vs the OpenAPI schema (drift check)", () => {
+  it.each(PAYLOAD_SHAPE_REGISTRY)(
     "$specName matches the $schemaName schema with zero drift",
     ({ spec, schemaName }) => {
       const schema = SCHEMAS[schemaName];
       if (schema === undefined) {
         throw new Error(`missing OpenAPI schema "${schemaName}"`);
       }
-      expect(compareGoStructToSchema(spec, schema, schemaName, "$")).toEqual([]);
+      expect(compareShapeToSchema(spec, schema, schemaName, "$")).toEqual([]);
     },
   );
 
@@ -368,8 +372,8 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
       },
       required: ["appliedSuccessfully", "currentConfig"],
     };
-    const mismatches = compareGoStructToSchema(
-      GO_SSL_ENFORCEMENT_RESPONSE,
+    const mismatches = compareShapeToSchema(
+      SSL_ENFORCEMENT_RESPONSE_SHAPE,
       mutatedSchema,
       "SslEnforcementResponse",
       "$",
@@ -382,7 +386,7 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
 
   it("has teeth: reports a mismatch when a field's required-ness flips", () => {
     // A hand-mutated copy of the real BranchResponse schema with `git_branch` moved into
-    // `required`, though the spec still marks it `goPtr`.
+    // `required`, though the spec still marks it `shapePtr`.
     const mutatedSchema: JsonSchema = {
       type: "object",
       properties: {
@@ -418,8 +422,8 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
         "with_data",
       ],
     };
-    const mismatches = compareGoStructToSchema(
-      GO_BRANCH_RESPONSE,
+    const mismatches = compareShapeToSchema(
+      BRANCH_RESPONSE_SHAPE,
       mutatedSchema,
       "BranchResponse",
       "$",
@@ -427,7 +431,7 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
     expect(mismatches).toContainEqual(
       expect.objectContaining({
         path: "$.git_branch",
-        message: expect.stringContaining("goPtr"),
+        message: expect.stringContaining("shapePtr"),
       }),
     );
   });
@@ -447,8 +451,8 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
       },
       required: ["appliedSuccessfully", "currentConfig"],
     };
-    const mismatches = compareGoStructToSchema(
-      GO_SSL_ENFORCEMENT_RESPONSE,
+    const mismatches = compareShapeToSchema(
+      SSL_ENFORCEMENT_RESPONSE_SHAPE,
       mutatedSchema,
       "SslEnforcementResponse",
       "$",

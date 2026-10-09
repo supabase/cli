@@ -110,8 +110,8 @@ Same envelope as `json` above (including on the Docker-unbundle path).
 - The `--use-api` path rejects path traversal and symlink escapes before writing source files
   (`resolveDownloadDestination`/`ensureContainedPath`) — the Docker-unbundle path has no equivalent
   check of its own; it delegates the actual file writes to the `unbundle` subcommand running inside
-  the edge-runtime container, through the `supabase/functions` bind mount — this is a pre-existing
-  gap, not one introduced by this port. Slugs sourced from the Management API's function
+  the edge-runtime container, through the `supabase/functions` bind mount — this is a known
+  gap. Slugs sourced from the Management API's function
   list (downloading-all) are validated against the same pattern as user-supplied slugs, on both
   paths, before any per-slug download runs (CLI-1891).
 - `--use-docker` is a hidden flag but runs natively.

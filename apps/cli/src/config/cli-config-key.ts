@@ -4,7 +4,7 @@ import { Option, Result, type Path } from "effect";
 import type { Flag } from "effect/unstable/cli";
 import { TomlDate } from "smol-toml";
 
-import { parseGoBool } from "../shared/config/config-bool.ts";
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
 import {
   makeCliConfigKeyFlag,
@@ -88,13 +88,13 @@ export interface CliConfigCodec<X> {
 }
 
 export const decodingFailedMessage = (issues: ReadonlyArray<string>): string =>
-  `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`;
+  `failed to parse config:\n${issues.join("\n")}`;
 
 const UINT_MAX = 18446744073709551615n;
 const MAX_PORT = 65535;
 
-/** Go's `strconv.ParseUint(value, 0, 64)` grammar: base prefixes, bare-zero octal, `_` separators. */
-function parseGoBaseZeroUint(value: string): bigint | undefined {
+/** Base-0 unsigned integer literal grammar: base prefixes, bare-zero octal, `_` separators. */
+function parseBaseZeroUint(value: string): bigint | undefined {
   if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;
 
   let literal: string | undefined;
@@ -119,7 +119,7 @@ function parseGoBaseZeroUint(value: string): bigint | undefined {
 }
 
 const parseUintUpTo = (max: bigint) => (raw: string) => {
-  const parsed = parseGoBaseZeroUint(raw);
+  const parsed = parseBaseZeroUint(raw);
   return parsed === undefined || parsed > max ? undefined : Number(parsed);
 };
 
@@ -132,18 +132,18 @@ const parseStringList = (raw: string): Array<string> => (raw.length === 0 ? [] :
 
 const quoted = (values: ReadonlyArray<string>) => values.map((value) => `"${value}"`).join(", ");
 
-export const goBoolCodec: CliConfigCodec<boolean> = {
+export const boolCodec: CliConfigCodec<boolean> = {
   kind: "bool",
-  parse: parseGoBool,
+  parse: parseBoolLiteral,
   fromConfig: (value) => {
     if (typeof value === "boolean") return value;
     if (typeof value === "number") return value !== 0;
-    return typeof value === "string" ? parseGoBool(value) : undefined;
+    return typeof value === "string" ? parseBoolLiteral(value) : undefined;
   },
   expected: "true or false",
 };
 
-export const goUintCodec: CliConfigCodec<number> = {
+export const uintCodec: CliConfigCodec<number> = {
   kind: "uint",
   parse: parseUintUpTo(UINT_MAX),
   fromConfig: (value) =>
@@ -211,14 +211,14 @@ const weakGlobEntry = (value: unknown): string | undefined => {
   return undefined;
 };
 
-const unconvertibleType = (value: unknown): string | undefined => {
+const unsupportedTypeName = (value: unknown): string | undefined => {
   if (value instanceof TomlDate) {
-    if (value.isDate()) return "toml.LocalDate";
-    if (value.isTime()) return "toml.LocalTime";
-    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+    if (value.isDate()) return "local date";
+    if (value.isTime()) return "local time";
+    return value.isLocal() ? "local date-time" : "offset date-time";
   }
-  if (Array.isArray(value)) return "[]interface {}";
-  return typeof value === "object" && value !== null ? "map[string]interface {}" : undefined;
+  if (Array.isArray(value)) return "array";
+  return typeof value === "object" && value !== null ? "table" : undefined;
 };
 
 const isEmptyTable = (value: unknown): boolean =>
@@ -249,10 +249,8 @@ export const globListCodec: CliConfigCodec<ReadonlyArray<string>> = {
   },
   issues: (path, value) =>
     (globEntries(value) ?? []).flatMap((entry, index) => {
-      const type = unconvertibleType(entry);
-      return type === undefined
-        ? []
-        : [`'${path}[${index}]' expected type 'string', got unconvertible type '${type}'`];
+      const type = unsupportedTypeName(entry);
+      return type === undefined ? [] : [`${path}[${index}]: expected a string, got ${type}`];
     }),
 };
 

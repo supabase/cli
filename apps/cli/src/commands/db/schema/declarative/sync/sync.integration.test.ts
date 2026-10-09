@@ -601,7 +601,7 @@ describe("db schema declarative sync integration", () => {
     },
   );
 
-  it.effect("rejects --apply=false --no-apply as a conflict (Go flag.Changed)", () => {
+  it.effect("rejects --apply=false --no-apply as a conflict", () => {
     // The gate runs first, so `--experimental` is required here for the mutex error to surface.
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

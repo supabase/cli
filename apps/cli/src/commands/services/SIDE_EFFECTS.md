@@ -75,11 +75,11 @@ Prints the YAML array of service rows.
 
 ### `--output-format json`
 
-TS-only structured success event: `{ services: [...] }`.
+Structured success event: `{ services: [...] }`.
 
 ### `--output-format stream-json`
 
-TS-only NDJSON success event with the same `{ services: [...] }` payload.
+NDJSON success event with the same `{ services: [...] }` payload.
 
 ## Notes
 

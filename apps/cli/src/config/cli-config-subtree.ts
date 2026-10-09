@@ -9,7 +9,7 @@ export const resolveCliSubtree = <T>(
   tree: T,
   values: Readonly<Record<string, string>>,
   path: string,
-) => resolveCliConfigSubtree(tree, { values }, path, { goViperCompat: true });
+) => resolveCliConfigSubtree(tree, { values }, path, { cliCompat: true });
 
 /** {@link resolveCliSubtree} with the values the snapshot's shell and project `.env*` supply. */
 export const resolveSnapshotSubtree = Effect.fn("CliConfigSubtree.resolve")(function* <T>(

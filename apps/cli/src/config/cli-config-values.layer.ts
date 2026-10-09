@@ -389,17 +389,17 @@ export const cliConfigValuesLayer = Layer.effect(
       const loaded = yield* withPlatform(
         decodeMergedCliConfig(mergedForDecode, {
           envValues,
-          goViperCompat: true,
+          cliCompat: true,
           document: declaredDraft,
         }),
       );
       const fileDeclared = withPlatform(
-        decodeMergedCliConfig(mergedForDecode, { envValues, goViperCompat: true, silent: true }),
+        decodeMergedCliConfig(mergedForDecode, { envValues, cliCompat: true, silent: true }),
       );
       const materializedLoaded = yield* withPlatform(
         decodeMergedCliConfig(mergedForDecode, {
           envValues,
-          goViperCompat: true,
+          cliCompat: true,
           document: materializedDraft,
           silent: true,
         }),

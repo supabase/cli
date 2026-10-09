@@ -421,7 +421,7 @@ export interface ComputeSetupOptions {
    * including `table` and `csv`, which these commands are meant to ignore and
    * render text for.
    */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   /** The root `--yes`, read by `delete` through `resolveYes`. */
   readonly yes?: boolean;
   /** Raw argv, which `resolveYes` scans for an explicit `--yes=false`. */
@@ -494,7 +494,7 @@ export function setupCompute(options: ComputeSetupOptions) {
       randomLayer,
       Layer.succeed(
         OutputFlag,
-        options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
+        options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       Layer.succeed(YesFlag, options.yes ?? false),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),

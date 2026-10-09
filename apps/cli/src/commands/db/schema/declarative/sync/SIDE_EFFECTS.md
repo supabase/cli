@@ -154,7 +154,7 @@ restore recreates the database; failed publication warns and keeps the live shad
 
 The bundled (pg-delta next) engine provisions both plan shadows through
 `acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when
-`SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
+`SUPABASE_SHADOW_CACHE` is set to anything not boolean-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share

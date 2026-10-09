@@ -9,7 +9,7 @@ import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import {
   commaListCodec,
   globListCodec,
-  goBoolCodec,
+  boolCodec,
   literalCodec,
   stringCodec,
   type CliConfigCodec,
@@ -163,7 +163,7 @@ export const CLI_CONFIG_DOCUMENT_KEYS: ReadonlyArray<CliConfigKeyDef> = [
     secret: true,
   },
   { path: "auth.external_url", codec: stringCodec, optional: true },
-  { path: "auth.passkey.enabled", codec: goBoolCodec, default: false },
+  { path: "auth.passkey.enabled", codec: boolCodec, default: false },
   { path: "auth.webauthn.rp_id", codec: stringCodec, default: "" },
   { path: "auth.webauthn.rp_display_name", codec: stringCodec, default: "" },
   { path: "auth.webauthn.rp_origins", codec: commaListCodec, default: [] },
@@ -208,13 +208,13 @@ export const CLI_CONFIG_FAMILIES: ReadonlyArray<CliConfigFamilyDef> = [
     id: "authExternal",
     prefix: "auth.external",
     fields: [
-      { name: "enabled", codec: goBoolCodec, default: false },
+      { name: "enabled", codec: boolCodec, default: false },
       { name: "client_id", codec: stringCodec, default: "" },
       { name: "secret", codec: stringCodec, optional: true, secret: true },
       { name: "url", codec: stringCodec, default: "" },
       { name: "redirect_uri", codec: stringCodec, default: "" },
-      { name: "skip_nonce_check", codec: goBoolCodec, default: false },
-      { name: "email_optional", codec: goBoolCodec, default: false },
+      { name: "skip_nonce_check", codec: boolCodec, default: false },
+      { name: "email_optional", codec: boolCodec, default: false },
     ],
   },
   {
@@ -230,7 +230,7 @@ export const CLI_CONFIG_FAMILIES: ReadonlyArray<CliConfigFamilyDef> = [
     id: "authEmailNotification",
     prefix: "auth.email.notification",
     fields: [
-      { name: "enabled", codec: goBoolCodec, default: false },
+      { name: "enabled", codec: boolCodec, default: false },
       { name: "subject", codec: stringCodec, optional: true },
       { name: "content_path", codec: stringCodec, default: "" },
       { name: "content", codec: stringCodec, optional: true },
@@ -240,7 +240,7 @@ export const CLI_CONFIG_FAMILIES: ReadonlyArray<CliConfigFamilyDef> = [
     id: "authHook",
     prefix: "auth.hook",
     fields: [
-      { name: "enabled", codec: goBoolCodec, default: false },
+      { name: "enabled", codec: boolCodec, default: false },
       { name: "uri", codec: stringCodec, default: "" },
       { name: "secrets", codec: stringCodec, default: "", secret: true },
     ],

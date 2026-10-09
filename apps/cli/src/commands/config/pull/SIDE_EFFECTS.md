@@ -171,9 +171,8 @@ not, regardless of `destination.created`.
 
 ### `-o/--output` (machine formats)
 
-**Not supported.** `config pull` is a net-new TS command with no Go parity contract (CLI-2156,
-mirrors `config diff`). Any `-o`/`--output` value — every machine-format value AND `pretty` — is
-rejected outright (`ConfigPullOutputFlagUnsupportedError`, exit 1), checked FIRST, before any
+**Not supported.** `config pull` does not accept `-o`/`--output`, like `config diff`. Any value —
+every machine-format value AND `pretty` — is rejected outright (`ConfigPullOutputFlagUnsupportedError`, exit 1), checked FIRST, before any
 config load, target resolution, or network call:
 
 ```

@@ -169,7 +169,7 @@ describe("projectRefLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not persist the selected ref to the temp file (Go parity)", () => {
+  it.effect("does not persist the selected ref to the temp file", () => {
     const projects = [
       { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
     ];
@@ -274,7 +274,7 @@ describe("projectRefLayer", () => {
     });
   });
 
-  describe("loadProjectRef (Go flags.LoadProjectRef — non-prompting)", () => {
+  describe("loadProjectRef (non-prompting)", () => {
     it.effect("prefers flag, then projectId, then the ref file", () => {
       writeRefFile(tempRoot, ANOTHER_REF);
       const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
@@ -347,7 +347,7 @@ describe("projectRefLayer", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("skips the ref file (Go MemMapFs) and fails off-TTY with no flag/projectId", () => {
+    it.effect("skips the ref file and fails off-TTY with no flag/projectId", () => {
       writeRefFile(tempRoot, VALID_REF);
       const { layer } = makeLayer({ workdir: tempRoot });
       return Effect.gen(function* () {

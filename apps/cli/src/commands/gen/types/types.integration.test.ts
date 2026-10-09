@@ -357,7 +357,7 @@ const setup = Effect.fnUntraced(function* (
     readonly explicitWorkdir?: boolean;
     readonly projectId?: Option.Option<string>;
     readonly format?: "text" | "json" | "stream-json";
-    readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+    readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     readonly projectTypes?: string;
     readonly childExitCode?: number;
     readonly childStderr?: ReadonlyArray<string>;
@@ -498,7 +498,7 @@ const setup = Effect.fnUntraced(function* (
     BunServices.layer,
     child.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
-    Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
+    Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
     Layer.succeed(DnsResolverFlag, "native" as const),
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(api.layer)),
@@ -530,7 +530,7 @@ const nonTypescriptProjectRefScenarios = [
 }>;
 
 describe("gen types", () => {
-  it.effect("accepts Go-style microsecond duration aliases", () =>
+  it.effect("accepts microsecond duration aliases", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutMillis(`15${"µ"}s`)).toBe(0.015);
       expect(yield* parseQueryTimeoutMillis(`15${"μ"}s`)).toBe(0.015);
@@ -978,7 +978,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () =>
+    it.live("does not misdetect a mutex flag consumed as -s's value", () =>
       Effect.gen(function* () {
         // `childExitCode: 1` fails the local target's `container inspect`, keeping the
         // downstream failure deterministic once `--linked` is consumed as `-s`'s value.
@@ -999,7 +999,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("rejects --swift-access-control with --linked (cobra mutex group)", () =>
+    it.live("rejects --swift-access-control with --linked (mutex group)", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: ["gen", "types", "--linked", "--swift-access-control", "public", "--lang", "swift"],
@@ -1021,7 +1021,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("rejects --swift-access-control with --project-id (cobra mutex group)", () =>
+    it.live("rejects --swift-access-control with --project-id (mutex group)", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: [
@@ -1097,7 +1097,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("rejects --query-timeout with --project-id (cobra mutex group)", () =>
+    it.live("rejects --query-timeout with --project-id (mutex group)", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: ["gen", "types", "--project-id", VALID_REF, "--query-timeout", "20s"],
@@ -1115,7 +1115,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("rejects --query-timeout with --linked (cobra mutex group)", () =>
+    it.live("rejects --query-timeout with --linked (mutex group)", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: ["gen", "types", "--linked", "--query-timeout", "20s"],
@@ -1135,7 +1135,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("counts explicitly negated booleans as set for mutex groups (pflag Changed)", () =>
+    it.live("counts explicitly negated booleans as set for mutex groups", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: ["gen", "types", "--linked=false", "--project-id", VALID_REF],
@@ -1213,7 +1213,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("reports mutex groups in cobra's sorted group-key order", () =>
+    it.live("reports mutex groups in sorted group-key order", () =>
       Effect.gen(function* () {
         const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
         const { layer } = yield* setup({
@@ -1310,7 +1310,7 @@ describe("gen types", () => {
         Effect.gen(function* () {
           const { layer } = yield* setup({
             args: ["gen", "types", "-o", "json", "go"],
-            goOutput: Option.some("json"),
+            outputFlag: Option.some("json"),
           });
           const exit = yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
 
@@ -2627,7 +2627,7 @@ describe("gen types", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("generates locally with Go defaults when supabase/config.toml is missing", () =>
+    it.live("generates locally with defaults when supabase/config.toml is missing", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-local-no-config-");
         const { layer, out, child, generator } = yield* setup({ workdir, skipConfig: true });

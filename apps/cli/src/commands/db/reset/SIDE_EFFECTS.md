@@ -265,8 +265,8 @@ to those defaults (the usual outcome for an interactive terminal).
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
   unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
   never implies `--linked`: passing it with a resolved `--local`/`--db-url`
-  target is a hard error rather than a silently discarded flag (deliberately
-  stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
+  target is a hard error rather than a silently discarded flag (stricter
+  than `SUPABASE_PROJECT_ID`, which simply goes unused on a
   non-linked target).
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
@@ -303,7 +303,7 @@ to those defaults (the usual outcome for an interactive terminal).
   `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled` is
   NOT set. Taking this branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
-  nothing. Two undocumented quirks apply: (1) the `schema_paths`
+  nothing. Two quirks apply: (1) the `schema_paths`
   default is `[]`, so a stock project running an experimental reset silently applies
   NOTHING (drops schemas, seeds, but replays no SQL) rather than falling back to
   migrations; (2) a partial glob failure (some patterns match, others don't) is

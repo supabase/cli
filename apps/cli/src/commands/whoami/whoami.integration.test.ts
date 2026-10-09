@@ -4,7 +4,7 @@ import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
-import { InvalidOutputFormatError } from "../../command-internal/go-output-flag.ts";
+import { InvalidOutputFormatError } from "../../command-internal/output-formats.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -35,7 +35,7 @@ const tempRoot = useTempWorkdir("supabase-whoami-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
@@ -53,7 +53,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ...(telemetry === undefined ? {} : { telemetry: telemetry.layer }),
   });
   return { layer, out, api, telemetry };
@@ -195,8 +195,8 @@ describe("whoami integration", () => {
   });
 
   it.live("rejects every -o/--output value before calling the API", () => {
-    const run = (goOutput: (typeof GLOBAL_OUTPUT_FORMATS)[number]) => {
-      const { layer, api } = setup({ goOutput });
+    const run = (outputFlag: (typeof GLOBAL_OUTPUT_FORMATS)[number]) => {
+      const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
         const error = findError(yield* whoami({}).pipe(Effect.exit));
         expect(error).toBeInstanceOf(WhoamiOutputFlagUnsupportedError);
@@ -217,8 +217,8 @@ describe("whoami integration", () => {
   });
 
   it.live("routes -o table/csv through the command's unsupported-output error", () => {
-    const run = (goOutput: "table" | "csv") => {
-      const { layer, api } = setup({ goOutput });
+    const run = (outputFlag: "table" | "csv") => {
+      const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
         const error = findError(yield* whoamiHandler({}).pipe(Effect.exit));
         expect(error).toBeInstanceOf(WhoamiOutputFlagUnsupportedError);
@@ -229,7 +229,7 @@ describe("whoami integration", () => {
           Layer.mergeAll(
             layer,
             commandRuntimeLayer(["whoami"]).pipe(Layer.provide(BunCrypto.layer)),
-            Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", goOutput]) }),
+            Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", outputFlag]) }),
           ),
         ),
       );

@@ -12,7 +12,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
-import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import {
@@ -78,7 +78,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   const telemetryState = yield* TelemetryState;
   const cliSettings = yield* CommandSettings;
   const processControl = yield* ProcessControl;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const fs = yield* FileSystem.FileSystem;
 
   // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
@@ -93,7 +93,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   yield* Effect.gen(function* () {
     // Reject `-o/--output` outright: this command only supports `--output-format`. Checked first
     // so an invalid invocation never burns a config load or a network call.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new ConfigDiffOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config diff"),
       });

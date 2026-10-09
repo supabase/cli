@@ -4,7 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -15,7 +15,7 @@ import { networkRestrictionsUpdate } from "./update.handler.ts";
 
 /**
  * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
- * appends across repeats, failing at parse time with pflag's diagnostic on malformed CSV.
+ * appends across repeats, failing at parse time with a diagnostic on malformed CSV.
  * If `-o` is also invalid, this error wins since `-o` is validated later, in the handler.
  */
 export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(

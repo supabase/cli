@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { FunctionsGoConfigCompat } from "../shared/functions/functions-config.ts";
+import type { FunctionsLocalConfigLoader } from "../shared/functions/functions-config.ts";
 import { loadLocalProjectContext } from "./local-project-context.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 
@@ -17,7 +17,7 @@ function toError(cause: unknown): Error {
  * local-dev values (JWTs, URLs) are discarded here; only `projectId`/`edgeRuntimeDenoVersion` and
  * the validation side effect (throws on the first failure) matter to these three commands.
  */
-export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
+export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
   load: ({ projectRoot, projectRef }) =>
     Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(projectRoot, toError, projectRef);

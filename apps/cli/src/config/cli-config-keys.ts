@@ -20,8 +20,8 @@ import type { CliConfigFlagDeclaration, CliConfigNoFlags } from "./cli-config-fl
 import {
   cliEnvName,
   commaListCodec,
-  goBoolCodec,
-  goUintCodec,
+  boolCodec,
+  uintCodec,
   literalCodec,
   makeCliConfigKey,
   portCodec,
@@ -75,10 +75,10 @@ const collectSchemaLeaves = (
 const codecForLeaf = (segments: ReadonlyArray<string>, node: SchemaAST.AST) => {
   switch (node._tag) {
     case "Boolean":
-      return goBoolCodec;
+      return boolCodec;
     case "Number": {
       const last = segments[segments.length - 1] ?? "";
-      return last === "port" || last.endsWith("_port") ? portCodec : goUintCodec;
+      return last === "port" || last.endsWith("_port") ? portCodec : uintCodec;
     }
     case "String":
       return stringCodec;

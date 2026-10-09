@@ -45,8 +45,7 @@ No files are written.
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
-project-ref paths — a sanctioned intentional divergence, see Notes
-(CLI-1988) — the project endpoint is probed first: a `404` means the ref is a
+project-ref paths (see Notes, CLI-1988), the project endpoint is probed first: a `404` means the ref is a
 preview branch (any 404 body), so the branch endpoint supplies the branch database
 host/port and credentials for the direct connection. Otherwise the database
 connection is resolved for the ref and the login-role endpoint supplies temporary
@@ -175,7 +174,7 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   over any of these three flags.
 - **Output compatibility with the previous pg-meta-based generator.** Measured against
   pg-meta's reference generators on the same schema:
-  - Go and Swift output are byte-identical.
+  - Go and Swift output is byte-identical to the reference generators.
   - TypeScript: a `NOT NULL` jsonb column now generates `NonNullable<Json>` instead of
     `Json` — the old type wrongly admitted `null` on a column the schema declares
     non-nullable.

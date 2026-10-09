@@ -5,10 +5,13 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { GO_ORGANIZATION_RESPONSE } from "../orgs.go-payload.ts";
+import { ORGANIZATION_RESPONSE_SHAPE } from "../orgs.response-shape.ts";
 import { OrgsCreateNetworkError, OrgsCreateUnexpectedStatusError } from "../orgs.errors.ts";
 import { renderOrgsListTable } from "../orgs.format.ts";
 import type { OrgsCreateFlags } from "./create.command.ts";
@@ -24,13 +27,13 @@ const mapCreateError = mapHttpError({
 
 export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
-    // gates on output.format rather than goFmt because --output pretty keeps the format
+    // gates on output.format rather than outputFlagFormat because --output pretty keeps the format
     // "text" while still rendering the table.
     const creating =
       output.format === "text" ? yield* output.task("Creating organization...") : undefined;
@@ -42,29 +45,29 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
       );
     yield* creating?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    // Printed once before the format switch, but only for the Go-format branches — the
+    // Printed once before the format switch, but only for the `-o` branches — the
     // --output-format json/stream-json paths emit a single structured event instead and
     // stay preamble-free.
     const preamble = `Created organization: ${created.id}\n`;
 
-    if (goFmt === "json") {
+    if (outputFlagFormat === "json") {
       yield* output.raw(preamble);
-      yield* output.raw(encodeGoJson(created));
+      yield* output.raw(encodeSortedJson(created));
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw(preamble);
-      yield* output.raw(encodeGoYaml(created, GO_ORGANIZATION_RESPONSE));
+      yield* output.raw(encodeStructYaml(created, ORGANIZATION_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(preamble);
-      yield* output.raw(encodeGoToml(created, GO_ORGANIZATION_RESPONSE));
+      yield* output.raw(encodeStructToml(created, ORGANIZATION_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(preamble);
       yield* output.raw(encodeEnv(created) + "\n");
       return;

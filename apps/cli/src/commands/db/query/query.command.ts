@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";

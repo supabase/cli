@@ -3,7 +3,7 @@ import { Effect, Option, Path } from "effect";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { describeCliConfigOrigin } from "../config/cli-config-key.ts";
 import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
-import { parseGoBool } from "../shared/config/config-bool.ts";
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 import { promptYesNoOutcome } from "./prompt-yes-no.ts";
@@ -36,7 +36,7 @@ const remoteDeclaresSeedEnabled = (snapshot: CliConfigSnapshot, remote: string):
   if (typeof block !== "object" || block === null) return false;
   const seed = (block as { db?: { seed?: { enabled?: unknown } } }).db?.seed;
   const declared = seed?.enabled;
-  return typeof declared === "string" ? parseGoBool(declared) === true : declared === true;
+  return typeof declared === "string" ? parseBoolLiteral(declared) === true : declared === true;
 };
 
 /**

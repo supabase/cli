@@ -1,6 +1,6 @@
 # `supabase db dump`
 
-Native TypeScript port (`dump.handler.ts`). Streams a `pg_dump`/`pg_dumpall`
+Implemented in `dump.handler.ts`. Streams a `pg_dump`/`pg_dumpall`
 script run inside the compose Postgres image, or catalog `pg_dump` /
 `pg_dumpall` on the stack backend (native artifact or a one-shot of the same
 image), to stdout or `--file`.
@@ -49,7 +49,7 @@ image), to stdout or `--file`.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                                |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                              |
 | `1`  | `--password` with `--db-url` or `--local`                                                                                                                             |
 
 ## Output
@@ -80,7 +80,7 @@ shell inherits the suppressing variables and is missed.
 > password) is printed **in cleartext** to stdout. Operators piping `--dry-run`
 > output to logs or CI artifacts should treat that output as a secret.
 
-## Notes / Divergences
+## Notes
 
 - **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on

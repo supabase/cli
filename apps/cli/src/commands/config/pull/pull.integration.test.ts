@@ -329,7 +329,7 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly v2?: { status: number; body: unknown } | "fail" | "decode-fail";
   readonly branchByName?: { status: number; body: unknown } | "fail";
   readonly branchByUuid?: { status: number; body: unknown };
@@ -423,7 +423,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -1557,10 +1557,10 @@ describe("config pull integration", () => {
 
   it.live("every -o/--output value is rejected before any config load or network call", () => {
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);

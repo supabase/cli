@@ -46,7 +46,7 @@ describe("debugLoggerLayer", () => {
     );
   });
 
-  it.effect("http emits Go timestamp order and method/url format", () => {
+  it.effect("http emits timestamp, method and url in order", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 5, 4, 8, 24, 47));
     const stderr = captureStderr();

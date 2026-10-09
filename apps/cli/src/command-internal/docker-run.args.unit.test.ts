@@ -26,7 +26,7 @@ describe("applyBitbucketDockerFilter", () => {
     expect(applyBitbucketDockerFilter(pgDelta, false)).toBe(pgDelta);
   });
 
-  test("drops named-volume binds and clears security-opt under Bitbucket (Go DockerStart)", () => {
+  test("drops named-volume binds and clears security-opt under Bitbucket", () => {
     const filtered = applyBitbucketDockerFilter(pgDelta, true);
     // Named Deno-cache volume dropped; the /repo:/workspace bind mount kept.
     expect(filtered.binds).toEqual(["/repo:/workspace"]);
@@ -35,7 +35,7 @@ describe("applyBitbucketDockerFilter", () => {
 });
 
 describe("buildDockerArgs", () => {
-  test("assembles run args in Go-parity order for a named network", () => {
+  test("assembles run args in order for a named network", () => {
     expect(buildDockerArgs(base)).toEqual([
       "run",
       "--rm",
@@ -114,7 +114,7 @@ describe("buildDockerArgs", () => {
     expect(buildDockerArgs(base)).not.toContain("--label");
   });
 
-  test("emits --label k=v for each entry, before the image (Go's DockerStart project labels)", () => {
+  test("emits --label k=v for each entry, before the image", () => {
     const args = buildDockerArgs({
       ...base,
       labels: {

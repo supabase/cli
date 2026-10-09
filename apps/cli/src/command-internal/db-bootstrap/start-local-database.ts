@@ -22,9 +22,9 @@ import {
   resolveGotruePasskeyWebauthn,
   resolveLocalConfigValues,
 } from "../local-config-values.ts";
-import { parseGoDuration, resolveHealthTimeoutSeconds } from "../go-duration.ts";
+import { parseDuration, resolveHealthTimeoutSeconds } from "../duration.ts";
 import { ramInBytes } from "../size-units.ts";
-import { goUrlParse } from "../storage-url.ts";
+import { parseUrl } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -110,10 +110,10 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // touched or the already-running check runs. The parsed values are discarded; only the
   // fail-fast behavior matters.
   yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
-    parseGoDuration(config.auth.email.max_frequency),
+    parseDuration(config.auth.email.max_frequency),
   );
   yield* wrapDbConfigOverride("auth.sms.max_frequency", () =>
-    parseGoDuration(config.auth.sms.max_frequency),
+    parseDuration(config.auth.sms.max_frequency),
   );
   if (
     config.auth.enabled &&
@@ -128,15 +128,15 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   }
   const { timebox, inactivity_timeout: inactivityTimeout } = config.auth.sessions ?? {};
   if (timebox !== undefined) {
-    yield* wrapDbConfigOverride("auth.sessions.timebox", () => parseGoDuration(timebox));
+    yield* wrapDbConfigOverride("auth.sessions.timebox", () => parseDuration(timebox));
   }
   if (inactivityTimeout !== undefined) {
     yield* wrapDbConfigOverride("auth.sessions.inactivity_timeout", () =>
-      parseGoDuration(inactivityTimeout),
+      parseDuration(inactivityTimeout),
     );
   }
   yield* wrapDbConfigOverride("auth.mfa.phone.max_frequency", () =>
-    parseGoDuration(config.auth.mfa.phone.max_frequency),
+    parseDuration(config.auth.mfa.phone.max_frequency),
   );
   yield* wrapDbConfigOverride("auth.passkey", () => resolveGotruePasskeyWebauthn(document));
   yield* wrapDbConfigOverride("auth.external", () =>
@@ -156,7 +156,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   }
   if (config.studio.enabled) {
     yield* Effect.try({
-      try: () => goUrlParse(config.studio.api_url),
+      try: () => parseUrl(config.studio.api_url),
       catch: (cause) =>
         new DbConfigLoadError({
           message: `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,

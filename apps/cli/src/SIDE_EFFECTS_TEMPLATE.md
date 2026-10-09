@@ -120,5 +120,5 @@
 <!-- Anything else an implementer or reviewer needs to know:
      - Behaviour differences between --local / --linked / --project-ref modes
      - Idempotency characteristics
-     - Known divergences from Go CLI output that are intentional
+     - Intentional output quirks
      - Side effects of retries or partial failures -->

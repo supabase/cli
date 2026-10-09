@@ -16,20 +16,19 @@ Compose, and it does not go through `@supabase/stack/effect`'s orchestration mod
 (see the CLI-1323 plan's "Critical architectural finding" for why: that runtime is a
 deliberately different local-dev product — no Kong gateway, native-binary-first,
 auto-allocated ports, opaque API keys — that would break the compatibility contract
-this port exists to provide).
+of this command).
 
 ## Scope
 
 Edge Runtime bring-up, the fresh-volume DB schema/migration/seed setup pipeline, and
-fresh-volume storage-bucket seeding are all now natively implemented (see below) — this
-section previously listed them as out-of-scope follow-ups.
+fresh-volume storage-bucket seeding are all natively implemented (see below).
 
 One piece of `start` is explicitly **out of scope**:
 
 1. **Linked-project version-check suggestion** — a best-effort Management API call, made
    only when a project happens to be linked _and_ the user is logged in, purely to print
-   an "update available" hint. Omitted entirely — this port has zero Management API
-   dependency for `start`, by design. The runtime layer does compose the lazy
+   an "update available" hint. Omitted entirely — `start` has zero Management API
+   dependency, by design. The runtime layer does compose the lazy
    Management-API factory — a static requirement of the shared storage-credentials
    resolver whose hosted branch `start` never reaches — so building the layer loads the
    credential subsystem: the keyring module import (skipped under `SUPABASE_NO_KEYRING=1`

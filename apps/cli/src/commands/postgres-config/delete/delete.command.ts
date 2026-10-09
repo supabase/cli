@@ -4,7 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -14,7 +14,7 @@ import {
 import { postgresConfigDelete } from "./delete.handler.ts";
 
 /**
- * CSV-splits each occurrence into config keys, failing at parse time with pflag's diagnostic
+ * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
  * on malformed CSV — before the --experimental gate runs.
  */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(

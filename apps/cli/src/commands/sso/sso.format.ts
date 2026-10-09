@@ -82,7 +82,7 @@ export function toSsoProviderView(value: unknown): SsoProviderView {
 
 /**
  * Validates a positional provider-id argument as a canonical UUID.
- * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
+ * Failure message double-quotes the raw input via JSON.stringify.
  */
 export function validateUuid(input: string): Result.Result<string, SsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {
@@ -149,7 +149,7 @@ const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
 
 /**
  * Pretty-prints an XML document by inserting newlines and indentation between
- * tags, matching `go-xmlfmt/xmlfmt@v1.1.3`'s output byte-for-byte (excluding
+ * tags, matching `xmlfmt@v1.1.3`'s output byte-for-byte (excluding
  * its unused nested-tags-in-comments branch). Text between adjacent
  * open/close tags (e.g. `<b>text</b>`) stays inline; other tags start a new,
  * indented line.

@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   commaListCodec,
-  goBoolCodec,
+  boolCodec,
   globListCodec,
-  goUintCodec,
+  uintCodec,
   literalCodec,
   optionalCliConfigKey,
   pickCliConfigKey,
@@ -61,7 +61,7 @@ const makeSources = (parts: SourceParts = {}): CliConfigSources => {
 const seed = requiredCliConfigKey({
   path: "db.seed.enabled",
   env: ["SUPABASE_DB_SEED_ENABLED"],
-  codec: goBoolCodec,
+  codec: boolCodec,
   default: true,
 });
 
@@ -146,7 +146,7 @@ describe("pickCliConfigKey tiers", () => {
   it("evaluates a context default against the loaded document", () => {
     const smtp = requiredCliConfigKey({
       path: "auth.email.smtp.enabled",
-      codec: goBoolCodec,
+      codec: boolCodec,
       defaultFrom: (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
     });
 
@@ -220,7 +220,7 @@ describe("pickCliConfigKey attributes", () => {
     const pgdelta = requiredCliConfigKey({
       path: "experimental.pgdelta.enabled",
       env: ["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED", "SUPABASE_EXPERIMENTAL_PG_DELTA"],
-      codec: goBoolCodec,
+      codec: boolCodec,
       default: false,
     });
 
@@ -245,7 +245,7 @@ describe("pickCliConfigKey attributes", () => {
     const webhooks = requiredCliConfigKey({
       path: "experimental.webhooks.enabled",
       env: ["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"],
-      codec: goBoolCodec,
+      codec: boolCodec,
       default: false,
       envRequiresSection: "experimental.webhooks",
     });
@@ -375,7 +375,7 @@ describe("pickCliConfigKey failure text", () => {
     const jwtExpiry = requiredCliConfigKey({
       path: "auth.jwt_expiry",
       env: ["SUPABASE_AUTH_JWT_EXPIRY"],
-      codec: goUintCodec,
+      codec: uintCodec,
       default: 3600,
     });
 
@@ -406,7 +406,7 @@ describe("pickCliConfigKey failure text", () => {
     const secretBool = requiredCliConfigKey({
       path: "x.secret",
       env: ["SUPABASE_X_SECRET"],
-      codec: goBoolCodec,
+      codec: boolCodec,
       default: false,
       secret: true,
     });
@@ -464,19 +464,17 @@ describe("pickCliConfigKey weak config values", () => {
     expect(globOf({})).toEqual([]);
   });
 
-  it("names every unconvertible entry in one decoding-failed error", () => {
+  it("names every unsupported entry in one decoding-failed error", () => {
     const failure = failureOf(sqlPaths, {
       config: { "db.seed.sql_paths": [["nested"], "ok", { k: "v" }] },
     });
 
     expect(failure).toMatchObject({ tier: "config", path: "db.seed.sql_paths" });
     expect(failure.issues).toEqual([
-      "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
-      "'db.seed.sql_paths[2]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+      "db.seed.sql_paths[0]: expected a string, got array",
+      "db.seed.sql_paths[2]: expected a string, got table",
     ]);
-    expect(failure.message).toBe(
-      `failed to parse config: decoding failed due to the following error(s):\n\n${failure.issues?.join("\n")}`,
-    );
+    expect(failure.message).toBe(`failed to parse config:\n${failure.issues?.join("\n")}`);
   });
 });
 

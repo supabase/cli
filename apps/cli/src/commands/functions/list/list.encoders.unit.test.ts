@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   decodeFunctionsResponse,
-  encodeFunctionsGoJson,
-  encodeFunctionsGoToml,
-  encodeFunctionsGoYaml,
+  encodeFunctionsListJson,
+  encodeFunctionsListToml,
+  encodeFunctionsListYaml,
   type ParsedFunctions,
 } from "./list.encoders.ts";
 
@@ -30,7 +30,7 @@ describe("list encoders", () => {
     });
   });
 
-  it("preserves null elements as Go zero-value rows", () => {
+  it("preserves null elements as zero-value rows", () => {
     const decoded = decodeFunctionsResponse("[null]");
     expect(decoded).toEqual({
       ok: true,
@@ -56,7 +56,7 @@ describe("list encoders", () => {
     });
   });
 
-  it("preserves Go zero values for omitted non-pointer fields", () => {
+  it("preserves zero values for omitted non-pointer fields", () => {
     const decoded = decodeFunctionsResponse("[{}]");
     expect(decoded).toEqual({
       ok: true,
@@ -82,15 +82,15 @@ describe("list encoders", () => {
     });
   });
 
-  it("omits null optional fields from Go JSON output", () => {
+  it("omits null optional fields from JSON output", () => {
     const parsed: ParsedFunctions = {
       functions: [SAMPLE_FUNCTION],
       isNil: false,
     };
-    expect(encodeFunctionsGoJson(parsed)).not.toContain('"import_map_path": null');
+    expect(encodeFunctionsListJson(parsed)).not.toContain('"import_map_path": null');
   });
 
-  it("escapes html-sensitive and line-separator characters in Go JSON output", () => {
+  it("escapes html-sensitive and line-separator characters in JSON output", () => {
     const parsed: ParsedFunctions = {
       functions: [
         {
@@ -100,17 +100,17 @@ describe("list encoders", () => {
       ],
       isNil: false,
     };
-    expect(encodeFunctionsGoJson(parsed)).toContain(
+    expect(encodeFunctionsListJson(parsed)).toContain(
       '"name": "\\u003cHello\\u003e\\u0026World\\u003e\\u2028\\u2029"',
     );
   });
 
-  it("keeps Go JSON keys in the legacy order", () => {
+  it("keeps JSON keys in the legacy order", () => {
     const parsed: ParsedFunctions = {
       functions: [SAMPLE_FUNCTION],
       isNil: false,
     };
-    expect(encodeFunctionsGoJson(parsed)).toContain(`{
+    expect(encodeFunctionsListJson(parsed)).toContain(`{
     "created_at": 1687423025152,
     "entrypoint_path": "functions/hello-world/index.ts",
     "id": "11111111-2222-3333-4444-555555555555",
@@ -124,9 +124,11 @@ describe("list encoders", () => {
   }`);
   });
 
-  it("keeps Go YAML keys and null optional fields", () => {
+  it("keeps YAML keys and null optional fields", () => {
     expect(
-      encodeFunctionsGoYaml([{ ...SAMPLE_FUNCTION, verify_jwt: undefined, import_map: undefined }]),
+      encodeFunctionsListYaml([
+        { ...SAMPLE_FUNCTION, verify_jwt: undefined, import_map: undefined },
+      ]),
     ).toContain(`- createdat: 1687423025152
   entrypointpath: functions/hello-world/index.ts
   ezbrsha256: null
@@ -135,8 +137,8 @@ describe("list encoders", () => {
   importmappath: null`);
   });
 
-  it("keeps Go TOML keys in struct order with BurntSushi's 2-space indentation", () => {
-    expect(encodeFunctionsGoToml({ functions: [SAMPLE_FUNCTION], isNil: false })).toBe(
+  it("keeps TOML keys in struct order with a 2-space indentation", () => {
+    expect(encodeFunctionsListToml({ functions: [SAMPLE_FUNCTION], isNil: false })).toBe(
       `[[functions]]
   CreatedAt = 1687423025152
   EntrypointPath = "functions/hello-world/index.ts"
@@ -153,7 +155,7 @@ describe("list encoders", () => {
   });
 
   it("emits nothing for a nil TOML list and `functions = []` for a decoded empty list", () => {
-    expect(encodeFunctionsGoToml({ functions: [], isNil: true })).toBe("");
-    expect(encodeFunctionsGoToml({ functions: [], isNil: false })).toBe("functions = []\n");
+    expect(encodeFunctionsListToml({ functions: [], isNil: true })).toBe("");
+    expect(encodeFunctionsListToml({ functions: [], isNil: false })).toBe("functions = []\n");
   });
 });

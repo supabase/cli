@@ -1,6 +1,6 @@
 # `supabase migration squash`
 
-Native Effect port (CLI-1969). Squashes every local migration up to (optionally)
+Squashes every local migration up to (optionally)
 `--version` into the last one — diffing a natively-provisioned shadow database's
 `auth`/`storage` schemas before and after applying every migration, dumping the
 full schema into the target file, and deleting the merged files — then either

@@ -845,7 +845,7 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--linked=false is an explicit linked target (Go gates on flag.Changed)", () => {
+  it.effect("--linked=false is an explicit linked target", () => {
     // Non-interactive (no TTY, no --yes), so a smart-mode fall-through would fail with "specify
     // a target" instead.
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false });
@@ -858,7 +858,7 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("caches the linked project after generate --linked (Go PersistentPostRun)", () => {
+  it.effect("caches the linked project after generate --linked", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
@@ -1060,30 +1060,27 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "smart mode: caches the linked project even when the user picks local (Go PostRun)",
-    () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        stdinIsTty: true,
-        yes: true,
-        projectId: Option.some("abcdefghijklmnopqrst"),
-        promptSelectResponses: ["local"],
-      });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current);
-        yield* dbSchemaDeclarativeGenerate(flags());
-        expect(s.cache.cached).toBe(true);
-        // The in-process local reset's own body never touches the linked-project cache or
-        // telemetry, so the outer command's single `Effect.ensuring` finalizer must still fire
-        // exactly once each, not twice.
-        expect(s.cache.cacheCount).toBe(1);
-        expect(s.telemetry.flushCount).toBe(1);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+  it.effect("smart mode: caches the linked project even when the user picks local", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      yes: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
+      yield* dbSchemaDeclarativeGenerate(flags());
+      expect(s.cache.cached).toBe(true);
+      // The in-process local reset's own body never touches the linked-project cache or
+      // telemetry, so the outer command's single `Effect.ensuring` finalizer must still fire
+      // exactly once each, not twice.
+      expect(s.cache.cacheCount).toBe(1);
+      expect(s.telemetry.flushCount).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
 
-  it.effect("smart mode: does not cache when no migrations exist (Go skips LoadProjectRef)", () => {
+  it.effect("smart mode: does not cache when no migrations exist", () => {
     const s = setup(tmp.current, {
       experimental: true,
       yes: true,

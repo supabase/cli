@@ -41,8 +41,7 @@
 
 ### `--output-format text`
 
-Prints a Glamour ASCII table `|Local|Remote|Time (UTC)|` to stdout (`AsciiStyle`
-rendering; cells are backtick-wrapped inline code). Queries `SELECT version FROM
+Prints an ASCII table `|Local|Remote|Time (UTC)|` to stdout (cells are backtick-wrapped inline code). Queries `SELECT version FROM
 supabase_migrations.schema_migrations ORDER BY version` (a missing table → empty
 Remote column).
 

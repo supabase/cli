@@ -9,7 +9,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
-import { goUrlParse } from "./storage-url.ts";
+import { parseUrl } from "./storage-url.ts";
 
 /**
  * Single home for config validation, shared by the two config readers:
@@ -296,7 +296,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       throw new ConfigValidateError("Missing required field in config: studio.port");
     }
     try {
-      goUrlParse(input.studio.apiUrl);
+      parseUrl(input.studio.apiUrl);
     } catch (cause) {
       throw new ConfigValidateError(`Invalid config for studio.api_url: ${messageOf(cause)}`);
     }
@@ -324,7 +324,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
         provider !== "turnstile"
       ) {
         throw new ConfigValidateError(
-          "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+          "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
         );
       }
       if (auth.captcha.enabled) {
@@ -361,12 +361,12 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Uses `goUrlParse`'s stricter semantics (the same port used for `studio.api_url`
+      // Uses `parseUrl`'s stricter semantics (the same port used for `studio.api_url`
       // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
       // whole load instead of passing a bare scheme-prefix regex.
       let scheme: string;
       try {
-        scheme = goUrlParse(hook.uri).scheme;
+        scheme = parseUrl(hook.uri).scheme;
       } catch (cause) {
         throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
       }
@@ -521,7 +521,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     backend !== "bigquery"
   ) {
     throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
+      "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
     );
   }
   if (input.analytics.enabled && backend === "bigquery") {

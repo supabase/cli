@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { storageMv } from "./mv.handler.ts";
@@ -413,7 +413,9 @@ describe("stack backend", () => {
       expect(out.stderrText).toContain("Successfully moved");
       const move = requests.find((r) => r.url.includes(MOVE));
       expect(move?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(move?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
+      expect(move?.headers["apikey"]).toBe(
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
     });
   });
 

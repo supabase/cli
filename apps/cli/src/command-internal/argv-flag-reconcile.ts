@@ -1,7 +1,7 @@
 import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { lastExplicitLongFlagValue, type PflagArgvScan } from "../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue, type ArgvFlagScan } from "../shared/cli/flag-groups.ts";
 import { ProfileFlag, WorkdirFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
@@ -20,12 +20,12 @@ import { validateWorkdirIsDirectory } from "./workdir-validation.ts";
  * validation or API call — the Effect CLI parser never validates this path itself, and can
  * miss the value entirely when `--workdir` consumed a flag-shaped token.
  *
- * Flows through {@link validatePflagWorkdir}'s inferred Effect error channel; no call site
- * imports the class by name.
+ * Flows through {@link validateArgvWorkdir}'s inferred Effect error channel; no call site
+ * imports the class by name. The tag is the telemetry fingerprint and must stay stable.
  *
  * @public
  */
-export class PflagWorkdirError extends Data.TaggedError("PflagWorkdirError")<{
+export class ArgvWorkdirError extends Data.TaggedError("PflagWorkdirError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -34,17 +34,16 @@ export class PflagWorkdirError extends Data.TaggedError("PflagWorkdirError")<{
 }
 
 /**
- * Reconciles an Effect-parsed option flag with pflag's raw-argv semantics: the flag is only
- * set when the raw scan says pflag would have set it, using the scan's own value (last
- * occurrence wins for a `StringVar`).
+ * Reconciles an Effect-parsed option flag with the raw-argv scan: the flag is only set when
+ * the scan shows it set, using the scan's own value (last occurrence wins).
  *
- * The vendored Effect parser refuses to consume a flag-shaped token as a value, while pflag
- * consumes it unconditionally — in `--project-ref --metadata-file x.xml --metadata-url u`,
- * pflag hands `--metadata-file` to `--project-ref` and never sets `metadata-file`, so acting
+ * The vendored Effect parser refuses to consume a flag-shaped token as a value, while the raw
+ * scan consumes it unconditionally — in `--project-ref --metadata-file x.xml --metadata-url u`,
+ * the scan hands `--metadata-file` to `--project-ref` and never sets `metadata-file`, so acting
  * on the parsed options there would still read the metadata file unexpectedly. The two agree
  * on every normal invocation.
  */
-export function pflagStringValue(
+export function argvStringValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
 ): Option.Option<string> {
@@ -53,7 +52,7 @@ export function pflagStringValue(
 }
 
 /**
- * Like `pflagStringValue`, but for CSV-accumulating slice flags: every occurrence is
+ * Like `argvStringValue`, but for CSV-accumulating slice flags: every occurrence is
  * CSV-split and accumulated. An absent flag reconciles to `[]` even when the Effect parser
  * produced values (its tokens were consumed by another flag).
  *
@@ -61,7 +60,7 @@ export function pflagStringValue(
  * practice, since the Effect parser rejects the same malformed input at parse time before the
  * handler runs; it just keeps a handler-level disagreement from crashing.
  */
-export function pflagSliceValue(
+export function argvSliceValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
   parsedFallback: ReadonlyArray<string>,
@@ -84,7 +83,7 @@ export function pflagSliceValue(
  * default applies, which cannot fail.
  *
  * Resolution order:
- * - the scan's last `--workdir` occurrence wins — pflag consumes flag-shaped tokens the
+ * - the scan's last `--workdir` occurrence wins — the scan consumes flag-shaped tokens the
  *   Effect parser refuses (`--workdir --metadata-file` binds `"--metadata-file"`), so the
  *   parsed flag cannot be trusted;
  * - when the `--workdir` token itself was consumed as another flag's value
@@ -93,12 +92,12 @@ export function pflagSliceValue(
  * - otherwise the Effect-parsed value covers what the anchored scan cannot see: `--workdir`
  *   placed before the command path (`supabase --workdir x sso add …`).
  */
-export function pflagWorkdirValue(
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
+export function argvWorkdirValue(
+  scan: Pick<ArgvFlagScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedWorkdir: Option.Option<string>,
   envWorkdir: string | undefined,
 ): Option.Option<string> {
-  const scanned = pflagStringValue(scan.occurrences, "workdir");
+  const scanned = argvStringValue(scan.occurrences, "workdir");
   // Same last-wins order as the profile resolver: post-path occurrence, then pre-path
   // occurrence, then consumed-discard, then the parsed fallback.
   const prePathValues = scan.prePathOccurrences.get("workdir");
@@ -122,7 +121,7 @@ export function pflagWorkdirValue(
 }
 
 /**
- * Validates the workdir {@link pflagWorkdirValue} resolves, aborting before any API call when
+ * Validates the workdir {@link argvWorkdirValue} resolves, aborting before any API call when
  * it's missing or not a directory — the config layer only path-resolves the workdir it sees
  * and never validates this, and can miss the value entirely when `--workdir` consumed a
  * flag-shaped token.
@@ -131,19 +130,19 @@ export function pflagWorkdirValue(
  * may have resolved the workdir from different sources, but they then issue the identical
  * request regardless.
  */
-export const validatePflagWorkdir = Effect.fnUntraced(function* (
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
+export const validateArgvWorkdir = Effect.fnUntraced(function* (
+  scan: Pick<ArgvFlagScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).
   const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(WorkdirFlag));
-  const workdir = pflagWorkdirValue(scan, parsedWorkdir, yield* envValue("SUPABASE_WORKDIR"));
+  const workdir = argvWorkdirValue(scan, parsedWorkdir, yield* envValue("SUPABASE_WORKDIR"));
   if (Option.isNone(workdir)) {
     return;
   }
   const fs = yield* FileSystem.FileSystem;
   yield* validateWorkdirIsDirectory(workdir.value, fs).pipe(
-    Effect.mapError((cause) => new PflagWorkdirError({ message: cause.message })),
+    Effect.mapError((cause) => new ArgvWorkdirError({ message: cause.message })),
   );
 });
 
@@ -152,8 +151,8 @@ export const validatePflagWorkdir = Effect.fnUntraced(function* (
  * it falls through to the persisted `~/.supabase/profile` file and then the `supabase`
  * default.
  *
- * Resolution order mirrors {@link pflagWorkdirValue}:
- * - the scan's last `--profile` occurrence wins — pflag consumes flag-shaped tokens the
+ * Resolution order mirrors {@link argvWorkdirValue}:
+ * - the scan's last `--profile` occurrence wins — the scan consumes flag-shaped tokens the
  *   Effect parser refuses (`--profile --metadata-url` binds `"--metadata-url"`), and a
  *   scanned occurrence marks the flag changed even when its value is the `supabase` default
  *   or empty;
@@ -165,12 +164,12 @@ export const validatePflagWorkdir = Effect.fnUntraced(function* (
  *   distinguish an explicit `--profile supabase` from the flag's default, so that value is
  *   treated as unset.
  */
-export function pflagProfileValue(
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
+export function argvProfileValue(
+  scan: Pick<ArgvFlagScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
   parsedProfile: Option.Option<string>,
   envProfile: string | undefined,
 ): Option.Option<string> {
-  const scanned = pflagStringValue(scan.occurrences, "profile");
+  const scanned = argvStringValue(scan.occurrences, "profile");
   // A post-path occurrence wins outright; otherwise a pre-path occurrence
   // (`--profile A sso add …`) stays effective even when a later profile-shaped token was
   // consumed as another flag's value.
@@ -195,7 +194,7 @@ export function pflagProfileValue(
 }
 
 /**
- * Reconciles the profile the Effect config layer resolved with the {@link pflagProfileValue}
+ * Reconciles the profile the Effect config layer resolved with the {@link argvProfileValue}
  * semantics, returning the API URL a request must target when they disagree — `Option.none`
  * means the layer's `CommandSettings.apiUrl` already matches. Loads before the workdir check
  * and any other flag validation or API request, since it can change which host every
@@ -210,15 +209,15 @@ export function pflagProfileValue(
  * `Stdio.layerTest`) the flag settings and `RuntimeInfo` may be absent, and the reconcile then
  * only acts on what the scan itself shows.
  */
-export const resolvePflagProfile = Effect.fnUntraced(function* (
-  scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
+export const resolveArgvProfile = Effect.fnUntraced(function* (
+  scan: Pick<ArgvFlagScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   const parsedRaw = yield* Effect.serviceOption(ProfileFlag);
   const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");
   const env = yield* envValue("SUPABASE_PROFILE");
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
-  // The explicit token pflag-equivalent semantics resolve, vs. the one the config layer's own
+  // The explicit token the raw-argv scan resolves, vs. the one the config layer's own
   // scan resolved (which treats the last raw `--profile` occurrence as explicit even when it
   // was consumed as another flag's value). When both agree on a non-empty token, the layer
   // already resolved the right profile.
@@ -226,7 +225,7 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
     onNone: () => undefined,
     onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
-  const goExplicit = pflagProfileValue(scan, parsedProfile, envProfile);
+  const argvExplicit = argvProfileValue(scan, parsedProfile, envProfile);
   const layerExplicit =
     scanExplicit !== undefined
       ? Option.some(scanExplicit)
@@ -236,10 +235,10 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
           ? Option.some(envProfile)
           : Option.none<string>();
   if (
-    Option.isSome(goExplicit) &&
+    Option.isSome(argvExplicit) &&
     Option.isSome(layerExplicit) &&
-    goExplicit.value === layerExplicit.value &&
-    goExplicit.value !== ""
+    argvExplicit.value === layerExplicit.value &&
+    argvExplicit.value !== ""
   ) {
     return Option.none<LoadedProfile>();
   }
@@ -258,8 +257,8 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
     .readFileString(yield* profileFilePath(path.value, runtimeInfo.value.homeDir))
     .pipe(Effect.option);
 
-  const goToken = Option.isSome(goExplicit)
-    ? goExplicit.value
+  const argvToken = Option.isSome(argvExplicit)
+    ? argvExplicit.value
     : Option.isSome(fileRaw)
       ? fileRaw.value
       : "supabase";
@@ -273,14 +272,14 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
         },
       });
 
-  if (goToken === layerToken && goToken !== "") {
+  if (argvToken === layerToken && argvToken !== "") {
     return Option.none<LoadedProfile>();
   }
-  return Option.some(yield* loadProfile(goToken, fs.value));
+  return Option.some(yield* loadProfile(argvToken, fs.value));
 });
 
-/** Accepted literal spellings for a pflag boolean flag value (`strconv.ParseBool`). */
-const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
+/** Accepted literal spellings for a boolean flag value: `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, `False`. */
+const BOOL_LITERALS: ReadonlyMap<string, boolean> = new Map([
   ["1", true],
   ["t", true],
   ["T", true],
@@ -296,17 +295,17 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
 ]);
 
 /**
- * Like `pflagStringValue`, but for boolean flags: every occurrence is applied in argv order
+ * Like `argvStringValue`, but for boolean flags: every occurrence is applied in argv order
  * (a bare occurrence sets `true`; `--flag=value` is checked against the literal set above),
  * so the last occurrence wins and an absent flag is `false`. An occurrence with an
  * unrecognized literal fails immediately, before any other flag validation or API call.
  *
  * This can't be read off the Effect-parsed boolean: the Effect parser resolves repeated
- * flags first-wins (pflag is last-wins) and accepts `yes`/`no`, which the literal set above
+ * flags first-wins (the scan is last-wins) and accepts `yes`/`no`, which the literal set above
  * rejects. The scan records a bare occurrence as `"true"` and an inline-empty `--flag=` as
  * `""`, so both go through the same literal-set check and fail consistently.
  */
-export function pflagBoolValue(
+export function argvBoolValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
 ): Result.Result<boolean, string> {
@@ -316,10 +315,10 @@ export function pflagBoolValue(
   }
   let effective = false;
   for (const raw of values) {
-    const parsed = GO_PARSE_BOOL.get(raw);
+    const parsed = BOOL_LITERALS.get(raw);
     if (parsed === undefined) {
       return Result.fail(
-        `invalid argument ${JSON.stringify(raw)} for "--${flagName}" flag: strconv.ParseBool: parsing ${JSON.stringify(raw)}: invalid syntax`,
+        `invalid argument ${JSON.stringify(raw)} for "--${flagName}" flag: expected a boolean`,
       );
     }
     effective = parsed;
@@ -328,7 +327,7 @@ export function pflagBoolValue(
 }
 
 /**
- * Like `pflagStringValue`, but for enum-valued flags: every occurrence must be in `allowed`,
+ * Like `argvStringValue`, but for enum-valued flags: every occurrence must be in `allowed`,
  * checked in argv order, and the first invalid one fails immediately — reachable here because
  * the Effect parser resolves repeats first-wins and never validates later occurrences (e.g.
  * `--type saml --type bogus` parses). The last occurrence wins; an absent flag is
@@ -337,7 +336,7 @@ export function pflagBoolValue(
  * `flagLabel` names the flag in the error message: `--name` without a shorthand, `-s, --name`
  * with one.
  */
-export function pflagEnumValue(
+export function argvEnumValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
   flagName: string,
   allowed: ReadonlyArray<string>,

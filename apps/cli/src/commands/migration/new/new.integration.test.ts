@@ -237,46 +237,43 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "fails the command when piped stdin errors mid-copy (Go: failed to copy from stdin)",
-    () => {
-      // The Created line is already scheduled by the time the copy fails, so it still
-      // prints to stdout before the error propagates to stderr.
-      const failingStdin = Layer.succeed(Stdin, {
-        isTTY: false,
-        readPipedBytes: Effect.succeed(Option.none()),
-        pipedBytesStream: Stream.fail(badArgument({ module: "Stdin", method: "read" })),
-        readPipedText: Effect.succeed(Option.none()),
-        readLine: () => Effect.succeed(Option.none()),
-      });
-      const out = mockOutput();
-      const telemetry = mockTelemetryStateTracked();
-      const layer = Layer.mergeAll(
-        out.layer,
-        telemetry.layer,
-        failingStdin,
-        mockCommandSettings({ workdir: tmp.current }),
-        BunServices.layer,
-      );
-      return Effect.gen(function* () {
-        const exit = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure)).toBe(true);
-          if (Option.isSome(failure)) {
-            expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
-            if (failure.value instanceof MigrationNewWriteError) {
-              expect(failure.value.message).toContain("failed to copy from stdin");
-            }
+  it.live("fails the command when piped stdin errors mid-copy (failed to copy from stdin)", () => {
+    // The Created line is already scheduled by the time the copy fails, so it still
+    // prints to stdout before the error propagates to stderr.
+    const failingStdin = Layer.succeed(Stdin, {
+      isTTY: false,
+      readPipedBytes: Effect.succeed(Option.none()),
+      pipedBytesStream: Stream.fail(badArgument({ module: "Stdin", method: "read" })),
+      readPipedText: Effect.succeed(Option.none()),
+      readLine: () => Effect.succeed(Option.none()),
+    });
+    const out = mockOutput();
+    const telemetry = mockTelemetryStateTracked();
+    const layer = Layer.mergeAll(
+      out.layer,
+      telemetry.layer,
+      failingStdin,
+      mockCommandSettings({ workdir: tmp.current }),
+      BunServices.layer,
+    );
+    return Effect.gen(function* () {
+      const exit = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
+          if (failure.value instanceof MigrationNewWriteError) {
+            expect(failure.value.message).toContain("failed to copy from stdin");
           }
         }
-        const file = yield* onlyMigration(tmp.current);
-        expect(stripAnsi(out.stdoutText)).toBe(
-          `Created new migration at supabase/migrations/${file}\n`,
-        );
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      }
+      const file = yield* onlyMigration(tmp.current);
+      expect(stripAnsi(out.stdoutText)).toBe(
+        `Created new migration at supabase/migrations/${file}\n`,
+      );
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 });

@@ -6,18 +6,18 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goFloat32,
-  goNullable,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeFloat32,
+  shapeNullable,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -51,41 +51,41 @@ function asRecord(obj: unknown): Record<string, unknown> {
  * casing. `description` (`nullable.Nullable[string]`) renders as
  * `map[bool]string` in YAML and is refused outright in TOML.
  */
-const GO_SNIPPET_LIST = goStruct([
-  ["cursor", goPtr(goString)],
+const SNIPPET_LIST_SHAPE = shapeStruct([
+  ["cursor", shapePtr(shapeString)],
   [
     "data",
-    goSlice(
-      goStruct([
-        ["description", goNullable(goString)],
-        ["favorite", goBool],
-        ["id", goString],
-        ["inserted_at", goString],
-        ["name", goString],
+    shapeSlice(
+      shapeStruct([
+        ["description", shapeNullable(shapeString)],
+        ["favorite", shapeBool],
+        ["id", shapeString],
+        ["inserted_at", shapeString],
+        ["name", shapeString],
         [
           "owner",
-          goStruct([
-            ["id", goFloat32],
-            ["username", goString],
+          shapeStruct([
+            ["id", shapeFloat32],
+            ["username", shapeString],
           ]),
         ],
         [
           "project",
-          goStruct([
-            ["id", goFloat32],
-            ["name", goString],
+          shapeStruct([
+            ["id", shapeFloat32],
+            ["name", shapeString],
           ]),
         ],
-        ["type", goString],
-        ["updated_at", goString],
+        ["type", shapeString],
+        ["updated_at", shapeString],
         [
           "updated_by",
-          goStruct([
-            ["id", goFloat32],
-            ["username", goString],
+          shapeStruct([
+            ["id", shapeFloat32],
+            ["username", shapeString],
           ]),
         ],
-        ["visibility", goString],
+        ["visibility", shapeString],
       ]),
     ),
   ],
@@ -116,7 +116,7 @@ function toSnippetRow(raw: unknown): SnippetRow {
 
 export const snippetsList = Effect.fn("snippets.list")(function* (flags: SnippetsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const httpClient = yield* HttpClient.HttpClient;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;
@@ -132,7 +132,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      if (Option.getOrUndefined(goOutputFlag) === "env") {
+      if (Option.getOrUndefined(outputFlag) === "env") {
         return yield* new SnippetsEnvNotSupportedError({
           message: "--output env flag is not supported",
         });
@@ -187,25 +187,25 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       yield* fetching?.clear ?? Effect.void;
 
       const parsed = parseSnippetsResponse(rawBody);
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
+      if (outputFlagFormat === "json") {
         // Round-trips the raw body so a real API `data: []` stays `data: []`
         // and a hypothetical `data: null` stays null — nil-vs-empty is
         // preserved rather than normalized.
-        yield* output.raw(encodeGoJson(rawBody));
+        yield* output.raw(encodeSortedJson(rawBody));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(rawBody, GO_SNIPPET_LIST));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(rawBody, SNIPPET_LIST_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // The established TOML encoder can't represent the nullable
         // `description` field, so this fails whenever any snippet carries a
         // `description` key — mirroring that established failure exactly.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(rawBody, GO_SNIPPET_LIST),
+          try: () => encodeStructToml(rawBody, SNIPPET_LIST_SHAPE),
           catch: (cause) =>
             new SnippetsTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,

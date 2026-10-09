@@ -22,7 +22,7 @@ const EXPECTED_ORDER = [
 ];
 
 describe("START_EXCLUDABLE_KEYS", () => {
-  it("matches Go's ExcludableContainers() order exactly", () => {
+  it("lists excludable containers in order", () => {
     expect(START_EXCLUDABLE_KEYS).toEqual(EXPECTED_ORDER);
   });
 
@@ -31,7 +31,7 @@ describe("START_EXCLUDABLE_KEYS", () => {
     expect(new Set(START_EXCLUDABLE_KEYS).size).toBe(13);
   });
 
-  it("never includes db/postgres — Postgres has no excludeKey in Go", () => {
+  it("never includes db/postgres — Postgres has no excludeKey", () => {
     expect(START_EXCLUDABLE_KEYS).not.toContain("db");
     expect(START_EXCLUDABLE_KEYS).not.toContain("postgres");
   });
@@ -52,7 +52,7 @@ describe("partitionStartExcludeFlags", () => {
     expect(result.warning).toBeUndefined();
   });
 
-  it("treats db/postgres as invalid, matching Go", () => {
+  it("treats db/postgres as invalid", () => {
     const result = partitionStartExcludeFlags(["db", "postgres"]);
     expect(result.valid).toEqual([]);
     expect(result.invalid).toEqual(["db", "postgres"]);
@@ -65,7 +65,7 @@ describe("partitionStartExcludeFlags", () => {
     expect(result.invalid).toEqual(["bogus", "nope"]);
   });
 
-  it("produces Go's exact WARNING: text, with the valid list alphabetically sorted", () => {
+  it("produces the exact WARNING: text, with the valid list alphabetically sorted", () => {
     const result = partitionStartExcludeFlags(["bogus"]);
     const sortedValid = [...EXPECTED_ORDER].sort();
     expect(stripAnsi(result.warning ?? "")).toBe(

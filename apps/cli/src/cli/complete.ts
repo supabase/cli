@@ -7,7 +7,7 @@ import process from "node:process";
 import {
   QUERY_OUTPUT_FORMATS,
   RESOURCE_OUTPUT_FORMATS,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { isValidBase0Int64, parseUintBase0 } from "../command-internal/parse-uint.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
@@ -29,7 +29,7 @@ import { formatCliError, normalizeCliError } from "../shared/output/normalize-er
 import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /**
- * Implements the shell completion protocol that cobra-generated scripts (`supabase
+ * Implements the shell completion protocol that the generated scripts (`supabase
  * completion {bash,zsh,fish,powershell}`) call into via `supabase __complete`/
  * `__completeNoDesc` on every tab press. Completion argv can contain partial or malformed
  * flag tokens (e.g. `--de` mid-word), so this bypasses the structured CLI parser and
@@ -473,7 +473,7 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
+ * Flags validated against duration syntax (see `isValidDuration`) rather than this
  * tree's plain `Flag.string` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
@@ -484,8 +484,8 @@ const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
 /** `--exp` (`gen bearer-jwt`) is validated as an RFC 3339 timestamp, not a plain string. */
 const COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
-/** Nanosecond scale for each unit the Go duration grammar accepts. */
-const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
+/** Nanosecond scale for each unit the duration grammar accepts. */
+const DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["ns", 1n],
   ["us", 1_000n],
   ["µs", 1_000n], // U+00B5 micro sign
@@ -496,23 +496,23 @@ const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["h", 3_600_000_000_000n],
 ]);
 
-// Go's duration grammar accumulates into a `uint64` (range-checked against `1<<63`
+// The duration grammar accumulates into a `uint64` (range-checked against `1<<63`
 // mid-parse) and narrows to the `int64` max in the final non-negative check below.
-const GO_DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
-const GO_DURATION_MAX_INT64 = (1n << 63n) - 1n;
+const DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
+const DURATION_MAX_INT64 = (1n << 63n) - 1n;
 
 function isAsciiDigit(char: string | undefined): boolean {
   return char !== undefined && char >= "0" && char <= "9";
 }
 
 /**
- * Validates the Go duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
+ * Validates the duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
  * boolean verdict rather than a parsed value. Uses `BigInt` for the integer/fraction
- * accumulators to match Go's `uint64` overflow semantics exactly, and a plain `Number` for
- * the one step Go performs in `float64` — a JS `number` is itself an IEEE-754 double, so
+ * accumulators to get `uint64` overflow semantics, and a plain `Number` for
+ * the one step performed in `float64` — a JS `number` is itself an IEEE-754 double, so
  * this round-trips bit-for-bit rather than merely approximating it.
  */
-function isValidGoDuration(value: string): boolean {
+function isValidDuration(value: string): boolean {
   let rest = value;
   let negative = false;
   if (rest.length > 0 && (rest[0] === "-" || rest[0] === "+")) {
@@ -530,9 +530,9 @@ function isValidGoDuration(value: string): boolean {
     let i = 0;
     let intPart = 0n;
     while (isAsciiDigit(rest[i])) {
-      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / 10n) return false;
+      if (intPart > DURATION_UINT64_OVERFLOW_BOUND / 10n) return false;
       intPart = intPart * 10n + BigInt(rest[i] as string);
-      if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+      if (intPart > DURATION_UINT64_OVERFLOW_BOUND) return false;
       i++;
     }
     const hasIntDigits = i > 0;
@@ -548,11 +548,11 @@ function isValidGoDuration(value: string): boolean {
       let fracOverflowed = false;
       while (isAsciiDigit(rest[j])) {
         if (!fracOverflowed) {
-          if (fracPart > GO_DURATION_MAX_INT64 / 10n) {
+          if (fracPart > DURATION_MAX_INT64 / 10n) {
             fracOverflowed = true;
           } else {
             const next = fracPart * 10n + BigInt(rest[j] as string);
-            if (next > GO_DURATION_UINT64_OVERFLOW_BOUND) {
+            if (next > DURATION_UINT64_OVERFLOW_BOUND) {
               fracOverflowed = true;
             } else {
               fracPart = next;
@@ -571,24 +571,24 @@ function isValidGoDuration(value: string): boolean {
     let k = 0;
     while (k < rest.length && !(rest[k] === "." || isAsciiDigit(rest[k]))) k++;
     if (k === 0) return false; // missing unit
-    const unitNanos = GO_DURATION_UNIT_NANOS.get(rest.slice(0, k));
+    const unitNanos = DURATION_UNIT_NANOS.get(rest.slice(0, k));
     rest = rest.slice(k);
     if (unitNanos === undefined) return false; // unknown unit
 
-    if (intPart > GO_DURATION_UINT64_OVERFLOW_BOUND / unitNanos) return false;
+    if (intPart > DURATION_UINT64_OVERFLOW_BOUND / unitNanos) return false;
     let termNanos = intPart * unitNanos;
     if (fracPart > 0n) {
       const fractional = Number(fracPart) * (Number(unitNanos) / Number(scale));
       termNanos += BigInt(Math.trunc(fractional));
-      if (termNanos > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+      if (termNanos > DURATION_UINT64_OVERFLOW_BOUND) return false;
     }
     total += termNanos;
-    if (total > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
+    if (total > DURATION_UINT64_OVERFLOW_BOUND) return false;
   }
 
   // The negative side already got the larger `1<<63` bound above (int64's two's-complement
   // asymmetry); only the non-negative case needs this final check.
-  return negative || total <= GO_DURATION_MAX_INT64;
+  return negative || total <= DURATION_MAX_INT64;
 }
 
 /**
@@ -598,11 +598,11 @@ function isValidGoDuration(value: string): boolean {
  * through `Date#setUTCFullYear`, which — unlike the `Date` constructor — doesn't special-case
  * a 0-99 year into 1900+year.
  */
-const GO_RFC3339_PATTERN =
+const RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
-function isValidGoRfc3339(value: string): boolean {
-  const match = GO_RFC3339_PATTERN.exec(value);
+function isValidRfc3339(value: string): boolean {
+  const match = RFC3339_PATTERN.exec(value);
   if (match === null) return false;
   const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match;
   const y = Number(year);
@@ -671,10 +671,10 @@ function isValidFlagValue(
     return "value" in parseUintBase0(value);
   }
   if (COMPLETION_DURATION_FLAGS.has(key)) {
-    return isValidGoDuration(value);
+    return isValidDuration(value);
   }
   if (COMPLETION_RFC3339_FLAGS.has(key)) {
-    return isValidGoRfc3339(value);
+    return isValidRfc3339(value);
   }
   if (
     flag.isVariadic &&
@@ -685,7 +685,7 @@ function isValidFlagValue(
   }
   switch (flag.primitiveTag) {
     case "Boolean":
-      return parseGoBool(value) !== undefined;
+      return parseBoolLiteral(value) !== undefined;
     case "Choice":
       if (flag.name === "output") {
         return outputFlagChoiceKeys(matchedPath).includes(value);
@@ -1020,15 +1020,8 @@ export function respondToComplete(
   });
 }
 
-const GO_TRUE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
-  "1",
-  "t",
-  "T",
-  "TRUE",
-  "true",
-  "True",
-]);
-const GO_FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
+const TRUE_BOOL_SPELLINGS: ReadonlySet<string> = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
   "0",
   "f",
   "F",
@@ -1037,16 +1030,15 @@ const GO_FALSE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
   "False",
 ]);
 
-function parseGoBool(value: string): boolean | undefined {
-  if (GO_TRUE_BOOL_SPELLINGS.has(value)) return true;
-  if (GO_FALSE_BOOL_SPELLINGS.has(value)) return false;
+function parseBoolLiteral(value: string): boolean | undefined {
+  if (TRUE_BOOL_SPELLINGS.has(value)) return true;
+  if (FALSE_BOOL_SPELLINGS.has(value)) return false;
   return undefined;
 }
 
 /**
  * `argv[0] === "__completeNoDesc"` always wins; otherwise `SUPABASE_COMPLETION_DESCRIPTIONS`
- * is checked first, falling back to `COBRA_COMPLETION_DESCRIPTIONS` when unset or empty. An
- * unparseable value is ignored, leaving the `argv[0]`-derived default in place.
+ * is consulted. An unparseable value is ignored, leaving the `argv[0]`-derived default in place.
  */
 export function resolveIncludeDescriptions(
   argv0: string | undefined,
@@ -1054,8 +1046,8 @@ export function resolveIncludeDescriptions(
 ): boolean {
   let includeDescriptions = argv0 !== "__completeNoDesc";
   if (includeDescriptions) {
-    const raw = env.SUPABASE_COMPLETION_DESCRIPTIONS || env.COBRA_COMPLETION_DESCRIPTIONS || "";
-    const parsed = parseGoBool(raw);
+    const raw = env.SUPABASE_COMPLETION_DESCRIPTIONS ?? "";
+    const parsed = parseBoolLiteral(raw);
     if (parsed !== undefined) includeDescriptions = parsed;
   }
   return includeDescriptions;

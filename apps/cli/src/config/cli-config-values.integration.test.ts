@@ -1100,7 +1100,7 @@ describe("CliConfigValues loaded document", () => {
       const layer = configValuesLayer();
 
       const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
-      const packaged = yield* loadCliConfig(root, { goViperCompat: true });
+      const packaged = yield* loadCliConfig(root, { cliCompat: true });
 
       expect(packaged).not.toBeNull();
       expect(snapshot.loaded).toEqual(packaged);

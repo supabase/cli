@@ -13,7 +13,7 @@ import {
 } from "./types.shared.ts";
 
 describe("parseQueryTimeoutMillis", () => {
-  it.effect("parses compound Go durations", () =>
+  it.effect("parses compound durations", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutMillis("15s")).toBe(15000);
       expect(yield* parseQueryTimeoutMillis("1h")).toBe(3600000);
@@ -67,7 +67,7 @@ describe("parseQueryTimeoutMillis", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses via encoding/csv with no trimming; an empty value yields no field.
+    // CSV parsing does no trimming; an empty value yields no field.
     expect(parseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",

@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
@@ -111,7 +111,7 @@ describe("storage rm", () => {
     );
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.live("auto-confirms from SUPABASE_YES in the project .env", () => {
     // SUPABASE_YES here lives only in supabase/.env, not the shell.
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -133,37 +133,34 @@ describe("storage rm", () => {
     });
   });
 
-  it.live(
-    "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
-    () => {
-      // The malformed supabase/.env must never be read; ref resolution fails first.
-      const { layer, requests } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        linkedFails: true,
-        files: { "supabase/.env": "!=\n" },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageRm({
-          files: ["ss:///private/a.pdf"],
-          recursive: false,
-          linked: true,
-          local: false,
-          projectRef: Option.none(),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("Cannot find project ref");
-          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
-          const failures = exit.cause.reasons
-            .filter(Cause.isFailReason)
-            .map((reason) => reason.error);
-          expect(failures.some((error) => error instanceof ProjectRefNotLinkedError)).toBe(true);
-          expect(failures.some((error) => error instanceof DbConfigLoadError)).toBe(false);
-        }
-        expect(requests).toHaveLength(0);
-      });
-    },
-  );
+  it.live("surfaces not-linked guidance before a malformed project .env", () => {
+    // The malformed supabase/.env must never be read; ref resolution fails first.
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      linkedFails: true,
+      files: { "supabase/.env": "!=\n" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Cannot find project ref");
+        expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+        const failures = exit.cause.reasons
+          .filter(Cause.isFailReason)
+          .map((reason) => reason.error);
+        expect(failures.some((error) => error instanceof ProjectRefNotLinkedError)).toBe(true);
+        expect(failures.some((error) => error instanceof DbConfigLoadError)).toBe(false);
+      }
+      expect(requests).toHaveLength(0);
+    });
+  });
 
   it.live("skips the bucket when the confirmation is declined", () => {
     const { layer, requests } = setupStorage(tmp.current, {
@@ -887,7 +884,9 @@ describe("stack backend", () => {
         (r) => r.method === "DELETE" && r.url.includes(DELETE_OBJECT("private")),
       );
       expect(del?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(del?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
+      expect(del?.headers["apikey"]).toBe(
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
     });
   });
 

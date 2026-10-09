@@ -65,7 +65,7 @@ describe("supabase functions deploy — argument validation", () => {
   );
 
   it.live(
-    "rejects --jobs without --use-api even with --use-docker=false (Go parity gap)",
+    "rejects --jobs without --use-api even with --use-docker=false",
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {

@@ -1,6 +1,6 @@
 # `supabase db diff`
 
-Native Effect port. Diffs the local project's expected schema (a throwaway shadow
+Diffs the local project's expected schema (a throwaway shadow
 database) against a target database (local / linked / `--db-url`), using one of
 three native engines: bundled in-process pg-delta, migra (edge-runtime), or
 pgAdmin (CLI-1968 — a native `docker run` of the differ container, no
@@ -179,11 +179,11 @@ transaction metadata.
 - **Status lines go to STDOUT in text mode, not stderr** — unlike the migra/pg-delta path's
   stderr diagnostics. So `db diff --use-pgadmin > out.sql` captures them. In `json`/`stream-json`
   mode these are diagnostics, not payload, so they redirect to STDERR instead — see below.
-- **Progress-streaming UX delta**: this port batches progress instead of streaming it live —
-  `DockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so this
-  port buffers each run's stderr via `runCapture` and only filters/emits its status lines once
+- **Progress batching**: progress is batched instead of streamed live —
+  `DockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so
+  each run's stderr is buffered via `runCapture` and its status lines are filtered/emitted only once
   that run's container has already exited — one status BATCH per `--schema` run, not a
-  continuous stream. That batch is processed and emitted before this port's own exit-code
+  continuous stream. That batch is processed and emitted before the exit-code
   check, so a run that goes on to exit non-zero still has its own captured statuses printed
   first, not dropped. See `pgadmin-diff.ts`'s own doc comment on `diffSchemaPgAdmin`
   for the full rationale and the possible follow-up (adding an `onStderr` hook to `runStream`).
@@ -268,7 +268,7 @@ platform baseline, so role-level defaults installed by `supabase/roles.sql`
 runs migrations before those defaults take effect. `--use-pgadmin` is NOT cached — its shadow keeps
 the plain create/remove lifecycle.
 
-### `--use-pgadmin` parity quirks and deliberate divergence (CLI-1968)
+### `--use-pgadmin` behaviour
 
 - `source`/`target` are INVERTED relative to the migra/pg-delta path: `source` is the
   USER'S db, `target` is the SHADOW.
@@ -278,8 +278,8 @@ the plain create/remove lifecycle.
 - `AssertSupabaseDbIsRunning` runs for `--linked`/`--db-url` too, and AFTER config load +
   target resolution — every other engine on this command never runs this check at all.
 - The `NOTE: …DESKTOP mode.` prefix (`supabase/pgadmin4#24`) is trimmed from the front of
-  EACH run's own stdout independently (each run is parsed on its own — see the "Deliberate
-  divergence" entry below), not just the front of a single, first run's buffer.
+  EACH run's own stdout independently (each run is parsed on its own — see "Output parsing"
+  below), not just the front of a single, first run's buffer.
 - The differ's stderr is filtered by the progress-line regex and non-matching lines are
   dropped, so a differ failure surfaces only `error running container: exit <n>` — even
   under `--debug`.
@@ -291,7 +291,7 @@ the plain create/remove lifecycle.
 - JSON-parse failures are reported with the stable prefix `failed to parse schema diff output:`
   rather than the raw parser error text.
 
-**Deliberate divergence:** every run's own stdout is genuinely parsed
+**Output parsing:** every run's own stdout is genuinely parsed
 (`parsePgAdminDiffEntries`, trimming that run's own DESKTOP-mode NOTE prefix off its own
 buffer), and every run's filtered DDLs are aggregated into one final diff before the header is
 rendered once (`renderPgAdminDiff`). A multi-`--schema` diff where every run's own

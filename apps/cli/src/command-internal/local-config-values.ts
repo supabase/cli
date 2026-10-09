@@ -56,8 +56,13 @@ import {
   type ThirdPartyInput,
   validateResolvedConfig,
 } from "./config-validate.ts";
-import { parseGoBool } from "../shared/config/config-bool.ts";
-import { DEFAULT_SIGNING_KEY, generateAsymmetricGoJwt, generateGoJwt, type Jwk } from "./go-jwt.ts";
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
+import {
+  DEFAULT_SIGNING_KEY,
+  generateAsymmetricLocalJwt,
+  generateLocalJwt,
+  type Jwk,
+} from "./local-jwt.ts";
 
 /**
  * Resolves local-dev config values (URLs, ports, keys) from the effective config the
@@ -153,7 +158,7 @@ export const narrowConfigEnum = <const T extends string>(
     throw new CliConfigValueError({
       path,
       tier: "config",
-      message: `Invalid config for ${path}: cannot parse "${configured}" as one of ${allowed
+      message: `Invalid config for ${path}: "${configured}" must be one of ${allowed
         .map((value) => `"${value}"`)
         .join(", ")}`,
     });
@@ -229,8 +234,8 @@ function resolveSignedKey(
 ): string {
   if (configured !== undefined && configured.length > 0) return configured;
   return signingKey !== undefined
-    ? generateAsymmetricGoJwt(signingKey, role)
-    : generateGoJwt(jwtSecret, role);
+    ? generateAsymmetricLocalJwt(signingKey, role)
+    : generateLocalJwt(jwtSecret, role);
 }
 
 /** JWK fields, matching {@link Jwk}. */
@@ -675,12 +680,12 @@ export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boole
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
   const raw = typeof value === "string" ? value : String(value);
-  const parsed = typeof value === "string" ? parseGoBool(value) : undefined;
+  const parsed = typeof value === "string" ? parseBoolLiteral(value) : undefined;
   if (parsed === undefined) {
     throw new CliConfigValueError({
       path: dottedFieldPath,
       tier: "config",
-      message: `Invalid config for ${dottedFieldPath}: cannot parse "${raw}" as a bool`,
+      message: `Invalid config for ${dottedFieldPath}: "${raw}" is not a valid boolean`,
     });
   }
   return parsed;
@@ -770,7 +775,7 @@ function validateAuthExternalProviders(
  * {@link readApiTlsFiles}.
  * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
  * malformed, or its first key uses an unsupported algorithm — see
- * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricGoJwt}.
+ * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricLocalJwt}.
  * @throws when an email template's `content` is present without `content_path`, or a
  * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
  * @throws {ConfigValidateError} for every other validation branch, deferred to a single call
@@ -810,9 +815,7 @@ export function resolveLocalConfigValues(
   // The resolved value is written verbatim into `/etc/postgresql-custom/pgsodium_root.key`.
   const rawRootKey = asRecord(document?.["db"])?.["root_key"];
   if (rawRootKey !== undefined && typeof rawRootKey !== "string") {
-    throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
-    );
+    throw new ConfigValidateError("failed to parse config:\ndb.root_key: expected a table");
   }
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0 ? POSTGRES_DEFAULT_ROOT_KEY : rawRootKey;

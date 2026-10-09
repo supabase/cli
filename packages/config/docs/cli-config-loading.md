@@ -192,7 +192,7 @@ Before decoding, most string values matching `env(NAME)` are substituted automat
 resolved `CliProjectEnvironment` — this is required so numeric and boolean fields don't crash the
 strict decoder when their TOML/JSON value is still a string. Substitution also coerces the
 resulting string to the field's declared type: a numeric field is parsed as a number, a boolean
-field accepts Go's `TRUE`/`FALSE`/`1`/`0`/`t`/`f`/… spellings, and a string-array field is split on
+field accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and `0`/`f`/`F`/`FALSE`/`false`/`False`, and a string-array field is split on
 `,`. A missing or empty-string env var leaves the literal `env(NAME)` untouched rather than
 substituting an empty value.
 
@@ -262,13 +262,13 @@ These helpers do two things at once:
 `resolveCliConfigSubtree` walks recursively through objects, arrays, and records, so it also
 resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
-An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
-`SCREAMING_SNAKE_CASE`-only pattern to the case-agnostic `^env\((.*)\)$` form the CLI accepts in
-config files; only the CLI sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
-`.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
+An optional `cliCompat` flag switches the `env(NAME)` matcher from the default, strict
+`SCREAMING_SNAKE_CASE`-only pattern to the Supabase CLI's case-agnostic `^env\((.*)\)$` form; only
+`apps/cli` sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+`.`/`./effect` take no options parameter at all (CLI-2234) — `cliCompat` is internal-only,
 typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
 `@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
-accept it; `apps/cli` imports them from there instead.
+accept it; `apps/cli` imports from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant

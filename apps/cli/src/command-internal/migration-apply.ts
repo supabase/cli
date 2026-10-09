@@ -144,14 +144,14 @@ const utf8ByteLength = (value: string): number => new TextEncoder().encode(value
 // The scanner buffer starts at this size before applying the configured/default max, so a
 // statement must reach at least this many bytes before an oversized-token error can fire,
 // regardless of how small an override is set.
-const GO_SCANNER_START_BUF_SIZE = 4096;
+const SCANNER_START_BUF_SIZE = 4096;
 
 // Fallback cap when `SUPABASE_SCANNER_BUFFER_SIZE` is set but parses to a non-positive size,
 // including a value that can't be parsed at all (e.g. a bare "5M" with no trailing "B").
-const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
+const DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
 
-const GO_MAX_INT64 = 9223372036854775807n;
-const GO_MIN_INT64 = -9223372036854775808n;
+const INT64_MAX = 9223372036854775807n;
+const INT64_MIN = -9223372036854775808n;
 
 /**
  * Parses a base-0 integer literal: decimal, or `0x`/`0o`/`0b`-prefixed hex/octal/binary, or a
@@ -159,7 +159,7 @@ const GO_MIN_INT64 = -9223372036854775808n;
  * the same base (never leading, trailing, or doubled). Returns `undefined` for anything invalid
  * or outside the 64-bit signed integer range.
  */
-const parseGoBaseZeroInt = (value: string): number | undefined => {
+const parseBaseZeroInt = (value: string): number | undefined => {
   const negative = value.startsWith("-");
   const unsigned = negative || value.startsWith("+") ? value.slice(1) : value;
   if (unsigned.length === 0) return undefined;
@@ -199,7 +199,7 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
   const bigPrefix = base === 16 ? "0x" : base === 8 ? "0o" : base === 2 ? "0b" : "";
   const magnitude = BigInt(`${bigPrefix}${cleanDigits}`);
   const signedMagnitude = negative ? -magnitude : magnitude;
-  if (signedMagnitude > GO_MAX_INT64 || signedMagnitude < GO_MIN_INT64) return undefined;
+  if (signedMagnitude > INT64_MAX || signedMagnitude < INT64_MIN) return undefined;
 
   const n = Number.parseInt(cleanDigits, base);
   return negative ? -n : n;
@@ -207,8 +207,8 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
 
 // Drops a decimal literal's fractional part rather than rounding (`"5.5"` → `"5"`); a
 // `0x`/`0o`/`0b` literal (which contains letters) never matches and passes through unchanged for
-// {@link parseGoBaseZeroInt} to accept or reject.
-const trimGoDecimal = (value: string): string => {
+// {@link parseBaseZeroInt} to accept or reject.
+const trimDecimalFraction = (value: string): string => {
   if (!value.includes(".")) return value;
   const match = /^([+-]?\d*)(?:\.\d*)?$/.exec(value);
   if (!match) return value;
@@ -221,7 +221,7 @@ const trimGoDecimal = (value: string): string => {
  * `SUPABASE_SCANNER_BUFFER_SIZE` accepts an integer byte count, optionally suffixed
  * `k`/`m`/`g` (× 1024/1024²/1024³) immediately followed by a trailing `b`/`B` (e.g. `"5MB"`). A
  * bare `"5M"` (no trailing `B`) is NOT 5 MiB — it fails to parse as an integer and is treated as
- * unset (`0`), same as any other unparseable or non-positive value. See {@link parseGoBaseZeroInt}
+ * unset (`0`), same as any other unparseable or non-positive value. See {@link parseBaseZeroInt}
  * for the accepted integer-literal grammar (hex/octal/binary prefixes, `_` separators).
  */
 const parseScannerBufferSize = (raw: string): number => {
@@ -247,7 +247,7 @@ const parseScannerBufferSize = (raw: string): number => {
         break;
     }
   }
-  const size = parseGoBaseZeroInt(trimGoDecimal(value));
+  const size = parseBaseZeroInt(trimDecimalFraction(value));
   return size !== undefined && Number.isFinite(size) && size > 0 ? size * multiplier : 0;
 };
 
@@ -271,16 +271,16 @@ export const checkScannerBufferSize = <E>(
     if (raw === undefined) return;
     const configuredLimit = parseScannerBufferSize(raw);
     // Covers both an explicit non-positive size and an unparseable value (see
-    // `GO_DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
+    // `DEFAULT_MAX_SCANNER_CAPACITY` above) — both fall back to the hardcoded default cap, not
     // to "no limit".
     const limit =
       configuredLimit > 0
-        ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
-        : GO_DEFAULT_MAX_SCANNER_CAPACITY;
-    // The reported limit is the raw configured value, even below the `GO_SCANNER_START_BUF_SIZE`
+        ? Math.max(configuredLimit, SCANNER_START_BUF_SIZE)
+        : DEFAULT_MAX_SCANNER_CAPACITY;
+    // The reported limit is the raw configured value, even below the `SCANNER_START_BUF_SIZE`
     // floor (which only affects when the too-long error can fire, not the number reported), or the
     // hardcoded default once that's been fallen back to.
-    const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+    const reportedLimit = configuredLimit > 0 ? configuredLimit : DEFAULT_MAX_SCANNER_CAPACITY;
     let emitted = 0;
     let lastRaw = "";
     for (const token of splitSqlTokens(content)) {
@@ -294,7 +294,7 @@ export const checkScannerBufferSize = <E>(
         const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
         return yield* Effect.fail(
           mapError(
-            `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
+            `scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
             "read",
           ),
         );

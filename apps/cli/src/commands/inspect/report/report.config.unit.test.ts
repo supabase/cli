@@ -123,7 +123,7 @@ describe("readInspectRules", () => {
   it.effect("rejects unknown keys in a rule table", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(readRules({ configToml: `${rule("bad")}typo = "x"\n` }));
-      expect(error.message).toContain("invalid keys: typo");
+      expect(error.message).toContain("unknown keys: typo");
     }),
   );
 

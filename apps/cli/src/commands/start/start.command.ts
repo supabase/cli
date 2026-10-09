@@ -23,7 +23,7 @@ import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
 
 /**
- * A pflag-style string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
+ * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
  * values) and accumulates across repeats, matching `status`'s own `--exclude` handling.
  */
 export const startExcludeFlag = stringSliceFlag(

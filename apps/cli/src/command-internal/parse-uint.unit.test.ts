@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { isValidBase0Int64, parseUintBase0 } from "./parse-uint.ts";
 
-describe("parseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
+describe("parseUintBase0", () => {
   it("parses plain decimal", () => {
     expect(parseUintBase0("0")).toEqual({ value: 0 });
     expect(parseUintBase0("1")).toEqual({ value: 1 });
@@ -16,7 +16,7 @@ describe("parseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
     expect(parseUintBase0("+1")).toEqual({ cause: "invalid syntax" });
   });
 
-  it("parses Go's base-0 prefix forms: hex, octal (bare leading zero!), binary", () => {
+  it("parses base-0 prefix forms: hex, octal (bare leading zero!), binary", () => {
     expect(parseUintBase0("0x10")).toEqual({ value: 16 });
     expect(parseUintBase0("0X10")).toEqual({ value: 16 });
     expect(parseUintBase0("0o10")).toEqual({ value: 8 });
@@ -58,7 +58,7 @@ describe("parseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
   });
 });
 
-describe("isValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
+describe("isValidBase0Int64", () => {
   it("accepts int64's exact bounds, both signs", () => {
     expect(isValidBase0Int64("9223372036854775807")).toBe(true); // int64 max
     expect(isValidBase0Int64("-9223372036854775808")).toBe(true); // int64 min
@@ -73,7 +73,7 @@ describe("isValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
     expect(isValidBase0Int64("18446744073709551616")).toBe(false); // one past uint64 max
   });
 
-  it("accepts plain decimals and Go's base-0 prefix forms, signed", () => {
+  it("accepts plain decimals and base-0 prefix forms, signed", () => {
     expect(isValidBase0Int64("0")).toBe(true);
     expect(isValidBase0Int64("42")).toBe(true);
     expect(isValidBase0Int64("-42")).toBe(true);

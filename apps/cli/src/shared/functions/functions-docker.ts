@@ -47,7 +47,7 @@ export function edgeRuntimeCacheVolume(projectId: string) {
  * (never set) falls through to `envNetworkId`; `""` (explicitly cleared) and
  * any non-empty value both skip `envNetworkId` and resolve immediately.
  * Callers must pass a flag reader that preserves this distinction — see
- * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
+ * `lastExplicitLongFlagValue` (`shared/cli/flag-groups.ts`).
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;

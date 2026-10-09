@@ -583,7 +583,7 @@ function withConfirmSideEffect(
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+  readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -663,7 +663,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
       processControl: { layer: processControl.layer },
       analytics: { layer: analytics.layer },
-      goOutput: opts.goOutput ?? Option.none(),
+      outputFlag: opts.outputFlag ?? Option.none(),
     }),
     machineErrorContextLayer,
     commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
@@ -1420,7 +1420,7 @@ describe("pull integration", () => {
   it.live(
     "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
     () => {
-      const { layer, api } = setup({ goOutput: Option.some("json") });
+      const { layer, api } = setup({ outputFlag: Option.some("json") });
       return Effect.gen(function* () {
         yield* writeConfig();
         const exit = yield* Effect.exit(runPull(pullFlags()));

@@ -20,7 +20,7 @@ import {
 } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { viperEnvBoolWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvBoolWithProjectFallback } from "../supabase-env.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { containerCliExitCode, describeContainerCliFailure } from "../container-cli.ts";
 import { DbConnection } from "../db-connection.service.ts";
@@ -60,7 +60,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (parsed as a boolean when set; unset is ON). */
 export const SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -688,7 +688,7 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !(yield* viperEnvBoolWithProjectFallback(
+      !(yield* supabaseEnvBoolWithProjectFallback(
         SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
       ))
@@ -871,7 +871,7 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !(yield* viperEnvBoolWithProjectFallback(
+      !(yield* supabaseEnvBoolWithProjectFallback(
         SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
         {

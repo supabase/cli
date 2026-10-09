@@ -24,7 +24,7 @@ describe("buildRealtimeEnv", () => {
     expect(env["API_JWT_JWKS"]).toBe(base.jwks);
   });
 
-  test("matches Go's remaining static env values", () => {
+  test("sets the remaining static env values", () => {
     const env = buildRealtimeEnv(base);
     expect(env).toMatchObject({
       PORT: "4000",
