@@ -332,6 +332,7 @@ const forward = Effect.fn("HttpProxy.forward")(
       // Error listeners remain until collection because destroy may emit errors asynchronously.
       const cleanup = () => {
         request.off("aborted", onClientGone);
+        request.off("end", endResponse);
         response.off("close", onResponseClose);
         response.off("finish", onFinish);
 
@@ -355,6 +356,19 @@ const forward = Effect.fn("HttpProxy.forward")(
         abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
       const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
       const onFinish = () => finish(Effect.void);
+      const endResponse = () => {
+        if (!settled) response.end();
+      };
+      // Bun resets a `Connection: close` client when the response completes before its request body
+      // is fully read, so the response ends only once the rest of that body has been drained.
+      const onUpstreamEnd = () => {
+        if (outgoing !== undefined) request.unpipe(outgoing);
+        if (request.readableEnded) endResponse();
+        else {
+          request.once("end", endResponse);
+          request.resume();
+        }
+      };
       // A close after `end()` but before `finish` means the client reset with writes still queued.
       const onResponseClose = () => {
         if (!response.writableFinished) onClientGone();
@@ -384,7 +398,8 @@ const forward = Effect.fn("HttpProxy.forward")(
             if (header !== undefined && !hopByHop.has(name.toLowerCase()))
               response.setHeader(name, header);
           }
-          value.pipe(response);
+          value.pipe(response, { end: false });
+          value.once("end", onUpstreamEnd);
         },
       );
       outgoing.on("error", onError);
