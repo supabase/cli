@@ -24,7 +24,8 @@ S3 protocol/vector controls are forwarded to their services. Storage receives th
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
 and ignored: the stack runs no Vector service.
-Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
+Encrypted JWT secrets are decrypted before shared credentials are derived, and encrypted
+`[edge_runtime.secrets]` values are decrypted before they reach the Functions service. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
 Studio receives the database connection, the Functions management directory/URL, and Analytics

@@ -44,7 +44,7 @@ import {
   resolveStorageCredentials,
   storageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
-import { decryptSecret, isEncryptedSecret } from "../../shared/config/vault-decrypt.ts";
+import { decryptSecretMap } from "../../shared/config/vault-decrypt.ts";
 import { parseDuration } from "../../command-internal/duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
@@ -1298,22 +1298,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // without this step the literal ciphertext would reach the container's env file.
           // `checkDbToml` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
-          const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
-          const { dotenvPrivateKeys } = context.resolvedConfig;
-          const edgeRuntimeSecrets: Record<string, string> = {};
-          for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
-            if (!isEncryptedSecret(secretValue)) {
-              edgeRuntimeSecrets[secretName] = secretValue;
-              continue;
-            }
-            const decrypted = decryptSecret(secretValue, dotenvPrivateKeys);
-            if (!decrypted.ok) {
-              return yield* new StartInvalidConfigError({
-                message: `failed to parse config: ${decrypted.error}`,
-              });
-            }
-            edgeRuntimeSecrets[secretName] = decrypted.value;
+          const decryptedEdgeRuntimeSecrets = decryptSecretMap(
+            toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
+            context.resolvedConfig.dotenvPrivateKeys,
+          );
+          if (!decryptedEdgeRuntimeSecrets.ok) {
+            return yield* new StartInvalidConfigError({
+              message: `failed to parse config: ${decryptedEdgeRuntimeSecrets.error}`,
+            });
           }
+          const edgeRuntimeSecrets = decryptedEdgeRuntimeSecrets.value;
           const edgeRuntimeInput: EdgeRuntimeBringUpInput = {
             projectId,
             networkId,

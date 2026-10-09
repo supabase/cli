@@ -94,3 +94,23 @@ export function decryptSecret(
   }
   return { ok: false, error: lastError };
 }
+
+/** Decrypts every `encrypted:` value in a name-to-secret map, leaving plain values as-is; the first failure wins. */
+export function decryptSecretMap(
+  secrets: Readonly<Record<string, string>>,
+  keys: ReadonlyArray<string>,
+):
+  | { readonly ok: true; readonly value: Record<string, string> }
+  | { readonly ok: false; readonly error: string } {
+  const decryptedSecrets: Record<string, string> = {};
+  for (const [name, value] of Object.entries(secrets)) {
+    if (!isEncryptedSecret(value)) {
+      decryptedSecrets[name] = value;
+      continue;
+    }
+    const decrypted = decryptSecret(value, keys);
+    if (!decrypted.ok) return decrypted;
+    decryptedSecrets[name] = decrypted.value;
+  }
+  return { ok: true, value: decryptedSecrets };
+}

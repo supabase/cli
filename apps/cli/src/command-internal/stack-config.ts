@@ -17,6 +17,7 @@ import type {
 } from "../config/cli-config-values.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
+import { decryptSecretMap } from "../shared/config/vault-decrypt.ts";
 import {
   describeConfigLoadFailure,
   loadResolvedConfigContext,
@@ -405,16 +406,20 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const functionsEnv = yield* Effect.try({
-        try: () =>
-          Object.fromEntries(
-            Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
-              key,
-              value ?? "",
-            ]),
-          ),
-        catch: (cause) => new StackConfigError({ message: String(cause) }),
-      });
+      const functionsEnvResult = decryptSecretMap(
+        Object.fromEntries(
+          Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
+            key,
+            value ?? "",
+          ]),
+        ),
+        resolvedConfig.dotenvPrivateKeys,
+      );
+      if (!functionsEnvResult.ok)
+        return yield* new StackConfigError({
+          message: `failed to parse config: ${functionsEnvResult.error}`,
+        });
+      const functionsEnv = functionsEnvResult.value;
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>
