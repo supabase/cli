@@ -14,7 +14,10 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
+import type {
+  ChildProcessHandle,
+  ChildProcessSpawner as ChildProcessSpawnerService,
+} from "effect/unstable/process/ChildProcessSpawner";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
@@ -550,33 +553,81 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         labels: ReadonlyArray<string>,
       ) {
         const testRunLabel = yield* testRunLabelArgs();
+        const stderrTail = (process: ChildProcessHandle) =>
+          process.stderr.pipe(
+            Stream.decodeText,
+            Stream.runFold(
+              () => "",
+              (tail, chunk) => (tail + chunk).slice(-4096),
+            ),
+            Effect.forkScoped,
+          );
         // Create the container before attaching so its name exists on the daemon before any
         // readiness timeout can fire. A `run` client killed mid-create leaves the daemon to
         // finish creating a container that nothing ever starts, so `--rm` never fires and a
         // later `rm -f` by name finds nothing to remove. `--rm -i` on `create` sets the same
         // AutoRemove and StdinOnce as on `run`, so stdin EOF still ends the helper when the
-        // attached client dies.
-        yield* engineCommand([
-          "create",
-          "--rm",
-          "-i",
-          "--name",
-          name,
-          "--label",
-          "com.supabase.stack-managed=true",
-          "--label",
-          `com.supabase.stack=${options.stackId}`,
-          ...labels.flatMap((label) => ["--label", label]),
-          "--label",
-          `com.supabase.stack-root=${options.path.resolve(options.root)}`,
-          ...composeHelperLabels,
-          ...testRunLabel,
-          ...mountArgs(mounts),
-          image,
-          "/bin/sh",
-          "-c",
-          "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
-        ]).pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        // attached client dies. The create is bounded like readiness so a stalled daemon cannot
+        // hang shutdown; the owned name is already registered, so the cleanup that follows a
+        // failure removes a helper the daemon finishes creating late, and the stack sweep on
+        // stop and destroy removes one left behind by an owner killed before `start`.
+        const creator = yield* options.spawner
+          .spawn(
+            ChildProcess.make(
+              options.target.engine,
+              [
+                ...options.target.argv,
+                "create",
+                "--rm",
+                "-i",
+                "--name",
+                name,
+                "--label",
+                "com.supabase.stack-managed=true",
+                "--label",
+                `com.supabase.stack=${options.stackId}`,
+                ...labels.flatMap((label) => ["--label", label]),
+                "--label",
+                `com.supabase.stack-root=${options.path.resolve(options.root)}`,
+                ...composeHelperLabels,
+                ...testRunLabel,
+                ...mountArgs(mounts),
+                image,
+                "/bin/sh",
+                "-c",
+                "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
+              ],
+              { stdin: "ignore", stdout: "pipe", stderr: "pipe", forceKillAfter: "5 seconds" },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        const createStderr = yield* stderrTail(creator);
+        const created = yield* Effect.all(
+          [creator.stdout.pipe(Stream.decodeText, Stream.runDrain), creator.exitCode],
+          { concurrency: "unbounded" },
+        ).pipe(Effect.timeout("30 seconds"), Effect.exit);
+        const createTail = (yield* Fiber.join(createStderr).pipe(
+          Effect.timeout("1 second"),
+          Effect.orElseSucceed(() => ""),
+        )).trim();
+        if (Exit.isFailure(created) || Number(created.value[1]) !== 0) {
+          yield* creator
+            .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+            .pipe(Effect.ignore);
+          const reason = Exit.isFailure(created)
+            ? Option.match(Cause.findErrorOption(created.cause), {
+                onNone: () => Cause.pretty(created.cause),
+                onSome: (error) =>
+                  Cause.isTimeoutError(error)
+                    ? "Database helper was not created within 30 seconds"
+                    : failureMessage(error),
+              })
+            : createTail || `Container engine exited with ${created.value[1]}`;
+          return yield* errorFor(
+            "helper",
+            Exit.isFailure(created) && createTail !== "" ? `${reason}: ${createTail}` : reason,
+          );
+        }
         const child = yield* options.spawner
           .spawn(
             ChildProcess.make(
@@ -586,14 +637,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ),
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-        const stderr = yield* child.stderr.pipe(
-          Stream.decodeText,
-          Stream.runFold(
-            () => "",
-            (tail, chunk) => (tail + chunk).slice(-4096),
-          ),
-          Effect.forkScoped,
-        );
+        const stderr = yield* stderrTail(child);
         return yield* child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
@@ -613,7 +657,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.timeout("1 second"),
                     Effect.orElseSucceed(() => ""),
                   );
-                  const tail = diagnostic.trim();
+                  // Docker prints warnings such as a platform mismatch on `create`, so keep that
+                  // output alongside what `start` wrote.
+                  const tail = [createTail, diagnostic.trim()]
+                    .filter((part) => part !== "")
+                    .join("\n");
                   const reason = Exit.isFailure(exit)
                     ? Option.match(Cause.findErrorOption(exit.cause), {
                         onNone: () => Cause.pretty(exit.cause),

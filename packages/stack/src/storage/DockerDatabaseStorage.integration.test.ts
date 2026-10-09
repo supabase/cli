@@ -23,7 +23,11 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
-import { makeContainerRuntime, type EngineTarget } from "../runtime/Container.ts";
+import {
+  makeContainerRuntime,
+  removeStackContainers,
+  type EngineTarget,
+} from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
@@ -290,6 +294,94 @@ const ownerDeathScenario = (shared: boolean) =>
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
+// An owner killed between `create` and `start` leaves a created helper that no attached client
+// ends. The confirming sweep that stop and destroy run removes it with the stack's other
+// containers; this checks that sweep finds and removes a container that never started.
+const ownerDeathDuringCreateScenario = Effect.scoped(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-owner-death-create-" });
+    const stackId = `storage-owner-death-create-${yield* crypto.randomUUIDv4}`;
+    const filter = `label=com.supabase.stack=${stackId}`;
+    const container = yield* makeContainerRuntime({ target: dockerTarget, root });
+    yield* container.prepareImage(yield* postgresImage("17"));
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../../tests/helper-owner-fixture.ts", import.meta.url)),
+          stackId,
+          root,
+          "stall-before-start",
+        ],
+        { stdin: "ignore" },
+      ),
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore);
+        const ids = yield* engine(["ps", "-aq", "--filter", filter]);
+        if (ids.length > 0) yield* engine(["rm", "-f", ...ids.split("\n")]);
+      }).pipe(Effect.ignore),
+    );
+    const stderrOutput = yield* child.stderr.pipe(
+      Stream.decodeText,
+      Stream.mkString,
+      Effect.forkScoped,
+    );
+    const created = yield* child.stdout.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.runHead,
+      Effect.timeout("60 seconds"),
+      Effect.exit,
+    );
+    if (
+      Exit.isFailure(created) ||
+      Option.isNone(created.value) ||
+      created.value.value !== "HELPER_CREATED"
+    ) {
+      yield* child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore);
+      const stderr = yield* Fiber.join(stderrOutput);
+      return yield* new DockerTestError({
+        message: `Owner exited before helper was created (stderr: ${stderr.trim() || "<empty>"})`,
+      });
+    }
+    const id = yield* engine([
+      "ps",
+      "--all",
+      "--filter",
+      filter,
+      "--filter",
+      "status=created",
+      "--no-trunc",
+      "--format",
+      "{{.ID}}",
+    ]).pipe(
+      Effect.flatMap((value) =>
+        value.length > 0
+          ? Effect.succeed(value)
+          : new DockerTestError({ message: "Owner helper was not created" }),
+      ),
+    );
+    expect(yield* child.isRunning).toBe(true);
+    yield* child.kill({ killSignal: "SIGKILL" });
+    yield* child.exitCode.pipe(Effect.exit);
+    // Nothing attached, so the created helper outlives its owner until the stack is swept.
+    expect(yield* engine(["ps", "-aq", "--no-trunc", "--filter", filter])).toBe(id);
+    const remaining = yield* removeStackContainers({
+      target: dockerTarget,
+      stackId,
+      stackRoot: path.resolve(path.join(root, "state", "stack", "data")),
+    });
+    expect(remaining).toEqual([]);
+    expect(yield* engine(["ps", "-aq", "--filter", filter])).toBe("");
+  }),
+).pipe(Effect.provide(NodeServices.layer));
+
 // The volume backend, helper registry and volume-labelling contracts exist only on Docker; Podman
 // always stores data in host directories, covered by the host storage suite below.
 describe.runIf(testEngine === "docker")(
@@ -304,6 +396,11 @@ describe.runIf(testEngine === "docker")(
     it.live.skipIf(process.platform === "win32")(
       "removes a shared volume helper when its owner is killed",
       () => ownerDeathScenario(true),
+    );
+
+    it.live.skipIf(process.platform === "win32")(
+      "sweeps a helper whose owner was killed between create and start",
+      () => ownerDeathDuringCreateScenario,
     );
 
     it.live("waits for helper creation to settle before cleaning up an interrupted operation", () =>
@@ -398,6 +495,7 @@ describe.runIf(testEngine === "docker")(
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
+              const creating = command.args[0] === "create";
               const attaching = command.args[0] === "start";
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
@@ -411,7 +509,8 @@ describe.runIf(testEngine === "docker")(
                       Stream.concat(Stream.never),
                     )
                   : Stream.empty,
-                stderr: attaching
+                // Docker prints the platform warning while creating the container, before start.
+                stderr: creating
                   ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
                   : Stream.empty,
                 all: Stream.empty,
@@ -448,6 +547,84 @@ describe.runIf(testEngine === "docker")(
           expect(failure.message).toBe(
             `Database helper did not become ready within 30 seconds: ${warning}`,
           );
+        }),
+      ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
+    );
+
+    it.effect("bounds helper creation and still removes the helper by name afterwards", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "docker-helper-create-timeout-",
+          });
+          const creating = yield* Deferred.make<void>();
+          const commands: string[][] = [];
+          const killed = yield* Ref.make(0);
+          const warning =
+            "WARNING: The requested image's platform does not match the host platform";
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* Effect.die("Unexpected command");
+              commands.push([...command.args]);
+              const create = command.args[0] === "create";
+              if (create) yield* Deferred.succeed(creating, undefined);
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(0),
+                // The daemon never answers the create.
+                exitCode: create ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(create),
+                kill: () => (create ? Ref.update(killed, (count) => count + 1) : Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.empty,
+                stderr: create
+                  ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
+                  : Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              });
+            }),
+          );
+          const storage = yield* makeDockerDatabaseStorage({
+            runtime: "docker",
+            target: dockerTarget,
+            stackId: "helper-create-timeout",
+            instanceId: "database",
+            instanceRoot: root,
+            root,
+            cacheRoot: path.join(root, "cache"),
+            fs,
+            path,
+            crypto,
+            spawner,
+            container: {
+              prepare: () => Effect.void,
+              prepareImage: (image) => Effect.succeed(image),
+              launch: () => Effect.die("unused"),
+              launchCommand: () => Effect.die("unused"),
+            },
+          });
+          yield* storage.prepare("17");
+          const operation = yield* storage.removeData("17").pipe(Effect.flip, Effect.forkScoped);
+          yield* Deferred.await(creating);
+          yield* TestClock.adjust("30 seconds");
+          const failure = yield* Fiber.join(operation);
+          expect(failure.message).toBe(
+            `Database helper was not created within 30 seconds: ${warning}`,
+          );
+          expect(yield* Ref.get(killed)).toBe(1);
+          const create = commands.find((args) => args[0] === "create");
+          const name = create?.[create.indexOf("--name") + 1];
+          expect(name).toMatch(/^supabase-db-helper-/u);
+          expect(commands.some((args) => args[0] === "start")).toBe(false);
+          // The owned name was registered before the create, so a late-created helper is still
+          // removed by name.
+          expect(commands.filter((args) => args[0] === "rm")).toEqual([["rm", "-f", name]]);
         }),
       ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
     );
