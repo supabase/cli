@@ -19,7 +19,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import { postgresVersion } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions, postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   StackError,
   type ServiceCreation,
@@ -1583,6 +1583,89 @@ describe("experimental stack start", () => {
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  const [orioledb = ""] = orioledbVersions();
+  for (const target of [
+    {
+      name: "both [db] major_version and [db] orioledb_version when stock 15 becomes OrioleDB 17",
+      before: "[db]\nmajor_version = 15\n",
+      after: `[db]\norioledb_version = "${orioledb}"\n`,
+      env: undefined,
+      changes: `[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested ${orioledb}`,
+      revert: "Revert the settings listed to their saved values",
+    },
+    {
+      name: "SUPABASE_DB_ORIOLEDB_VERSION when it switches a saved stock stack to OrioleDB",
+      before: "",
+      after: "",
+      env: orioledb,
+      changes: `SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
+      revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
+    },
+  ])
+    it.live(`names ${target.name}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        const configPath = `${root}/supabase/config.toml`;
+        yield* fs.writeFileString(configPath, `project_id = "orioledb"\n${target.before}`);
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(configPath, `project_id = "orioledb"\n${target.after}`);
+        yield* fixture.stack.composition.stop;
+        const restart = stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        const error = yield* target.env === undefined
+          ? restart
+          : withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", target.env, restart);
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: `The saved stack cannot adopt these changes: ${target.changes}`,
+          suggestion: expect.stringContaining(
+            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\``,
+          ),
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+  it.live("offers no revert to an OrioleDB build the catalog no longer pins", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-retired-orioledb-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "retired"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database?.service !== "database") return yield* Effect.die("database missing");
+      const observed = yield* database.status;
+      if (observed.config.service !== "database") return yield* Effect.die("config missing");
+      yield* database.restart({
+        ...observed.config,
+        config: { ...observed.config.config, version: "17.0.0.000-orioledb" },
+      });
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining(
+          "[db] orioledb_version: saved 17.0.0.000, requested unset",
+        ),
+        suggestion: expect.stringContaining(
+          "This CLI release starts a different [db] orioledb_version than the saved stack.",
+        ),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(

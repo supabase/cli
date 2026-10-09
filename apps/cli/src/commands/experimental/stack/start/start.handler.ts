@@ -1,4 +1,10 @@
-import { defaultRuntime, postgresVersion } from "@supabase/stack/internal/artifacts";
+import {
+  defaultRuntime,
+  isOrioledbVersion,
+  orioledbConfigVersion,
+  orioledbVersions,
+  postgresVersion,
+} from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
   renderStackSummary,
@@ -54,6 +60,7 @@ import {
   loadStackConfig,
   stackEndpointSetting,
   stackMajorVersionSetting,
+  stackOrioledbVersionSetting,
   type StackEndpointSetting,
 } from "../../../../command-internal/stack-config.ts";
 import { envOverride } from "../../../../command-internal/local-config-values.ts";
@@ -225,6 +232,10 @@ const databaseVersionOf = (
 
 const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
 
+/** The `db.orioledb_version` value behind a database artifact version, or `unset` for stock. */
+const orioledbVersionOf = (version: string): string =>
+  isOrioledbVersion(version) ? orioledbConfigVersion(version) : "unset";
+
 /** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
 const formatConfigPath = (path: string): string => {
   const segments = path.split(".");
@@ -242,8 +253,8 @@ const settingKeyLabel = (
     : formatConfigPath(setting.configPath);
 
 /**
- * One incompatible path, reported as the JSON/stream-json error envelope's `stack_changes`
- * entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
+ * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
+ * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
  * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
  * artifact or Postgres build.
  */
@@ -262,7 +273,7 @@ const describeSettingChange = (
   savedCreation: ServiceCreation | undefined,
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
-): StructuredSettingChange => {
+): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
   if (service === "database" && path === "config.version") {
     // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
     // composition plan actually compared, so the saved/requested pair reflects what changed.
@@ -270,9 +281,11 @@ const describeSettingChange = (
     const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
     const savedMajor = majorVersionOf(savedVersion);
     const requestedMajor = majorVersionOf(requestedVersion);
-    // Same major but different pinned build: `major_version` doesn't control this, so reverting
-    // it wouldn't fix anything — name the actual (unpinnable) versions instead.
-    if (savedMajor === requestedMajor)
+    const savedOrioledb = orioledbVersionOf(savedVersion);
+    const requestedOrioledb = orioledbVersionOf(requestedVersion);
+    // Same major and engine but different pinned build: no setting controls this, so name the
+    // actual (unpinnable) versions instead.
+    if (savedMajor === requestedMajor && savedOrioledb === requestedOrioledb)
       return {
         service,
         path,
@@ -281,14 +294,27 @@ const describeSettingChange = (
         requested: requestedVersion,
         editable: false,
       };
-    return {
-      service,
-      path,
-      key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
-      saved: savedMajor,
-      requested: requestedMajor,
-      editable: true,
-    };
+    const changes: Array<StructuredSettingChange> = [];
+    if (savedMajor !== requestedMajor)
+      changes.push({
+        service,
+        path,
+        key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
+        saved: savedMajor,
+        requested: requestedMajor,
+        editable: true,
+      });
+    if (savedOrioledb !== requestedOrioledb)
+      changes.push({
+        service,
+        path,
+        key: settingKeyLabel(stackOrioledbVersionSetting, projectEnvValues),
+        saved: savedOrioledb,
+        requested: requestedOrioledb,
+        // A catalog upgrade can retire the saved build, which the config then rejects.
+        editable: savedOrioledb === "unset" || orioledbVersions().includes(savedOrioledb),
+      });
+    return changes;
   }
   const endpointName = path.startsWith("endpoints.") ? path.split(".")[1] : undefined;
   const setting =
@@ -326,7 +352,7 @@ const incompatibleSettingChanges = (
     .flatMap((entry) =>
       // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
       entry.change === "incompatible"
-        ? entry.paths.map((path) =>
+        ? entry.paths.flatMap((path) =>
             describeSettingChange(
               entry.service,
               path,

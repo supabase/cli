@@ -17,6 +17,7 @@ import {
   stackWithShadowDatabase,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 
 const defaultConfig = Schema.decodeUnknownSync(CliConfigSchema)({});
 
@@ -515,5 +516,95 @@ describe("stack shadow databases", () => {
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,
+  );
+
+  it.live("creates the shadow database on the pinned OrioleDB build", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-pinned-" });
+      const [orioledb = ""] = orioledbVersions();
+      const versions: string[] = [];
+      // Stops at the database creation, so the test asserts the wiring without running OrioleDB.
+      const capturingApi = Layer.effect(
+        StackApi,
+        Effect.gen(function* () {
+          const api = yield* StackApi;
+          return StackApi.of({
+            ...api,
+            create: (options) =>
+              api.create(options).pipe(
+                Effect.map((stack) => ({
+                  ...stack,
+                  services: {
+                    ...stack.services,
+                    create: (creation) => {
+                      if (creation.service === "database") versions.push(creation.config.version);
+                      return Effect.fail(
+                        new StackError({ operation: "create", message: "captured" }),
+                      );
+                    },
+                  },
+                })),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+      const setup = {
+        ...input(fs, path, root),
+        db: { major_version: 17, orioledb_version: orioledb, settings: {} },
+      };
+
+      yield* stackWithShadowDatabase(setup, () => Effect.void, { runtime: "native" }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            capturingApi,
+            stackCatalogSetupLayer,
+            dbConnectionLayer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+            mockOutput().layer,
+          ),
+        ),
+        Effect.exit,
+      );
+
+      expect(versions).toEqual([`${orioledb}-orioledb`]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("refuses an unpinned OrioleDB version before creating a shadow stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-" });
+      const output = mockOutput();
+      const roots: string[] = [];
+      const setup = {
+        ...input(fs, path, root),
+        db: { major_version: 17, orioledb_version: "17.0.0.000", settings: {} },
+      };
+
+      const error = yield* stackWithShadowDatabase(setup, () => Effect.void, {
+        runtime: "native",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            recordingApi(roots, []),
+            stackCatalogSetupLayer,
+            dbConnectionLayer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+            output.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain(
+        "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
+      );
+      expect(roots).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });
