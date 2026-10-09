@@ -2896,17 +2896,23 @@ describe("db reset", () => {
             ...migrationFile("20240101000000", "create table migrated_table ();"),
           },
           experimental: true,
-          confirm: [true],
+          confirm: [false],
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
-          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-          const warning = out.stderrText.indexOf(
+          // Declining the prompt proves the warning was printed before it.
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "DbResetCancelledError",
+          });
+          expect(out.stderrText).toContain(
             "[db.migrations].schema_paths is not applied while pg-delta is enabled",
           );
-          expect(warning).toBeGreaterThanOrEqual(0);
-          expect(warning).toBeLessThan(out.stderrText.indexOf("Resetting remote database"));
+          expect(conn.execs).toEqual([]);
         });
       },
     );
