@@ -3,7 +3,6 @@ import { Effect, Option, Path, Predicate } from "effect";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { describeCliConfigOrigin } from "../config/cli-config-key.ts";
 import type { ResolvedCliConfig } from "../config/cli-config-values.service.ts";
-import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 import { promptYesNoOutcome } from "./prompt-yes-no.ts";
@@ -39,7 +38,7 @@ const remoteDeclaresSeedEnabled = (resolvedConfig: ResolvedCliConfig, remote: st
     Predicate.hasProperty(block.db.seed, "enabled")
       ? block.db.seed.enabled
       : undefined;
-  return typeof declared === "string" ? parseBoolLiteral(declared) === true : declared === true;
+  return CliConfigKeys.db.seed.enabled.codec.fromConfig(declared) === true;
 };
 
 /**

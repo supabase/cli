@@ -814,6 +814,18 @@ describe("db push", () => {
       });
     });
 
+    it.live("does not ask when the matched remote block enables seeding with a number", () => {
+      const { layer, out, conn } = remoteSeed({
+        format: "json",
+        remoteBlock: "\n[remotes.preview.db.seed]\nenabled = 1\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(seeded(conn)).toBe(true);
+      });
+    });
+
     it.live("--dry-run says a real run will ask, without prompting or writing", () => {
       const { layer, out, conn } = remoteSeed({ migrations: true });
       return Effect.gen(function* () {
