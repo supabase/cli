@@ -95,7 +95,12 @@ export interface ContainerRuntime {
 
 /** The engine picks published host ports (`127.0.0.1::port`), so a refusal is its own allocation. */
 const portAllocated = (message: string) =>
-  /port is already allocated|address already in use/iu.test(message);
+  /port is already allocated|address already in use|listen failed for host tcp port[^\n]*address in use/iu.test(
+    message,
+  );
+
+/** Podman releases the host port it picks at create before pasta binds it at start, so another listener can take it. */
+const PORT_COLLISION_ATTEMPTS = 3;
 
 /** A refused registry connection also reads "connection refused", so a pull needs the daemon named. */
 const pullEngineUnreachable = (cause: unknown, message: string) =>
@@ -716,10 +721,10 @@ export const makeContainerRuntime = (options: {
         ? hostGateway.prefetch(hostGatewayProbe(image, spec)).pipe(Effect.as("host-gateway"))
         : hostGateway.resolve(hostGatewayProbe(image, spec));
 
-    const launch = Effect.fn("Container.launch")(function* (
+    const launchOnce = Effect.fnUntraced(function* (
       spec: ContainerSpec,
-      interactive = false,
-      oneOff = false,
+      interactive: boolean,
+      oneOff: boolean,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -1114,6 +1119,31 @@ export const makeContainerRuntime = (options: {
           ).pipe(Effect.mapError(wrapFailure));
         }),
       );
+    });
+    const launchWithRetry = (
+      spec: ContainerSpec,
+      interactive: boolean,
+      oneOff: boolean,
+      attempt: number,
+    ): ReturnType<ContainerRuntime["launch"]> =>
+      launchOnce(spec, interactive, oneOff).pipe(
+        Effect.catchTag("ContainerLaunchError", (error) =>
+          attempt >= PORT_COLLISION_ATTEMPTS || error.failure.kind !== "port-allocation"
+            ? Effect.fail(error)
+            : Effect.logDebug(`Retrying container launch: ${error.failure.message}`).pipe(
+                Effect.andThen(error.process.remove),
+                Effect.mapError(() => error),
+                Effect.andThen(Effect.annotateCurrentSpan({ "retry.attempt_count": attempt + 1 })),
+                Effect.andThen(launchWithRetry(spec, interactive, oneOff, attempt + 1)),
+              ),
+        ),
+      );
+    const launch = Effect.fn("Container.launch")(function* (
+      spec: ContainerSpec,
+      interactive = false,
+      oneOff = false,
+    ) {
+      return yield* launchWithRetry(spec, interactive, oneOff, 1);
     });
     return {
       prepare,
