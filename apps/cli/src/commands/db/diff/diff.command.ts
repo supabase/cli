@@ -8,9 +8,8 @@ import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
-  // The four engine flags are a mutually-exclusive group, and `--use-migra` defaults to true, so
-  // they are modelled as `Option` to track whether the flag was passed: the mutex check and
-  // `resolveDiffEngine`'s `useMigraChanged` key off whether it was passed, not its value.
+  // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
+  // off whether the flag was passed; engine selection uses its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -22,7 +21,7 @@ const config = {
   // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
   // an unknown-flag parse error; see diff.handler.ts.
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    Flag.withDescription("Removed: use the default migra engine or --use-pg-delta instead."),
+    Flag.withDescription("Removed: use the default pg-delta engine or --use-migra instead."),
     Flag.optional,
     Flag.withHidden,
   ),

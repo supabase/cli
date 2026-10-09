@@ -37,7 +37,6 @@ import {
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
 import {
-  parseBoolEnv,
   resolveDeclarativeFromArgs,
   resolvePullDiffEngine,
   schemaPathsTransitionWarning,
@@ -89,8 +88,7 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
-const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+const DEPRECATION_LINE = "Flag --use-pg-delta has been deprecated, use --declarative instead.";
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
@@ -372,7 +370,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         shouldUsePgDelta({
           configEnabled: toml.pgDelta.enabled,
           usePgDeltaFlag: false,
-          envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
         }),
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {

@@ -52,7 +52,6 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  parseBoolEnv,
   resolveDiffEngine,
   schemaPathsTransitionWarning,
   shouldUsePgDelta,
@@ -103,12 +102,18 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   },
 });
 
-const declarativeBaselineNote = (displayPath: string) =>
-  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
+const declarativeNextSteps = (suggestMigra: boolean, syncNeedsExperimental: boolean) =>
+  `Run ${aqua(`supabase db schema declarative sync${syncNeedsExperimental ? " --experimental" : ""}`)} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.`;
+
+const declarativeBaselineNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects. ${nextSteps}\n`;
+
+const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. ${nextSteps}\n`;
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
-    return yield* removedFlag("--use-pg-schema", "Use the default migra engine or --use-pg-delta.");
+    return yield* removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.");
   }
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -150,10 +155,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
       });
     }
-    if (Option.isSome(flags.useMigra) || Option.isSome(flags.usePgAdmin)) {
-      yield* stackRejectNativeDockerDiffEngine(
-        Option.isSome(flags.useMigra) ? "--use-migra" : "--use-pgadmin",
-      );
+    // `--use-migra=false` / `--use-pgadmin=false` keep the pg-delta default, which the stack
+    // backend supports, so only a true value is rejected there.
+    const useMigra = Option.getOrElse(flags.useMigra, () => false);
+    if (useMigra || Option.getOrElse(flags.usePgAdmin, () => false)) {
+      yield* stackRejectNativeDockerDiffEngine(useMigra ? "--use-migra" : "--use-pgadmin");
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base config
@@ -453,17 +459,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
+    // Engine resolution: the pg-delta config/flag gate, read from the
     // (possibly remote-merged) config.
+    const onStackBackend = (yield* currentStackBackend).kind === "stack";
     const pgDeltaDefault =
-      (yield* currentStackBackend).kind === "stack" ||
+      onStackBackend ||
       shouldUsePgDelta({
         configEnabled: cfg.pgDelta.enabled,
         usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-        envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       });
     const useDelta = resolveDiffEngine({
-      useMigraChanged: Option.isSome(flags.useMigra),
+      useMigra,
       usePgAdmin,
       pgDeltaDefault,
     });
@@ -687,7 +693,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       "diff.drop_statement_count": drops.length,
     });
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
-    if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
+    const fileRequested = Option.isSome(flags.file) && flags.file.value.length > 0;
+    const writesMigration = out.length >= 2 && fileRequested;
+    // `db diff -f` after editing declarative files is the migra-era workflow pg-delta no longer
+    // serves, so only `-f` runs get a text note; local runs keep the structured advisory.
+    if (useDelta && (fileRequested || resolved.isLocal)) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
@@ -703,7 +713,29 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
-        yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+        // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`), which applies
+        // only to local targets: schema_paths first, then this dir while pg-delta stays enabled
+        // in config, then supabase/schemas. The stack backend rejects migra outright.
+        const migraReadsDeclarativeDir =
+          resolved.isLocal &&
+          cfg.schemaPathPatterns.length === 0 &&
+          (cfg.pgDelta.enabled ||
+            declarativeDirAbsolute === path.resolve(cliSettings.workdir, "supabase", "schemas"));
+        const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
+        if (fileRequested) {
+          // `declarative sync` gates on the base config, which a `[remotes.<ref>]` override may
+          // contradict, so suggest the always-accepted flag whenever an override was applied.
+          const nextSteps = declarativeNextSteps(
+            suggestMigra,
+            !cfg.pgDelta.enabled || cfg.appliedRemote !== undefined,
+          );
+          yield* output.raw(
+            writesMigration
+              ? declarativeBaselineNote(displayPath, nextSteps)
+              : declarativeFilesIgnoredNote(displayPath, nextSteps),
+            "stderr",
+          );
+        }
       }
     }
     if (out.length < 2) {

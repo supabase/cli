@@ -9,25 +9,16 @@ import {
 } from "./diff-engine.ts";
 
 describe("shouldUsePgDelta", () => {
-  it("is the OR of config, flag, and env", () => {
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(false);
-    expect(
-      shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: true }),
-    ).toBe(true);
+  it("follows the config and lets --use-pg-delta override an explicit rollback", () => {
+    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false })).toBe(false);
+    expect(shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false })).toBe(true);
+    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true })).toBe(true);
   });
 });
 
 describe("resolveDiffEngine", () => {
   const base = {
-    useMigraChanged: false,
+    useMigra: false,
     usePgAdmin: false,
     pgDeltaDefault: true,
   };
@@ -38,7 +29,7 @@ describe("resolveDiffEngine", () => {
   });
 
   it("an explicit --use-migra clears pg-delta mode", () => {
-    expect(resolveDiffEngine({ ...base, useMigraChanged: true })).toBe(false);
+    expect(resolveDiffEngine({ ...base, useMigra: true })).toBe(false);
   });
 
   it("--use-pgadmin clears pg-delta mode", () => {

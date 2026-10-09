@@ -933,12 +933,12 @@ describe("readDbToml", () => {
   it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED still wins when the block omits pgdelta", () => {
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
     return readRef(dir, ref).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(true);
+          expect(v.pgDelta.enabled).toBe(false);
         }),
       ),
       Effect.ensuring(
@@ -2620,12 +2620,12 @@ describe("readDbToml", () => {
 });
 
 describe("readDbToml [experimental.pgdelta]", () => {
-  it.effect("defaults pg-delta to disabled with no config", () => {
+  it.effect("defaults pg-delta to enabled with no config", () => {
     const dir = withConfig(undefined);
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(false);
+          expect(v.pgDelta.enabled).toBe(true);
           expect(Option.isNone(v.pgDelta.declarativeSchemaPath)).toBe(true);
           expect(Option.isNone(v.pgDelta.formatOptions)).toBe(true);
           rmSync(dir, { recursive: true, force: true });
@@ -2638,7 +2638,7 @@ describe("readDbToml [experimental.pgdelta]", () => {
     const dir = withConfig(
       [
         "[experimental.pgdelta]",
-        "enabled = true",
+        "enabled = false",
         'declarative_schema_path = "./db/decl"',
         'format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2}"',
         "",
@@ -2647,7 +2647,7 @@ describe("readDbToml [experimental.pgdelta]", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(true);
+          expect(v.pgDelta.enabled).toBe(false);
           expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe(
             join("supabase", "db", "decl"),
           );
@@ -2660,19 +2660,23 @@ describe("readDbToml [experimental.pgdelta]", () => {
     );
   });
 
-  it.effect("keeps an absolute declarative_schema_path unchanged", () => {
-    const dir = withConfig(
-      ["[experimental.pgdelta]", 'declarative_schema_path = "/abs/decl"', ""].join("\n"),
-    );
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("/abs/decl");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "keeps an absolute declarative_schema_path and enables pg-delta when enabled is omitted",
+    () => {
+      const dir = withConfig(
+        ["[experimental.pgdelta]", 'declarative_schema_path = "/abs/decl"', ""].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.pgDelta.enabled).toBe(true);
+            expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("/abs/decl");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
 
 describe("resolveDeclarativeDir", () => {

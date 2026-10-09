@@ -17,6 +17,10 @@ import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import {
+  experimentalSchemaPathsIgnoredWarning,
+  ignoresExperimentalSchemaPaths,
+} from "../../../command-internal/migrate-and-seed.ts";
 import { applyMigrations, applySchemaFiles } from "../../../command-internal/migration-apply.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
@@ -224,6 +228,16 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
     const vaultSecrets = toml.vault;
+    if (
+      ignoresExperimentalSchemaPaths({
+        experimental,
+        version: resolvedVersion,
+        pgDeltaEnabled: toml.pgDelta.enabled,
+        schemaPaths: toml.schemaPaths,
+      })
+    ) {
+      yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
+    }
 
     // Prompt (default false) → cancel, then reset everything.
     const shouldReset = yield* promptYesNo(
