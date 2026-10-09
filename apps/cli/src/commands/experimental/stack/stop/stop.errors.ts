@@ -1,12 +1,14 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandStopError extends Data.TaggedError("ExperimentalStackStopError")<{
-  readonly reason: "flags" | "invalid-config" | "lifecycle" | "unknown";
+  readonly reason: "flags" | "invalid-config" | "stack";
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -15,13 +17,11 @@ export class StackCommandStopError extends Data.TaggedError("ExperimentalStackSt
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "flags":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
-        return actionability.invalidConfig;
-      case "lifecycle":
-        return actionability.invalidConfig;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }

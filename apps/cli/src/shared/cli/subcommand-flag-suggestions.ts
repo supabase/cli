@@ -1,4 +1,4 @@
-import type { CliError, Command, HelpDoc } from "effect/unstable/cli";
+import type { CliError, Command, HelpDoc } from "effect/cli";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
 export interface CliErrorSuggestionContext {

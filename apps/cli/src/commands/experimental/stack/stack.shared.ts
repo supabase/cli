@@ -36,7 +36,9 @@ export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetE
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.reason === "flags" ? actionability.provideFlags : actionability.invalidConfig;
+    return this.reason === "flags"
+      ? { ...actionability.provideFlags, fingerprint_suffix: "flags" }
+      : { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
   }
 }
 

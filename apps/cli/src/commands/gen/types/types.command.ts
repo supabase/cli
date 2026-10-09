@@ -1,5 +1,5 @@
-import { Argument, Command, Flag, Param } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag, Param } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
@@ -13,27 +13,27 @@ import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts
 import { genTypesRuntimeLayer } from "./types.layers.ts";
 
 const config = {
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Generate types from the local dev database."),
     Flag.withDefault(false),
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Generate types from the linked project."),
     Flag.withDefault(false),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Generate types from a database url."),
     Flag.optional,
   ),
-  projectId: Flag.string("project-id").pipe(
+  projectId: Flag.String("project-id").pipe(
     Flag.withDescription("Generate types from a project ID."),
     Flag.optional,
   ),
-  lang: Flag.choice("lang", GEN_TYPES_LANGUAGES).pipe(
+  lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
     Flag.withDefault("typescript"),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -43,12 +43,12 @@ const config = {
     ),
   ),
   // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints the deprecation line.
-  postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
+  postgrestV9Compat: Flag.Boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withHidden,
     Flag.withDefault(false),
   ),
-  queryTimeout: Flag.string("query-timeout").pipe(
+  queryTimeout: Flag.String("query-timeout").pipe(
     Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
     Flag.withDefault("15s"),
   ),
@@ -81,7 +81,7 @@ const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_RESERVED_FLA
 
 const commandConfig = {
   ...flagsConfig,
-  language: Argument.string("language").pipe(Argument.optional, Param.withHidden),
+  language: Argument.String("language").pipe(Argument.optional, Param.withHidden),
 } as const;
 
 /** The registry's language flags are only known at runtime; read them through `languageOptionValues`. */

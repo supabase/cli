@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import * as SmolToml from "smol-toml";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
   Cause,
   ConfigProvider,
@@ -159,9 +160,9 @@ describe("init", () => {
       }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      expect(SmolToml.parse(content)).toMatchObject({
-        db: { major_version: 17, orioledb_version: "17.11.0.002" },
-      });
+      const db = (SmolToml.parse(content) as { db?: Record<string, unknown> }).db;
+      expect(db?.["major_version"]).toBe(17);
+      expect(orioledbVersions()).toContain(db?.["orioledb_version"]);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });

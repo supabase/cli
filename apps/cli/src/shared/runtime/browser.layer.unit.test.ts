@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, PlatformError, Sink, Stream } from "effect";
 import { FileSystem } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { Browser } from "./browser.service.ts";
 import { browserLayer } from "./browser.layer.ts";

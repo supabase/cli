@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { makeTypegenHost } from "./types.typegen-host.ts";
 
 describe.skipIf(process.platform === "win32")("makeTypegenHost with the real spawner", () => {

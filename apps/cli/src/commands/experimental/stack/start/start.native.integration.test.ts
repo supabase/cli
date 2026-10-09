@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import * as net from "node:net";
 import type { Stack } from "@supabase/stack/effect";
 import {
@@ -157,7 +157,6 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
     output,
     telemetry,
     layer: Layer.mergeAll(
-      BunServices.layer,
       FetchHttpClient.layer,
       runtimeInfoLayer,
       settings,
@@ -173,7 +172,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
       Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
       stdinLayer.pipe(Layer.provide(tty)),
       tty,
-    ),
+    ).pipe(Layer.provideMerge(BunServices.layer)),
   };
 };
 
@@ -237,7 +236,7 @@ describe("experimental stack start native lifecycle", () => {
             const firstCredentials = yield* firstDatabase.credentials({ from: "host" });
             const firstDatabaseUrl = firstCredentials.databaseUrl;
             if (firstDatabaseUrl === undefined) return yield* Effect.die("database URL missing");
-            const firstConnection = parseConnectionString(firstDatabaseUrl);
+            const firstConnection = yield* parseConnectionString(firstDatabaseUrl);
             if (firstConnection === undefined) return yield* Effect.die("database URL invalid");
             const db = yield* DbConnection;
             yield* Effect.scoped(
@@ -270,7 +269,9 @@ describe("experimental stack start native lifecycle", () => {
             expect(secondDatabase.id).toBe(firstDatabase.id);
             const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
             expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const secondConnection = parseConnectionString(secondCredentials.databaseUrl ?? "");
+            const secondConnection = yield* parseConnectionString(
+              secondCredentials.databaseUrl ?? "",
+            );
             if (secondConnection === undefined) return yield* Effect.die("reopened URL invalid");
             const rows = yield* Effect.scoped(
               Effect.gen(function* () {
@@ -300,7 +301,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(restartedDatabase.id).toBe(firstDatabase.id);
             const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
             expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const restartedConnection = parseConnectionString(
+            const restartedConnection = yield* parseConnectionString(
               restartedCredentials.databaseUrl ?? "",
             );
             if (restartedConnection === undefined)

@@ -17,8 +17,8 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
@@ -2106,7 +2106,7 @@ describe("functions download", () => {
             ),
           ).toHaveLength(1);
           const ambient = yield* Config.option(
-            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+            Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
           ).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,

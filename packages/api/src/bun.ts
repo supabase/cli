@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { Layer, ManagedRuntime } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { makeApiClient, type ApiClient } from "./effect.ts";
 import { type SupabaseApiClientOptions, type SupabaseApiConfig } from "./internal/client.ts";

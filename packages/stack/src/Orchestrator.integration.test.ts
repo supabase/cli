@@ -18,7 +18,7 @@ import {
   Stream,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real backend behind the listener.
 import { captureLogs } from "../tests/logs.ts";
 import type { LifecycleEvent } from "./Lifecycle.ts";

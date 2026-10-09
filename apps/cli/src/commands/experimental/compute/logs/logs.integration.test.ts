@@ -13,7 +13,7 @@ import {
   Stdio,
   Tracer,
 } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import {
   makeComputeProject,
   setupCompute,
@@ -824,11 +824,7 @@ describe("compute logs", () => {
         Effect.withTracerEnabled(true),
       );
 
-      expect(spans.map((span) => span.name)).toEqual([
-        "compute.logs",
-        "v1GetProjectLogs",
-        "http.client GET",
-      ]);
+      expect(spans.map((span) => span.name)).toEqual(["compute.logs", "v1GetProjectLogs", "GET"]);
       expect(spans[0]?.attributes.get("poll.attempt_count")).toBe(4);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

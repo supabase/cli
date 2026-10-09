@@ -135,23 +135,19 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
         const local = yield* listLocalMigrations(fs, path, migrationsDir);
         const result = findPendingMigrations(local, remote);
         if (result.kind === "missing-local") {
-          return yield* Effect.fail(
-            new DbPushMissingLocalError({
-              message: ERR_MISSING_LOCAL,
-              suggestion: suggestRevertHistory(result.versions, repairSuggestsLocalFlag),
-            }),
-          );
+          return yield* new DbPushMissingLocalError({
+            message: ERR_MISSING_LOCAL,
+            suggestion: suggestRevertHistory(result.versions, repairSuggestsLocalFlag),
+          });
         }
         if (result.kind === "missing-remote") {
           if (!includeAll) {
             // Workdir-relative paths for `suggestIgnoreFlag`.
             const relPaths = result.paths.map((p) => toSlash(path.relative(workdir, p)));
-            return yield* Effect.fail(
-              new DbPushMissingRemoteError({
-                message: ERR_MISSING_REMOTE,
-                suggestion: suggestIgnoreFlag(relPaths),
-              }),
-            );
+            return yield* new DbPushMissingRemoteError({
+              message: ERR_MISSING_REMOTE,
+              suggestion: suggestIgnoreFlag(relPaths),
+            });
           }
           pending = includeAllPending(local, remote.length, result.paths);
         } else {
@@ -228,9 +224,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           yield* seedGlobals(
             session,
@@ -249,9 +243,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           if (includeVault) {
             yield* upsertVaultSecrets(session, vaultSecrets);
@@ -269,9 +261,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           yield* seedData(session, fs, workdir, path, seeds, applyError);
         } else if (includeSeed) {

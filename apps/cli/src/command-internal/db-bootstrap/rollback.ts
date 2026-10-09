@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { ContainerIdName } from "../docker-lifecycle.ts";
 import { dockerRemoveAll } from "../docker-remove-all.ts";

@@ -56,7 +56,7 @@
     "@napi-rs/keyring": "^1.3.0",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
-    "@supabase/pg-delta": "1.0.0-alpha.57",
+    "@supabase/pg-delta": "1.0.0-alpha.58",
     "@supabase/pg-topo": "1.0.0-alpha.8",
     "@supabase/stack": "workspace:*",
     "@supabase/supabase-js": "catalog:",

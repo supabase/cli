@@ -10,7 +10,7 @@ import {
   type TypegenLanguage,
 } from "@supabase/typegen";
 import { Config, Effect, Layer, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -55,7 +55,7 @@ export const mapRegistryError = (lang: string, cause: unknown): GenTypesGenerate
 };
 
 const optionalEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(Effect.map(Option.getOrUndefined));
+  Config.option(Config.String(name)).pipe(Effect.map(Option.getOrUndefined));
 
 /**
  * Live `GenTypesGenerator`: opens a `DbConnection` session, adapts it to typegen's `Queryable`

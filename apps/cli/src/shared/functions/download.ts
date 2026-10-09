@@ -3,9 +3,9 @@ import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@su
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option, Path, type PlatformError, Schema } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
 import {
   mutuallyExclusiveFlagsMessage,

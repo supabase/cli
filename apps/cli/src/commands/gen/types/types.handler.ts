@@ -1,6 +1,6 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -458,18 +458,22 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const branchPassword = branch.db_pass;
 
       const poolerFallback = api.v1.getPoolerConfig({ ref: branch.ref }).pipe(
-        Effect.map((configs) => {
-          const primary = configs.find((config) => config.database_type === "PRIMARY");
-          if (primary === undefined) return Option.none<PgConnInput>();
-          const parsed = poolerConfigFromConnectionString(
-            branch.ref,
-            primary.connection_string,
-            cliSettings.poolerHost,
-          );
-          return parsed._tag === "ok"
-            ? Option.some(pinSupabaseTls({ ...parsed.conn, password: branchPassword }))
-            : Option.none<PgConnInput>();
-        }),
+        Effect.flatMap((configs) =>
+          Effect.gen(function* () {
+            const primary = configs.find((config) => config.database_type === "PRIMARY");
+            if (primary === undefined) return Option.none<PgConnInput>();
+            const parsed = yield* poolerConfigFromConnectionString(
+              branch.ref,
+              primary.connection_string,
+              cliSettings.poolerHost,
+            );
+            return parsed._tag === "ok"
+              ? Option.some(pinSupabaseTls({ ...parsed.conn, password: branchPassword }))
+              : Option.none<PgConnInput>();
+          }),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.orElseSucceed(() => Option.none<PgConnInput>()),
       );
 

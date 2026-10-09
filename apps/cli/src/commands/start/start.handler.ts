@@ -6,8 +6,8 @@ import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { rawFunctionConfigRecord } from "../../shared/functions/deploy.ts";

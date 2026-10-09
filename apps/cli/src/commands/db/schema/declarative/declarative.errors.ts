@@ -2,6 +2,7 @@ import { Data } from "effect";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
@@ -119,10 +120,14 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
    * hint) when the local-reset recovery path fails, so the wrap doesn't drop it.
    */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.connect === true) {
-      return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+      const declared = causeDeclaration(this.cause);
+      return declared === undefined
+        ? { ...actionability.dbConnection, fingerprint_suffix: "connect" }
+        : { ...declared, fingerprint_suffix: declared.fingerprint_suffix ?? "connect" };
     }
     return actionability.dbFinding;
   }

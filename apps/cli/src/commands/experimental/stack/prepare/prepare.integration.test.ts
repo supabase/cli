@@ -86,7 +86,13 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     }).pipe(
       Effect.andThen(() =>
         failPreparation
-          ? Effect.fail(new StackError({ operation: "prepareService", message: "download failed" }))
+          ? Effect.fail(
+              new StackError({
+                operation: "prepareService",
+                message: "download failed",
+                kind: "artifact-download",
+              }),
+            )
           : Effect.void,
       ),
     ),
@@ -292,7 +298,7 @@ describe("stack prepare", () => {
           Effect.tap((error) =>
             Effect.sync(() => {
               expect(error.message).toContain("download failed");
-              expect(error.reason).toBe("artifact");
+              expect(error.reason).toBe("stack");
               expect(fixture.destroyCount).toBe(1);
               expect(fixture.startCount).toBe(0);
             }),

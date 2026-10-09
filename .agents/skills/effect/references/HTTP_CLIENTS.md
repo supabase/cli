@@ -4,10 +4,10 @@ Use this when writing outgoing HTTP calls, Effect HttpClient adapters, status cl
 
 Use Effect HTTP client modules for outgoing HTTP in app/provider code:
 
-- `effect/unstable/http/HttpClient`
-- `effect/unstable/http/HttpClientRequest`
-- `effect/unstable/http/HttpClientResponse`
-- `effect/unstable/http/HttpClientError`
+- `effect/http/HttpClient`
+- `effect/http/HttpClientRequest`
+- `effect/http/HttpClientResponse`
+- `effect/http/HttpClientError`
 
 Prefer Effect HttpClient in Effect application and provider code when its typed errors, layers, and transforms are useful. Raw `fetch` remains reasonable for browser or edge constraints, small adapters, platform transports, and libraries that intentionally avoid unstable Effect HTTP APIs.
 

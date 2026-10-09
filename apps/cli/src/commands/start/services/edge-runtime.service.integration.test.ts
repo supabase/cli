@@ -4,7 +4,7 @@ import { expect, layer } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
 import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
-import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { type ChildProcess, ChildProcessSpawner } from "effect/process";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";

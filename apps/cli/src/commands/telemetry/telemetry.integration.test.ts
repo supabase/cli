@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { Command } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 
 import {
   mockAnalytics,

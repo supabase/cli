@@ -4,7 +4,7 @@ import {
   type CliConfigLoadOptions,
 } from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import {
   resolveStorageCredentials,
