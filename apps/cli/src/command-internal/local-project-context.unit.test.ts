@@ -217,4 +217,47 @@ describe("loadLocalProjectContext", () => {
       );
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
   });
+
+  it.effect("fails with a typed error when SUPABASE_ENV cannot be resolved", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      const error = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestError);
+      expect(error.message).toBe("failed to resolve environment variable: SUPABASE_ENV");
+    }).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.make(() =>
+          Effect.fail(new ConfigProvider.SourceError({ message: "injected" })),
+        ),
+      ),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    );
+  });
+
+  it.effect("fails with a typed error when SUPABASE_PROJECT_ID cannot be resolved", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      const error = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestError);
+      expect(error.message).toBe("failed to resolve environment variable: SUPABASE_PROJECT_ID");
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_PROJECT_ID", undefined, body),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.make((path) =>
+          path[0] === "SUPABASE_PROJECT_ID"
+            ? Effect.fail(new ConfigProvider.SourceError({ message: "injected" }))
+            : ConfigProvider.fromEnvRecord({}).load(path),
+        ),
+      ),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    );
+  });
 });

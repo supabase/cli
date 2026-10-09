@@ -72,7 +72,7 @@ const readDotEnvFile = Effect.fnUntraced(function* (path: string) {
  * that — fall back to deriving `<workdir>/supabase` and `workdir` directly, with `process.env`
  * as the ambient layer.
  */
-export const resolveProjectEnvironmentValues = Effect.fnUntraced(function* (
+export const resolveProjectEnvironmentValues = Effect.fn("ProjectEnvironment.resolve")(function* (
   projectEnv: CliProjectEnvironment | null,
   workdir: string,
   supabaseEnv?: string,
@@ -80,10 +80,20 @@ export const resolveProjectEnvironmentValues = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const env =
     supabaseEnv ||
-    Option.getOrUndefined(yield* Config.option(Config.string("SUPABASE_ENV")).pipe(Effect.orDie)) ||
+    Option.getOrUndefined(
+      yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+        Effect.mapError(
+          () =>
+            new ProjectEnvironmentError({
+              message: "failed to resolve environment variable: SUPABASE_ENV",
+            }),
+        ),
+      ),
+    ) ||
     "development";
-  const filenames = candidateDotenvFilenames(env);
+  const filenames = [...new Set(candidateDotenvFilenames(env))];
   const merged: Record<string, string> = {};
+  let fileCount = 0;
 
   const supabaseDir = projectEnv?.paths.supabaseDir ?? path.join(workdir, "supabase");
   const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
@@ -95,11 +105,13 @@ export const resolveProjectEnvironmentValues = Effect.fnUntraced(function* (
     for (const filename of filenames) {
       const parsed = yield* readDotEnvFile(path.join(dir, filename));
       if (parsed === undefined) continue;
+      fileCount += 1;
       for (const [key, value] of Object.entries(parsed)) {
         if (!(key in merged)) merged[key] = value;
       }
     }
   }
+  yield* Effect.annotateCurrentSpan("file.count", fileCount);
 
   const ambientOverrides: Record<string, string> = {};
   if (projectEnv !== null) {

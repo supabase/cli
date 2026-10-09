@@ -39,7 +39,11 @@ export const loadLocalProjectContext = <E>(
 > =>
   Effect.gen(function* () {
     const supabaseEnv = Option.getOrUndefined(
-      yield* Config.option(Config.string("SUPABASE_ENV")).pipe(Effect.orDie),
+      yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+        Effect.mapError(() =>
+          mapConfigLoadError("failed to resolve environment variable: SUPABASE_ENV"),
+        ),
+      ),
     );
     // `workdir` is already the fully-resolved chdir target, so `search: false` stops
     // `@supabase/config` from climbing ancestors and picking up an unrelated project's
@@ -94,7 +98,13 @@ export const loadLocalProjectContext = <E>(
           ? undefined
           : (projectEnvValues["SUPABASE_PROJECT_ID"] ??
               Option.getOrUndefined(
-                yield* Config.option(Config.string("SUPABASE_PROJECT_ID")).pipe(Effect.orDie),
+                yield* Config.option(Config.string("SUPABASE_PROJECT_ID")).pipe(
+                  Effect.mapError(() =>
+                    mapConfigLoadError(
+                      "failed to resolve environment variable: SUPABASE_PROJECT_ID",
+                    ),
+                  ),
+                ),
               )),
         config.project_id,
         workdir,
