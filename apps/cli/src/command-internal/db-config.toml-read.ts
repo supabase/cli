@@ -23,7 +23,7 @@ import {
   type ThirdPartyInput,
   validateResolvedConfig,
 } from "./config-validate.ts";
-import { DbConfigLoadError } from "./db-config.errors.ts";
+import { DbConfigLoadError, isPassthroughLoadFailure } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { ramInBytes } from "./size-units.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
@@ -331,7 +331,8 @@ const parseErrorMessage = (cause: unknown): string => {
 
 type ResolvedConfigLoadError = Effect.Error<ReturnType<CliConfigValues["Service"]["load"]>>;
 
-const toDbConfigLoadError = (error: ResolvedConfigLoadError): DbConfigLoadError => {
+const toDbConfigLoadError = (error: ResolvedConfigLoadError) => {
+  if (isPassthroughLoadFailure(error)) return error;
   switch (error._tag) {
     case "CliConfigParseError":
       return new DbConfigLoadError({ message: parseErrorMessage(error.cause) });
@@ -819,9 +820,12 @@ export const readDbToml = (
     ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets).pipe(
         // Fall back to the ignore-file defaults path (never re-reads the broken config)
         // so a best-effort caller gets a well-formed defaults result instead of a throw.
-        Effect.catchTag("DbConfigLoadError", () =>
-          readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
-        ),
+        Effect.catchTags({
+          DbConfigLoadError: () =>
+            readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
+          CliConfigValueError: () =>
+            readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
+        }),
       )
     : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets);
 };

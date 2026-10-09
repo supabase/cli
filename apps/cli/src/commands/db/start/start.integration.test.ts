@@ -934,7 +934,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.rate_limit");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -967,7 +967,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -990,7 +990,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1013,7 +1013,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1033,7 +1033,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("storage.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1058,7 +1058,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1118,7 +1118,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.jwt_expiry");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1138,7 +1138,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("api.port");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1174,7 +1174,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1195,7 +1195,7 @@ describe("db start", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = Cause.pretty(exit.cause);
-        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("CliConfigValueError");
         expect(message).toContain("auth.passkey");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1215,7 +1215,7 @@ describe("db start", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = Cause.pretty(exit.cause);
-        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("CliConfigValueError");
         expect(message).toContain("auth.external");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1235,7 +1235,7 @@ describe("db start", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = Cause.pretty(exit.cause);
-        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("CliConfigValueError");
         expect(message).toContain("auth.hook");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1257,7 +1257,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("auth.email.smtp");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1292,7 +1292,7 @@ describe("db start", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = Cause.pretty(exit.cause);
-        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("CliConfigValueError");
         expect(message).toContain("storage.image_transformation.enabled");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1325,7 +1325,7 @@ describe("db start", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = Cause.pretty(exit.cause);
-        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("CliConfigValueError");
         expect(message).toContain("db.ssl_enforcement.enabled");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1345,7 +1345,7 @@ describe("db start", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain("CliConfigValueError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);

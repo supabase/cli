@@ -39,6 +39,19 @@ export class DbConfigLoadError extends Data.TaggedError("DbConfigLoadError")<{
   }
 }
 
+type PassthroughLoadFailureTag =
+  | "ProjectRefReadError"
+  | "CliConfigValueError"
+  | "CliConfigFlagConflictError";
+
+/** Config-load failures that keep their own tag instead of becoming {@link DbConfigLoadError}. */
+export const isPassthroughLoadFailure = <E extends { readonly _tag: string }>(
+  error: E,
+): error is Extract<E, { readonly _tag: PassthroughLoadFailureTag }> =>
+  error._tag === "ProjectRefReadError" ||
+  error._tag === "CliConfigValueError" ||
+  error._tag === "CliConfigFlagConflictError";
+
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class DbConfigLoginRoleNetworkError extends Data.TaggedError(
   "DbConfigLoginRoleNetworkError",

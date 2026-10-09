@@ -109,6 +109,21 @@ describe("read (lenient) vs check (throws) split", () => {
     );
   });
 
+  it.effect("checkDbToml surfaces an invalid env value as CliConfigValueError", () => {
+    const dir = withConfig("[db]\nport = 5432\n");
+    writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PORT=notaport\n");
+    return withServices(dir, (fs, path) => checkDbToml(fs, path, dir)).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error._tag).toBe("CliConfigValueError");
+          expect(error.message).toContain('Invalid SUPABASE_DB_PORT="notaport"');
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("can skip vault resolution without skipping the rest of config validation", () => {
     const dir = withConfig(
       [
@@ -1512,7 +1527,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("DbConfigLoadError");
+            expect(json).toContain("CliConfigValueError");
             expect(json).toContain("Invalid api.auto_expose_new_tables in supabase/config.toml");
           }
           rmSync(dir, { recursive: true, force: true });
@@ -2146,7 +2161,7 @@ describe("readDbToml", () => {
             Effect.sync(() => {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
-                expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+                expect(JSON.stringify(exit.cause)).toContain("CliConfigValueError");
                 expect(JSON.stringify(exit.cause)).toContain("Invalid db.port");
               }
               rmSync(dir, { recursive: true, force: true });

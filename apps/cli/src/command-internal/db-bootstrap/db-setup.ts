@@ -24,6 +24,11 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
 import type { DbConnectError, DbExecError } from "../db-connection.errors.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigValueError,
+} from "../../config/cli-config.errors.ts";
+import type { ProjectRefReadError } from "../../shared/config/temp-paths.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import { checkDbToml } from "../db-config.toml-read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
@@ -118,6 +123,9 @@ function dbSetupDockerReason(
 /** Every failure {@link startSetupLocalDatabase} can produce. */
 export type StartSetupLocalDatabaseError =
   | DbConfigLoadError
+  | ProjectRefReadError
+  | CliConfigValueError
+  | CliConfigFlagConflictError
   | DbSetupError
   | MigrationVaultError
   | MigrationApplyError
