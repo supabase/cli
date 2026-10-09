@@ -1,9 +1,11 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   changedLinkedLocalFlags,
+  rejectPasswordWithDirectTarget,
   resolveDbTargetFlags,
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
@@ -320,4 +322,23 @@ describe("changedLinkedLocalFlags", () => {
   it("detects selectors given after positional arguments", () => {
     expect(changedLinkedLocalFlags(["storage", "rm", "ss:///b/x", "--local"])).toEqual(["local"]);
   });
+});
+
+describe("rejectPasswordWithDirectTarget", () => {
+  const run = (connType: "local" | "db-url", password: string) =>
+    Effect.runSyncExit(rejectPasswordWithDirectTarget(connType, Option.some(password)));
+
+  it.each(["local", "db-url"] as const)(
+    "treats an empty --password as absent with %s",
+    (connType) => {
+      expect(Exit.isSuccess(run(connType, ""))).toBe(true);
+    },
+  );
+
+  it.each(["local", "db-url"] as const)(
+    "still rejects a non-empty --password with %s",
+    (connType) => {
+      expect(Exit.isFailure(run(connType, "x"))).toBe(true);
+    },
+  );
 });

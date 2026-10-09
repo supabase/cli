@@ -260,7 +260,11 @@ export const rejectPasswordWithDirectTarget = (
   password: Option.Option<string> | undefined,
   options: { readonly localByDefaultFor?: string } = {},
 ): Effect.Effect<void, DbPasswordFlagsError> => {
-  if (password === undefined || Option.isNone(password) || connType === "linked") {
+  if (
+    password === undefined ||
+    Option.isNone(Option.filter(password, (value) => value.length > 0)) ||
+    connType === "linked"
+  ) {
     return Effect.void;
   }
   const target = connType ?? "local";
