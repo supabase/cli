@@ -74,9 +74,17 @@ it.live("routes streamed HTTP bodies and releases target activity after the resp
   Effect.scoped(
     Effect.gen(function* () {
       const body = new Uint8Array(2 * 1024 * 1024).fill(71);
-      const uploaded = yield* Deferred.make<void>();
+      const uploaded = yield* Deferred.make<void, HttpProxyTestError>();
       const backend = createServer((incoming, outgoing) => {
         incoming.once("end", () => Deferred.doneUnsafe(uploaded, Effect.void));
+        incoming.once("close", () => {
+          if (!incoming.complete) {
+            Deferred.doneUnsafe(
+              uploaded,
+              Effect.fail(new HttpProxyTestError({ message: "Upload aborted" })),
+            );
+          }
+        });
         incoming.resume();
         outgoing.writeHead(200);
         outgoing.write(body);

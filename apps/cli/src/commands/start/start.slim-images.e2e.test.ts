@@ -50,6 +50,7 @@ const makeProject = Effect.fnUntraced(function* (prefix: string) {
 const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
 const WGET_PROBE_TIMEOUT_MS = 10_000;
+const WGET_PROBE_FORCE_KILL_AFTER_MS = 2_000;
 const WGET_PROBE_CLEANUP_TIMEOUT_MS = 5_000;
 const PULL_TIMEOUT_MS = 240_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
@@ -87,7 +88,7 @@ const WGET_PROBE_TEST_TIMEOUT_MS =
   catalogPins()
     .filter((entry) => WGET_PROBE_SERVICES.includes(entry.service))
     .reduce((count, entry) => count + (entry.service === "vector" ? 2 : 1), 0) *
-    (WGET_PROBE_TIMEOUT_MS + WGET_PROBE_CLEANUP_TIMEOUT_MS) +
+    (WGET_PROBE_TIMEOUT_MS + WGET_PROBE_FORCE_KILL_AFTER_MS + WGET_PROBE_CLEANUP_TIMEOUT_MS) +
   10_000;
 
 function wgetProbeCatalogImages(): ReadonlyArray<string> {
@@ -251,7 +252,7 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
       image,
       ...args,
     ],
-    { timeout: WGET_PROBE_TIMEOUT_MS },
+    { timeout: WGET_PROBE_TIMEOUT_MS, forceKillAfter: WGET_PROBE_FORCE_KILL_AFTER_MS },
   ).pipe(
     Effect.catchTag("DockerCommandError", (error) => {
       const output = `${error.stdout}\n${error.stderr}`
