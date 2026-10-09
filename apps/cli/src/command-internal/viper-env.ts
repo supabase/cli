@@ -17,7 +17,7 @@ function viperBool(raw: string | undefined): boolean {
 
 /** Env-record providers never fail this read, so a `ConfigError` here is a defect. */
 const shellEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(Effect.map(Option.getOrUndefined), Effect.orDie);
+  Config.option(Config.String(name)).pipe(Effect.map(Option.getOrUndefined), Effect.orDie);
 
 /** Reads a single `SUPABASE_*` boolean env var through `Config` (see module doc). */
 export const viperEnvBool = Effect.fnUntraced(function* (name: string) {
