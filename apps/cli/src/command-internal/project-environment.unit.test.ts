@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, layer } from "@effect/vitest";
 import type { CliProjectEnvironment } from "@supabase/config";
-import { Cause, ConfigProvider, Effect, Exit, FileSystem, Option, Path, Tracer } from "effect";
+import { ConfigProvider, Effect, FileSystem, Path, Tracer } from "effect";
 
 import { withConfigEnv, withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { ProjectEnvironmentError, resolveProjectEnvironmentValues } from "./project-environment.ts";
@@ -94,6 +94,19 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({})))),
   );
 
+  it.effect("defaults an empty SUPABASE_ENV to development", () =>
+    Effect.gen(function* () {
+      const dirs = yield* project;
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(
+        path.join(root, ".env.development"),
+        "SUPABASE_PROJECT_ID=dev-project\n",
+      );
+      const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("dev-project");
+    }).pipe((body) => withConfigEnv({ SUPABASE_ENV: "" }, body)),
+  );
+
   it.effect("selects the SUPABASE_ENV-named file over the bare .env file", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
@@ -183,9 +196,9 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
   it.effect("ignores blank lines and comments", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
-      const { fs, root } = dirs;
+      const { fs, path, root } = dirs;
       yield* fs.writeFileString(
-        root + "/.env",
+        path.join(root, ".env"),
         "\n# a comment\nSUPABASE_PROJECT_ID=commented-project\n",
       );
       const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
@@ -198,8 +211,11 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     () =>
       Effect.gen(function* () {
         const dirs = yield* project;
-        const { fs, root } = dirs;
-        yield* fs.writeFileString(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
+        const { fs, path, root } = dirs;
+        yield* fs.writeFileString(
+          path.join(root, ".env"),
+          "SUPABASE_AUTH_JWT_SECRET=long#secret\n",
+        );
         const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
         expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
       }),
@@ -208,8 +224,8 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
   it.effect("still truncates an unquoted value at a whitespace-preceded inline comment", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
-      const { fs, root } = dirs;
-      yield* fs.writeFileString(root + "/.env", "SUPABASE_PROJECT_ID=54323 # local\n");
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(path.join(root, ".env"), "SUPABASE_PROJECT_ID=54323 # local\n");
       const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
       expect(merged["SUPABASE_PROJECT_ID"]).toBe("54323");
     }),
@@ -218,8 +234,8 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
   it.effect("strips a trailing comment after a quoted value, matching godotenv", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
-      const { fs, root } = dirs;
-      yield* fs.writeFileString(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(path.join(root, ".env"), 'SUPABASE_PROJECT_ID="demo" # local\n');
       const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
       expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
     }),
@@ -230,8 +246,8 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     () =>
       Effect.gen(function* () {
         const dirs = yield* project;
-        const { fs, root } = dirs;
-        yield* fs.writeFileString(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
+        const { fs, path, root } = dirs;
+        yield* fs.writeFileString(path.join(root, ".env"), "SUPABASE_PROJECT_ID: colon-project\n");
         const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
         expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
       }),
@@ -283,16 +299,11 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
         const dirs = yield* project;
         const { fs, path, root } = dirs;
         yield* fs.writeFileString(path.join(root, ".env"), "not a valid line\n");
-        const exit = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
-          Effect.exit,
+        const error = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
+          Effect.flip,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBeInstanceOf(
-            ProjectEnvironmentError,
-          );
-          expect(Cause.pretty(exit.cause)).toMatch(/^Error: failed to parse environment file: /);
-        }
+        expect(error).toBeInstanceOf(ProjectEnvironmentError);
+        expect(String(error)).toMatch(/^Error: failed to parse environment file: /);
       }),
   );
 
@@ -301,13 +312,10 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
       const dirs = yield* project;
       const { fs, path, root } = dirs;
       yield* fs.writeFileString(path.join(root, ".env"), "\uFEFFSUPABASE_PROJECT_ID=bom-project\n");
-      const exit = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
-        Effect.exit,
+      const error = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
+        Effect.flip,
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toMatch(/^Error: failed to parse environment file: /);
-      }
+      expect(String(error)).toMatch(/^Error: failed to parse environment file: /);
     }),
   );
 
@@ -316,13 +324,10 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
       const dirs = yield* project;
       const { fs, path, root } = dirs;
       yield* fs.makeDirectory(path.join(root, ".env"));
-      const exit = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
-        Effect.exit,
+      const error = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
+        Effect.flip,
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toMatch(/^Error: EISDIR/);
-      }
+      expect(String(error)).toMatch(/^Error: EISDIR/);
     }),
   );
 

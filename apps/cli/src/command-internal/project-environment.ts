@@ -81,7 +81,7 @@ export const resolveProjectEnvironmentValues = Effect.fn("ProjectEnvironment.res
   const env =
     supabaseEnv ||
     Option.getOrUndefined(
-      yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+      yield* Config.option(Config.String("SUPABASE_ENV")).pipe(
         Effect.mapError(
           () =>
             new ProjectEnvironmentError({

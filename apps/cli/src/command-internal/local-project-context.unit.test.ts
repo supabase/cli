@@ -40,11 +40,13 @@ const writeConfigToml = Effect.fnUntraced(function* (workdir: string, contents: 
 });
 
 const processEnvValue = (name: string) =>
-  Config.option(Config.string(name)).pipe(
-    Effect.map(Option.getOrUndefined),
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+  Effect.suspend(() =>
+    Config.option(Config.String(name)).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+      ),
     ),
   );
 
@@ -161,6 +163,68 @@ describe("loadLocalProjectContext", () => {
       expect(yield* processEnvValue(BITBUCKET_CLONE_DIR_KEY)).toBe("/real-shell-clone-dir");
     }).pipe(
       (body) => withEnvVar(BITBUCKET_CLONE_DIR_KEY, "/real-shell-clone-dir", body),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    );
+  });
+
+  it.effect("falls back to config.toml's project_id when SUPABASE_PROJECT_ID is empty", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+
+      const context = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      );
+      expect(context.projectId).toBe("toml-project");
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_PROJECT_ID", "", body),
+      (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "" }, body),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    );
+  });
+
+  it.effect(
+    "falls back to config.toml's project_id when only Config sees an empty SUPABASE_PROJECT_ID",
+    () => {
+      // Windows env lookups are case-insensitive, so a lowercase `supabase_project_id=` reaches the
+      // Config read with "" while the ambient values only carry the lowercase key.
+      const workdir = tempRoot.current;
+      return Effect.gen(function* () {
+        yield* writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+
+        const context = yield* loadLocalProjectContext(
+          workdir,
+          (message) => new TestError({ message }),
+        );
+        expect(context.projectId).toBe("toml-project");
+      }).pipe(
+        (body) => withEnvVar("SUPABASE_PROJECT_ID", undefined, body),
+        (body) => withConfigEnv({ SUPABASE_PROJECT_ID: "" }, body),
+        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+      );
+    },
+  );
+
+  it.effect("loads the development dotenv files when SUPABASE_ENV is empty", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", ".env.development"),
+        "SUPABASE_AUTH_JWT_SECRET=dev-secret\n",
+      );
+
+      const context = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      );
+      expect(context.projectEnvValues["SUPABASE_AUTH_JWT_SECRET"]).toBe("dev-secret");
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_AUTH_JWT_SECRET", undefined, body),
+      (body) => withConfigEnv({ SUPABASE_ENV: "" }, body),
       Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
     );
   });
