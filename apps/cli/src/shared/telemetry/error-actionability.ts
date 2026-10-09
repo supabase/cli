@@ -1,4 +1,3 @@
-import { constants as osConstants } from "node:os";
 import { Cause, Option, Predicate } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -967,8 +966,46 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   return toActionability(actionability.unknown, "error", undefined);
 }
 
+/** A fixed list, so a code groups the same way on every platform. */
+const defectSystemErrorCodes = new Set([
+  "EACCES",
+  "EADDRINUSE",
+  "EADDRNOTAVAIL",
+  "EAGAIN",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EAI_NONAME",
+  "EBADF",
+  "EBUSY",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EEXIST",
+  "EHOSTUNREACH",
+  "EINVAL",
+  "EISDIR",
+  "ELOOP",
+  "EMFILE",
+  "ENAMETOOLONG",
+  "ENETUNREACH",
+  "ENFILE",
+  "ENOENT",
+  "ENOMEM",
+  "ENOSPC",
+  "ENOTDIR",
+  "ENOTEMPTY",
+  "ENOTFOUND",
+  "ENOTSUP",
+  "EPERM",
+  "EPIPE",
+  "EROFS",
+  "ESRCH",
+  "ETIMEDOUT",
+  "EXDEV",
+]);
+
 /**
- * Names an unclassified defect by its class's prototype tag and a known errno code, or by its type
+ * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
  * for a non-error value. Instance fields other than an errno code are never read, so only
  * source-owned identifiers reach telemetry.
  */
@@ -978,8 +1015,9 @@ function defectIdentity(defect: unknown): string {
     if (!isErrorRecord(error)) return typeof error;
     if (!(error instanceof Error)) return "object";
     const base = readStableTaggedPrototypeName(error, true) ?? "Error";
-    const code = readString(error, "code");
-    return code !== undefined && Object.hasOwn(osConstants.errno, code) ? `${base}:${code}` : base;
+    // A data descriptor, so reading the code never runs a getter.
+    const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
+    return typeof code === "string" && defectSystemErrorCodes.has(code) ? `${base}:${code}` : base;
   } catch {
     return "Unreadable";
   }

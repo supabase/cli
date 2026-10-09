@@ -306,6 +306,7 @@ describe("classifyCliCauseActionability", () => {
       [new UndeclaredError({ message: secret }), "error:Defect:UndeclaredError"],
       [new NamespaceDefect({ message: secret }), "error:Defect:Namespace.NamespaceError"],
       [Object.assign(new Error(secret), { code: "ENOENT" }), "error:Defect:Error:ENOENT"],
+      [Object.assign(new Error(secret), { code: "EAI_AGAIN" }), "error:Defect:Error:EAI_AGAIN"],
       [new Error(secret), "error:Defect:Error"],
       [Object.assign(new Error(secret), { name: secret, _tag: secret }), "error:Defect:Error"],
       [
@@ -319,7 +320,7 @@ describe("classifyCliCauseActionability", () => {
             throw new Error(secret);
           },
         }),
-        "error:Defect:Unreadable",
+        "error:Defect:Error",
       ],
       [secret, "error:Defect:string"],
     ];
