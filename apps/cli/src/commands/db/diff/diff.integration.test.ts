@@ -753,6 +753,21 @@ describe("db diff", () => {
     }),
   );
 
+  it.effect(
+    "suggests --use-migra for an absolute path to supabase/schemas with pg-delta disabled",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const absoluteSchemas = JSON.stringify(path.join(tmp.current, "supabase", "schemas"));
+        const err = yield* ignoredDeclarativeNote(
+          `[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = ${absoluteSchemas}\n`,
+          "supabase/schemas/public.sql",
+        );
+        expect(err).toContain("the configured declarative schema directory are not read");
+        expect(err).toContain("or pass --use-migra to diff them with migra");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("omits the migra suggestion for a custom dir migra would not read", () =>
     Effect.gen(function* () {
       const err = yield* ignoredDeclarativeNote(

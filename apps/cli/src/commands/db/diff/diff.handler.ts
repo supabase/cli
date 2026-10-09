@@ -720,7 +720,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           resolved.isLocal &&
           cfg.schemaPathPatterns.length === 0 &&
           (cfg.pgDelta.enabled ||
-            path.normalize(declarativeDir) === path.join("supabase", "schemas"));
+            declarativeDirAbsolute === path.resolve(cliSettings.workdir, "supabase", "schemas"));
         const suggestMigra = migraReadsDeclarativeDir && !onStackBackend;
         if (fileRequested) {
           const nextSteps = declarativeNextSteps(suggestMigra, !cfg.pgDelta.enabled);
