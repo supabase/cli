@@ -345,16 +345,18 @@ describe.runIf(testEngine === "docker")(
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           const present = yield* Ref.make(false);
-          const removals = yield* Ref.make(0);
+          const removals = yield* Ref.make<ReadonlyArray<boolean>>([]);
           const spawner = ChildProcessSpawner.make((command) =>
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
               const creating = command.args[0] === "create";
               if (creating) yield* Deferred.succeed(started, undefined);
-              /* Only a removal after the create settled finds the helper. */
-              if (command.args[0] === "rm" && (yield* Ref.getAndSet(present, false)))
-                yield* Ref.update(removals, (count) => count + 1);
+              /* Each removal records whether the create had settled into a container by then. */
+              if (command.args[0] === "rm") {
+                const existed = yield* Ref.getAndSet(present, false);
+                yield* Ref.update(removals, (all) => [...all, existed]);
+              }
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
                 exitCode: creating
@@ -403,7 +405,7 @@ describe.runIf(testEngine === "docker")(
           yield* Effect.sync(() => operation.interruptUnsafe());
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.await(operation);
-          expect(yield* Ref.get(removals)).toBe(1);
+          expect(yield* Ref.get(removals)).toEqual([true]);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
     );
@@ -505,6 +507,7 @@ describe.runIf(testEngine === "docker")(
           const creating = yield* Deferred.make<void>();
           const commands: string[][] = [];
           const killed = yield* Deferred.make<void>();
+          const present = yield* Ref.make(false);
           const warning =
             "WARNING: The requested image's platform does not match the host platform";
           const spawner = ChildProcessSpawner.make((command) =>
@@ -514,10 +517,13 @@ describe.runIf(testEngine === "docker")(
               commands.push([...command.args]);
               const create = command.args[0] === "create";
               if (create) yield* Deferred.succeed(creating, undefined);
+              const missing = command.args[0] === "rm" && !(yield* Ref.getAndSet(present, false));
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
                 // The daemon never answers the create.
-                exitCode: create ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                exitCode: create
+                  ? Effect.never
+                  : Effect.succeed(ChildProcessSpawner.ExitCode(missing ? 1 : 0)),
                 isRunning: Effect.succeed(create),
                 kill: () => (create ? Deferred.succeed(killed, undefined) : Effect.void),
                 stdin: Sink.drain,
@@ -526,7 +532,9 @@ describe.runIf(testEngine === "docker")(
                   ? Stream.succeed(new TextEncoder().encode(`${warning}\n`)).pipe(
                       Stream.concat(Stream.fromEffect(Deferred.await(killed)).pipe(Stream.drain)),
                     )
-                  : Stream.empty,
+                  : missing
+                    ? Stream.succeed(new TextEncoder().encode("No such container\n"))
+                    : Stream.empty,
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
                 getOutputFd: () => Stream.empty,
@@ -534,6 +542,7 @@ describe.runIf(testEngine === "docker")(
               });
             }),
           );
+          const owner = yield* Scope.fork(yield* Scope.Scope);
           const storage = yield* makeDockerDatabaseStorage({
             runtime: "docker",
             target: dockerTarget,
@@ -552,7 +561,7 @@ describe.runIf(testEngine === "docker")(
               launch: () => Effect.die("unused"),
               launchCommand: () => Effect.die("unused"),
             },
-          });
+          }).pipe(Scope.provide(owner));
           yield* storage.prepare("17");
           const operation = yield* storage.removeData("17").pipe(Effect.flip, Effect.forkScoped);
           yield* Deferred.await(creating);
@@ -566,7 +575,14 @@ describe.runIf(testEngine === "docker")(
           const name = create?.[create.indexOf("--name") + 1];
           expect(name).toMatch(/^supabase-db-helper-/u);
           expect(commands.some((args) => args[0] === "start")).toBe(false);
-          expect(commands.filter((args) => args[0] === "rm")).toEqual([["rm", "-f", name]]);
+          /* The daemon finishes the create after the failure cleanup found nothing to remove. */
+          yield* Ref.set(present, true);
+          yield* Scope.close(owner, Exit.void);
+          expect(commands.filter((args) => args[0] === "rm")).toEqual([
+            ["rm", "-f", name],
+            ["rm", "-f", name],
+          ]);
+          expect(yield* Ref.get(present)).toBe(false);
         }),
       ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
     );

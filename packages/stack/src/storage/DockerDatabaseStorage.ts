@@ -756,7 +756,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* Ref.set(helperScopeRef, helperScope);
               return yield* startAttachedHelper(name, mounts, preparedImage, [
                 `com.supabase.instance=${options.instanceId}`,
-              ]).pipe(Scope.provide(helperScope));
+              ]).pipe(
+                Scope.provide(helperScope),
+                /* A create the daemon finishes after the failure cleanup's `rm -f` would outlive
+                   it, so this unique name is removed again on shutdown. */
+                Effect.tapError(() =>
+                  Scope.addFinalizer(
+                    ownerScope,
+                    engineCommand(["rm", "-f", name]).pipe(
+                      Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                        missingContainer(cause.message) ? Effect.void : Effect.logError(cause),
+                      ),
+                    ),
+                  ),
+                ),
+              );
             }),
           ),
       );
