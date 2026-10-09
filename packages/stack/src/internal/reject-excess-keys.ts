@@ -24,7 +24,7 @@ export const rejectExcessKeys = <S extends Schema.Struct<Schema.Struct.Fields>>(
     Schema.check(
       Schema.makeFilter((input) =>
         Object.keys(input)
-          .filter((key) => !(key in struct.fields))
+          .filter((key) => !Object.hasOwn(struct.fields, key))
           .map((key) => ({ path: [key], issue: "Expected no excess property" })),
       ),
     ),

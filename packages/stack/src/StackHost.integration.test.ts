@@ -506,7 +506,7 @@ it.live(
         expect(identity.status).toBe(200);
         const client = yield* ownerClient(access);
         const permissiveClient = yield* permissiveCommandClientFor(access);
-        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+        for (const override of ["args", "env", "pgProve", "stdin", "constructor"] as const) {
           const rejected = yield* permissiveClient
             .runCommand({
               attachmentId: `invalid-${override}`,
@@ -518,7 +518,7 @@ it.live(
           if (Exit.isFailure(rejected))
             expect(Cause.pretty(rejected.cause)).toContain("Expected no excess property");
         }
-        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+        for (const override of ["args", "env", "pgProve", "stdin", "constructor"] as const) {
           const rejected = yield* permissiveClient
             .runCommand({
               attachmentId: `invalid-command-${override}`,

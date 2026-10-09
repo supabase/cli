@@ -1008,6 +1008,52 @@ it.live("disconnects a pending upstream response quietly when its client closes"
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
 
+it.live("sends an early upstream rejection while the client is still uploading its body", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((_request, response) => {
+        response.writeHead(413, { "content-length": "0" });
+        response.end();
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const released = yield* Deferred.make<void>();
+      yield* proxy.setRoutes([
+        {
+          id: "upload",
+          prefix: "/",
+          target: Effect.acquireRelease(Effect.succeed(address), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+      const client = yield* Effect.acquireRelease(
+        Effect.sync(() => new Socket()),
+        (socket) => Effect.sync(() => socket.destroy()),
+      );
+      const head = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        let received = "";
+        client.on("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message }))),
+        );
+        client.on("data", (chunk: Buffer) => {
+          received += chunk.toString();
+          if (received.includes("\r\n\r\n")) resume(Effect.succeed(received));
+        });
+        client.connect(proxy.port, "127.0.0.1", () =>
+          client.write(
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhalf-",
+          ),
+        );
+      }).pipe(Effect.timeout("5 seconds"));
+      expect(head).toMatch(/^HTTP\/1\.1 413 /);
+      expect(yield* Deferred.isDone(released)).toBe(false);
+      client.write("body!");
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("stays quiet when a client closes after receiving part of the response", () => {
   const logs: Array<string> = [];
   return Effect.scoped(

@@ -398,6 +398,7 @@ const forward = Effect.fn("HttpProxy.forward")(
             if (header !== undefined && !hopByHop.has(name.toLowerCase()))
               response.setHeader(name, header);
           }
+          response.flushHeaders();
           value.pipe(response, { end: false });
           value.once("end", onUpstreamEnd);
         },
