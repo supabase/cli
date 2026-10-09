@@ -14,7 +14,7 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { tmpdir } from "node:os";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";

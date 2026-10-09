@@ -20,7 +20,7 @@ export const detectGitBranch = (
   RuntimeInfo | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
-    const githubHeadRef = yield* Config.option(Config.string("GITHUB_HEAD_REF"));
+    const githubHeadRef = yield* Config.option(Config.String("GITHUB_HEAD_REF"));
     if (Option.isSome(githubHeadRef) && githubHeadRef.value.length > 0) {
       return githubHeadRef;
     }

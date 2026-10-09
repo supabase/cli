@@ -1,5 +1,5 @@
 import { Effect, Exit, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { ContainerRuntimeNotFoundError, spawnContainerCli } from "./container-cli.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "./docker-suggest.ts";

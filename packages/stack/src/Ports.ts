@@ -12,6 +12,7 @@ import {
   Scope,
 } from "effect";
 import * as Net from "node:net";
+import type { StackFailureKind } from "./FailureKind.ts";
 import type * as StackNamespace from "./StackNamespace.ts";
 import * as Lease from "./namespace/Lease.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
@@ -30,11 +31,13 @@ export interface PortConflict {
   readonly holder: Holder | "foreign";
 }
 
+/** Without a `kind`, the failure is the stack's own allocation (`port-allocation`). */
 export class PortError extends Data.TaggedError("PortError")<{
   readonly key: string;
   readonly message: string;
   readonly cause?: unknown;
   readonly conflict?: PortConflict;
+  readonly kind?: StackFailureKind;
 }> {}
 
 export interface PortRequest {
@@ -245,17 +248,21 @@ const resolveRequest = (
       new PortError({
         key: request.key,
         message: "The requested listener differs from its reserved assignment",
+        kind: "configuration",
       }),
     );
   const requested = owned ?? request.port;
   if (requested === "auto") return Effect.succeed(requested);
   if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
-    return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
+    return Effect.fail(
+      new PortError({ key: request.key, message: "Invalid public port", kind: "configuration" }),
+    );
   if (requested >= nativePortBase && requested < portBase)
     return Effect.fail(
       new PortError({
         key: request.key,
         message: `Public port ${requested} for ${request.key} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service backends; configure a port outside that range`,
+        kind: "configuration",
       }),
     );
   return Effect.succeed(requested);
@@ -369,7 +376,11 @@ export const makePorts = (state: StackNamespace.Interface) =>
         Effect.gen(function* () {
           const stack = yield* state.read(request.stackId);
           if (stack === undefined)
-            return yield* new PortError({ key: request.key, message: "Stack is not registered" });
+            return yield* new PortError({
+              key: request.key,
+              message: "Stack is not registered",
+              kind: "state",
+            });
           const owned = yield* portReservations.find(stateRoot, request.stackId, request.key);
           const requested = yield* resolveRequest(request, owned);
           const owner = yield* Scope.Scope;
@@ -389,6 +400,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
                     key: request.key,
                     message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
                     cause: cause.cause,
+                    ...(cause.kind === undefined ? {} : { kind: cause.kind }),
                     conflict:
                       cause.conflict ??
                       (isAddressInUse(cause.cause)
@@ -452,7 +464,20 @@ export const makePorts = (state: StackNamespace.Interface) =>
               !(error.value instanceof PortError)
             )
               return yield* Effect.failCause(result.cause);
-            return yield* error.value;
+            // Only a port the caller requested by number is the user's to change; an owned
+            // assignment from an earlier auto allocation is ours.
+            return yield* new PortError({
+              key: error.value.key,
+              message: error.value.message,
+              ...(error.value.cause === undefined ? {} : { cause: error.value.cause }),
+              ...(error.value.conflict === undefined ? {} : { conflict: error.value.conflict }),
+              kind:
+                request.port === "auto"
+                  ? "port-allocation"
+                  : error.value.conflict !== undefined
+                    ? "port-conflict"
+                    : (error.value.kind ?? "configuration"),
+            });
           }
 
           // A freshly auto-reserved port that fails to bind (including by interruption mid-probe)

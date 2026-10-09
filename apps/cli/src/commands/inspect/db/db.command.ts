@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { inspectDbBloatCommand } from "./bloat/bloat.command.ts";
 import { inspectDbBlockingCommand } from "./blocking/blocking.command.ts";
 import { inspectDbCallsCommand } from "./calls/calls.command.ts";

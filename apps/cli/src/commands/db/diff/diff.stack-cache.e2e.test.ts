@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Redacted } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { create as createStack, discover as discoverStacks } from "@supabase/stack/effect";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";

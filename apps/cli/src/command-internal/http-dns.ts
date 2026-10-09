@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import { Effect, Layer } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { DnsResolverFlag } from "./global-flags.ts";
 import { DbConnectError } from "./db-connection.errors.ts";

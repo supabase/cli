@@ -584,7 +584,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       backend.kind === "stack"
         ? yield* stackLocalDatabaseConn.pipe(
             Effect.mapError(
-              (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
+              (error) =>
+                new DeclarativeApplyError({ message: error.message, connect: true, cause: error }),
             ),
           )
         : {

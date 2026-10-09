@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
@@ -8,13 +8,13 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackDestroy } from "./destroy.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription(
       "Destroy the stack with this name (defaults to the current project stack).",
     ),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription(
       "Destroy an existing stack by id or unique id prefix; repeat to select several. A full id, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind.",
     ),

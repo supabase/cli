@@ -1,5 +1,5 @@
 import { Effect, Layer, type Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -12,7 +12,7 @@ import { seedBuckets } from "./buckets.handler.ts";
 
 const config = {
   // TS-only flag; see push.command.ts (db push) for the same pattern.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

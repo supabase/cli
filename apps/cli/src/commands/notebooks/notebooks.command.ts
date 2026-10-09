@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { notebooksPullCommand } from "./pull/pull.command.ts";
 import { notebooksPushCommand } from "./push/push.command.ts";
 

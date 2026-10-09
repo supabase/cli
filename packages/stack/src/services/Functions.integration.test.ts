@@ -14,8 +14,8 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";

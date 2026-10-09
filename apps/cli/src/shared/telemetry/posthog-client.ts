@@ -6,7 +6,7 @@ import {
   HttpClient,
   HttpClientRequest,
   type HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { PostHog, type PostHogOptions } from "posthog-node";
 
 const EXIT_DELAY_CAP_MS = 2_000;

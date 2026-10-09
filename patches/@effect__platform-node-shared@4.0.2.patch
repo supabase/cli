@@ -1,8 +1,8 @@
 diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
-index aa8abbe375f40350f9a5a12f36143d5d85802485..5a86ce881e6a5aa1358059dc0f10ec0934ef164d 100644
+index b3e4deaa75124184262437280a97bad2b9e07c9d..4b1f5f5f4c119e738991b6d8b84d59fd425d0833 100644
 --- a/dist/NodeChildProcessSpawner.js
 +++ b/dist/NodeChildProcessSpawner.js
-@@ -196,6 +196,10 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+@@ -214,6 +214,10 @@ const make = /*#__PURE__*/Effect.gen(function* () {
      // sink that will attached to the process handle
      let sink = Sink.drain;
      if (Predicate.isNotNull(childProcess.stdin)) {

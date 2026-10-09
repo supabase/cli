@@ -1,13 +1,13 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { genKeys } from "./keys.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  overrideName: Flag.string("override-name").pipe(
+  overrideName: Flag.String("override-name").pipe(
     Flag.withDescription("Override specific variable names."),
     Flag.atLeast(0),
   ),

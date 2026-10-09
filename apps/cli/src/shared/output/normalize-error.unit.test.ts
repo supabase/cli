@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
@@ -78,7 +78,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
+  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.Setting value)", () => {
     const error = new CliError.InvalidValue({
       option: "output-format",
       value: "bogus",

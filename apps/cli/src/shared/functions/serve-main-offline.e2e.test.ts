@@ -14,9 +14,9 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/unstable/http";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { START_KONG_YML_TEMPLATE } from "../../commands/start/templates/kong.yml.ts";
 import { edgeRuntimeDockerfileImage } from "../../command-internal/edge-runtime-image.ts";

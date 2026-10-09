@@ -117,7 +117,7 @@ const inheritedEnvironment = Effect.gen(function* () {
   const environment: NodeJS.ProcessEnv = {};
   const provider = ConfigProvider.fromEnv();
   for (const name of inheritedEnvironmentNames) {
-    const value = yield* Config.option(Config.string(name)).parse(provider);
+    const value = yield* Config.option(Config.String(name)).parse(provider);
     if (Option.isSome(value)) environment[name] = value.value;
   }
   return environment;

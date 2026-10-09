@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer, Sink, Stream, Tracer } from "effect";
 import * as PlatformError from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 
 import { DbConnectError } from "../db-connection.errors.ts";
@@ -682,7 +682,7 @@ describe("waitForHealthyServices", () => {
         yield* Fiber.await(fiber);
 
         const wait = spans.find((span) => span.name === "HealthCheck.waitHealthyServices");
-        expect(spans.map((span) => span.name)).not.toContain("http.client HEAD");
+        expect(spans.map((span) => span.name)).not.toContain("HEAD");
         expect(wait?.attributes.get("retry.attempt_count")).toBe(2);
       }),
     );
