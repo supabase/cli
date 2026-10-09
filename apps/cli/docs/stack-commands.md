@@ -187,7 +187,7 @@ A `--db-url` that matches `config.toml` host and port is still rewritten like a 
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag also routes local `functions serve` through the stack; other `functions`
+rejected (`--use-migra=false` and `--use-pgadmin=false` keep pg-delta and are accepted). The flag also routes local `functions serve` through the stack; other `functions`
 commands retain their existing behavior.
 
 `functions serve` requires a running project stack. It attaches to the existing Functions member,

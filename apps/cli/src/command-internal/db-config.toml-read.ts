@@ -146,7 +146,7 @@ interface BaselineTomlConfig {
 
 /** The `[experimental.pgdelta]` subtree. */
 export interface PgDeltaTomlConfig {
-  /** `[experimental.pgdelta] enabled`, default false. */
+  /** `[experimental.pgdelta] enabled`, default true. */
   readonly enabled: boolean;
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
@@ -744,7 +744,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     orioledbVersion,
     denoVersion,
     pgDelta: {
-      enabled: pgDeltaConfig?.enabled ?? false,
+      enabled: (yield* getKey(CliConfigKeys.experimental.pgdelta.enabled)).value,
       declarativeSchemaPath,
       formatOptions,
     },

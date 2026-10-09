@@ -532,42 +532,47 @@ const PGADMIN_SOURCE_URL =
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@host.docker.internal:54320/postgres";
 
 describe("db diff", () => {
-  it.effect("diffs local with the default migra engine and prints SQL to stdout", () => {
-    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags());
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      expect(stdout(s.out)).toBe("create table players ();\n\n");
-      expect(stderr(s.out)).toContain("Creating shadow database...");
-      expect(stderr(s.out)).toContain("Diffing schemas...");
-      // The temp workdir sits outside any git checkout, so the branch is unknown and
-      // the "Finished" line omits the clause instead of falsely claiming "main".
-      expect(stderr(s.out)).toContain("Finished supabase db diff.\n");
-      expect(s.telemetry.flushed).toBe(true);
-      const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
-      expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
-      let sawHost = false;
-      for (const call of s.shadowSetupJobCalls) {
-        if (call.env["DB_HOST"] !== undefined) {
-          expect(call.env["DB_HOST"]).toBe(expectedHost);
-          sawHost = true;
-        }
-        for (const value of Object.values(call.env)) {
-          if (value.includes("@") && value.includes(":")) {
-            expect(value).toContain(`@${expectedHost}:`);
+  it.effect(
+    "diffs local with --use-migra over the pg-delta default and prints SQL to stdout",
+    () => {
+      const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ useMigra: Option.some(true) }));
+        expect(s.edgeCalls).toHaveLength(1);
+        expect(s.databaseDiffCalls).toEqual([]);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        expect(stdout(s.out)).toBe("create table players ();\n\n");
+        expect(stderr(s.out)).toContain("Creating shadow database...");
+        expect(stderr(s.out)).toContain("Diffing schemas...");
+        // The temp workdir sits outside any git checkout, so the branch is unknown and
+        // the "Finished" line omits the clause instead of falsely claiming "main".
+        expect(stderr(s.out)).toContain("Finished supabase db diff.\n");
+        expect(s.telemetry.flushed).toBe(true);
+        const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+        expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
+        let sawHost = false;
+        for (const call of s.shadowSetupJobCalls) {
+          if (call.env["DB_HOST"] !== undefined) {
+            expect(call.env["DB_HOST"]).toBe(expectedHost);
             sawHost = true;
           }
+          for (const value of Object.values(call.env)) {
+            if (value.includes("@") && value.includes(":")) {
+              expect(value).toContain(`@${expectedHost}:`);
+              sawHost = true;
+            }
+          }
         }
-      }
-      expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("GITHUB_HEAD_REF", undefined, body));
-  });
+        expect(sawHost).toBe(true);
+      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("GITHUB_HEAD_REF", undefined, body));
+    },
+  );
 
   it.effect("forwards SUPABASE_SSL_DEBUG=TRUE to the migra script as true", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
-      yield* dbDiff(flags()).pipe(
+      yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromEnvRecord(
@@ -584,7 +589,7 @@ describe("db diff", () => {
   it.effect("omits SUPABASE_SSL_DEBUG from the migra script when it is set empty", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
-      yield* dbDiff(flags()).pipe(
+      yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromEnvRecord({ SUPABASE_SSL_DEBUG: "" }, { preserveEmptyStrings: true }),
@@ -601,7 +606,7 @@ describe("db diff", () => {
       env: { SUPABASE_PROJECT_ID: "test" },
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags());
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
       expect(s.edgeCalls[0]?.binds).toEqual(["supabase_edge_runtime_test:/root/.cache/deno:rw"]);
       expect(s.spawnedBeforeEdgeRun[0]).toContainEqual([
         "volume",
@@ -621,7 +626,7 @@ describe("db diff", () => {
       files: { "supabase/.env": "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n" },
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags());
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
       expect(s.edgeCalls).toHaveLength(1);
       expect(
         s.shadowSpawned.filter(
@@ -664,6 +669,155 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("diffs local with pg-delta when no [experimental.pgdelta] config is present", () => {
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(s.edgeCalls).toEqual([]);
+      expect(stdout(s.out)).toBe("create table p ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("keeps the pg-delta default with --use-migra=false", () => {
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ useMigra: Option.some(false) }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(s.edgeCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("diffs local with migra when [experimental.pgdelta] enabled = false", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(stdout(s.out)).toBe("create table m ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-pg-delta overrides [experimental.pgdelta] enabled = false", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
+      diffSql: "create table p ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(s.edgeCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explains ignored declarative files when a default local diff finds no changes", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ file: Option.some("declared") }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(stderr(s.out)).toContain("No schema changes found");
+      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
+      expect(stderr(s.out)).toContain("Run supabase db schema declarative sync to generate");
+      expect(stderr(s.out)).toContain("or pass --use-migra to diff them with migra");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("keeps a local diff without -f quiet while reporting the declarative advisory", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
+      format: "json",
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(stderr(s.out)).not.toContain("are not read");
+      const success = s.out.messages.find((message) => message.type === "success");
+      expect(success?.data).toHaveProperty("advisories");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  const ignoredDeclarativeNote = (config: string, file: string) =>
+    Effect.gen(function* () {
+      const s = setup(tmp.current, {
+        files: { "supabase/config.toml": config, [file]: "create table declared ();\n" },
+        diffSql: "",
+      });
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("declared") })).pipe(
+        Effect.provide(s.layer),
+      );
+      return stderr(s.out);
+    });
+
+  it.effect("suggests --use-migra for supabase/schemas even when config disables pg-delta", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        "[experimental.pgdelta]\nenabled = false\n",
+        "supabase/schemas/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/schemas are not read");
+      expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
+      expect(err).toContain("or pass --use-migra to diff them with migra");
+    }),
+  );
+
+  it.effect(
+    "suggests --use-migra for an absolute path to supabase/schemas with pg-delta disabled",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const absoluteSchemas = path.join(tmp.current, "supabase", "schemas");
+        const err = yield* ignoredDeclarativeNote(
+          `[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = '${absoluteSchemas}'\n`,
+          "supabase/schemas/public.sql",
+        );
+        expect(err).toContain("the configured declarative schema directory are not read");
+        expect(err).toContain("or pass --use-migra to diff them with migra");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("omits the migra suggestion for a custom dir migra would not read", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        '[experimental.pgdelta]\nenabled = false\ndeclarative_schema_path = "./decl"\n',
+        "supabase/decl/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/decl are not read");
+      expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
+      expect(err).not.toContain("or pass --use-migra");
+    }),
+  );
+
+  it.effect("omits the migra suggestion when schema_paths selects other files", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        '[db.migrations]\nschema_paths = ["other.sql"]\n',
+        "supabase/schemas/public.sql",
+      );
+      expect(err).toContain("declarative schema files in supabase/schemas are not read");
+      expect(err).not.toContain("or pass --use-migra");
+    }),
+  );
+
+  it.effect("does not explain declarative files on a linked diff without -f", () => {
+    const s = setup(tmp.current, {
+      files: { "supabase/schemas/public.sql": "create table declared ();\n" },
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "alter table x;\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ linked: Option.some(true) }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(stderr(s.out)).not.toContain("are not read");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
     const s = setup(tmp.current, {
       usePgDelta: true,
@@ -699,6 +853,9 @@ describe("db diff", () => {
       });
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
+      expect(stderr(s.out)).toContain("declarative sync` reads declarative_schema_path");
+      expect(stderr(s.out)).toContain("still reads schema_paths, and only for local targets");
+      expect(stderr(s.out)).not.toContain("are not read");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
@@ -872,6 +1029,34 @@ describe("db diff", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("suggests sync --experimental when a remote block overrides the base gate", () => {
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+        "supabase/schemas/public.sql": "create table declared ();\n",
+      },
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ linked: Option.some(true), file: Option.some("declared") }));
+      expect(stderr(s.out)).toContain(
+        "Run supabase db schema declarative sync --experimental to generate",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("the base config (default local target) does not merge a remote block", () => {
     const s = setup(tmp.current, {
@@ -1101,7 +1286,7 @@ describe("db diff", () => {
         diffSql: "create table o ();\n",
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags());
+        yield* dbDiff(flags({ useMigra: Option.some(true) }));
         expect(stdout(s.out)).toBe("create table o ();\n\n");
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -1403,6 +1588,7 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
       expect(stderr(s.out)).toContain("-f names the migration; it does not filter objects");
+      expect(stderr(s.out)).toContain("Run supabase db schema declarative sync to generate");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1846,17 +2032,17 @@ describe("db diff", () => {
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
-  it.effect("rejects --use-migra=false on the stack backend", () => {
+  it.effect("accepts --use-migra=false on the stack backend and proceeds to stack services", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
+      expect(stderr(s.out)).toContain("Creating shadow database...");
+      // The fixture's stack services are placeholders, so the run stops at its first stack call
+      // after the engine check; a typed error here would mean the flag was rejected.
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) return;
-      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-      expect(error).toBeInstanceOf(StackNativeEngineError);
-      if (!(error instanceof StackNativeEngineError)) return;
-      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
-      expect(error.message).toContain("--use-migra");
+      expect(Cause.pretty(exit.cause)).toContain("Stack services must not run");
+      expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBeUndefined();
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
@@ -1907,7 +2093,7 @@ describe("db diff", () => {
       expect(success?.data).toMatchObject({
         diff: "create table j ();\n",
         file: null,
-        engine: "migra",
+        engine: "pg-delta",
       });
     }).pipe(Effect.provide(s.layer));
   });
@@ -1927,7 +2113,7 @@ describe("db diff", () => {
         "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDiff(flags()).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stderr(s.out)).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
@@ -1937,7 +2123,7 @@ describe("db diff", () => {
     const s = setup(tmp.current, { oom: true, diffSql: "create table fb ();\n", isLocal: true });
     return Effect.gen(function* () {
       // Pass --schema so the fallback does not need a live DB to list schemas.
-      yield* dbDiff(flags({ schema: ["public"] }));
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -1952,7 +2138,7 @@ describe("db diff", () => {
       networkId: "my-net",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ schema: ["public"] }));
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
         _tag: "named",
@@ -1971,7 +2157,7 @@ describe("db diff", () => {
         networkId: "my-net",
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ schema: ["public"] }));
+        yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
         const env = (s.dockerCalls[0] as { env: Readonly<Record<string, string>> }).env;
         expect(new URL(env["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
         expect(new URL(env["TARGET"] ?? "").host).toBe("host.docker.internal:54322");

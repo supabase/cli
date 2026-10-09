@@ -6,7 +6,7 @@ import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
 import { isPgDeltaEnabled, pgDeltaSuggestion, requirePgDelta } from "./declarative.gate.ts";
 
 const EXPECTED_SUGGESTION =
-  "Either pass --experimental or add [experimental.pgdelta] with enabled = true to supabase/config.toml";
+  "Pass --experimental to run declarative commands while [experimental.pgdelta] enabled = false is set in supabase/config.toml";
 
 describe("isPgDeltaEnabled", () => {
   it("opens the gate when --experimental is passed even if config disables it", () => {

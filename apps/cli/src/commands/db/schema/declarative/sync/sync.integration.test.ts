@@ -78,6 +78,10 @@ interface SetupOpts {
   stdinIsTty?: boolean;
   diffSql?: string;
   replannedDiffSql?: string;
+  /**
+   * Fails the first ALTER statement run against the live database. The recovery reset replays
+   * the migrations (including the one just written), so later ALTERs succeed.
+   */
   applyFails?: boolean;
   /**
    * Makes the recovery reset's `resetLocalDatabase` fail immediately with
@@ -228,22 +232,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `dbExec`, which every "not yet applied" assertion expects to stay empty until real apply.
   const SHADOW_PORT = 54320;
   const dbConnectPorts: number[] = [];
+  let applyFailuresLeft = opts.applyFails === true ? 1 : 0;
+  const takeApplyFailure = (statements: ReadonlyArray<string>) => {
+    const index = applyFailuresLeft > 0 ? statements.findIndex((s) => s.startsWith("ALTER")) : -1;
+    if (index >= 0) applyFailuresLeft--;
+    return index;
+  };
   const dbConn = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) => {
       if (cfg.port !== SHADOW_PORT) dbConnectPorts.push(cfg.port);
       return Effect.succeed({
         exec: (sql: string) =>
-          opts.applyFails === true && sql.startsWith("ALTER")
+          takeApplyFailure([sql]) >= 0
             ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
         execBatch: (statements: ReadonlyArray<DbBatchStatement>) => {
           const sql = statements.map((statement) => statement.sql);
-          const failureIndex =
-            opts.applyFails === true
-              ? sql.findIndex((statement) => statement.startsWith("ALTER"))
-              : -1;
+          const failureIndex = takeApplyFailure(sql);
           return failureIndex >= 0
             ? Effect.fail({
                 _tag: "DbExecError",
@@ -436,6 +443,17 @@ const seedDeclarative = (workdir: string) =>
     yield* fs.writeFileString(path.join(dir, "public.sql"), "create table a();");
   });
 
+const disablePgDelta = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(workdir, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
+  });
+
 const seedMigration = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -491,9 +509,19 @@ describe("db schema declarative sync integration", () => {
   const tmp = useTempWorkdir();
   useShadowCacheDisabled();
 
-  it.effect("gate: fails when pg-delta is not enabled", () => {
+  it.effect("gate is open by default: runs without --experimental or any pgdelta config", () => {
+    const s = setup(tmp.current, { experimental: false, diffSql: "" });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("gate: fails when config disables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
+      yield* disablePgDelta(tmp.current);
       yield* seedDeclarative(tmp.current);
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
       expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
@@ -520,6 +548,7 @@ describe("db schema declarative sync integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* Effect.exit(
           dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
@@ -563,6 +592,7 @@ describe("db schema declarative sync integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* withEnvVar(ENV, "1", Effect.exit(dbSchemaDeclarativeSync(flags())));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");

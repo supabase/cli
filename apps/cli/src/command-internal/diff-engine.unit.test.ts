@@ -9,7 +9,7 @@ import {
 
 describe("resolveDiffEngine", () => {
   const base = {
-    useMigraChanged: false,
+    useMigra: false,
     usePgAdmin: false,
     pgDeltaDefault: true,
   };
@@ -20,7 +20,7 @@ describe("resolveDiffEngine", () => {
   });
 
   it("an explicit --use-migra clears pg-delta mode", () => {
-    expect(resolveDiffEngine({ ...base, useMigraChanged: true })).toBe(false);
+    expect(resolveDiffEngine({ ...base, useMigra: true })).toBe(false);
   });
 
   it("--use-pgadmin clears pg-delta mode", () => {

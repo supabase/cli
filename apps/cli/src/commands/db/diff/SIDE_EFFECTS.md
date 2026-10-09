@@ -112,7 +112,6 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)               | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | overrides `[experimental.pgdelta].enabled` (deprecated alias of `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`, which wins when both are set); a value that is not a boolean fails the command                             | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                      | no        |
@@ -121,8 +120,10 @@ of this command's own target resolve, ahead of the differ container.
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
 through the same primitives.
 
-`SUPABASE_EXPERIMENTAL_PG_DELTA` and `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` have no effect on
-the pgadmin path: `--use-pgadmin` always selects the pgadmin engine.
+`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` has no effect on the pgadmin path: `--use-pgadmin`
+always selects the pgadmin engine. The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is
+**not read**: pg-delta is the default engine, and an explicit `enabled = false` rollback is
+authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
 docker-run layer receives the loaded project environment on each invocation. A registry
@@ -167,8 +168,14 @@ the ordered plan units separately for application through `db reset` or `db push
 Progress strings still go to stderr; stdout carries a single structured envelope
 `{ diff, file, files, schemas, engine, dropStatements, advisories? }` instead of
 the raw SQL. Bundled pg-delta reports the best-effort
-`DeclarativeSchemaNotUsedAsDiffBaseline` advisory for a non-empty `--file` diff
-when declarative files exist.
+`DeclarativeSchemaNotUsedAsDiffBaseline` advisory when declarative files exist and
+the diff passes a non-empty `--file` or targets the local database. Only `--file` runs
+also print a stderr note: the `-f` baseline note for a written migration, or a note that
+the files are not read when the diff is empty. Both end with next steps:
+`supabase db schema declarative sync` (with `--experimental` when config disables pg-delta)
+and, when migra would read that directory (local target, no `schema_paths`, and pg-delta
+enabled in config or the directory is `supabase/schemas`; never on the stack backend),
+`--use-migra`.
 
 In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
 representation as text stdout; the machine envelope does not restore the per-unit
@@ -209,9 +216,10 @@ transaction metadata.
 - **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
   so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
   stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
-  `--use-migra` or `--use-pgadmin` always wins; the stack backend always uses pg-delta.
-- `--use-migra` (default), `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine
-  group; `--db-url` / `--linked` / `--local` are a mutually-exclusive target group (default
+  `--use-migra` or `--use-pgadmin` (a true value) always wins; `--use-migra=false` keeps pg-delta; the stack backend always uses pg-delta.
+- `--use-migra`, `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine group
+  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`); `--db-url` /
+  `--linked` / `--local` are a mutually-exclusive target group (default
   `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
   Notes below), so it is never a live member of the group.
 - **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
@@ -314,8 +322,8 @@ port reports the real diff.
 ### `--use-pg-schema` is removed
 
 The flag is removed: passing it (with any value, including `--use-pg-schema=false`)
-fails with a removal error and a suggestion to use the default migra engine or
-`--use-pg-delta` instead. It is checked before any other engine-conflict or
+fails with a removal error and a suggestion to use the default pg-delta engine or
+`--use-migra` instead. It is checked before any other engine-conflict or
 target resolution, so combining it with another engine flag (e.g. `--use-pgadmin`)
 still hits the removal error first, not the mutex error.
 

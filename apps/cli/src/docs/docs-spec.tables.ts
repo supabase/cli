@@ -87,9 +87,9 @@ export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled = true`
- * in config.toml — the flag is documented but not marked required, since the
- * config path also passes the gate.
+ * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled` (default true)
+ * in config.toml — the flag is documented but not marked required, since the gate
+ * is open unless config sets `enabled = false`.
  */
 export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
   "supabase-db-schema-declarative-generate",
@@ -132,12 +132,11 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-db-advisors local": "true",
   "supabase-db-advisors type": "all",
   "supabase-db-diff local": "true",
-  "supabase-db-diff use-migra": "true",
   "supabase-db-dump linked": "true",
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",
   "supabase-db-lint local": "true",
-  "supabase-db-pull diff-engine": "migra",
+  "supabase-db-pull diff-engine": "pg-delta",
   "supabase-db-pull linked": "true",
   "supabase-db-push linked": "true",
   "supabase-db-query local": "true",
