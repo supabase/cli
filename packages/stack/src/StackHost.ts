@@ -603,7 +603,16 @@ export const runStackHost = Effect.fn("StackHost.run")(
           );
       }),
     ).pipe(
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          // Idle sockets close before the 5 s keep-alive of the stack's shortest-lived upstream.
+          Layer.provide(
+            NodeHttpClient.layerNodeHttpNoAgent,
+            NodeHttpClient.layerAgentOptions({ keepAlive: true, timeout: 4_000 }),
+          ),
+        ),
+      ),
       Effect.mapError((cause) =>
         cause instanceof StackHostError ? cause : hostError("host", cause),
       ),
