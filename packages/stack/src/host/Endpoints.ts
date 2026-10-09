@@ -102,6 +102,13 @@ export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndp
     ? [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }]
     : undefined;
 
+/**
+ * Whether an endpoint's writes each take a fresh upstream connection instead of the pool: only
+ * Studio's, `/mcp` included; its reads and every other endpoint's writes stay pooled.
+ */
+export const freshWrites = (creation: EndpointIntents, name: string): boolean =>
+  creation.service === "studio" && name === "http";
+
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
 export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>
   endpoint.kind === "unix"

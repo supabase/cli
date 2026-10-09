@@ -1,5 +1,5 @@
 import { Option } from "effect";
-import type { HelpDoc } from "effect/unstable/cli";
+import type { HelpDoc } from "effect/cli";
 
 function escapeMdxText(value: string): string {
   return value

@@ -566,12 +566,12 @@ const resolveRealDockerHost = Effect.gen(function* () {
  * docker CLI's client state, that engine state is outside this test's confinement contract.
  */
 const resolveRealPodmanState = Effect.gen(function* () {
-  const home = yield* Config.string("HOME");
+  const home = yield* Config.String("HOME");
   return {
-    XDG_DATA_HOME: yield* Config.string("XDG_DATA_HOME").pipe(
+    XDG_DATA_HOME: yield* Config.String("XDG_DATA_HOME").pipe(
       Config.withDefault(`${home}/.local/share`),
     ),
-    XDG_CONFIG_HOME: yield* Config.string("XDG_CONFIG_HOME").pipe(
+    XDG_CONFIG_HOME: yield* Config.String("XDG_CONFIG_HOME").pipe(
       Config.withDefault(`${home}/.config`),
     ),
   };

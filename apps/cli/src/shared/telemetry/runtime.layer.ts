@@ -12,7 +12,7 @@ const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_U
 /** Whether a well-known CI provider variable is set. */
 export const detectCi = Effect.gen(function* () {
   for (const envVar of CI_ENV_VARS) {
-    if (Option.isSome(yield* Config.option(Config.string(envVar)))) return true;
+    if (Option.isSome(yield* Config.option(Config.String(envVar)))) return true;
   }
   return false;
 });

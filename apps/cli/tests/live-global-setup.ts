@@ -2,7 +2,7 @@ import type { ProvidedContext } from "vitest";
 
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import "./helpers/live-provided-context.ts";
 import { cleanupLiveEnvironment, provisionLiveEnvironment } from "./helpers/live-project.ts";

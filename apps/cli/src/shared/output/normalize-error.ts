@@ -1,5 +1,5 @@
 import { Cause, Option } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
 import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";

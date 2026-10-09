@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { storageLsCommand } from "./ls/ls.command.ts";
 import { storageCpCommand } from "./cp/cp.command.ts";
 import { storageMvCommand } from "./mv/mv.command.ts";

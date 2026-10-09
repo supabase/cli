@@ -18,9 +18,9 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,
@@ -276,6 +276,7 @@ const health = Effect.fn("Database.health")(function* (
           username: "supabase_admin",
           password: config.databasePassword,
           connectTimeout: "2 seconds",
+          idleTimeout: "10 seconds",
         }),
       );
       const client = Context.get(layer, PgClient.PgClient);
@@ -298,6 +299,7 @@ const health = Effect.fn("Database.health")(function* (
               username: "supabase_admin",
               password: config.databasePassword,
               connectTimeout: "2 seconds",
+              idleTimeout: "10 seconds",
             }),
           );
           const client = Context.get(layer, PgClient.PgClient);
@@ -311,6 +313,7 @@ const health = Effect.fn("Database.health")(function* (
                 username: "supabase_admin",
                 password: config.databasePassword,
                 connectTimeout: "2 seconds",
+                idleTimeout: "10 seconds",
               }),
             );
             return makeDatabaseSessionFromSqlClient(Context.get(internalLayer, PgClient.PgClient));
@@ -382,7 +385,7 @@ const nativeTrustStore = Effect.gen(function* () {
   const path = yield* Path.Path;
   const env: Record<string, string> = {};
   for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR"]) {
-    const value = yield* Config.option(Config.nonEmptyString(name)).pipe(
+    const value = yield* Config.option(Config.NonEmptyString(name)).pipe(
       Effect.orElseSucceed(() => Option.none()),
     );
     // OpenSSL splits SSL_CERT_DIR on ":" on macOS and Linux, the native targets, and skips blanks.

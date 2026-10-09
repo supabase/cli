@@ -12,7 +12,7 @@ import {
 
 import type { Path } from "effect";
 import { Data, Effect, Option, Predicate, Runtime, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";

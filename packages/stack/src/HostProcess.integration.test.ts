@@ -20,10 +20,10 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- reads the spawned owner's own argv.
 import { execFileSync } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
@@ -569,12 +569,9 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
         Effect.tap(bestEffortShutdown(root)),
         Effect.withTracer(tracer),
       );
+      const requests = spans.filter((span) => span.attributes.has("http.request.method"));
+      expect(requests.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
       const attributes = spans.flatMap((span) => Array.from(span.attributes));
-      const authorization = attributes.filter(
-        ([key]) => key === "http.request.header.authorization",
-      );
-      expect(authorization.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
-      expect(authorization.every(([, value]) => value === "<redacted>")).toBe(true);
       expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

@@ -1,7 +1,7 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { Effect, FileSystem, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import {
   resolveStorageCredentials,

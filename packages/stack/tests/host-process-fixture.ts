@@ -11,7 +11,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture owns inherited readiness and release descriptors.
 import { closeSync, createReadStream, writeSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- consumes its own startup payload file the way the real consumer does.

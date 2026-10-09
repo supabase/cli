@@ -13,8 +13,8 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliOutput, Command } from "effect/cli";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   mockAnalytics,

@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { ssoAddCommand } from "./add/add.command.ts";
 import { ssoInfoCommand } from "./info/info.command.ts";
 import { ssoListCommand } from "./list/list.command.ts";

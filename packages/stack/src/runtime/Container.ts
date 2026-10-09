@@ -20,7 +20,7 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { StackFailureKind } from "../FailureKind.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
@@ -238,7 +238,7 @@ const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Se
   });
 
 const nonEmptyEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.map(Option.filter((value) => value.length > 0)),
     Effect.orElseSucceed(() => Option.none<string>()),
   );

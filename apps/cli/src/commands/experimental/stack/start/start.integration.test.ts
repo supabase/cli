@@ -54,7 +54,7 @@ import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-se
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";

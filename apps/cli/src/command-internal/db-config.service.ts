@@ -1,6 +1,6 @@
 import { Context, Config, type Effect, type Option } from "effect";
 import type { SupabaseApiInputError } from "@supabase/api/effect";
-import type * as HttpBody from "effect/unstable/http/HttpBody";
+import type * as HttpBody from "effect/http/HttpBody";
 import type { CommandPlatformApiFactoryError } from "../auth/command-platform-api-factory.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import type {
