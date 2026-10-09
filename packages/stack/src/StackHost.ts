@@ -43,9 +43,18 @@ import {
 import { ChildProcessSpawner } from "effect/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
-import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
+import {
+  StackError,
+  stackError,
+  StackRpc,
+  type EndpointPortChange,
+  type RunCommandPayload,
+} from "./Rpc.ts";
 import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
+import { makeScopedPorts } from "./Ports.ts";
+import { applyEndpointReplan, reportedEndpointChanges } from "./composition/EndpointReplan.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
@@ -65,6 +74,12 @@ export interface StackHostOptions {
   readonly stackId: string;
   /** Registers this definition once the owner holds the lease; the stack must not exist. */
   readonly register?: StackNamespace.SavedStack;
+  /**
+   * Saves these requested endpoint intents over the stack's saved ones before the owner binds
+   * its endpoints, while this process alone holds the lease; the owner then claims the changed
+   * endpoints' ports through its normal binding.
+   */
+  readonly requestedCreations?: ReadonlyArray<ServiceCreationInput>;
   readonly release?: string;
   readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
@@ -194,6 +209,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
     draining: Deferred.Deferred<void>,
+    startupEndpointChanges: ReadonlyArray<EndpointPortChange> = [],
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
@@ -325,6 +341,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           readonly attachmentId: string;
           readonly bytes: Uint8Array | null;
         }) => attachments.input(attachmentId, bytes),
+        startupEndpointChanges: () => Effect.succeed(startupEndpointChanges),
       });
       const rpc = yield* RpcServer.toHttpEffect(StackRpc, { streamBufferSize: 16 }).pipe(
         Effect.provide(Layer.merge(StackRpc.toLayer(handlers), RpcSerialization.layerNdjson)),
@@ -460,8 +477,30 @@ export const runStackHost = Effect.fn("StackHost.run")(
           );
         const draining = yield* Deferred.make<void>();
         const started = yield* Effect.gen(function* () {
-          const saved = yield* state.read(id);
-          if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
+          const registered = yield* state.read(id);
+          if (registered === undefined)
+            return yield* hostError("startup", "Stack is not registered");
+          // A concurrent launcher that loses the lease race never reaches this, and attaches to
+          // whichever owner wins instead of re-planning again.
+          const replanRequest =
+            options.requestedCreations === undefined
+              ? undefined
+              : {
+                  requested: options.requestedCreations,
+                  ports: yield* makeScopedPorts(state).pipe(
+                    Effect.mapError((cause) => hostError("startup", cause)),
+                  ),
+                };
+          const replan =
+            replanRequest === undefined
+              ? undefined
+              : yield* applyEndpointReplan(
+                  state,
+                  replanRequest.ports,
+                  registered,
+                  replanRequest.requested,
+                ).pipe(Effect.mapError((cause) => hostError("startup", cause)));
+          const saved = replan?.saved ?? registered;
           const control = yield* bindControl();
           const dataRoot = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, saved.id);
           const project = projectSegmentFor(saved.identity, path);
@@ -513,6 +552,15 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
+          const startupEndpointChanges =
+            replan === undefined || replanRequest === undefined
+              ? []
+              : yield* owner.claimEndpoints(replan.changedInstanceIds).pipe(
+                  Effect.andThen(
+                    reportedEndpointChanges(replanRequest.ports, saved.id, replan.changed),
+                  ),
+                  Effect.mapError((cause) => hostError("startup", cause)),
+                );
           const endpoint: HostEndpoint = {
             stackId: saved.id,
             identity: saved.identity,
@@ -531,6 +579,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             control.server,
             control.closeConnections,
             draining,
+            startupEndpointChanges,
           ).pipe(
             Effect.provideService(
               CommandRunner.Service,

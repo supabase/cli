@@ -168,10 +168,27 @@ verification, replace the saved configuration of the existing instances; their i
 and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
 Removed services remain saved and stopped so including them again can reuse them; a saved stopped
 instance of a newly included service is reused when its endpoints and versions still match. The
-project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
-version fails before modifying the stopped composition, naming the `config.toml` key or
-`SUPABASE_*` env var behind the change with its saved and requested values, and suggesting either
-reverting it or running the stack's exact `supabase stack destroy` command to recreate it.
+project configuration file is unchanged. The requested creations travel into the stack package's own owner startup through a private,
+short-lived file the owner deletes after reading, so no secret appears on the owner's argv. When
+every incompatible path across the whole composition is a changed endpoint, each is re-planned
+there while the new owner alone holds the stack's lease: it saves the requested endpoint intents,
+releases the changed endpoints' port registry rows, and claims the new ports through its normal
+endpoint binding. A requested fixed port that is taken fails the start with the usual port
+conflict; the saved intent stays as requested, the old automatic row stays released, and nothing is
+rolled back, so fixing the configuration and starting again succeeds. A concurrent start attaches
+to whichever owner wins the lease instead of re-planning again. The requested creations are passed
+whenever the stack is saved, whatever liveness this command observed first: an owner that is
+already live ignores them, leaves no payload file and re-plans nothing, and a replacement owner
+that starts after the previous one exited re-plans them. Text
+output prints one line per changed endpoint naming its old and new port; JSON and stream-json output
+add the same changes to the success payload. Any other incompatible path blocks the re-plan for the
+whole composition, even for a member whose own change is purely a changed endpoint: a changed
+`config.toml`-backed or env-var-backed setting (such as a changed PostgreSQL major version) still
+fails before modifying the stopped composition, naming the key or env var behind the change with its
+saved and requested values and suggesting reverting it; a changed catalog-pinned artifact version or
+a same-major PostgreSQL build mismatch, which no `config.toml` key or env var controls, instead uses
+a plain label with no revert advice. Either way the failure suggests running the stack's exact
+`supabase stack destroy` command to recreate it.
 Switching between stock PostgreSQL and OrioleDB is an artifact version change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
 Initialized database data is reused only on its own release line (the PostgreSQL major for stock
@@ -224,17 +241,21 @@ and warnings written while the spinner is shown appear on their own rows.
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
 name (protocol, address, port, and URL, matching `stack status`, with no synthetic entries),
 `lazy_services` listing members that start on their first request (empty with `--eager`), `env`
-(the same connection map `stack status --env` exports, present on every success path), and an
-empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
-example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
-after success or failure.
+(the same connection map `stack status --env` exports, present on every success path), an
+`endpoint_changes` array when the start applied any, each entry naming the re-planned endpoint
+(`endpoint`, e.g. `api`), the `endpoints` keys it moved (`keys`, every HTTP key on the shared API
+listener for `api`), and its old and new port (`from`, `to`), and an empty message. See
+[`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an example. Failures retain
+typed command errors and package diagnostics. Telemetry state is flushed after success or failure.
 
 A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
 envelope: one entry per affected service and setting (a shared setting such as the API port appears
 once per API-backed service, unlike the deduplicated text message; a database version change that
 moves both `db.major_version` and `db.orioledb_version` has an entry for each), each with `service`, `path` (the
 composition planner's dotted path, e.g. `endpoints.http.port`, not a `config.toml` key), `key`,
-`saved`, `requested`, and `editable`. `recreate_command` is the exact `supabase stack destroy
---stack-id <id>` invocation, without `--yes`, since destroy deletes local database data; running it
+`saved`, `requested`, and `editable`. `recreate_command` is present only when recreating the stack
+is among the suggested remedies; it is the exact `supabase stack destroy --stack-id <id>`
+invocation, without `--yes`, since destroy deletes local database data; running it
 non-interactively or with `--output-format json`/`--output-format stream-json` requires passing
-`--yes` explicitly.
+`--yes` explicitly. It is absent when a running idle owner only needs `supabase stack stop` then
+`supabase stack start` to apply endpoint port changes.

@@ -93,6 +93,17 @@ owner are unreachable. Plain `status` JSON `env` comes from saved bindings and c
 stopped or sleeping members, while `--env` requires a reachable owner and a running primary
 database.
 
+Starting a stopped stack whose `config.toml` moved an endpoint to a different port, or to and from
+automatic, applies that change instead of failing: text output prints one line per changed endpoint,
+for example `api: 54321 → 26199`, and JSON/stream-json output add an `endpoint_changes` array (each
+entry naming the endpoint, the `endpoints` keys it moved in `keys`, and its `from`/`to` port) to the
+success payload, present only when a change applied. A requested fixed port that is already taken
+fails the start with the usual port conflict; the new port stays saved and the previous automatic
+port is released, so starting again succeeds once the port is free. A changed artifact version or
+PostgreSQL major version still fails, naming the changed setting and suggesting
+`supabase stack destroy`. A changed port met by a stack whose owner is still running (for example
+after `stack prepare`) fails with advice to run `supabase stack stop`, then `supabase stack start`.
+
 ## Exporting environment variables
 
 ```sh

@@ -1709,6 +1709,7 @@ describe("db start stack backend", () => {
                           member: members.includes(database),
                           change: "incompatible" as const,
                           paths: ["config.version"],
+                          endpointsOnly: false,
                         },
                   ]
                 : [],
@@ -1729,6 +1730,7 @@ describe("db start stack backend", () => {
         stop: Effect.succeed([]),
         restart: Effect.succeed([]),
       },
+      startupEndpointChanges: Effect.succeed([]),
       stop: Effect.void,
       destroy: Effect.void,
       gateway: unusedGateway,

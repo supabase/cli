@@ -90,7 +90,12 @@ no separate command that rewrites it, and no second project-level pinned-version
 Raw `supabase/config.toml` values and their origins are loaded before defaults are applied. Explicit
 sticky values are persisted as `exact` intents in each managed document. Omitted values remain
 `automatic`; sibling worktrees and branches have independent stack identities and allocations.
-Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. An exact
+Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. A port
+intent is stable: it does not migrate on its own, but starting a stopped stack whose configuration
+moved an endpoint to a different exact port, or to and from automatic, re-plans that endpoint and
+claims the new one instead of failing; a line in the command's output names the endpoint and its
+old and new port. A taken exact port fails that start with the usual conflict and the saved intent
+stays as configured. An exact
 port is rejected only when a listener already answers on it or the port cannot be bound; another
 stack's saved claim alone never blocks it, and a conflict names the stack that saved the port. Runtime-only service ports are
 selected by the managed supervisor and are not written to the document.

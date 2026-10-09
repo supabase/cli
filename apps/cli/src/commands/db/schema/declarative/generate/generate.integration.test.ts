@@ -159,6 +159,7 @@ function generateStackApi(workdir: string) {
       stop: unusedStack,
       restart: unusedStack,
     },
+    startupEndpointChanges: unusedStack,
     stop: unusedStack,
     destroy: unusedStack,
     gateway: unusedGateway,

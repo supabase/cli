@@ -37,6 +37,7 @@ import {
 import {
   planSupabaseComposition,
   type PlannedInstance,
+  type PlanOptions,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
@@ -46,7 +47,13 @@ import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
-import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import {
+  findConflict,
+  StackError,
+  type Definition,
+  type EndpointPortChange,
+  type Observation,
+} from "./Rpc.ts";
 import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
 import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
@@ -77,12 +84,13 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type {
   CreationChange,
   PlannedInstance,
+  PlanOptions,
   SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./StackNamespace.ts";
 export type { StackCredentials, StackKeysInput };
-export type { Observation } from "./Rpc.ts";
+export type { EndpointPortChange, Observation } from "./Rpc.ts";
 export type { LogPosition, LogRecord, StackLogRecord };
 export type {
   Command,
@@ -119,6 +127,12 @@ export interface CreateOptions extends StackLocations {
 export interface OpenOptions extends StackLocations {
   readonly id: string;
   readonly startOwner?: boolean;
+  /**
+   * Endpoint intents a spawned owner re-plans against the saved state before it binds the saved
+   * endpoints, applying a changed endpoint's port instead of keeping the saved one. Only a freshly
+   * spawned owner acts on this; an already-running owner is unaffected.
+   */
+  readonly requestedCreations?: ReadonlyArray<CatalogServiceCreationInput>;
 }
 
 /** No owner serves the stack: nothing holds its lease, or a sweeper is cleaning it up. */
@@ -133,6 +147,7 @@ const knownOutcomeKind = <O extends { readonly kind?: string }>({ kind, ...outco
 /** An explicit `kind` wins; otherwise the cause's typed chain is classified. */
 const failure = (operation: string, cause: unknown, kind?: StackFailureKind): StackError => {
   if (Schema.is(StackError)(cause)) return cause;
+  const conflict = findConflict(cause);
   const classified = kind ?? failureKind(cause);
   return new StackError({
     operation,
@@ -146,6 +161,7 @@ const failure = (operation: string, cause: unknown, kind?: StackFailureKind): St
         : hasReason("runtime-unavailable")(cause)
           ? { reason: "runtime-unavailable" as const }
           : {}),
+    ...(conflict === undefined ? {} : { conflict }),
     ...(classified === undefined ? {} : { kind: classified }),
   });
 };
@@ -263,10 +279,14 @@ export interface Stack {
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
     /**
      * Compares the requested creations with every saved instance of the same kinds, ignoring
-     * inputs the composition supplies, without changing state or contacting the owner.
+     * inputs the composition supplies, without changing state or contacting the owner. A
+     * `complete` request (the caller's whole desired composition) never falls back to a saved
+     * sibling's port for a shared endpoint kind the request leaves out; a `partial` request
+     * (comparing only the kinds it names) does.
      */
     readonly plan: (
       services: ReadonlyArray<ServiceCreationInput>,
+      options?: PlanOptions,
     ) => Effect.Effect<ReadonlyArray<PlannedInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
@@ -278,6 +298,12 @@ export interface Stack {
   readonly gateway: {
     readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
   };
+  /**
+   * The endpoint port changes the owner this handle reaches applied at its own last startup,
+   * re-planned from `OpenOptions.requestedCreations`. An owner that was already running reports
+   * whatever its own last startup applied (possibly none).
+   */
+  readonly startupEndpointChanges: Effect.Effect<ReadonlyArray<EndpointPortChange>, StackError>;
   readonly stop: Effect.Effect<void, StackError>;
   /**
    * Removes the stack. When its container engine is unreachable, fails with reason
@@ -822,14 +848,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.eager === undefined ? {} : { eager: options.eager }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
-      plan: (services: ReadonlyArray<ServiceCreationInput>) =>
+      plan: (services: ReadonlyArray<ServiceCreationInput>, options?: PlanOptions) =>
         Effect.forEach(services, (service) =>
           Schema.decodeEffect(ServiceCreationInputSchema)(service),
         ).pipe(
           Effect.mapError((cause) => failure("plan", cause)),
           Effect.flatMap((requested) =>
             savedDefinition.pipe(
-              Effect.map((current) => planSupabaseComposition(current, requested)),
+              Effect.map((current) => planSupabaseComposition(current, requested, options)),
             ),
           ),
         ),
@@ -841,6 +867,11 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
     gateway: { readLogs: readLogs(gatewayLog.instanceId) },
+    startupEndpointChanges: call(
+      "startupEndpointChanges",
+      (rpc) => rpc.startupEndpointChanges(),
+      "attach",
+    ),
     stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     commands: { run },
@@ -911,7 +942,13 @@ export const open = Effect.fn("Stack.open")(
       ? undefined
       : saved.lifetime === "session"
         ? yield* connectHost(state, saved.id)
-        : yield* launchHost(state, { ...locations, stackId: saved.id });
+        : yield* launchHost(state, {
+            ...locations,
+            stackId: saved.id,
+            ...(options.requestedCreations === undefined
+              ? {}
+              : { requestedCreations: options.requestedCreations }),
+          });
     return yield* makeHandle(state, saved, locations, { access });
   },
   Effect.mapError((cause) => failure("open", cause)),

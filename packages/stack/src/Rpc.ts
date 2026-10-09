@@ -23,7 +23,7 @@ const ConflictHolder = Schema.Union([
   Schema.Struct({ stackId: Schema.String, stateRoot: Schema.String }),
   Schema.Literal("foreign"),
 ]);
-const Conflict = Schema.Struct({
+export const Conflict = Schema.Struct({
   port: Schema.Int,
   endpoint: Schema.String,
   holder: ConflictHolder,
@@ -70,7 +70,7 @@ const isPortConflict = (value: unknown): value is PortConflict =>
   (value.holder === "foreign" || isHolder(value.holder));
 
 /** The first `conflict` found by walking a failure's `cause` chain, if any carries one. */
-const findConflict = (cause: unknown, depth = 0): PortConflict | undefined => {
+export const findConflict = (cause: unknown, depth = 0): PortConflict | undefined => {
   if (depth > 10 || typeof cause !== "object" || cause === null) return undefined;
   if ("conflict" in cause && isPortConflict(cause.conflict)) return cause.conflict;
   if ("cause" in cause) return findConflict(cause.cause, depth + 1);
@@ -235,6 +235,15 @@ export const OwnerRpc = RpcGroup.make(
   Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackError }),
 );
 
+/** A changed endpoint the owner's own startup re-planned, with its bound port before and after. */
+export const EndpointPortChange = Schema.Struct({
+  service: Schema.String,
+  endpoint: Schema.String,
+  from: Schema.Int,
+  to: Schema.Int,
+});
+export interface EndpointPortChange extends Schema.Schema.Type<typeof EndpointPortChange> {}
+
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = OwnerRpc.add(
   Rpc.make("runCommand", {
@@ -245,6 +254,10 @@ export const StackRpc = OwnerRpc.add(
   }),
   Rpc.make("commandInput", {
     payload: { attachmentId: Schema.String, bytes: Schema.NullOr(Schema.Uint8ArrayFromBase64) },
+    error: StackError,
+  }),
+  Rpc.make("startupEndpointChanges", {
+    success: Schema.Array(EndpointPortChange),
     error: StackError,
   }),
 );

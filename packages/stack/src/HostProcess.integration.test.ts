@@ -12,6 +12,8 @@ import {
   Layer,
   Option,
   Path,
+  PlatformError,
+  Redacted,
   Ref,
   Schema,
   Scope,
@@ -22,6 +24,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- reads the spawned owner's own argv.
+import { execFileSync } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -34,6 +38,7 @@ import {
   type HostAccess,
 } from "./HostProcess.ts";
 import { discover } from "./effect.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { watchLeaseRelease } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -44,14 +49,57 @@ const fixtureEntrypoint = fileURLToPath(
   new URL("../tests/host-process-fixture.ts", import.meta.url),
 );
 
-const savedStack = (root: string, stackName: string): StackNamespace.SavedStack => ({
+/** The startup payload files a launcher left in the owner directory. */
+const leftoverStartupPayloads = (ownerDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(ownerDir))) return [];
+    return (yield* fs.readDirectory(ownerDir)).filter((name) => name.startsWith("startup-"));
+  });
+
+const savedStack = (
+  root: string,
+  stackName: string,
+  databasePassword?: string,
+): StackNamespace.SavedStack => ({
   id: "stack",
   runtime: "native",
   identity: { projectRoot: root, branchContext: "main", stackName },
-  instances: [],
+  instances:
+    databasePassword === undefined
+      ? []
+      : [
+          {
+            id: "database-1",
+            creation: {
+              service: "database",
+              config: {
+                version: "17",
+                databasePassword: Redacted.make(databasePassword),
+                jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
+                jwtExpiry: 3600,
+              },
+              endpoints: { sql: { port: "auto" } },
+            },
+          },
+        ],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
 });
+
+/** The live command line of a running process, read the POSIX or Windows way. */
+const processCommandLine = (pid: number) =>
+  process.platform === "win32"
+    ? execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+        ],
+        { encoding: "utf8" },
+      )
+    : execFileSync("ps", ["-ww", "-p", String(pid), "-o", "args="], { encoding: "utf8" });
 
 /** A loopback listener that accepts connections and never answers, counting each one. */
 const silentListener = Effect.acquireRelease(
@@ -525,6 +573,176 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
       expect(requests.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
       const attributes = spans.flatMap((span) => Array.from(span.attributes));
       expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "keeps the spawned owner's registration and requested creations out of its process argv",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-argv-secrecy-" });
+        const state = yield* makeTestState(root);
+        const marker = `argv-secrecy-password-${root.split("/").at(-1)}`;
+        const registerMarker = `argv-secrecy-register-${root.split("/").at(-1)}`;
+        yield* state.save(savedStack(root, "argv-secrecy"));
+        const requestedCreations: ReadonlyArray<ServiceCreationInput> = [
+          {
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make(marker),
+              jwtSecret: Redacted.make("argv-secrecy-jwt-secret-with-32-characters"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          },
+        ];
+        const access = yield* launchHost(state, {
+          stateRoot: root,
+          cacheRoot: root,
+          stackId: "stack",
+          entrypoint: fixtureEntrypoint,
+          register: savedStack(root, "argv-secrecy", registerMarker),
+          requestedCreations,
+        });
+        yield* Effect.sync(() => {
+          const argv = processCommandLine(access.endpoint.pid);
+          expect(argv).not.toContain(marker);
+          expect(argv).not.toContain(registerMarker);
+        }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("hands the owner a private startup payload file that it deletes once read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-payload-mode-" });
+      const state = yield* makeTestState(root);
+      const ownerDir = path.dirname(state.ownerLog("stack"));
+      yield* state.save(savedStack(root, "payload-mode"));
+      const access = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        entrypoint: fixtureEntrypoint,
+        register: savedStack(root, "payload-mode"),
+      });
+      yield* Effect.gen(function* () {
+        // The fixture records the mode it observed when it read the file.
+        const observed = yield* fs.readFileString(path.join(root, "payload-mode"));
+        if (process.platform !== "win32") expect(observed).toBe("600");
+        expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
+      }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("deletes the spawned owner's startup payload file once it reports ready", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "host-process-payload-cleanup-",
+      });
+      const state = yield* makeTestState(root);
+      const ownerDir = path.dirname(state.ownerLog("stack"));
+      // The real consumer (`internal/host-process.ts`), not the lightweight test fixture, reads
+      // and deletes this file; the default entrypoint exercises it.
+      const access = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        register: savedStack(root, "payload-cleanup"),
+      });
+      yield* leftoverStartupPayloads(ownerDir).pipe(
+        Effect.map((leftover) => expect(leftover).toEqual([])),
+        Effect.ensuring(bestEffortShutdown(root)(access)),
+      );
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("deletes the spawned owner's startup payload file even when its startup fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "host-process-payload-cleanup-fail-",
+      });
+      const state = yield* makeTestState(root);
+      const ownerDir = path.dirname(state.ownerLog("stack"));
+      // This fixture never reads argv past the stack id, so only the launcher's own release
+      // deletes the file here, proving the cleanup does not depend on the child consuming it.
+      const failure = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        entrypoint: fileURLToPath(new URL("../tests/failing-owner-fixture.ts", import.meta.url)),
+        register: savedStack(root, "payload-cleanup-fail"),
+      }).pipe(Effect.flip);
+      expect(failure.message).toContain("owner startup failed");
+      expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("deletes a startup payload file that fails to write after creating partial content", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "host-process-payload-write-failure-",
+      });
+      const state = yield* makeTestState(root);
+      const ownerDir = path.dirname(state.ownerLog("stack"));
+      // Writes a few bytes of the real payload through the real filesystem, then fails, the
+      // way a disk running out of space would after creating the file.
+      const failingWrites = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (real) => ({
+          ...real,
+          writeFileString: (
+            file: string,
+            content: string,
+            options?: Parameters<typeof real.writeFileString>[2],
+          ) =>
+            file.includes("startup-")
+              ? real.writeFileString(file, content.slice(0, 4), options).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "Unknown",
+                        module: "FileSystem",
+                        method: "writeFile",
+                        pathOrDescriptor: file,
+                        description: "injected write failure",
+                        cause: Object.assign(new Error("no space left on device"), {
+                          code: "ENOSPC",
+                        }),
+                      }),
+                    ),
+                  ),
+                )
+              : real.writeFileString(file, content, options),
+        })),
+      );
+      const failure = yield* launchHost(state, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        register: savedStack(root, "payload-write-failure"),
+      }).pipe(Effect.provide(failingWrites), Effect.flip);
+      expect(failure.message).toContain("injected write failure");
+      expect(yield* leftoverStartupPayloads(ownerDir)).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

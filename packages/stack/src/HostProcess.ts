@@ -31,7 +31,9 @@ import { isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
 import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
-import { StackRpc } from "./Rpc.ts";
+import type { PortConflict } from "./Ports.ts";
+import { Conflict, StackRpc } from "./Rpc.ts";
+import { ServiceCreationInput } from "./services/Catalog.ts";
 import {
   SavedStack,
   type Interface as StateInterface,
@@ -87,6 +89,8 @@ export class HostProcessError extends Data.TaggedError("HostProcessError")<{
   readonly message: string;
   readonly cause?: unknown;
   readonly reason?: HostFailureReason;
+  /** The contested public port, when the owner failed to start on a port conflict. */
+  readonly conflict?: PortConflict;
   readonly kind?: StackFailureKind;
 }> {}
 type HostFailureReason =
@@ -355,15 +359,30 @@ export const shutdownHost = Effect.fn("HostProcess.shutdownHost")(function* (
   );
 });
 
+/**
+ * A spawned owner's registration and requested creations carry database, JWT, and root-key
+ * secrets, and Functions env values. They travel through a private, owner-only file instead of
+ * argv, which a live process list exposes to any local user for the owner's whole lifetime: the
+ * launcher writes this payload once under the owner's state directory, and the spawned child reads
+ * and deletes it before it does anything else.
+ */
+export const HostStartupPayload = Schema.Struct({
+  register: Schema.optionalKey(SavedStack),
+  requestedCreations: Schema.optionalKey(Schema.Array(Schema.toCodecJson(ServiceCreationInput))),
+});
+export interface HostStartupPayload extends Schema.Schema.Type<typeof HostStartupPayload> {}
+
 export interface LaunchOptions {
   readonly stateRoot: string;
   readonly cacheRoot: string;
   readonly stackId: string;
   readonly entrypoint?: string;
-  /** Extra positional arguments a non-default `entrypoint` reads, ahead of `register`. */
+  /** Extra positional arguments a non-default `entrypoint` reads, ahead of the startup payload path. */
   readonly entrypointArgs?: ReadonlyArray<string>;
   /** Registers this definition once the spawned owner holds the lease. */
   readonly register?: SavedStack;
+  /** Endpoint intents a stopped stack's owner re-plans before it starts. */
+  readonly requestedCreations?: ReadonlyArray<ServiceCreationInput>;
   /** Ties a spawned owner to the enclosing scope, whose closure destroys the stack. */
   readonly lifeline?: boolean;
 }
@@ -373,6 +392,7 @@ const readyLine = Schema.Union([
     type: Schema.Literal("error"),
     message: Schema.String,
     reason: Schema.optionalKey(Schema.Literals(["lease-held", "exists", "runtime-unavailable"])),
+    conflict: Schema.optionalKey(Conflict),
     kind: Schema.optionalKey(Schema.String),
   }),
 ]);
@@ -444,6 +464,7 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   state: StateInterface,
   options: LaunchOptions,
   entrypoint: string,
+  payloadArgs: ReadonlyArray<string>,
 ): Effect.fn.Return<Spawned, HostProcessError, Scope.Scope | FileSystem.FileSystem | Path.Path> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -451,14 +472,6 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   yield* fs
     .makeDirectory(path.dirname(log), { recursive: true, mode: 0o700 })
     .pipe(Effect.mapError((cause) => error("startup", cause)));
-  const register =
-    options.register === undefined
-      ? []
-      : [
-          yield* Schema.encodeEffect(Schema.fromJsonString(SavedStack))(options.register).pipe(
-            Effect.mapError((cause) => error("startup", cause)),
-          ),
-        ];
   return yield* Effect.acquireUseRelease(
     Effect.try({
       try: () => openSync(log, "a+", 0o600),
@@ -487,7 +500,7 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                   options.cacheRoot,
                   options.stackId,
                   ...(options.entrypointArgs ?? []),
-                  ...register,
+                  ...payloadArgs,
                 ],
                 {
                   cwd: process.cwd(),
@@ -561,12 +574,13 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                       undefined,
                       line.reason === "exists" ? "already-exists" : "lease-held",
                     )
-                  : error(
-                      "startup",
-                      `Stack owner failed to start: ${line.message} (owner log: ${log})`,
-                      line.reason,
-                      isStackFailureKind(line.kind) ? line.kind : undefined,
-                    );
+                  : new HostProcessError({
+                      operation: "startup",
+                      message: `Stack owner failed to start: ${line.message} (owner log: ${log})`,
+                      ...(line.reason === undefined ? {} : { reason: line.reason }),
+                      ...(line.conflict === undefined ? {} : { conflict: line.conflict }),
+                      ...(isStackFailureKind(line.kind) ? { kind: line.kind } : {}),
+                    });
               }
               if (line.endpoint.stackId !== options.stackId)
                 return yield* failure(
@@ -597,6 +611,49 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   );
 });
 
+/** Writes the startup payload to a private file for the spawn and removes it when the spawn settles. */
+const withStartupPayload = Effect.fn("HostProcess.withStartupPayload")(function* <A, E, R>(
+  state: StateInterface,
+  options: LaunchOptions,
+  use: (payloadArgs: ReadonlyArray<string>) => Effect.Effect<A, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const payload: HostStartupPayload = {
+    ...(options.register === undefined ? {} : { register: options.register }),
+    ...(options.requestedCreations === undefined
+      ? {}
+      : { requestedCreations: options.requestedCreations }),
+  };
+  if (Object.keys(payload).length === 0) return yield* use([]);
+  const ownerDir = path.dirname(state.ownerLog(options.stackId));
+  // The path is computed before the write so a write that creates the file and then fails still
+  // reaches the release.
+  return yield* Effect.acquireUseRelease(
+    Effect.gen(function* () {
+      const name = Array.from(yield* crypto.randomBytes(16), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      return path.join(ownerDir, `startup-${name}.json`);
+    }).pipe(Effect.mapError((cause) => error("startup", cause))),
+    (payloadFile) =>
+      Effect.gen(function* () {
+        yield* fs
+          .makeDirectory(ownerDir, { recursive: true, mode: 0o700 })
+          .pipe(Effect.mapError((cause) => error("startup", cause)));
+        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(HostStartupPayload))(
+          payload,
+        ).pipe(Effect.mapError((cause) => error("startup", cause)));
+        yield* fs
+          .writeFileString(payloadFile, encoded, { mode: 0o600 })
+          .pipe(Effect.mapError((cause) => error("startup", cause)));
+        return yield* use([payloadFile]);
+      }),
+    (payloadFile) => fs.remove(payloadFile, { force: true }).pipe(Effect.ignore),
+  );
+});
+
 /** Connects to the stack's live owner, or spawns one and attaches to whichever owner wins the lease. */
 export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   state: StateInterface,
@@ -619,7 +676,9 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
       (yield* state.readHolder(options.stackId))?.role === "sweeper"
     )
       return yield* error("startup", "Another owner is sweeping this stack", "sweeping");
-    const spawned = yield* spawnOwner(state, options, entrypoint);
+    const spawned = yield* withStartupPayload(state, options, (payloadArgs) =>
+      spawnOwner(state, options, entrypoint, payloadArgs),
+    );
     return spawned._tag === "Ready" ? spawned.access : yield* connectHost(state, options.stackId);
   });
   // A sweeper holds a dead stack's lease for a bounded time; a displaced spawn waits it out.

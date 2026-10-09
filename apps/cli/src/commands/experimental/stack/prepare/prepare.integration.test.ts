@@ -160,6 +160,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       stop: Effect.succeed([]),
       restart: Effect.succeed([]),
     },
+    startupEndpointChanges: Effect.succeed([]),
     stop: Effect.void,
     destroy: Effect.void,
     gateway: unusedGateway,

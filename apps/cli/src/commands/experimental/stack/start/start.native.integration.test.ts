@@ -145,6 +145,45 @@ enabled = false
 enabled = false
 `;
 
+/** REST and Auth share the API listener; an absent \`[api] port\` requests an automatic one. */
+const n2ProjectConfig = (apiPort: number | undefined) => `
+project_id = "stack-start-n2-replan"
+${apiPort === undefined ? "" : `\n[api]\nport = ${apiPort}\n`}
+[auth]
+enabled = true
+
+[realtime]
+enabled = false
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[analytics]
+enabled = false
+
+[db.pooler]
+enabled = false
+
+[local_smtp]
+enabled = false
+`;
+const onlyRestAndAuth = [
+  "realtime",
+  "storage",
+  "functions",
+  "studio",
+  "mail",
+  "analytics",
+  "pooler",
+];
+const onlyRest = [...onlyRestAndAuth, "auth"];
+
 const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
   const settings = mockCommandSettings({ workdir, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
@@ -386,7 +425,7 @@ describe("experimental stack start native lifecycle", () => {
   );
 
   it.live(
-    "stops owners after bind and pre-compose config failures across retries",
+    "stops owners after bind failures across retries, and rejects an invalid config before spawning one",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -469,6 +508,9 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
+            // A stopped stack now reads its project config before reopening the stack, to carry a
+            // changed endpoint into the owner's own startup; an invalid config rejects here without
+            // spawning another owner, leaving `ownerPids[2]` unset.
             yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
             activeAttempt = 2;
             const invalidConfigStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
@@ -478,11 +520,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(Option.isSome(configError)).toBe(true);
             if (Option.isSome(configError))
               expect(configError.value).toMatchObject({ reason: "invalid-config" });
-            const configFailureOwnerPid = ownerPids[2];
-            expect(configFailureOwnerPid).toBeDefined();
-            if (configFailureOwnerPid === undefined)
-              return yield* Effect.die("owner PID missing after config failure");
-            expect(yield* ownerHasExited(configFailureOwnerPid)).toBe(true);
+            expect(ownerPids[2]).toBeUndefined();
             const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
             expect(definitions).toHaveLength(1);
             const definition = definitions[0];
@@ -496,7 +534,7 @@ describe("experimental stack start native lifecycle", () => {
             });
             expect(yield* stack.services.list).toHaveLength(0);
             expect((yield* stack.composition.describe).members).toHaveLength(0);
-            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(3);
+            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(2);
           }),
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
@@ -562,5 +600,73 @@ describe("experimental stack start native lifecycle", () => {
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 180_000 },
+  );
+
+  it.live(
+    "re-plans the shared API port after excluding a sibling that previously shared it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-n2-replan-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        // Below the native backend range (10000-19999), the automatic public range (20000-32767)
+        // and every OS ephemeral range, so no concurrent stack claim or outbound socket holds it.
+        const fixedPort = 8_915;
+        const locations = (r: string) => ({
+          stateRoot: path.join(r, "stacks"),
+          cacheRoot: path.join(r, "cache"),
+        });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(fixedPort),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations(root) });
+            const restBefore = (yield* stack.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restBefore === undefined) return yield* Effect.die("REST missing");
+            const statusBefore = yield* restBefore.status;
+            const portBefore = statusBefore.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portBefore).toBe(fixedPort);
+
+            yield* stack.stop;
+            // The config drops the fixed API port and now excludes Auth too: REST alone remains,
+            // so Auth's still-saved fixed port must not anchor REST's shared port back to it.
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "config.toml"),
+              n2ProjectConfig(undefined),
+            );
+            const restartedId = yield* stackStart(flags(onlyRest));
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({ id: restartedId, ...locations(root) });
+            const restAfter = (yield* restarted.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restAfter === undefined) return yield* Effect.die("REST missing after restart");
+            expect(restAfter.id).toBe(restBefore.id);
+            const statusAfter = yield* restAfter.status;
+            const portAfter = statusAfter.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portAfter).toBeDefined();
+            // The fixed port is outside the automatic range, so the replan to automatic claims a
+            // different number and that claim agrees with the live bind.
+            const changes = yield* restarted.startupEndpointChanges;
+            const restChange = changes.find((change) => change.service === "rest");
+            expect(restChange?.from).toBe(fixedPort);
+            expect(restChange?.to).toBe(portAfter);
+            expect(restChange?.to).not.toBe(fixedPort);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 120_000 },
   );
 });
