@@ -10,7 +10,6 @@ import { Effect, Option, Path, Schema, type SchemaAST } from "effect";
 
 import { getDocumentValue } from "./cli-config-document.ts";
 import {
-  CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_SCHEMA_EXCLUDED,
   CLI_CONFIG_SECTION_ENV_EXEMPT,
@@ -140,14 +139,6 @@ describe("config key registry", () => {
     expect(
       notification && cliConfigFamilyKey(notification, "email_changed", "enabled")?.env,
     ).toEqual(["SUPABASE_AUTH_EMAIL_NOTIFICATION_EMAIL_CHANGED_ENABLED"]);
-  });
-
-  it("resolves every deprecated alias to a real key that keeps its canonical name first", () => {
-    for (const [path, aliases] of Object.entries(CLI_CONFIG_ENV_ALIASES)) {
-      const key = cliConfigRegistry.keyAt(path);
-      expect(key?.env[0]).toBe(deriveCliConfigEnvName(path));
-      expect(key?.env.slice(1)).toEqual(aliases);
-    }
   });
 
   it("keeps document-only keys out of the environment and the linked password out of the document", () => {

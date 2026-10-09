@@ -20,7 +20,7 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
 - Commands read values through the `CliConfigValues` service. `load({ workdir, projectRef })`
   returns a resolved config, memoised per workdir, project ref and flag set within a runtime. The resolved config
   decodes the whole config eagerly, so an invalid value fails every command that loads config
-  unless the caller passes `tolerateInvalid`. Load-time warnings (a deprecated alias, an env value
+  unless the caller passes `tolerateInvalid`. Load-time warnings (an env value
   overriding a remote, the `[inbucket]` deprecation) print once per runtime, however many
   resolved configs it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
   the memo.
@@ -39,7 +39,7 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     the exceptions).
 - The key registry is generated from `CliConfigSchema`. Each leaf gets a path, the env name
   `SUPABASE_` plus the upper-snake path, and a codec derived from its type. Hand-written
-  annotations cover what the schema cannot express: deprecated env aliases, codec overrides, secret
+  annotations cover what the schema cannot express: codec overrides, secret
   and section-gated keys, context defaults, exclusions and key families. Document-only keys such as
   `db.password` have no env tier.
 - A flag binds to a key with `key.flag(...)`, declared in the annotations. The flag supplies the
@@ -66,6 +66,9 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     target project before any config is loaded.
   - `resolveExperimentalFeature` ignores remotes and `.env`, because it runs before the target
     project is known.
+  - `experimental.pgdelta` is exempt from section gating: `enabled` defaults to true, so the env
+    rollback (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false`) applies while the section is absent.
+    `SUPABASE_EXPERIMENTAL_PG_DELTA` is not read.
   - `db.password` has no env tier: the local database password lives in config, and the linked
     password is a separate key with its own env name, flag and scoping.
   - Credential scoping covers the linked database password only. `SUPABASE_AUTH_SERVICE_ROLE_KEY`
@@ -107,8 +110,8 @@ order stays the same for every key.
 
 ### Negative
 
-- Breaking changes, listed in the pull request: invalid `SUPABASE_EXPERIMENTAL_PG_DELTA` or
-  `SUPABASE_EXPERIMENTAL_STACK` values now fail, `--password` is rejected for commands that
+- Breaking changes, listed in the pull request: an invalid `SUPABASE_EXPERIMENTAL_STACK`
+  value now fails, `--password` is rejected for commands that
   default to the local database, `db reset --linked` can ask a second prompt, an invalid config
   value fails every command that loads config, `services` and `functions` read `config.json`
   first, and `config push` pushes env-overridden values.
@@ -141,12 +144,12 @@ order stays the same for every key.
   code-structure guard instead.
 - `CliConfigFlagInputs` is not an allowed runtime service, so a command that reads config values
   without `withCliConfigFlags` fails `tsc`.
-- Registry unit tests check env-name uniqueness, alias resolution, section gating, and that every
+- Registry unit tests check env-name uniqueness, section gating, and that every
   schema leaf is in the registry or explicitly excluded.
 - `cli-config-contract.unit.test.ts` walks every registry key and family field and checks that
   each resolves from the highest tier that can supply it, with that tier's origin, that a lower
   tier wins only when every higher one is unavailable, and that an empty shell variable falls
-  through. It also pins deprecated aliases, secret keys and the declared flags to real keys.
+  through. It also pins secret keys and the declared flags to real keys.
 - `cli-config-flag-ownership.unit.test.ts` walks the command tree, hidden commands included, and
   fails when a flag the registry owns is missing from a command, bound to another key, or bound by
   a command that does not declare it. It checks the names in `CLI_CONFIG_FLAGS` only.
@@ -154,7 +157,7 @@ order stays the same for every key.
 ### Adding a key or a flag
 
 - A new `CliConfigSchema` leaf joins the registry automatically. Add an annotation only for a
-  non-default codec, an alias, a secret, a section gate or an exclusion; a leaf with no codec must
+  non-default codec, a secret, a section gate or an exclusion; a leaf with no codec must
   be listed in `CLI_CONFIG_SCHEMA_EXCLUDED` or registry construction throws.
 - To bind a flag, add it to `CLI_CONFIG_FLAGS`, declare it with `key.flag` in the command, and
   pipe the command config through `withCliConfigFlags`.

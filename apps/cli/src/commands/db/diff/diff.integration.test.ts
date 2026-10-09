@@ -703,6 +703,7 @@ describe("db diff", () => {
 
   it.effect("--use-pg-delta overrides [experimental.pgdelta] enabled = false", () => {
     const s = setup(tmp.current, {
+      usePgDelta: true,
       files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
       diffSql: "create table p ();\n",
     });
@@ -745,6 +746,7 @@ describe("db diff", () => {
   const ignoredDeclarativeNote = (config: string, file: string) =>
     Effect.gen(function* () {
       const s = setup(tmp.current, {
+        usePgDelta: true,
         files: { "supabase/config.toml": config, [file]: "create table declared ();\n" },
         diffSql: "",
       });
@@ -901,24 +903,57 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--use-pg-delta=false beats SUPABASE_EXPERIMENTAL_PG_DELTA and config together", () => {
-    const s = setup(tmp.current, {
-      ...writeSchemaPathsConfig(true),
-      usePgDelta: false,
-      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" },
-      diffSql: "create table result ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ usePgDelta: Option.some(false) }));
-      expect(s.databaseDiffCalls).toEqual([]);
-      expect(s.edgeCalls).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "--use-pg-delta=false beats SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED and config together",
+    () => {
+      const s = setup(tmp.current, {
+        ...writeSchemaPathsConfig(true),
+        usePgDelta: false,
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "true" },
+        diffSql: "create table result ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgDelta: Option.some(false) }));
+        expect(s.databaseDiffCalls).toEqual([]);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
-  it.effect("SUPABASE_EXPERIMENTAL_PG_DELTA beats [experimental.pgdelta] enabled in config", () => {
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED beats [experimental.pgdelta] enabled in config",
+    () => {
+      const s = setup(tmp.current, {
+        ...writeSchemaPathsConfig(true),
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" },
+        diffSql: "create table result ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags());
+        expect(s.databaseDiffCalls).toEqual([]);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false selects migra without a pgdelta section",
+    () => {
+      const s = setup(tmp.current, {
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" },
+        diffSql: "create table result ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags());
+        expect(s.databaseDiffCalls).toEqual([]);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("ignores SUPABASE_EXPERIMENTAL_PG_DELTA, so the pg-delta default stays on", () => {
     const s = setup(tmp.current, {
-      ...writeSchemaPathsConfig(false),
-      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" },
+      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "false" },
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
@@ -928,18 +963,21 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("rejects an unparseable SUPABASE_EXPERIMENTAL_PG_DELTA instead of ignoring it", () => {
-    const s = setup(tmp.current, {
-      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "banana" },
-      diffSql: "create table result ();\n",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbDiff(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(s.databaseDiffCalls).toEqual([]);
-      expect(s.edgeCalls).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "rejects an unparseable SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED instead of ignoring it",
+    () => {
+      const s = setup(tmp.current, {
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "banana" },
+        diffSql: "create table result ();\n",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbDiff(flags()).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(s.databaseDiffCalls).toEqual([]);
+        expect(s.edgeCalls).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     const s = setup(tmp.current, {

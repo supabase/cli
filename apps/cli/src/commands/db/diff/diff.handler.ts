@@ -460,9 +460,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
     const onStackBackend = (yield* currentStackBackend).kind === "stack";
-    const pgDeltaEnabled = (yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled))
-      .value;
-    const pgDeltaDefault = onStackBackend || pgDeltaEnabled;
+    const pgDeltaSetting = yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
+    const pgDeltaDefault = onStackBackend || pgDeltaSetting.value;
     const useDelta = resolveDiffEngine({
       useMigra,
       usePgAdmin,
@@ -708,6 +707,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
+        // A per-run `--use-pg-delta` says nothing about what `--use-migra` or `declarative sync`
+        // would resolve, so fall back to what the config file declares.
+        const pgDeltaEnabled =
+          pgDeltaSetting.origin.tier === "flag"
+            ? ((yield* resolvedConfig.fileDeclared).config.experimental.pgdelta?.enabled ?? true)
+            : pgDeltaSetting.value;
         // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`), which applies
         // only to local targets: schema_paths first, then this dir while pg-delta stays enabled
         // in config, then supabase/schemas. The stack backend rejects migra outright.

@@ -384,32 +384,57 @@ describe("CliConfigValues memoisation", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
-  it.live("warns once per runtime when a deprecated alias supplies the value, across loads", () =>
+  it.live("defaults pg-delta on and lets config turn it off", () =>
     Effect.gen(function* () {
-      const root = yield* project('project_id = "alias"\n');
+      const bare = yield* project('project_id = "bare"\n');
+      const disabled = yield* project(
+        'project_id = "off"\n\n[experimental.pgdelta]\nenabled = false\n',
+      );
+      const layer = configValuesLayer();
+
+      yield* Effect.gen(function* () {
+        const values = yield* CliConfigValues;
+        const load = (workdir: string) => values.load({ workdir, projectRef: Option.none() });
+
+        const byDefault = yield* (yield* load(bare)).get(
+          CliConfigKeys.experimental.pgdelta.enabled,
+        );
+        const byConfig = yield* (yield* load(disabled)).get(
+          CliConfigKeys.experimental.pgdelta.enabled,
+        );
+
+        expect(byDefault).toMatchObject({ value: true, origin: { tier: "default" } });
+        expect(byConfig).toMatchObject({ value: false, origin: { tier: "config" } });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("ignores SUPABASE_EXPERIMENTAL_PG_DELTA and honours the canonical env name", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "env"\n');
       const output = mockOutput();
       const layer = configValuesLayer({ output: output.layer });
 
       yield* Effect.gen(function* () {
         const values = yield* CliConfigValues;
-        const resolvedConfig = yield* values.load({ workdir: root, projectRef: Option.none() });
-        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
-        const first = yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
-        yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled);
+        const resolved = yield* values.load({ workdir: root, projectRef: Option.none() });
 
-        expect(first.value).toBe(true);
+        expect(yield* resolved.get(CliConfigKeys.experimental.pgdelta.enabled)).toMatchObject({
+          value: false,
+          origin: { tier: "shell", envName: "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED" },
+        });
       }).pipe(Effect.provide(layer));
-
-      expect(output.messages).toEqual([
-        {
-          type: "warn",
-          message:
-            "SUPABASE_EXPERIMENTAL_PG_DELTA is deprecated; rename it to SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED. It now overrides config.toml, so false turns pg-delta off.",
-        },
-      ]);
+      expect(output.messages).toEqual([]);
     }).pipe(
       Effect.provide(BunServices.layer),
-      (effect) => withShell({ SUPABASE_EXPERIMENTAL_PG_DELTA: "true" }, effect),
+      (effect) =>
+        withShell(
+          {
+            SUPABASE_EXPERIMENTAL_PG_DELTA: "true",
+            SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false",
+          },
+          effect,
+        ),
       Effect.scoped,
     ),
   );

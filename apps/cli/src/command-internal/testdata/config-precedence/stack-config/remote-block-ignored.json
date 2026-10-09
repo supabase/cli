@@ -662,7 +662,7 @@
         "rules": []
       },
       "pgdelta": {
-        "enabled": false
+        "enabled": true
       },
       "webhooks": {
         "enabled": false
@@ -1047,7 +1047,7 @@
             "rules": []
           },
           "pgdelta": {
-            "enabled": false
+            "enabled": true
           },
           "webhooks": {
             "enabled": false

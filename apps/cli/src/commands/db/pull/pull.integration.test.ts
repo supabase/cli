@@ -842,20 +842,23 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false selects migra for a migration-style pull", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      yes: true,
-      env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" },
-    });
-    return Effect.gen(function* () {
-      yield* dbPull(flags());
-      expect(s.engineCalls).toHaveLength(0);
-      expect(s.edgeCalls).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false selects migra for a migration-style pull",
+    () => {
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" },
+      });
+      return Effect.gen(function* () {
+        yield* dbPull(flags());
+        expect(s.engineCalls).toHaveLength(0);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("creates the labeled Deno-cache volume before the migra run mounts it", () => {
     const s = setup(tmp.current, {

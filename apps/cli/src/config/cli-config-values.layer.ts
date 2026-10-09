@@ -24,7 +24,7 @@ import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/c
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { CLI_CONFIG_ENV_ALIAS_NOTES, CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
+import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import {
   cloneDocumentRecord,
   collectEnvReferences,
@@ -141,11 +141,6 @@ const materializedWrite = (
       : undefined;
   }
   return key.normalize === undefined ? declared : key.toDocument(picked.value);
-};
-
-const aliasWarning = (used: string, canonical: string): string => {
-  const note = CLI_CONFIG_ENV_ALIAS_NOTES[used];
-  return `${used} is deprecated; rename it to ${canonical}.${note === undefined ? "" : ` ${note}`}`;
 };
 
 export const cliConfigValuesLayer = Layer.effect(
@@ -333,7 +328,6 @@ export const cliConfigValuesLayer = Layer.effect(
       const origins = new Map<string, CliConfigKeyOrigin>();
       const invalid: Array<CliConfigValueError> = [];
       const entryFailures: Array<CliConfigValueError> = [];
-      const aliasWarnings: Array<string> = [];
       const overrideWarnings: Array<string> = [];
       for (const key of enumerated.values()) {
         const picked = pickCliConfigKey(key, sources);
@@ -352,10 +346,6 @@ export const cliConfigValuesLayer = Layer.effect(
         const { origin } = picked.success;
         origins.set(key.path, origin);
         if (origin.tier === "shell" || origin.tier === "projectEnv") {
-          const canonical = key.env[0];
-          if (canonical !== undefined && origin.envName !== canonical) {
-            aliasWarnings.push(aliasWarning(origin.envName, canonical));
-          }
           if (appliedRemote !== undefined && remoteLeaves.has(key.path)) {
             overrideWarnings.push(
               `${describeCliConfigOrigin(origin, sources.context)} overrides ${key.path} in [remotes.${appliedRemote}].`,
@@ -430,7 +420,7 @@ export const cliConfigValuesLayer = Layer.effect(
           return picked.success;
         });
 
-      for (const message of [...aliasWarnings, ...overrideWarnings]) yield* warnOnce(message);
+      for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
         for (const [originPath, origin] of origins) {
           if (origin.tier === "default") continue;

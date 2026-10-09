@@ -384,8 +384,6 @@ These are different mechanisms and both apply:
 - A `SUPABASE_<UPPER_SNAKE_PATH>` variable overrides the key at the env tier. An empty variable is
   ignored and falls through to config. A value of the form `env(NAME)` in the variable expands once.
   A shell variable, even an empty one, shadows the same name in a project `.env` file.
-- A deprecated alias such as `SUPABASE_EXPERIMENTAL_PG_DELTA` is read after the canonical name and
-  prints a one-time deprecation warning to stderr.
 
 An override is parsed with a codec derived from the schema type, so an unparsable value fails the
 command that loads config instead of falling back to the file.
@@ -395,7 +393,8 @@ command that loads config instead of falling back to the file.
 An env override for a key inside an optional section applies only when that section exists in the
 merged document: webhooks, `storage.image_transformation`, `db.ssl_enforcement`, `auth.captcha`,
 `auth.email.smtp`, hooks, SMS providers, passkey, WebAuthn and external providers other than
-Apple. `auth.sessions`, `db.settings` and `experimental.pgdelta` are exempt.
+Apple. `auth.sessions`, `db.settings` and `experimental.pgdelta` are exempt; `pgdelta.enabled`
+defaults to true, so its env rollback applies while the section is absent.
 
 ### Remotes
 

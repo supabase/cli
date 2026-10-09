@@ -631,7 +631,7 @@
         "rules": []
       },
       "pgdelta": {
-        "enabled": false
+        "enabled": true
       },
       "webhooks": {
         "enabled": false

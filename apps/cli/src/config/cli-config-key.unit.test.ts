@@ -216,28 +216,28 @@ describe("pickCliConfigKey attributes", () => {
     default: "transaction",
   });
 
-  it("uses a deprecated alias and reports it, with the canonical name winning when both are set", () => {
-    const pgdelta = requiredCliConfigKey({
-      path: "experimental.pgdelta.enabled",
-      env: ["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED", "SUPABASE_EXPERIMENTAL_PG_DELTA"],
-      codec: boolCodec,
-      default: false,
+  it("reports the env name that supplied the value, with the first name winning when several are set", () => {
+    const poolSize = requiredCliConfigKey({
+      path: "db.pooler.default_pool_size",
+      env: ["SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE", "SUPABASE_DB_POOLER_POOL_SIZE"],
+      codec: uintCodec,
+      default: 20,
     });
 
-    expect(valueOf(pgdelta, { shell: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" } })).toMatchObject({
-      value: true,
-      origin: { tier: "shell", envName: "SUPABASE_EXPERIMENTAL_PG_DELTA" },
+    expect(valueOf(poolSize, { shell: { SUPABASE_DB_POOLER_POOL_SIZE: "5" } })).toMatchObject({
+      value: 5,
+      origin: { tier: "shell", envName: "SUPABASE_DB_POOLER_POOL_SIZE" },
     });
-    const both = valueOf(pgdelta, {
+    const both = valueOf(poolSize, {
       shell: {
-        SUPABASE_EXPERIMENTAL_PG_DELTA: "true",
-        SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false",
+        SUPABASE_DB_POOLER_POOL_SIZE: "5",
+        SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE: "8",
       },
     });
-    expect(both.value).toBe(false);
+    expect(both.value).toBe(8);
     expect(both.origin).toEqual({
       tier: "shell",
-      envName: "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
+      envName: "SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE",
     });
   });
 

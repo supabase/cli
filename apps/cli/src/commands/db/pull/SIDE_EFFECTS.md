@@ -134,6 +134,7 @@ at all, so nothing is cached for it.
 | `SUPABASE_USE_SLIM_IMAGES`                                                            | resolves the current-pin shadow Postgres, `pg_dump`, PG15+ realtime/storage/auth migrate-job images (migration-style cold shadow), and (for migra) the edge-runtime image from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, flag-off `15.8.1.085`, and `deno_version = 1` stay on docker.io | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                                                                                                                                                                           | no        |
+| `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                               | overrides `[experimental.pgdelta].enabled` (default true; `false` selects migra for the migration-style diff unless `--diff-engine` is passed, and lets a declarative export write `schema_paths`); a value that is not a boolean fails the command                                                                                                                                             | no        |
 | `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated in-process structured-dump export (same as `--declarative`) when `--declarative` is not set                                                                                                                                                                                                                                                                              | no        |
 
 ## Exit Codes
@@ -194,7 +195,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   `--experimental` export honors `--project-ref` the same way `--declarative`
   does.
 - `--use-pg-delta` is hidden, selects the declarative export, and prints
-  `Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.`
+  `Flag --use-pg-delta has been deprecated, use --declarative instead.`
   to stderr. It also sets `[experimental.pgdelta].enabled` at the flag tier, so the declarative
   export leaves `[db.migrations].schema_paths` alone and, if the pull falls back to migration mode
   (`--use-pg-delta --declarative=false`, last flag wins), the migration diff uses pg-delta.

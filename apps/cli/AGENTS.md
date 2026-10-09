@@ -113,8 +113,8 @@ block over the base document) > default. Do not reorder it or special-case it pe
 **Add a config key or env var**
 
 Add the field to `CliConfigSchema`; the registry key and its `SUPABASE_<UPPER_SNAKE_PATH>` env name
-follow. Touch `config/cli-config-key-annotations.ts` only for a deprecated env alias, section gate,
-codec override, secret or exclusion. Never read a `SUPABASE_*` name anywhere else.
+follow. Touch `config/cli-config-key-annotations.ts` only for a section gate, codec override,
+secret or exclusion. Never read a `SUPABASE_*` name anywhere else.
 
 **Variables that are not config keys**
 

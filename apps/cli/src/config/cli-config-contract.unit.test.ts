@@ -6,7 +6,6 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
-  CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_ENV_EXCLUDED,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
@@ -322,25 +321,6 @@ describe("config key contract", () => {
     expect(failures).toEqual([]);
   });
 
-  it("reports a deprecated alias as the winning env name", () => {
-    const aliased = subjects.filter(({ key }) => key.env.length > 1);
-    expect(aliased.map(({ key }) => key.path)).toEqual(Object.keys(CLI_CONFIG_ENV_ALIASES));
-
-    for (const { key } of aliased) {
-      const [, ...aliases] = key.env;
-      for (const alias of aliases) {
-        const picked = pickCliConfigKey(
-          key,
-          sourcesFor(key, { winner: "shell", envName: alias, sectionPresent: true }),
-        );
-        expect(Result.isSuccess(picked) && picked.success.origin).toEqual({
-          tier: "shell",
-          envName: alias,
-        });
-      }
-    }
-  });
-
   it("keeps every secret key a string key, so tier decryption applies to all of them", () => {
     const secrets = subjects.filter(({ key }) => key.secret === true);
 
@@ -358,7 +338,6 @@ describe("config key annotations", () => {
 
   it("annotates only paths that exist in the schema or are declared raw-only", () => {
     const annotated: Readonly<Record<string, ReadonlyArray<string>>> = {
-      aliases: Object.keys(CLI_CONFIG_ENV_ALIASES),
       codecOverrides: Object.keys(CLI_CONFIG_CODEC_OVERRIDES),
       schemaExcluded: Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED),
       envExcluded: Object.keys(CLI_CONFIG_ENV_EXCLUDED),
@@ -397,17 +376,6 @@ describe("config key annotations", () => {
       value: Option.some("from-env"),
       origin: { tier: "shell", envName: "SUPABASE_DB_PASSWORD" },
     });
-    expect(Object.keys(CLI_CONFIG_ENV_ALIASES)).not.toContain("db.password");
-  });
-
-  it("resolves every deprecated alias to the real key that owns it", () => {
-    for (const [path, aliases] of Object.entries(CLI_CONFIG_ENV_ALIASES)) {
-      const key = cliConfigRegistry.keyAt(path);
-      expect(key).toBeDefined();
-      for (const alias of aliases) {
-        expect(cliConfigRegistry.keyForEnvName(alias)).toBe(key);
-      }
-    }
   });
 
   it("names a real key for every declared flag, carrying its names and aliases", () => {

@@ -36,16 +36,6 @@ export interface CliConfigKeyDef {
   readonly materializeDefault?: true;
 }
 
-/** Deprecated env names that still resolve to the key at the given path. */
-export const CLI_CONFIG_ENV_ALIASES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "experimental.pgdelta.enabled": ["SUPABASE_EXPERIMENTAL_PG_DELTA"],
-};
-
-/** Extra warning text for a deprecated env alias whose behaviour changed. */
-export const CLI_CONFIG_ENV_ALIAS_NOTES: Readonly<Record<string, string>> = {
-  SUPABASE_EXPERIMENTAL_PG_DELTA: "It now overrides config.toml, so false turns pg-delta off.",
-};
-
 /** Schema leaves whose env decoding differs from the schema-derived codec. */
 export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<unknown>>> = {
   "db.seed.sql_paths": globListCodec,
@@ -136,7 +126,8 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "a plain struct in the document model: its keys exist whether or not it is written",
   "db.settings":
     "a plain struct in the document model: its keys exist whether or not it is written",
-  "experimental.pgdelta": "the env opt-in is what enables pg-delta, so it creates the section",
+  "experimental.pgdelta":
+    "enabled defaults to true without the section, so the env rollback must apply while it is absent",
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */

@@ -5,7 +5,6 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
-  CLI_CONFIG_ENV_ALIASES,
   CLI_CONFIG_ENV_EXCLUDED,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
@@ -105,9 +104,7 @@ const codecForLeaf = (segments: ReadonlyArray<string>, node: SchemaAST.AST) => {
 };
 
 const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
-  const canonical = def.env?.[0] ?? deriveCliConfigEnvName(def.path);
-  const aliases = CLI_CONFIG_ENV_ALIASES[def.path] ?? [];
-  const env = def.noEnv === true ? [] : (def.env ?? [canonical, ...aliases]);
+  const env = def.noEnv === true ? [] : (def.env ?? [deriveCliConfigEnvName(def.path)]);
   const section = envRequiresSectionFor(def.path);
   const normalize = CLI_CONFIG_NORMALIZERS[def.path];
   const optional = def.optional === true && def.defaultFrom === undefined;
