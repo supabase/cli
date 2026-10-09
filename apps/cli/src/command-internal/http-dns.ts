@@ -76,6 +76,14 @@ export interface DohFetchOptions {
   readonly innerFetch?: FetchFn;
 }
 
+const interruptOnAbort = (signal: AbortSignal) =>
+  Effect.callback<never>((resume) => {
+    if (signal.aborted) return resume(Effect.interrupt);
+    const onAbort = () => resume(Effect.interrupt);
+    signal.addEventListener("abort", onAbort, { once: true });
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+  });
+
 /**
  * Produces a custom `fetch` implementation that DNS-over-HTTPS-resolves the
  * request hostname before dialing, then passes `tls.serverName` so Bun
@@ -90,55 +98,57 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
   const { dnsResolver, resolver = resolveHostsOverHttps } = opts;
   const innerFetch: FetchFn = opts.innerFetch ?? globalThis.fetch;
 
-  const fetchImpl: FetchFn = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const originalUrl =
-      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const parsed = new URL(originalUrl);
-    // Strip Bun's IPv6 brackets (e.g. "[::1]") so net.isIP identifies the literal correctly.
-    const rawHostname = parsed.hostname;
-    const host =
-      rawHostname.startsWith("[") && rawHostname.endsWith("]")
-        ? rawHostname.slice(1, -1)
-        : rawHostname;
+  const fetchImpl: FetchFn = (input, init) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const originalUrl =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const parsed = new URL(originalUrl);
+        // Strip Bun's IPv6 brackets (e.g. "[::1]") so net.isIP identifies the literal correctly.
+        const rawHostname = parsed.hostname;
+        const host =
+          rawHostname.startsWith("[") && rawHostname.endsWith("]")
+            ? rawHostname.slice(1, -1)
+            : rawHostname;
 
-    if (dnsResolver !== "https" || net.isIP(host) !== 0) {
-      return innerFetch(input, init);
-    }
+        if (dnsResolver !== "https" || net.isIP(host) !== 0) {
+          return yield* Effect.promise(() => innerFetch(input, init));
+        }
 
-    // The request's abort signal must reach the lookup too, or an abort during
-    // resolution leaves the resolver fiber running until the DoH server answers.
-    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const ips = await Effect.runPromise(resolver(host), { signal: signal ?? undefined });
-    const firstIp = ips[0];
-    if (firstIp === undefined) {
-      // resolver guarantees a non-empty result; this is a safety net.
-      return innerFetch(input, init);
-    }
+        // The request's abort signal must reach the lookup too, or an abort during
+        // resolution leaves the resolver fiber running until the DoH server answers.
+        const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        const ips = yield* signal
+          ? Effect.raceFirst(resolver(host), interruptOnAbort(signal))
+          : resolver(host);
+        const firstIp = ips[0];
+        if (firstIp === undefined) {
+          // resolver guarantees a non-empty result; this is a safety net.
+          return yield* Effect.promise(() => innerFetch(input, init));
+        }
 
-    const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
+        const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
 
-    // `init.headers` may be a plain record, a WHATWG `Headers` instance
-    // (supabase-js), or an entries array; spreading a `Headers` instance yields
-    // zero entries, so rebuild through the constructor. A `Request` input with
-    // no `init.headers` carries its headers on the request itself.
-    const headers = new Headers(
-      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        // `init.headers` may be a plain record, a WHATWG `Headers` instance
+        // (supabase-js), or an entries array; spreading a `Headers` instance yields
+        // zero entries, so rebuild through the constructor. A `Request` input with
+        // no `init.headers` carries its headers on the request itself.
+        const headers = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        );
+        headers.set("Host", hostHeader);
+        // Bun's fetch sends `tls.serverName` as the SNI extension and validates
+        // the peer certificate against it, not against the IP used as the URL
+        // authority.
+        const rewrittenInit: BunFetchRequestInit = {
+          ...init,
+          headers,
+          tls: { serverName },
+        };
+
+        return yield* Effect.promise(() => innerFetch(url, rewrittenInit));
+      }),
     );
-    headers.set("Host", hostHeader);
-    // Bun's fetch sends `tls.serverName` as the SNI extension and validates
-    // the peer certificate against it, not against the IP used as the URL
-    // authority.
-    const rewrittenInit: BunFetchRequestInit = {
-      ...init,
-      headers,
-      tls: { serverName },
-    };
-
-    return innerFetch(url, rewrittenInit);
-  };
 
   // `typeof globalThis.fetch` includes Bun's `preconnect` member; attach the
   // real one so this override satisfies that type without a cast.

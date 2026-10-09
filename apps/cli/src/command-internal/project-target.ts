@@ -155,62 +155,61 @@ function reclassifyBranchNotFoundError<E extends ConfigTargetResolveFailure, C>(
  * A UUID branch needs no parent ref, so it works unlinked; a name branch resolves the parent
  * ref eagerly, before any spinner starts, so an unlinked or stale link fails immediately.
  */
-export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolveFailure>(
+export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* <
+  TError,
+  EResolve extends ConfigTargetResolveFailure,
+>(
   requested: Option.Option<string>,
   errors: ConfigTargetErrors<TError>,
   /** Maps a branch-lookup (`GET`-by-UUID or `FIND`-by-name) transport/status failure. */
   mapResolveError: (cause: SupabaseApiError) => Effect.Effect<never, EResolve>,
 ) {
-  return Effect.gen(function* () {
-    const output = yield* Output;
-    const resolver = yield* ProjectRefResolver;
+  const output = yield* Output;
+  const resolver = yield* ProjectRefResolver;
 
-    let ref: string;
-    let branch: string | undefined;
-    if (Option.isSome(requested) && !BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
-      const target = requested.value;
-      branch = target;
-      const byId = BRANCH_UUID_PATTERN.test(target);
-      yield* Effect.annotateCurrentSpan("project_target.kind", byId ? "branch_id" : "branch_name");
+  let ref: string;
+  let branch: string | undefined;
+  if (Option.isSome(requested) && !BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
+    const target = requested.value;
+    branch = target;
+    const byId = BRANCH_UUID_PATTERN.test(target);
+    yield* Effect.annotateCurrentSpan("project_target.kind", byId ? "branch_id" : "branch_name");
 
-      let parentRef: ReturnType<typeof resolveParentScopedProjectRef>;
-      if (byId) {
-        parentRef = resolveParentScopedProjectRef(Option.none());
-      } else {
-        const parent = yield* resolveLinkedParentRef();
-        if (parent.kind === "absent") {
-          return yield* Effect.fail(errors.notLinked(target));
-        }
-        if (parent.kind === "invalid") {
-          return yield* Effect.fail(errors.parentRefInvalid(target));
-        }
-        parentRef = Effect.succeed(parent.ref);
-      }
-
-      const resolving =
-        output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-      ref = yield* resolveBranchProjectRef(target, parentRef, {
-        mapGetError: mapResolveError,
-        mapFindError: mapResolveError,
-      }).pipe(
-        Effect.tapError(() => resolving?.fail() ?? Effect.void),
-        Effect.catch((cause) =>
-          reclassifyBranchNotFoundError(cause, errors.branchNotFound(target)),
-        ),
-      );
-      yield* resolving?.clear ?? Effect.void;
-
-      // The resolved branch might not have a project ref yet (still provisioning); don't
-      // let an empty ref reach the config-read call.
-      if (!BRANCH_PROJECT_REF_PATTERN.test(ref)) {
-        return yield* Effect.fail(errors.branchNotReady(target));
-      }
+    let parentRef: ReturnType<typeof resolveParentScopedProjectRef>;
+    if (byId) {
+      parentRef = resolveParentScopedProjectRef(Option.none());
     } else {
-      yield* Effect.annotateCurrentSpan("project_target.kind", "project");
-      ref = yield* resolver.resolve(requested);
+      const parent = yield* resolveLinkedParentRef();
+      if (parent.kind === "absent") {
+        return yield* Effect.fail(errors.notLinked(target));
+      }
+      if (parent.kind === "invalid") {
+        return yield* Effect.fail(errors.parentRefInvalid(target));
+      }
+      parentRef = Effect.succeed(parent.ref);
     }
 
-    yield* Effect.annotateCurrentSpan("project.ref", ref);
-    return { ref, branch };
-  }).pipe(Effect.withSpan("ProjectTarget.resolve"));
-}
+    const resolving =
+      output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
+    ref = yield* resolveBranchProjectRef(target, parentRef, {
+      mapGetError: mapResolveError,
+      mapFindError: mapResolveError,
+    }).pipe(
+      Effect.tapError(() => resolving?.fail() ?? Effect.void),
+      Effect.catch((cause) => reclassifyBranchNotFoundError(cause, errors.branchNotFound(target))),
+    );
+    yield* resolving?.clear ?? Effect.void;
+
+    // The resolved branch might not have a project ref yet (still provisioning); don't
+    // let an empty ref reach the config-read call.
+    if (!BRANCH_PROJECT_REF_PATTERN.test(ref)) {
+      return yield* Effect.fail(errors.branchNotReady(target));
+    }
+  } else {
+    yield* Effect.annotateCurrentSpan("project_target.kind", "project");
+    ref = yield* resolver.resolve(requested);
+  }
+
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
+  return { ref, branch };
+});

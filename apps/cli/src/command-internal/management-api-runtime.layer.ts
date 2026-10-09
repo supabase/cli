@@ -87,9 +87,13 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
 
   // Compile-time guarantee that the merged layer exposes every service a Management-API handler
   // may yield from its top-level `Effect.fn` body — a service missing from `ManagementApiServices`
-  // below becomes a type error here instead of a `Service not found` runtime panic. `unknown` for
-  // E and R keeps this check scoped to exposed services only.
-  const _serviceCoverageCheck: Layer.Layer<ManagementApiServices, unknown, unknown> = built;
+  // below becomes a type error here instead of a `Service not found` runtime panic. Reusing
+  // `built`'s own E and R keeps this check scoped to exposed services only.
+  const _serviceCoverageCheck: Layer.Layer<
+    ManagementApiServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Config, ConfigProvider, Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Crypto,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   configureLoopbackProxyBypass,
@@ -38,38 +45,43 @@ function configLayer(env: Readonly<Record<string, string | undefined>>) {
   );
 }
 
-function writeDockerConfigDir(options: {
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const writeDockerConfigDir = Effect.fnUntraced(function* (options: {
   readonly currentContext?: string;
   readonly contexts?: Readonly<Record<string, string>>;
-}): string {
-  const dir = mkdtempSync(join(tmpdir(), "hostname-docker-config-"));
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hostname-docker-config-" });
   if (options.currentContext !== undefined) {
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({ currentContext: options.currentContext }),
+    yield* fs.writeFileString(
+      path.join(dir, "config.json"),
+      yield* encodeJson({ currentContext: options.currentContext }),
     );
   }
   for (const [name, host] of Object.entries(options.contexts ?? {})) {
     const contextId = createHash("sha256").update(name).digest("hex");
-    const metaDir = join(dir, "contexts", "meta", contextId);
-    mkdirSync(metaDir, { recursive: true });
-    writeFileSync(
-      join(metaDir, "meta.json"),
-      JSON.stringify({ Endpoints: { docker: { Host: host } } }),
+    const metaDir = path.join(dir, "contexts", "meta", contextId);
+    yield* fs.makeDirectory(metaDir, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(metaDir, "meta.json"),
+      yield* encodeJson({ Endpoints: { docker: { Host: host } } }),
     );
   }
   return dir;
-}
+});
 
 function withDockerConfig<A>(
   options: Parameters<typeof writeDockerConfigDir>[0],
   env: Readonly<Record<string, string | undefined>>,
   run: () => Effect.Effect<A, Config.ConfigError, HostnameServices>,
-): Effect.Effect<A, Config.ConfigError> {
-  return Effect.acquireUseRelease(
-    Effect.sync(() => writeDockerConfigDir(options)),
-    (configDir) => run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
-    (configDir) => Effect.sync(() => rmSync(configDir, { recursive: true, force: true })),
+) {
+  return writeDockerConfigDir(options).pipe(
+    Effect.provide(BunServices.layer),
+    Effect.flatMap((configDir) =>
+      run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
+    ),
   );
 }
 
