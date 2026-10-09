@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { makeGit } from "./promotion-shared.ts";
 import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
 import type { PullRequestDraft, ResolutionPlan } from "./sync-branches.ts";
-import { type PublishIo, publishResolution } from "./sync-publish.ts";
+import { type PublishIo, type RepairIo, publishRepair, publishResolution } from "./sync-publish.ts";
+import type { RepairPlan } from "./sync-repair.ts";
 import { type AgentResolution, type ResolveResult, replayMerges } from "./sync-resolve.ts";
 
 const repos: TestRepo[] = [];
@@ -59,10 +60,11 @@ async function resolveWith(
   plan: ResolutionPlan,
   edit: (checkout: string) => void,
   agent: Partial<AgentResolution> = {},
+  followUp?: (checkout: string) => void,
 ): Promise<{ result: ResolveResult; bundlePath: string }> {
   const checkout = repo.checkout();
   const git_ = makeGit(checkout);
-  const result = await replayMerges(git_, checkout, plan, async () => {
+  let result = await replayMerges(git_, checkout, plan, async () => {
     edit(checkout);
     return {
       status: "resolved",
@@ -73,6 +75,10 @@ async function resolveWith(
       ...agent,
     };
   });
+  if (followUp && result.status === "resolved") {
+    followUp(checkout);
+    result = { ...result, head: git(checkout, "rev-parse", "HEAD") };
+  }
   const bundlePath = join(mkdtempSync(join(tmpdir(), "sync-bundle-")), "resolved.bundle");
   if (result.status === "resolved") {
     git(checkout, "update-ref", "refs/sync/resolved", result.head);
@@ -88,8 +94,11 @@ function fakeIo(checkout: string) {
     comments: [] as { pullRequest: number; body: string }[],
     drafts: [] as number[],
     reviews: [] as string[],
+    aiReviews: [] as number[],
+    replies: [] as { commentId: number; body: string }[],
+    resolved: [] as string[],
   };
-  const io: PublishIo = {
+  const io: PublishIo & RepairIo = {
     git: makeGit(checkout),
     createPullRequest: async (draft) => {
       calls.created.push(draft);
@@ -106,6 +115,15 @@ function fakeIo(checkout: string) {
     },
     requestTeamReview: async (_, team) => {
       calls.reviews.push(team);
+    },
+    dispatchAiReview: async (pullRequest) => {
+      calls.aiReviews.push(pullRequest);
+    },
+    replyToReviewComment: async (_, commentId, body) => {
+      calls.replies.push({ commentId, body });
+    },
+    resolveReviewThread: async (threadId) => {
+      calls.resolved.push(threadId);
     },
   };
   return { io, calls };
@@ -145,6 +163,7 @@ describe("publishResolution", () => {
     expect(record).toContain("next's default, @​someone");
     expect(record).toContain("- `shared.txt`: Kept both lines. (follows #3)");
     expect(calls.reviews).toEqual(["cli"]);
+    expect(calls.aiReviews).toEqual([42]);
   });
 
   test("updates the open pull request instead of opening another", async () => {
@@ -213,6 +232,28 @@ describe("publishResolution", () => {
     expect(calls.comments).toHaveLength(0);
   });
 
+  test("accepts a fix commit on a workflow file and asks for a decision on it", async () => {
+    const { repo, plan } = diverged();
+    const { result, bundlePath } = await resolveWith(
+      repo,
+      plan,
+      (checkout) => writeFileSync(join(checkout, "shared.txt"), "next\ndevelop\n"),
+      {},
+      (checkout) => {
+        writeFileSync(join(checkout, ".github/ci.yml"), "fixed\n");
+        git(checkout, "commit", "-qam", "chore(repo): fix checks");
+      },
+    );
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishResolution(io, plan, result, options(bundlePath));
+
+    expect(outcome).toEqual({ status: "published", pullRequest: 42, decisions: 1 });
+    expect(calls.comments[0]?.body).toContain(
+      "1. Claude changed this workflow file to fix the checks, and it runs with repository secrets. Is the change right? (`.github/ci.yml`)",
+    );
+  });
+
   test("pauses the open pull request as a draft when a maintainer must resolve", async () => {
     const { repo, plan } = diverged();
     const openPlan = {
@@ -241,5 +282,93 @@ describe("publishResolution", () => {
     expect(calls.comments[0]?.body).toContain("git merge origin/next");
     expect(calls.comments[0]?.body).toContain("git merge origin/develop");
     expect(() => repo.remoteTip("sync/develop-into-next")).toThrow();
+  });
+});
+
+describe("publishRepair", () => {
+  /** Pushes the develop tip as the sync branch head and stacks a repair commit on it in a fresh checkout. */
+  function repairedBranch(repo: TestRepo, plan: ResolutionPlan) {
+    const head = plan.merges[0]?.sha ?? "";
+    git(repo.seed, "push", "-q", "origin", `${head}:refs/heads/sync/develop-into-next`);
+    const checkout = repo.checkout();
+    git(checkout, "switch", "-q", "--detach", head);
+    writeFileSync(join(checkout, ".github/ci.yml"), "restored input\n");
+    git(checkout, "commit", "-qam", "chore(repo): address checks and review");
+    const repaired = git(checkout, "rev-parse", "HEAD");
+    git(checkout, "update-ref", "refs/sync/resolved", repaired);
+    const bundlePath = join(mkdtempSync(join(tmpdir(), "sync-bundle-")), "resolved.bundle");
+    git(checkout, "bundle", "create", bundlePath, "refs/sync/resolved", `^${head}`);
+    const repairPlan: RepairPlan = {
+      source: "develop",
+      target: "next",
+      pullRequest: 9,
+      head,
+      round: 1,
+      failures: [{ name: "Check code quality", runId: 1, jobId: 2, conclusion: "failure" }],
+      findings: [
+        { threadId: "T1", commentId: 11, path: "shared.txt", line: 1, body: "Lost the input." },
+        { threadId: "T2", commentId: 12, path: "shared.txt", line: 1, body: "Rename it." },
+      ],
+      reviewBody: null,
+    };
+    const result = {
+      head: repaired,
+      outcome: {
+        status: "repaired" as const,
+        summary: "Restored the setup input develop relies on.",
+        files: [{ path: ".github/ci.yml", resolution: "Restored the input." }],
+        findings: [
+          { commentId: 11, disposition: "fixed" as const, reply: "Restored it, thanks @someone." },
+          {
+            commentId: 12,
+            disposition: "declined" as const,
+            reply: "Renaming is out of scope for a sync.",
+          },
+        ],
+        decisions: [],
+      },
+    };
+    return { repairPlan, result, bundlePath };
+  }
+
+  test("pushes the repair, answers every finding, and resolves only the fixed ones", async () => {
+    const { repo, plan } = diverged();
+    const { repairPlan, result, bundlePath } = repairedBranch(repo, plan);
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishRepair(io, repairPlan, result, options(bundlePath));
+
+    expect(outcome).toEqual({ status: "published", head: result.head, decisions: 1 });
+    expect(repo.remoteTip("sync/develop-into-next")).toBe(result.head);
+    expect(calls.replies).toEqual([
+      { commentId: 11, body: "Fixed in repair round 1: Restored it, thanks @\u200bsomeone." },
+      { commentId: 12, body: "Declined in repair round 1: Renaming is out of scope for a sync." },
+    ]);
+    expect(calls.resolved).toEqual(["T1"]);
+    const record = calls.comments[0]?.body ?? "";
+    expect(record).toStartWith(`<!-- sync-repair round=1 head=${repairPlan.head} -->`);
+    expect(record).toContain("(`.github/ci.yml`)");
+    expect(calls.reviews).toEqual(["cli"]);
+  });
+
+  test.each([
+    ["pushed a repair", false],
+    ["changed nothing", true],
+  ])("drops a round that %s when the sync branch moved meanwhile", async (_, unchanged) => {
+    const { repo, plan } = diverged();
+    const branch = repairedBranch(repo, plan);
+    const { repairPlan, bundlePath } = branch;
+    const result = unchanged ? { ...branch.result, head: repairPlan.head } : branch.result;
+    git(repo.seed, "switch", "-q", "--detach", repairPlan.head);
+    const newer = repo.commit(repo.seed, "late.txt", "late\n", "Merge develop again");
+    git(repo.seed, "push", "-q", "--force", "origin", "HEAD:refs/heads/sync/develop-into-next");
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishRepair(io, repairPlan, result, options(bundlePath));
+
+    expect(outcome).toEqual({ status: "superseded" });
+    expect(repo.remoteTip("sync/develop-into-next")).toBe(newer);
+    expect(calls.replies).toHaveLength(0);
+    expect(calls.comments).toHaveLength(0);
   });
 });

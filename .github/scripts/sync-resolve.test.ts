@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { makeGit, RELEASE_BOT_LOGIN } from "./promotion-shared.ts";
@@ -9,7 +9,6 @@ import {
   type AgentResolution,
   type Conflict,
   RESOLUTION_MARKER,
-  checkAndFix,
   gatherPrecedents,
   replayMerges,
 } from "./sync-resolve.ts";
@@ -118,92 +117,6 @@ describe("replayMerges", () => {
       "`shared.txt` still contains conflict markers.",
     ]);
     expect(git(checkout, "rev-parse", "HEAD")).toBe(plan.base);
-  });
-});
-
-describe("checkAndFix", () => {
-  async function mergedCheckout() {
-    const { repo, plan } = conflictingPlan(["shared.txt"]);
-    const checkout = repo.checkout();
-    await replayMerges(makeGit(checkout), checkout, plan, async () => {
-      writeFileSync(join(checkout, "shared.txt"), "next\ndevelop\n");
-      return resolution();
-    });
-    return { checkout, merge: git(checkout, "rev-parse", "HEAD") };
-  }
-
-  const typeChecker = (checkout: string) => () => {
-    const passed = !readFileSync(join(checkout, "shared.txt"), "utf8").includes("develop");
-    return {
-      passed,
-      output: passed ? "" : "shared.txt(2,1): error TS2304: Cannot find name 'develop'.",
-    };
-  };
-
-  test("keeps the formatter's changes in the merge commit and drops generated files", async () => {
-    const { checkout, merge } = await mergedCheckout();
-
-    const check = await checkAndFix(
-      makeGit(checkout),
-      () => {
-        writeFileSync(join(checkout, "shared.txt"), "next\n  develop\n");
-        writeFileSync(join(checkout, "generated.txt"), "build output\n");
-        return { passed: true, output: "" };
-      },
-      async () => "unused",
-    );
-
-    expect(check).toEqual({
-      passed: true,
-      fixes: [
-        {
-          path: "shared.txt",
-          resolution: "Formatted with the repository formatter.",
-          precedent: null,
-        },
-      ],
-      decisions: [],
-    });
-    const head = git(checkout, "rev-parse", "HEAD");
-    expect(git(checkout, "rev-parse", `${head}^@`)).toBe(git(checkout, "rev-parse", `${merge}^@`));
-    expect(git(checkout, "show", `${head}:shared.txt`)).toBe("next\n  develop");
-    expect(git(checkout, "status", "--porcelain")).toBe("");
-  });
-
-  test("amends a fix that makes the check pass into the merge commit", async () => {
-    const { checkout, merge } = await mergedCheckout();
-
-    const check = await checkAndFix(makeGit(checkout), typeChecker(checkout), async (output) => {
-      expect(output).toContain("error TS2304");
-      writeFileSync(join(checkout, "shared.txt"), "next\n");
-      return resolution({
-        files: [{ path: "shared.txt", resolution: "Dropped the stale name.", precedent: null }],
-      });
-    });
-
-    expect(check).toEqual({
-      passed: true,
-      fixes: [{ path: "shared.txt", resolution: "Dropped the stale name.", precedent: null }],
-      decisions: [],
-    });
-    const head = git(checkout, "rev-parse", "HEAD");
-    expect(git(checkout, "rev-parse", `${head}^@`)).toBe(git(checkout, "rev-parse", `${merge}^@`));
-    expect(git(checkout, "show", `${head}:shared.txt`)).toBe("next");
-  });
-
-  test("drops a fix that edits a workflow file and reports the failure", async () => {
-    const { checkout, merge } = await mergedCheckout();
-
-    const check = await checkAndFix(makeGit(checkout), typeChecker(checkout), async () => {
-      mkdirSync(join(checkout, ".github"), { recursive: true });
-      writeFileSync(join(checkout, ".github/ci.yml"), "tampered\n");
-      writeFileSync(join(checkout, "shared.txt"), "next\n");
-      return resolution();
-    });
-
-    expect(check).toMatchObject({ passed: false, fixes: [] });
-    expect(check.remaining).toContain("error TS2304");
-    expect(git(checkout, "rev-parse", "HEAD")).toBe(merge);
   });
 });
 

@@ -17,9 +17,12 @@ import {
   renderConflictPr,
   syncBranchName,
 } from "./sync-branches.ts";
+import type { AgentDecision } from "./sync-agent.ts";
+import type { RepairPlan, RepairResult } from "./sync-repair.ts";
 import {
   type AgentResolution,
   type CheckResult,
+  REPAIR_MARKER,
   RESOLUTION_MARKER,
   type ResolveResult,
 } from "./sync-resolve.ts";
@@ -28,6 +31,8 @@ import {
 export const REVIEW_TEAM_SLUG = "cli";
 
 const MAX_BODY_LENGTH = 60_000;
+/** Fix commits a run may stack on top of its merges. */
+const MAX_FOLLOW_UPS = 5;
 
 export interface PublishIo {
   git: GitRunner;
@@ -35,6 +40,15 @@ export interface PublishIo {
   updatePullRequestBody(pullRequest: number, body: string): Promise<void>;
   convertToDraft(pullRequest: number): Promise<void>;
   comment(pullRequest: number, body: string): Promise<void>;
+  requestTeamReview(pullRequest: number, team: string): Promise<void>;
+  dispatchAiReview(pullRequest: number): Promise<void>;
+}
+
+export interface RepairIo {
+  git: GitRunner;
+  comment(pullRequest: number, body: string): Promise<void>;
+  replyToReviewComment(pullRequest: number, commentId: number, body: string): Promise<void>;
+  resolveReviewThread(threadId: string): Promise<void>;
   requestTeamReview(pullRequest: number, team: string): Promise<void>;
 }
 
@@ -54,9 +68,9 @@ function short(sha: string): string {
   return sha.slice(0, 7);
 }
 
-/** Agent text is rendered into comments; this keeps it from pinging anyone or overflowing the body limit. */
+/** Agent text is rendered into bot comments; this keeps it from pinging anyone or forging a hidden marker. */
 function neutralize(text: string): string {
-  return text.replace(/@(?=[\w-])/g, "@​");
+  return text.replace(/@(?=[\w-])/g, "@\u200b").replace(/<!--/g, "&lt;!--");
 }
 
 function capped(body: string): string {
@@ -65,17 +79,73 @@ function capped(body: string): string {
     : `${body.slice(0, MAX_BODY_LENGTH)}\n\n… truncated; see the workflow run.`;
 }
 
+function changedProtectedPaths(git: GitRunner, commits: string[]): string[] {
+  const paths = commits.flatMap((commit) =>
+    gitOrThrow(git, [
+      "diff",
+      "-z",
+      "--name-only",
+      `${commit}^`,
+      commit,
+      "--",
+      PROTECTED_PATH_PREFIX,
+    ])
+      .split("\0")
+      .filter(Boolean),
+  );
+  return [...new Set(paths)];
+}
+
 /**
- * Checks that `head` is exactly the plan's merges on top of its base, changing protected paths only where they
- * conflicted. Returns those conflicted protected paths per merge, in plan order.
+ * Checks that every commit from `from` (exclusive) to `head` is a plain, non-merge commit, at most a few, and
+ * returns the protected paths they change.
+ */
+export function validateFollowUps(
+  git: GitRunner,
+  from: string,
+  head: string,
+): { error: string } | { protectedEdits: string[] } {
+  const commits: string[] = [];
+  let commit = head;
+  while (commit !== from) {
+    const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
+      .split(" ")
+      .slice(1);
+    if (parents.length !== 1 || commits.length === MAX_FOLLOW_UPS) {
+      return {
+        error: `\`${short(head)}\` is not a few plain commits on top of \`${short(from)}\`.`,
+      };
+    }
+    commits.push(commit);
+    commit = parents[0] ?? "";
+  }
+  return { protectedEdits: changedProtectedPaths(git, commits) };
+}
+
+/**
+ * Checks that `head` is the plan's merges on top of its base, followed by at most a few fix commits. Merges may
+ * change protected paths only where they conflicted. Returns those conflicted paths per merge, in plan order, and
+ * the protected paths the fix commits change.
  */
 export function validateResolvedHistory(
   git: GitRunner,
   plan: ResolutionPlan,
   head: string,
-): { error: string } | { protectedConflicts: string[][] } {
-  const protectedConflicts: string[][] = [];
+): { error: string } | { protectedConflicts: string[][]; protectedEdits: string[] } {
+  const followUps: string[] = [];
   let commit = head;
+  for (;;) {
+    const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
+      .split(" ")
+      .slice(1);
+    if (parents.length !== 1 || commit === plan.base || followUps.length === MAX_FOLLOW_UPS) {
+      break;
+    }
+    followUps.push(commit);
+    commit = parents[0] ?? "";
+  }
+
+  const protectedConflicts: string[][] = [];
   for (const merge of [...plan.merges].reverse()) {
     const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
       .split(" ")
@@ -95,40 +165,68 @@ export function validateResolvedHistory(
     commit = parents[0] ?? "";
   }
   return commit === plan.base
-    ? { protectedConflicts }
+    ? { protectedConflicts, protectedEdits: changedProtectedPaths(git, followUps) }
     : { error: `The history does not start at \`${short(plan.base)}\`.` };
 }
 
-/** Adds a decision for every conflicted protected path the agent did not already raise, whatever it reported. */
+/** One decision per protected path not already raised, since workflows on the sync branch run with secrets. */
+export function protectedDecisions(
+  paths: string[],
+  raised: AgentDecision[],
+  question: string,
+): AgentDecision[] {
+  const covered = new Set(raised.flatMap(({ paths: decided }) => decided));
+  return paths
+    .filter((path) => !covered.has(path))
+    .map((path) => ({
+      paths: [path],
+      question,
+      chosen: "The change on this branch.",
+      alternative: "Fix it by hand on the sync branch.",
+    }));
+}
+
+const CONFLICT_QUESTION =
+  "This workflow file conflicted and runs with repository secrets. Is the resolution right?";
+const EDIT_QUESTION =
+  "Claude changed this workflow file to fix the checks, and it runs with repository secrets. Is the change right?";
+
+/** Adds a decision for every protected path the merges resolved or the fix commits changed, whatever the agent reported. */
 export function withProtectedDecisions(
   result: Extract<ResolveResult, { status: "resolved" }>,
   protectedConflicts: string[][],
+  protectedEdits: string[] = [],
 ): Extract<ResolveResult, { status: "resolved" }> {
+  const merges = result.merges.map((merge, index) =>
+    merge.resolution === null
+      ? merge
+      : {
+          ...merge,
+          resolution: {
+            ...merge.resolution,
+            decisions: [
+              ...merge.resolution.decisions,
+              ...protectedDecisions(
+                protectedConflicts[index] ?? [],
+                merge.resolution.decisions,
+                CONFLICT_QUESTION,
+              ),
+            ],
+          },
+        },
+  );
+  const raised = [
+    ...merges.flatMap(({ resolution }) => resolution?.decisions ?? []),
+    ...(result.check?.decisions ?? []),
+  ];
+  const editDecisions = protectedDecisions(protectedEdits, raised, EDIT_QUESTION);
+  const check: CheckResult = result.check ?? { passed: true, fixes: [], decisions: [] };
   return {
     ...result,
-    merges: result.merges.map((merge, index) => {
-      const raised = new Set(merge.resolution?.decisions.flatMap(({ paths }) => paths));
-      const missing = (protectedConflicts[index] ?? []).filter((path) => !raised.has(path));
-      if (merge.resolution === null || missing.length === 0) {
-        return merge;
-      }
-      return {
-        ...merge,
-        resolution: {
-          ...merge.resolution,
-          decisions: [
-            ...merge.resolution.decisions,
-            ...missing.map((path) => ({
-              paths: [path],
-              question:
-                "This workflow file conflicted and runs with repository secrets. Is the resolution right?",
-              chosen: "The resolution on this branch.",
-              alternative: "Resolve it by hand on the sync branch.",
-            })),
-          ],
-        },
-      };
-    }),
+    merges,
+    ...(result.check || editDecisions.length > 0
+      ? { check: { ...check, decisions: [...check.decisions, ...editDecisions] } }
+      : {}),
   };
 }
 
@@ -184,9 +282,9 @@ function renderCheck(check: CheckResult): string[] {
   const decisions = renderDecisions(check.decisions);
   if (check.passed) {
     return fixes.length === 0
-      ? ["#### Format and type check", "", "Passed on the merged tree."]
+      ? ["#### Quality checks", "", "Passed on the merged tree.", ...decisions]
       : [
-          "#### Format and type check",
+          "#### Quality checks",
           "",
           "Passed after these changes to the merged tree:",
           "",
@@ -195,13 +293,13 @@ function renderCheck(check: CheckResult): string[] {
         ];
   }
   return [
-    "#### Format and type check",
+    "#### Quality checks",
     "",
-    "**The type check still fails.** Fix it on the branch before approving.",
+    "**The checks still fail.** Fix them on the branch before approving.",
     ...(fixes.length > 0 ? ["", "Already changed:", "", ...fixes] : []),
     ...decisions,
     "",
-    "<details><summary>Type checker output</summary>",
+    "<details><summary>Check output</summary>",
     "",
     "````text",
     (check.remaining ?? "").slice(-6000),
@@ -254,7 +352,7 @@ function renderPullRequestBody(
       decisions > 0
         ? `**${decisions} decision${decisions === 1 ? "" : "s"} need${decisions === 1 ? "s" : ""} review.**`
         : "**No decisions needed in the latest update.**",
-      ...(checkFails ? ["", "**The type check still fails on this branch.**"] : []),
+      ...(checkFails ? ["", "**The quality checks still fail on this branch.**"] : []),
       "",
       "Approve to fast-forward `" +
         plan.target +
@@ -352,7 +450,11 @@ export async function publishResolution(
   if ("error" in validation) {
     return { status: "rejected", reason: validation.error };
   }
-  const reviewed = withProtectedDecisions(result, validation.protectedConflicts);
+  const reviewed = withProtectedDecisions(
+    result,
+    validation.protectedConflicts,
+    validation.protectedEdits,
+  );
 
   pushSyncBranch(git, plan, head);
   const record = renderResolutionRecord(plan, reviewed, options);
@@ -378,10 +480,149 @@ export async function publishResolution(
       console.log(`::warning::Could not request review from ${REVIEW_TEAM_SLUG}: ${error}`);
     }
   }
+  try {
+    await io.dispatchAiReview(pullRequest);
+  } catch (error) {
+    console.log(`::warning::Could not start the AI review: ${error}`);
+  }
   return { status: "published", pullRequest, decisions };
 }
 
-function makeIo(token: string, repository: string): PublishIo {
+export type RepairPublishOutcome =
+  | { status: "rejected"; reason: string }
+  | { status: "superseded" }
+  | { status: "published"; head: string; decisions: number };
+
+export function renderRepairRecord(
+  plan: RepairPlan,
+  result: RepairResult,
+  decisions: AgentDecision[],
+  options: Pick<PublishOptions, "model" | "owner" | "runUrl">,
+): string {
+  const moved = result.head !== plan.head;
+  const lines = [
+    `${REPAIR_MARKER} round=${plan.round} head=${plan.head} -->`,
+    `### Repair round ${plan.round} for \`${short(result.head)}\``,
+    "",
+    `Claude (\`${options.model}\`) worked on ${plan.failures.length} failing CI job${plan.failures.length === 1 ? "" : "s"} and ${plan.findings.length} AI review finding${plan.findings.length === 1 ? "" : "s"}. [Workflow run](${options.runUrl})`,
+  ];
+  if (plan.failures.length > 0) {
+    lines.push("", "**Failing jobs**", "", ...plan.failures.map(({ name }) => `- ${name}`));
+  }
+  if (result.outcome) {
+    lines.push("", neutralize(result.outcome.summary));
+  }
+  if (result.failure) {
+    lines.push("", `**No repair pushed.** ${neutralize(result.failure)}`);
+  } else if (!moved) {
+    lines.push("", "No file changes were needed.");
+  }
+  if (result.outcome && result.outcome.files.length > 0) {
+    lines.push(
+      "",
+      "**Changed files**",
+      "",
+      ...result.outcome.files.map(
+        ({ path, resolution }) => `- \`${path}\`: ${neutralize(resolution)}`,
+      ),
+    );
+  }
+  if (result.outcome && result.outcome.findings.length > 0) {
+    const fixed = result.outcome.findings.filter(({ disposition }) => disposition === "fixed");
+    lines.push(
+      "",
+      `Replied on every review finding: ${fixed.length} fixed and resolved, ${result.outcome.findings.length - fixed.length} declined and left open.`,
+    );
+  }
+  lines.push(...renderDecisions(decisions));
+  if (result.check) {
+    lines.push("", ...renderCheck(result.check));
+  }
+  if (decisions.length > 0) {
+    lines.push(
+      "",
+      `@${options.owner}/${REVIEW_TEAM_SLUG}: ${decisions.length === 1 ? "one choice needs" : `${decisions.length} choices need`} a decision.`,
+    );
+  }
+  return capped(lines.join("\n"));
+}
+
+/**
+ * Publishes one repair round: pushes its commits when the branch has not moved, replies on every planned review
+ * finding, resolves the threads it fixed, and records the round. A branch that moved means a newer sync or round
+ * owns it, so the round is dropped.
+ */
+export async function publishRepair(
+  io: RepairIo,
+  plan: RepairPlan,
+  result: RepairResult,
+  options: PublishOptions,
+): Promise<RepairPublishOutcome> {
+  const { git } = io;
+  const branch = `sync/${plan.source}-into-${plan.target}`;
+  const moved = result.head !== plan.head;
+  let protectedEdits: string[] = [];
+  if (moved) {
+    gitOrThrow(git, ["fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"]);
+    gitOrThrow(git, ["fetch", options.bundlePath, "+refs/sync/resolved:refs/sync/resolved"]);
+    const head = gitOrThrow(git, ["rev-parse", "refs/sync/resolved"]);
+    if (head !== result.head) {
+      return {
+        status: "rejected",
+        reason: `The bundle head ${short(head)} is not ${short(result.head)}.`,
+      };
+    }
+    const validation = validateFollowUps(git, plan.head, head);
+    if ("error" in validation) {
+      return { status: "rejected", reason: validation.error };
+    }
+    protectedEdits = validation.protectedEdits;
+    const push = git([
+      "push",
+      `--force-with-lease=refs/heads/${branch}:${plan.head}`,
+      "origin",
+      `${head}:refs/heads/${branch}`,
+    ]);
+    if (push.status !== 0) {
+      return { status: "superseded" };
+    }
+  } else {
+    const remote = gitOrThrow(git, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+    if (remote.split("\t")[0] !== plan.head) {
+      return { status: "superseded" };
+    }
+  }
+
+  const replies = new Map(result.outcome?.findings.map((reply) => [reply.commentId, reply]));
+  for (const finding of plan.findings) {
+    const reply = replies.get(finding.commentId);
+    const fixed = moved && reply?.disposition === "fixed";
+    const body = reply
+      ? `${fixed ? "Fixed" : "Declined"} in repair round ${plan.round}: ${neutralize(reply.reply)}`
+      : `Repair round ${plan.round} did not address this finding; it needs a maintainer.`;
+    await io.replyToReviewComment(plan.pullRequest, finding.commentId, body);
+    if (fixed) {
+      await io.resolveReviewThread(finding.threadId);
+    }
+  }
+
+  const agentDecisions = [...(result.outcome?.decisions ?? []), ...(result.check?.decisions ?? [])];
+  const decisions = [
+    ...agentDecisions,
+    ...protectedDecisions(protectedEdits, agentDecisions, EDIT_QUESTION),
+  ];
+  await io.comment(plan.pullRequest, renderRepairRecord(plan, result, decisions, options));
+  if (decisions.length > 0) {
+    try {
+      await io.requestTeamReview(plan.pullRequest, REVIEW_TEAM_SLUG);
+    } catch (error) {
+      console.log(`::warning::Could not request review from ${REVIEW_TEAM_SLUG}: ${error}`);
+    }
+  }
+  return { status: "published", head: result.head, decisions: decisions.length };
+}
+
+function makeIo(token: string, repository: string): PublishIo & RepairIo {
   const pulls = `/repos/${repository}/pulls`;
   return {
     git: makeGit(process.cwd()),
@@ -414,25 +655,58 @@ function makeIo(token: string, repository: string): PublishIo {
         team_reviewers: [team],
       });
     },
+    async dispatchAiReview(pullRequest) {
+      await githubRequest(
+        requireEnv("AI_REVIEW_TOKEN"),
+        `/repos/${repository}/actions/workflows/ai-review.yml/dispatches`,
+        { ref: requireEnv("DEFAULT_BRANCH"), inputs: { pr: String(pullRequest) } },
+      );
+    },
+    async replyToReviewComment(pullRequest, commentId, body) {
+      await githubRequest(token, `${pulls}/${pullRequest}/comments/${commentId}/replies`, { body });
+    },
+    async resolveReviewThread(threadId) {
+      await githubGraphql(
+        token,
+        "mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { id } } }",
+        { id: threadId },
+      );
+    },
   };
 }
 
 async function main(): Promise<void> {
-  const plan = JSON.parse(requireEnv("PLAN")) as ResolutionPlan;
   const resultDir = resolve(requireEnv("RESULT_DIR"));
   const repository = requireEnv("REPOSITORY");
-  const result = JSON.parse(readFileSync(join(resultDir, "result.json"), "utf8")) as ResolveResult;
-  const outcome = await publishResolution(
-    makeIo(requireEnv("GH_TOKEN"), repository),
-    plan,
-    result,
-    {
-      bundlePath: join(resultDir, "resolved.bundle"),
-      model: requireEnv("CLAUDE_MODEL"),
-      owner: repository.split("/")[0] ?? "",
-      runUrl: requireEnv("RUN_URL"),
-    },
-  );
+  const io = makeIo(requireEnv("GH_TOKEN"), repository);
+  const options = {
+    bundlePath: join(resultDir, "resolved.bundle"),
+    model: requireEnv("CLAUDE_MODEL"),
+    owner: repository.split("/")[0] ?? "",
+    runUrl: requireEnv("RUN_URL"),
+  };
+  const read = <T>(): T => JSON.parse(readFileSync(join(resultDir, "result.json"), "utf8")) as T;
+
+  if (process.argv[2] === "repair") {
+    const plan = JSON.parse(requireEnv("REPAIR")) as RepairPlan;
+    const outcome = await publishRepair(io, plan, read<RepairResult>(), options);
+    switch (outcome.status) {
+      case "rejected":
+        console.error(`::error::Refusing to publish the repair: ${outcome.reason}`);
+        process.exit(1);
+        break;
+      case "superseded":
+        console.log("::notice::The sync branch moved during the repair; a later round takes over.");
+        break;
+      case "published":
+        console.log(`Repair round ${plan.round} published; head ${outcome.head}.`);
+        break;
+    }
+    return;
+  }
+
+  const plan = JSON.parse(requireEnv("PLAN")) as ResolutionPlan;
+  const outcome = await publishResolution(io, plan, read<ResolveResult>(), options);
   switch (outcome.status) {
     case "rejected":
       console.error(`::error::Refusing to publish the resolution: ${outcome.reason}`);

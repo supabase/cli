@@ -81,6 +81,9 @@ export async function githubRequest<T>(
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
