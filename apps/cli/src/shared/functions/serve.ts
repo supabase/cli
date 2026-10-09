@@ -91,6 +91,7 @@ import {
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -705,6 +706,7 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
       (value) => value.length > 0,
     ),
   );
+  yield* (yield* CliConfigValues).invalidate;
   const context = yield* loadFunctionsCliConfig({ projectRoot, projectRef, localConfigLoader });
   const { resolvedConfig } = context;
   const baseConfig = context.loaded.config;

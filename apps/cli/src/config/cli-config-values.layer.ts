@@ -475,6 +475,11 @@ export const cliConfigValuesLayer = Layer.effect(
       timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
     });
 
+    const invalidate = Effect.all([
+      Cache.invalidateAll(cache),
+      Cache.invalidateAll(parsedDocuments),
+    ]).pipe(Effect.asVoid);
+
     return CliConfigValues.of({
       load: (target) =>
         Cache.get(
@@ -487,11 +492,8 @@ export const cliConfigValuesLayer = Layer.effect(
             tolerateInvalid: target.tolerateInvalid === true,
           }),
         ),
-      writeThrough: (write) =>
-        Effect.ensuring(
-          write,
-          Effect.all([Cache.invalidateAll(cache), Cache.invalidateAll(parsedDocuments)]),
-        ),
+      writeThrough: (write) => Effect.ensuring(write, invalidate),
+      invalidate,
     });
   }),
 );

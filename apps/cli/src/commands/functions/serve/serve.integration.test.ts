@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { FileSystem, Path } from "effect";
+import { FileSystem, Path, PlatformError } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -1947,6 +1947,92 @@ describe("functions serve integration", () => {
       ).toHaveLength(2);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  const dockerRestartHandler = (command: string, args: ReadonlyArray<string>) => {
+    if (command !== "docker") {
+      throw new Error(`unexpected process: ${command}`);
+    }
+    if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+      return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+    }
+    if (args[0] === "exec") {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected docker args: ${args.join(" ")}`);
+  };
+
+  const restartPolicies = () =>
+    deployMockState.runCalls
+      .filter((call) => call.command === "docker" && call.args[0] === "create")
+      .map((call) => call.args.join(" ").match(/--policy=(\S+)/)?.[1]);
+
+  const restartOnce = Effect.fnUntraced(function* (
+    change: Effect.Effect<void, PlatformError.PlatformError>,
+  ) {
+    deployMockState.runHandler = dockerRestartHandler;
+    const path = yield* Path.Path;
+    const fileWatcher = mockFileWatcher();
+    const childSpawner = mockDockerLogSpawner([
+      { pending: true },
+      { exitCode: 1, stderr: "docker logs exited with 1" },
+    ]);
+    const { layer } = setupServe({ fileWatcher, childSpawner });
+    const fiber = yield* functionsServe(baseFlags()).pipe(
+      Effect.provide(layer),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* waitFor(
+      () =>
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "create",
+        ).length === 1,
+      "timed out waiting for first docker create",
+    );
+    yield* change;
+    fileWatcher.emit([
+      {
+        path: path.join(tempRoot.current, "supabase", "functions", "hello", "index.ts"),
+        type: "update",
+      },
+    ]);
+    yield* Fiber.join(fiber).pipe(Effect.flip);
+  });
+
+  it.live("re-reads the project .env on each restart", () =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[edge_runtime]", 'policy = "env(EDGE_POLICY)"', ""].join(
+          "\n",
+        ),
+      );
+      yield* writeProjectFile("supabase/.env", "EDGE_POLICY=per_worker\n");
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+      yield* restartOnce(writeProjectFile("supabase/.env", "EDGE_POLICY=oneshot\n"));
+
+      expect(restartPolicies()).toEqual(["per_worker", "oneshot"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("re-reads config.toml on each restart", () =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[edge_runtime]", 'policy = "per_worker"', ""].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+      yield* restartOnce(
+        writeCliConfig(
+          ['project_id = "test-project"', "[edge_runtime]", 'policy = "oneshot"', ""].join("\n"),
+        ),
+      );
+
+      expect(restartPolicies()).toEqual(["per_worker", "oneshot"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("stops serving cleanly on a process signal", () => {
     deployMockState.runHandler = (command, args) => {

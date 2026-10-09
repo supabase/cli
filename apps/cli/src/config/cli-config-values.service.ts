@@ -97,6 +97,8 @@ interface CliConfigValuesShape {
   ) => Effect.Effect<ResolvedCliConfig, CliConfigLoadFailure>;
   /** Runs a write to config or `.temp`, then drops the memoised resolved configs it may have staled. */
   readonly writeThrough: <A, E, R>(write: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  /** Drops the memoised documents and resolved configs so the next `load` re-reads disk. */
+  readonly invalidate: Effect.Effect<void>;
 }
 
 export class CliConfigValues extends Context.Service<CliConfigValues, CliConfigValuesShape>()(
