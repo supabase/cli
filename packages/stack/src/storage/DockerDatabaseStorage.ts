@@ -13,11 +13,11 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import type {
   ChildProcessHandle,
   ChildProcessSpawner as ChildProcessSpawnerService,
-} from "effect/unstable/process/ChildProcessSpawner";
+} from "effect/process/ChildProcessSpawner";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
@@ -525,7 +525,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
       const helperImage = yield* Ref.make<string | undefined>(undefined);
-      const helperScopeRef = yield* Ref.make<Scope.Scope | undefined>(undefined);
+      const helperScopeRef = yield* Ref.make<Scope.Closeable | undefined>(undefined);
       const helperCleanupPending = yield* Ref.make(false);
       const operationLock = yield* Semaphore.make(1);
       const ownerScope = yield* Scope.Scope;

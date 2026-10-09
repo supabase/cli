@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";

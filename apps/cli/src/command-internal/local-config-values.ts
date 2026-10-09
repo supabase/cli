@@ -15,7 +15,8 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Effect, Encoding, Option, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
   resolveRemoteJwks,
@@ -3105,7 +3106,7 @@ export const resolveLocalJwks = Effect.fnUntraced(function* (
   }
   keys.push(...signingKeys.map(toPublicJwk));
   if (signingKeysPath === undefined || signingKeysPath.length === 0) {
-    keys.push({ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) });
+    keys.push({ kty: "oct", k: Base64Url.encode(jwtSecret) });
   }
   return yield* Schema.encodeEffect(
     Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),

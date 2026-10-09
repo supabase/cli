@@ -104,7 +104,12 @@ describe("database component", { timeout: 180_000 }, () => {
             yield* query(
               endpoint,
               defaults.databasePassword,
-              "CREATE EXTENSION IF NOT EXISTS pgsodium; CREATE EXTENSION IF NOT EXISTS supabase_vault",
+              "CREATE EXTENSION IF NOT EXISTS pgsodium",
+            );
+            yield* query(
+              endpoint,
+              defaults.databasePassword,
+              "CREATE EXTENSION IF NOT EXISTS supabase_vault",
             );
             const derivation = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
             const originalKey = yield* query(endpoint, defaults.databasePassword, derivation);
@@ -198,10 +203,11 @@ describe("database component", { timeout: 180_000 }, () => {
           "postgres",
         ).pipe(Effect.flip);
         expect(Predicate.isTagged(rejected.reason, "AuthenticationError")).toBe(true);
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION dblink");
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION dblink; CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
+          "CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
         );
         const connected = yield* query(
           endpoint,
@@ -274,8 +280,9 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION http WITH SCHEMA extensions; CREATE EXTENSION pg_net",
+          "CREATE EXTENSION http WITH SCHEMA extensions",
         );
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION pg_net");
         expect(
           yield* query(
             endpoint,
@@ -289,7 +296,7 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/') AS id`,
+            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/')::text AS id`,
           ),
         );
         expect(
@@ -347,7 +354,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+            "CREATE TABLE server_env (file text, dir text)",
+          );
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
           );
           const [serverEnv] = yield* Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
@@ -394,10 +406,14 @@ describe("database component", { timeout: 180_000 }, () => {
               PERFORM pg_notify('cron_runs', (SELECT jobname FROM cron.job WHERE jobid = NEW.jobid)
                 || ': ' || NEW.status || ': ' || coalesce(NEW.return_message, ''));
               RETURN NEW;
-            END $$;
-            CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
+            END $$`,
+          );
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
               FOR EACH ROW WHEN (NEW.status IN ('succeeded', 'failed'))
-              EXECUTE FUNCTION report_cron_run();`,
+              EXECUTE FUNCTION report_cron_run()`,
           );
           const sql = Context.get(
             yield* Layer.build(
@@ -415,7 +431,13 @@ describe("database component", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               /* Jobs repeat every second, so a run reported before LISTEN is ready is not lost. */
               const run = yield* sql.listen("cron_runs").pipe(
-                Stream.filter((message) => message.startsWith(`${name}: `)),
+                Effect.map((notifications) =>
+                  Stream.fromQueue(notifications).pipe(
+                    Stream.map((notification) => notification.payload),
+                    Stream.filter((message) => message.startsWith(`${name}: `)),
+                  ),
+                ),
+                Stream.unwrap,
                 Stream.runHead,
                 Effect.forkScoped({ startImmediately: true }),
               );
@@ -573,7 +595,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             firstEndpoint,
             config.databasePassword,
-            "ALTER ROLE supabase_admin SET log_statement = 'all'; ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
+            "ALTER ROLE supabase_admin SET log_statement = 'all'",
+          );
+          yield* query(
+            firstEndpoint,
+            config.databasePassword,
+            "ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
           );
           yield* service.restart(loggedConfig);
           yield* service.ready;

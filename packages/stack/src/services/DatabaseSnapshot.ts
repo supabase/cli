@@ -14,7 +14,7 @@ import {
   Schema,
 } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { postgresVersion } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";

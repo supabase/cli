@@ -1,7 +1,7 @@
 import * as net from "node:net";
 import { Duration, Effect } from "effect";
 import { constTrue } from "effect/Function";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { DbConnectError } from "./db-connection.errors.ts";
 

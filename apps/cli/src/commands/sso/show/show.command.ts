@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -7,15 +7,15 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoShow } from "./show.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  metadata: Flag.boolean("metadata").pipe(
+  metadata: Flag.Boolean("metadata").pipe(
     Flag.withDescription("Show SAML 2.0 XML Metadata only"),
     Flag.withDefault(false),
   ),
-  providerId: Argument.string("provider-id").pipe(
+  providerId: Argument.String("provider-id").pipe(
     Argument.withDescription("The ID of the SSO identity provider to show."),
   ),
 };

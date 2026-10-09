@@ -78,7 +78,7 @@ export function parseQueryTimeoutMillis(
 }
 
 export const localDbPassword = Effect.fnUntraced(function* () {
-  const value = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
+  const value = yield* Config.option(Config.String("SUPABASE_DB_PASSWORD"));
   return Option.getOrElse(value, () => "postgres");
 });
 

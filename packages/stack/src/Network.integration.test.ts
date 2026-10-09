@@ -4,7 +4,7 @@ import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, 
 import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { HttpBody, HttpClient } from "effect/unstable/http";
+import { HttpBody, HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";

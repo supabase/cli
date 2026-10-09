@@ -20,7 +20,7 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import {
