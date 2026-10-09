@@ -24,10 +24,13 @@ export interface CliShellEnvironment {
  */
 export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function* (options?: {
   readonly names?: Iterable<string>;
+  /** Names whose numeric children past the walk cap still get their highest index loaded. */
+  readonly highestNumericSuffixOf?: Iterable<string>;
 }) {
   const provider = yield* ConfigProvider.ConfigProvider;
   const variables = new Map<string, string>();
   const attempted = new Set<string>();
+  const highestSuffixNames = new Set(options?.highestNumericSuffixOf ?? []);
 
   const loadPath = (path: ReadonlyArray<string | number>) =>
     provider
@@ -43,12 +46,20 @@ export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function
       Effect.flatMap((node) => {
         if (node === undefined) return Effect.void;
         if (node.value !== undefined && path.length > 0) variables.set(path.join("_"), node.value);
-        const children =
+        const children: Array<string | number> =
           node._tag === "Record"
             ? [...node.keys]
             : node._tag === "Array"
               ? Array.from({ length: Math.min(node.length, MAX_NUMERIC_SEGMENTS) }, (_, i) => i)
               : [];
+        // The node reports only its length, so the highest index is the one past the cap that is known to exist.
+        if (
+          node._tag === "Array" &&
+          node.length > MAX_NUMERIC_SEGMENTS &&
+          highestSuffixNames.has(path.join("_"))
+        ) {
+          children.push(node.length - 1);
+        }
         return Effect.forEach(children, (child) => walk([...path, child]), { discard: true });
       }),
     );

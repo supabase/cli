@@ -184,6 +184,7 @@ export const cliConfigValuesLayer = Layer.effect(
 
       const shell = yield* readShellEnvironment({
         names: [...registryEnvNames, "DOTENV_PRIVATE_KEY", ...documentEnvNames(rawDocument)],
+        highestNumericSuffixOf: ["DOTENV_PRIVATE_KEY"],
       });
       const projectEnv = yield* withPlatform(loadCliProjectEnvFiles(target.workdir, { shell }));
       const valueReferences = new Set<string>();

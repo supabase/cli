@@ -598,6 +598,20 @@ describe("CliConfigValues secrets", () => {
     ),
   );
 
+  it.live("decrypts with a shell-only DOTENV_PRIVATE_KEY whose numeric suffix is large", () =>
+    Effect.gen(function* () {
+      const root = yield* project(captcha(CIPHERTEXT));
+
+      const { decoded } = yield* readCaptcha(root);
+
+      expect(decoded).toBe("value");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ DOTENV_PRIVATE_KEY_2026: PRIVATE_KEY }, effect),
+      Effect.scoped,
+    ),
+  );
+
   it.live("decrypts ciphertext reached through an env() reference", () =>
     Effect.gen(function* () {
       const root = yield* project(captcha("env(CAPTCHA_CIPHERTEXT)"), {

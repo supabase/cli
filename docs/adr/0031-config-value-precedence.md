@@ -33,6 +33,9 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     origin of every registry key.
   - `appliedRemote`, `hasConfigFile`, `declares(path)`, `familyNames(family)`, `invalid`,
     `withheldEnv`, `dotenvPrivateKeys`.
+  - `dotenvPrivateKeys` reads `DOTENV_PRIVATE_KEY[_<suffix>]` from the shell and the project `.env*`
+    files. With several shell-only all-numeric suffixes at or above 256, only the highest is
+    found; non-numeric suffixes and project `.env*` keys are unaffected.
   - `envValues(names)`: the non-empty value of each named variable, shell before project `.env*`,
     for resolving `env(NAME)` references.
   - `projectEnvValues`: the raw project `.env*` record, for names outside the registry only (see

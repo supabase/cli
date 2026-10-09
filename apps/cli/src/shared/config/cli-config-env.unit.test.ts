@@ -114,6 +114,14 @@ describe("shell snapshot", () => {
     }),
   );
 
+  it.effect("finds a shell-only dotenvx key whose numeric suffix is past the walk cap", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ highestNumericSuffixOf: ["DOTENV_PRIVATE_KEY"] });
+
+      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBe("k");
+    }).pipe(Effect.provide(withShell({ DOTENV_PRIVATE_KEY_2026: "k" }))),
+  );
+
   it.effect("loads each requested name once", () =>
     Effect.gen(function* () {
       let loads = 0;
