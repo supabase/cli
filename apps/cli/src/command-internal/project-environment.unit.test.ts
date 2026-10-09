@@ -49,7 +49,7 @@ describe("resolveProjectEnvironmentValues", () => {
     });
   });
 
-  it("fills in a value from a project-root .env file Go's loadNestedEnv would load", () => {
+  it("fills in a value from a project-root .env file", () => {
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("root-env-project");
@@ -91,7 +91,7 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("prod-local-project");
   });
 
-  it("skips .env.local when SUPABASE_ENV=test, matching Go's loadDefaultEnv", () => {
+  it("skips .env.local when SUPABASE_ENV=test", () => {
     process.env["SUPABASE_ENV"] = "test";
     writeFileSync(join(root, ".env.local"), "SUPABASE_PROJECT_ID=local-project\n");
     writeFileSync(join(root, ".env.test"), "SUPABASE_PROJECT_ID=test-project\n");
@@ -127,7 +127,7 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("commented-project");
   });
 
-  it("preserves a literal # in an unquoted value with no leading whitespace, matching godotenv", () => {
+  it("preserves a literal # in an unquoted value with no leading whitespace", () => {
     writeFileSync(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
@@ -139,13 +139,13 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("54323");
   });
 
-  it("strips a trailing comment after a quoted value, matching godotenv", () => {
+  it("strips a trailing comment after a quoted value", () => {
     writeFileSync(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
   });
 
-  it("accepts a colon-separated assignment, matching godotenv's YAML-style key/value form", () => {
+  it("accepts a colon-separated assignment (YAML-style key/value form)", () => {
     writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
@@ -180,7 +180,7 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
   });
 
-  it("throws on a malformed line, matching Go's loadEnvIfExists propagating godotenv's parse error", () => {
+  it("throws on a malformed line", () => {
     writeFileSync(join(root, ".env"), "not a valid line\n");
     expect(() => resolveProjectEnvironmentValues(fakeProjectEnv(), root)).toThrow(
       /failed to parse environment file/,
@@ -205,19 +205,19 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("$BASE");
   });
 
-  it("expands an unresolved bare reference to an empty string, matching Go's map zero-value", () => {
+  it("expands an unresolved bare reference to an empty string", () => {
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=$NOPE\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("");
   });
 
-  it("expands an unresolved braced reference to an empty string, matching Go's map zero-value", () => {
+  it("expands an unresolved braced reference to an empty string", () => {
     writeFileSync(join(root, ".env"), 'SUPABASE_AUTH_JWT_SECRET="${NOPE}"\n');
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("");
   });
 
-  it("preserves a backslash-escaped $VAR reference as a literal, matching godotenv's escape rule", () => {
+  it("preserves a backslash-escaped $VAR reference as a literal", () => {
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=demo\\$BASE\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$BASE");
@@ -235,7 +235,7 @@ describe("resolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$");
   });
 
-  it("preserves a multiline quoted value alongside an unrelated SUPABASE_* key (godotenv parity)", () => {
+  it("preserves a multiline quoted value alongside an unrelated SUPABASE_* key", () => {
     // A quoted value spanning physical lines (e.g. a pasted PEM key) must not break
     // parsing of the rest of the file.
     const pem = "-----BEGIN PRIVATE KEY-----\nMIIBogIBAAJ\n-----END PRIVATE KEY-----";

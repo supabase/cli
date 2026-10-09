@@ -17,7 +17,7 @@ import { postgresConfigDelete } from "./delete/delete.handler.ts";
 import { postgresConfigGet } from "./get/get.handler.ts";
 import { postgresConfigUpdate } from "./update/update.handler.ts";
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
 
@@ -26,7 +26,7 @@ function runtimeWith(opts: {
   readonly api: ReturnType<typeof mockCommandPlatformApi>;
   readonly telemetry?: ReturnType<typeof mockTelemetryStateTracked>["layer"];
   readonly linkedProjectCache?: ReturnType<typeof mockLinkedProjectCacheTracked>["layer"];
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
 }) {
   return buildTestRuntime({
     out: opts.out,
@@ -34,7 +34,7 @@ function runtimeWith(opts: {
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     telemetry: opts.telemetry,
     linkedProjectCache: opts.linkedProjectCache,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 }
 
@@ -60,9 +60,9 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
-    // The established table output renders every JSON number as a float64 with shortest `%g`
-    // formatting, so 1000000 renders as `1e+06`, never `1000000`.
+  it.live("renders a large integral config value in exponent notation in the pretty table", () => {
+    // The table renders every JSON number as a float64 in shortest round-trip form, so 1000000
+    // renders as `1e+06`, never `1000000`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 1000000 } },
@@ -81,7 +81,7 @@ describe("postgres-config get", () => {
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
     });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
@@ -118,7 +118,7 @@ describe("postgres-config get", () => {
         response: { status: 200, body: responseBody },
       });
       yield* postgresConfigGet({ projectRef: Option.none() }).pipe(
-        Effect.provide(runtimeWith({ out: tomlOut, api: tomlApi, goOutput: "toml" })),
+        Effect.provide(runtimeWith({ out: tomlOut, api: tomlApi, outputFlag: "toml" })),
       );
 
       expect(tomlOut.stdoutText).toBe(
@@ -132,7 +132,7 @@ describe("postgres-config get", () => {
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { track_commit_timestamp: true } },
     });
-    const layer = runtimeWith({ out, api, goOutput: "env" });
+    const layer = runtimeWith({ out, api, outputFlag: "env" });
 
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
@@ -142,7 +142,7 @@ describe("postgres-config get", () => {
 
   it.live("emits JSON and YAML bytes", () =>
     Effect.gen(function* () {
-      for (const [goOutput, expected] of [
+      for (const [outputFlag, expected] of [
         ["json", '"max_connections": 100'],
         ["yaml", "max_connections: 100"],
       ] as const) {
@@ -150,7 +150,7 @@ describe("postgres-config get", () => {
         const api = mockCommandPlatformApi({
           response: { status: 200, body: { max_connections: 100 } },
         });
-        const layer = runtimeWith({ out, api, goOutput });
+        const layer = runtimeWith({ out, api, outputFlag });
         yield* postgresConfigGet({ projectRef: Option.none() }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(expected);
         expect(out.stderrText).toBe("");
@@ -172,12 +172,12 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lets the Go --output flag win over --output-format json", () => {
+  it.live("lets the --output flag win over --output-format json", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
     });
-    const layer = runtimeWith({ out, api, goOutput: "toml" });
+    const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
@@ -191,7 +191,7 @@ describe("postgres-config get", () => {
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 100 } },
     });
-    const layer = runtimeWith({ out, api, goOutput: "pretty" });
+    const layer = runtimeWith({ out, api, outputFlag: "pretty" });
 
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
@@ -317,19 +317,19 @@ describe("postgres-config update", () => {
     Effect.gen(function* () {
       const cases = [
         {
-          goOutput: "json" as const,
+          outputFlag: "json" as const,
           expected: '"max_connections": 100',
         },
         {
-          goOutput: "yaml" as const,
+          outputFlag: "yaml" as const,
           expected: "max_connections: 100",
         },
         {
-          goOutput: "toml" as const,
+          outputFlag: "toml" as const,
           expected: "max_connections = 100.0\n",
         },
         {
-          goOutput: "env" as const,
+          outputFlag: "env" as const,
           expected: "MAX_CONNECTIONS=100",
         },
       ];
@@ -341,7 +341,7 @@ describe("postgres-config update", () => {
             PUT: { status: 200, body: { max_connections: 100 } },
           },
         });
-        const layer = runtimeWith({ out, api, goOutput: testCase.goOutput });
+        const layer = runtimeWith({ out, api, outputFlag: testCase.outputFlag });
         yield* postgresConfigUpdate({
           projectRef: Option.none(),
           config: ["max_connections=100"],
@@ -527,19 +527,19 @@ describe("postgres-config delete", () => {
     Effect.gen(function* () {
       const cases = [
         {
-          goOutput: "json" as const,
+          outputFlag: "json" as const,
           expected: '"shared_buffers": "1GB"',
         },
         {
-          goOutput: "yaml" as const,
+          outputFlag: "yaml" as const,
           expected: "shared_buffers: 1GB",
         },
         {
-          goOutput: "toml" as const,
+          outputFlag: "toml" as const,
           expected: 'shared_buffers = "1GB"\n',
         },
         {
-          goOutput: "env" as const,
+          outputFlag: "env" as const,
           expected: 'SHARED_BUFFERS="1GB"',
         },
       ];
@@ -552,7 +552,7 @@ describe("postgres-config delete", () => {
             PUT: { status: 200, body: { shared_buffers: "1GB" } },
           },
         });
-        const layer = runtimeWith({ out, api, goOutput: testCase.goOutput });
+        const layer = runtimeWith({ out, api, outputFlag: testCase.outputFlag });
         yield* postgresConfigDelete({
           projectRef: Option.none(),
           config: ["max_connections"],

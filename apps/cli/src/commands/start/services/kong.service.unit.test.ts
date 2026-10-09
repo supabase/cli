@@ -22,7 +22,7 @@ const apiKeys: KongApiKeys = {
 };
 
 describe("buildKongBearerToken", () => {
-  test("builds the exact lua request-transformer expression (start.go:501-514)", () => {
+  test("builds the exact lua request-transformer expression", () => {
     expect(buildKongBearerToken(apiKeys)).toBe(
       "$((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) " +
         "or (headers.apikey == 'sb_secret_abc' and 'Bearer service-role-jwt') " +
@@ -33,7 +33,7 @@ describe("buildKongBearerToken", () => {
 });
 
 describe("buildKongQueryToken", () => {
-  test("builds the exact lua query-param expression (start.go:515-521)", () => {
+  test("builds the exact lua query-param expression", () => {
     expect(buildKongQueryToken(apiKeys)).toBe(
       "$((query_params.apikey == 'sb_secret_abc' and 'service-role-jwt') " +
         "or (query_params.apikey == 'sb_publishable_abc' and 'anon-jwt') " +
@@ -43,11 +43,11 @@ describe("buildKongQueryToken", () => {
 });
 
 describe("resolveKongNginxWorkerProcesses", () => {
-  test('defaults to "1" when unset (start.go:1466-1471)', () => {
+  test('defaults to "1" when unset', () => {
     expect(resolveKongNginxWorkerProcesses(undefined)).toBe("1");
   });
 
-  test("uses a project dotenv-only value, matching Go's post-Load os.LookupEnv", () => {
+  test("uses a project dotenv-only value", () => {
     expect(resolveKongNginxWorkerProcesses({ KONG_NGINX_WORKER_PROCESSES: "auto" })).toBe("auto");
   });
 });
@@ -98,7 +98,7 @@ describe("buildKongEmailTemplateBind", () => {
 });
 
 describe("buildKongEntrypointScript", () => {
-  test("writes only the custom_nginx.template heredoc, then execs docker-entrypoint.sh (start.go:588-601, minus the secretFiles-carried heredocs)", () => {
+  test("writes only the custom_nginx.template heredoc, then execs docker-entrypoint.sh (minus the secretFiles-carried heredocs)", () => {
     const script = buildKongEntrypointScript("NGINX_TEMPLATE");
     expect(script).toBe(
       "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
@@ -138,25 +138,22 @@ const base: KongContainerSpecInput = {
 };
 
 describe("buildKongContainerSpec", () => {
-  it.effect(
-    "builds identity, entrypoint, restart policy, and network aliases (start.go:564-627)",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-        const spec = buildKongContainerSpec(base, { path, posixPath });
-        expect(spec.image).toBe("supabase/kong:3.0.0");
-        expect(spec.containerName).toBe("supabase_kong_proj");
-        expect(spec.entrypoint).toBe("sh");
-        expect(spec.cmd?.[0]).toBe("-c");
-        expect(spec.restartPolicy).toBe("unless-stopped");
-        expect(spec.networkId).toBe("supabase_network_proj");
-        expect(spec.networkAliases).toEqual(["kong", "api.supabase.internal"]);
-        expect(spec.labels).toEqual({});
-        expect(spec.healthcheck).toBeUndefined();
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("builds identity, entrypoint, restart policy, and network aliases", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const spec = buildKongContainerSpec(base, { path, posixPath });
+      expect(spec.image).toBe("supabase/kong:3.0.0");
+      expect(spec.containerName).toBe("supabase_kong_proj");
+      expect(spec.entrypoint).toBe("sh");
+      expect(spec.cmd?.[0]).toBe("-c");
+      expect(spec.restartPolicy).toBe("unless-stopped");
+      expect(spec.networkId).toBe("supabase_network_proj");
+      expect(spec.networkAliases).toEqual(["kong", "api.supabase.internal"]);
+      expect(spec.labels).toEqual({});
+      expect(spec.healthcheck).toBeUndefined();
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect("emits the fixed KONG_* env vars, including the resolved worker-process count", () => {
     return Effect.gen(function* () {
@@ -180,22 +177,19 @@ describe("buildKongContainerSpec", () => {
     }).pipe(Effect.provide(BunPath.layer));
   });
 
-  it.effect(
-    "publishes 8000 to the host and exposes 8000/8443/8088 when TLS is disabled (start.go:560-563,602-612)",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-        const spec = buildKongContainerSpec({ ...base, apiTlsEnabled: false }, { path, posixPath });
-        expect(spec.ports).toEqual([{ hostPort: "54321", containerPort: "8000" }]);
-        expect(spec.exposedPorts).toEqual([
-          { containerPort: "8000" },
-          { containerPort: "8443" },
-          { containerPort: "8088" },
-        ]);
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("publishes 8000 to the host and exposes 8000/8443/8088 when TLS is disabled", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const spec = buildKongContainerSpec({ ...base, apiTlsEnabled: false }, { path, posixPath });
+      expect(spec.ports).toEqual([{ hostPort: "54321", containerPort: "8000" }]);
+      expect(spec.exposedPorts).toEqual([
+        { containerPort: "8000" },
+        { containerPort: "8443" },
+        { containerPort: "8088" },
+      ]);
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect("publishes 8443 to the host when TLS is enabled, exposed ports unchanged", () => {
     return Effect.gen(function* () {
@@ -212,7 +206,7 @@ describe("buildKongContainerSpec", () => {
   });
 
   it.effect(
-    "renders kong.yml using Config.Realtime.TenantId, not Realtime's container name (start.go:492)",
+    "renders kong.yml using Config.Realtime.TenantId, not Realtime's container name",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -249,7 +243,7 @@ describe("buildKongContainerSpec", () => {
     }).pipe(Effect.provide(BunPath.layer));
   });
 
-  it.effect("mounts every resolved email template bind (start.go:544-558)", () => {
+  it.effect("mounts every resolved email template bind", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
@@ -308,7 +302,7 @@ describe("buildKongContainerSpec", () => {
   );
 
   it.effect(
-    "still carries (empty-content) TLS cert/key secretFiles entries when TLS is unconfigured — an unconditional bind, matching Go's always-written empty files",
+    "still carries (empty-content) TLS cert/key secretFiles entries when TLS is unconfigured — an unconditional bind",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;

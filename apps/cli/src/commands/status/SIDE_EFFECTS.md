@@ -10,7 +10,7 @@ legacy handler reads TOML only. Backend selection happens before command parsing
 environment override is unset or empty, an unreadable, malformed, or invalid project configuration
 falls back to the legacy backend; an invalid environment override remains an error.
 
-TS-only divergence (CLI-2167 follow-up, no Go counterpart): `status` additionally resolves and
+`status` additionally resolves and
 surfaces the current linked project/branch — a "Linked Project:" block on stdout in human text
 mode, and additive fields in every machine-readable output — so an agent (or a human who forgot
 which branch they linked) can discover which project/branch it's on without a separate
@@ -24,8 +24,8 @@ which branch they linked) can discover which project/branch it's on without a se
 | `auth.signing_keys_path` (config-relative or absolute)                                                              | JSON                                                                                  | only when `auth.signing_keys_path` is set in config.toml                                                                                                                                                                                                 |
 | `api.tls.cert_path` / `api.tls.key_path` (unconditionally joined with `<workdir>/supabase`, no absolute-path guard) | raw bytes                                                                             | only when `api.enabled` and `api.tls.enabled`, and the respective path is set                                                                                                                                                                            |
 | `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute)                  | text (existence/readability only — bytes discarded, used only to validate the config) | only when `auth.enabled`, for every configured template and every notification with `enabled = true`; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
-| `<workdir>/supabase/.temp/project-ref`                                                                              | plain text                                                                            | always (soft) — the linked-state "currently linked ref" lookup (CLI-2167 follow-up, TS-only)                                                                                                                                                             |
-| `<workdir>/supabase/.temp/linked-project.json`                                                                      | JSON                                                                                  | always (soft), once linked — determines plain-project-vs-branch state and the display name (CLI-2167 follow-up, TS-only)                                                                                                                                 |
+| `<workdir>/supabase/.temp/project-ref`                                                                              | plain text                                                                            | always (soft) — the linked-state "currently linked ref" lookup (CLI-2167 follow-up)                                                                                                                                                                      |
+| `<workdir>/supabase/.temp/linked-project.json`                                                                      | JSON                                                                                  | always (soft), once linked — determines plain-project-vs-branch state and the display name (CLI-2167 follow-up)                                                                                                                                          |
 
 ## Files Written
 
@@ -35,9 +35,9 @@ which branch they linked) can discover which project/branch it's on without a se
 
 ## API Routes
 
-| Method | Path                             | Auth         | Request body | Response (used fields)                                     |
-| ------ | -------------------------------- | ------------ | ------------ | ---------------------------------------------------------- |
-| `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{name, project_ref, ...}]` (CLI-2167 follow-up, TS-only) |
+| Method | Path                             | Auth         | Request body | Response (used fields)                            |
+| ------ | -------------------------------- | ------------ | ------------ | ------------------------------------------------- |
+| `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{name, project_ref, ...}]` (CLI-2167 follow-up) |
 
 Everything else is resolved from local `config.toml` and the local Docker daemon — `status` never
 required a Management API call before CLI-2167's linked-state follow-up, and still doesn't need
@@ -60,17 +60,17 @@ resolves a token at layer-build time and would break every offline/token-less `s
 
 ## Environment Variables
 
-| Variable                         | Purpose                                                                                                                                                                                | Required?                                                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`            | overrides the resolved local project id; ALSO the 1st candidate for the linked-state "currently linked ref" (CLI-2167 follow-up, TS-only — a shared env var, two independent purposes) | no (falls back to config.toml `project_id` → workdir basename)                                             |
-| `SUPABASE_WORKDIR`               | overrides the resolved project workdir                                                                                                                                                 | no (falls back to `--workdir` → walk-up search for `config.toml` → cwd)                                    |
-| `SUPABASE_SERVICES_HOSTNAME`     | overrides the hostname used to build local service URLs                                                                                                                                | no (falls back to `DOCKER_HOST`'s tcp host → `127.0.0.1`)                                                  |
-| `SUPABASE_AUTH_JWT_SECRET`       | overrides `auth.jwt_secret`                                                                                                                                                            | no                                                                                                         |
-| `SUPABASE_AUTH_PUBLISHABLE_KEY`  | overrides `auth.publishable_key`                                                                                                                                                       | no                                                                                                         |
-| `SUPABASE_AUTH_SECRET_KEY`       | overrides `auth.secret_key`                                                                                                                                                            | no                                                                                                         |
-| `SUPABASE_AUTH_ANON_KEY`         | overrides `auth.anon_key`                                                                                                                                                              | no                                                                                                         |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | overrides `auth.service_role_key`                                                                                                                                                      | no                                                                                                         |
-| `SUPABASE_ACCESS_TOKEN`          | Management API bearer auth for the LAZY branch-name lookup only (CLI-2167 follow-up, TS-only) — never required for `status` to succeed                                                 | no (falls back to keyring → `~/.supabase/access-token`; absent → the lookup degrades, `status` still runs) |
+| Variable                         | Purpose                                                                                                                                                                       | Required?                                                                                                  |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`            | overrides the resolved local project id; ALSO the 1st candidate for the linked-state "currently linked ref" (CLI-2167 follow-up — a shared env var, two independent purposes) | no (falls back to config.toml `project_id` → workdir basename)                                             |
+| `SUPABASE_WORKDIR`               | overrides the resolved project workdir                                                                                                                                        | no (falls back to `--workdir` → walk-up search for `config.toml` → cwd)                                    |
+| `SUPABASE_SERVICES_HOSTNAME`     | overrides the hostname used to build local service URLs                                                                                                                       | no (falls back to `DOCKER_HOST`'s tcp host → `127.0.0.1`)                                                  |
+| `SUPABASE_AUTH_JWT_SECRET`       | overrides `auth.jwt_secret`                                                                                                                                                   | no                                                                                                         |
+| `SUPABASE_AUTH_PUBLISHABLE_KEY`  | overrides `auth.publishable_key`                                                                                                                                              | no                                                                                                         |
+| `SUPABASE_AUTH_SECRET_KEY`       | overrides `auth.secret_key`                                                                                                                                                   | no                                                                                                         |
+| `SUPABASE_AUTH_ANON_KEY`         | overrides `auth.anon_key`                                                                                                                                                     | no                                                                                                         |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | overrides `auth.service_role_key`                                                                                                                                             | no                                                                                                         |
+| `SUPABASE_ACCESS_TOKEN`          | Management API bearer auth for the LAZY branch-name lookup only (CLI-2167 follow-up) — never required for `status` to succeed                                                 | no (falls back to keyring → `~/.supabase/access-token`; absent → the lookup degrades, `status` still runs) |
 
 The `SUPABASE_AUTH_*` vars follow the same `SUPABASE_`-prefixed, `.`→`_` env-var naming
 convention used elsewhere in config loading, and take precedence over the corresponding
@@ -96,7 +96,7 @@ convention used elsewhere in config loading, and take precedence over the corres
 | `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (rejected at config-load time)                                                                                                                                                                                                                               |
 | `1`  | `api.enabled` and `api.tls.enabled` are true, both `cert_path` and `key_path` are set, but one of the files can't be read                                                                                                                                                                                                                                       |
 
-> The linked-state resolution (CLI-2167 follow-up, TS-only) never affects the exit code or any of
+> The linked-state resolution (CLI-2167 follow-up) never affects the exit code or any of
 > the failure conditions above — it never fails (see `resolveLinkedState`'s doc comment),
 > and every one of `status`'s existing failure paths (workdir, config, Docker/health) is untouched.
 > If `status` fails, it fails exactly as it did before this feature existed; in human text mode the
@@ -117,8 +117,7 @@ convention used elsewhere in config loading, and take precedence over the corres
 
 ### `--output-format text`
 
-TS-only addition (CLI-2167 follow-up, no Go counterpart; Neon-style block per Colum's request):
-before any of the Go-compatible output below, and before any daemon/stack work begins, a block
+Before any of the output below, and before any daemon/stack work begins, a block
 goes to **stdout** — so it's still visible even if `status` subsequently fails to connect to
 Docker. Only in human text mode (`-o` unset or `-o pretty` AND `--output-format text`); a spinner
 (`Checking linked branch...`) may show first if resolving the linked branch's name needs a
@@ -216,9 +215,9 @@ the 13 expected service containers isn't in the running set.
 ### `-o env`
 
 `KEY="VALUE"` lines (unquoted for integer-looking values), one per resolved field, sorted by
-key — see `go-output.encoders.ts`'s `encodeEnv`.
+key — see `output.encoders.ts`'s `encodeEnv`.
 
-TS-only addition (CLI-2167 follow-up, no Go counterpart): additive `LINKED_PROJECT_REF`,
+Additive `LINKED_PROJECT_REF`,
 `LINKED_PROJECT_NAME`, `LINKED_ORG_SLUG`, `LINKED_ORG_ID`, `LINKED_BRANCH`,
 `LINKED_PARENT_PROJECT_REF` lines — only the ones known (sorted in with everything else, since
 `encodeEnv` sorts every key). Entirely absent when not linked — there is no `LINKED=false` line.
@@ -252,7 +251,7 @@ In the branch-linked state, a degraded/unresolved lookup still emits every field
 Top-level keys sorted alphabetically, 2-space indent, trailing newline. Fields whose owning
 service is disabled or excluded are omitted entirely (not emitted as `null`/`""`).
 
-TS-only addition (CLI-2167 follow-up, no Go counterpart): additive `linked_project_ref`,
+Additive `linked_project_ref`,
 `linked_project_name`, `linked_org_slug`, `linked_org_id`, `linked_branch`,
 `linked_parent_project_ref` keys — only the ones known (the JSON encoder alphabetizes every key
 regardless of insertion order, so they sort in among the existing fields, as in the branch-linked
@@ -268,9 +267,8 @@ render last.
 
 ### `--output-format json` / `stream-json` (when `-o` is unset or `pretty`)
 
-Additive — no Go CLI equivalent. Emits the same resolved value map via
-`output.success("", values)` / the NDJSON `result` event, plus one more additive, nested field
-(CLI-2167 follow-up, TS-only): `linked_project`, `null` when not linked, otherwise
+Emits the same resolved value map via
+`output.success("", values)` / the NDJSON `result` event, plus one more additive, nested field: `linked_project`, `null` when not linked, otherwise
 `{ project_ref, branch?, parent_project_ref?, project_name?, org_slug?, org_id? }` — e.g. for the
 branch-linked state:
 
@@ -295,8 +293,7 @@ other field the cache knows is still present, matching the machine-format guaran
 key always wins that collision, never this extension (PR #6168 review; see `valuesWithLinkedState`
 and the structured-payload `output.success` call in `status.handler.ts`).
 
-**The same `linked_project` object is carried on the FAILURE envelope too** (CLI-2167 follow-up,
-TS-only) — the agent-discovery use case matters most when `status` fails to reach the
+**The same `linked_project` object is carried on the FAILURE envelope too** (CLI-2167 follow-up) — the agent-discovery use case matters most when `status` fails to reach the
 daemon/stack, since a stopped stack is the common state an agent probes `status` in:
 
 ```json
@@ -324,9 +321,8 @@ spread onto the envelope's top level, never inside `error`. `status`'s handler s
 the linked state, before any daemon/stack work, mirroring the same `linkedStateJsonField`
 value the success path already uses.
 
-**`-o env|json|yaml|toml`'s failure output is intentionally UNCHANGED** — those Go-compatible
-formats still print nothing but the red stderr message on failure (no payload at all), matching
-the Go CLI's own contract exactly. The additive failure envelope above is scoped to
+**`-o env|json|yaml|toml`'s failure output is intentionally UNCHANGED** — those formats
+print nothing but the red stderr message on failure (no payload at all). The additive failure envelope above is scoped to
 `--output-format json`/`stream-json` (the agent-facing modes) only.
 
 ## Notes
@@ -372,13 +368,13 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
 - `--exclude <value>` (hidden) omits a service from the value map when `value` matches either its
   container id or its default Docker image short name (e.g.
   `storage-api` for the storage service, `edge-runtime` for edge functions) — the default image
-  is read from the same embedded Dockerfile manifest the old Go CLI parsed, so a version bump
+  is read from the embedded Dockerfile manifest, so a version bump
   there is picked up automatically without needing to read the `.temp/<service>-version` pin file.
 - `--ignore-health-check` (hidden) skips the db container health assertion entirely and always
   exits `0`.
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a
-  Go-byte-exact HS256 signer (`go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
-  latter uses a different issuer, expiry, and claim order that would not match the old Go CLI's
+  HS256 signer (`local-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
+  latter uses a different issuer, expiry, and claim order that would not match the established
   local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
   (`StatusInvalidConfigError`) at config-load time before any command can render output.
 - When `auth.signing_keys_path` is set and resolves to a non-empty JWK array, `anon_key`/
@@ -391,11 +387,9 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   `SUPABASE_AUTH_ANON_KEY`/`SUPABASE_AUTH_SERVICE_ROLE_KEY` override the corresponding
   `config.toml` value at higher precedence — an empty env var
   is treated as unset. This is scoped to exactly the 5 auth fields `status` reads; it is not a
-  general `@supabase/config` port of Viper's `AutomaticEnv` (which applies to every config field).
+  general `SUPABASE_*` override of every config field.
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
-  the old Go CLI hardcoded both (`"postgres"` and the S3 access key/secret/region seen above),
-  reproduced identically in `local-config-values.ts`.
+  both are hardcoded (`"postgres"` and the S3 access key/secret/region seen above)
+  in `local-config-values.ts`.
 - No e2e test is planned for this command: there is no Docker-daemon-free golden path, and the
-  e2e harness (`runSupabase()`) does not provision a real local stack. This is a scope reduction
-  relative to the Linear issue's "E2E compatibility test added" checkbox; see the port plan for
-  the full justification.
+  e2e harness (`runSupabase()`) does not provision a real local stack.

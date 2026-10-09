@@ -6,76 +6,75 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Byte-faithful `-o yaml`/`-o toml` output for struct payloads, matching `gopkg.in/yaml.v3` and
- * `github.com/BurntSushi/toml`. Neither library reads `json:` tags, so emitted keys are the
- * original Go field names, not the snake_case JSON the API returns.
+ * Byte-stable `-o yaml`/`-o toml` output for struct payloads. Emitted keys are the
+ * PascalCase field names declared by the shape, not the snake_case JSON the API returns.
  *
- * Each payload family declares a {@link GoType} spec mirroring the original struct so the decoded
- * JSON can be re-expressed with each library's own casing, nil handling, and quoting rules.
+ * Each payload family declares a {@link OutputShape} spec describing the struct so the decoded
+ * JSON can be re-expressed with the established casing, null handling, and quoting rules.
  */
 
-export type GoType =
+export type OutputShape =
   | { readonly kind: "string" }
   | { readonly kind: "uuid" }
   | { readonly kind: "bool" }
   | { readonly kind: "int" }
   | { readonly kind: "float"; readonly bits: 32 | 64 }
-  /** Go `time.Time` — native TOML datetime, unquoted yaml timestamp. */
+  /** RFC3339 timestamp — native TOML datetime, unquoted yaml timestamp. */
   | { readonly kind: "time" }
-  /** Go `interface{}` — shape inferred from the JSON value like `encoding/json` decoding. */
+  /** Untyped value — shape inferred from the JSON value. */
   | { readonly kind: "any" }
-  | { readonly kind: "ptr"; readonly elem: GoType }
-  /** oapi-codegen `nullable.Nullable[T]` — a `map[bool]T` under the hood. */
-  | { readonly kind: "nullable"; readonly elem: GoType }
-  | { readonly kind: "slice"; readonly elem: GoType }
-  | { readonly kind: "map"; readonly value: GoType }
-  | { readonly kind: "struct"; readonly fields: ReadonlyArray<GoStructField> };
+  | { readonly kind: "ptr"; readonly elem: OutputShape }
+  /** A nullable API field: absent, explicit null, or a value. */
+  | { readonly kind: "nullable"; readonly elem: OutputShape }
+  | { readonly kind: "slice"; readonly elem: OutputShape }
+  | { readonly kind: "map"; readonly value: OutputShape }
+  | { readonly kind: "struct"; readonly fields: ReadonlyArray<OutputShapeField> };
 
-interface GoStructField {
+interface OutputShapeField {
   /** JSON tag name — the key present in the decoded payload. */
   readonly json: string;
-  /** Go field name (PascalCase). */
-  readonly go: string;
-  readonly type: GoType;
+  /** Struct field name (PascalCase). */
+  readonly name: string;
+  readonly type: OutputShape;
 }
 
-export const goString: GoType = { kind: "string" };
-export const goUuid: GoType = { kind: "uuid" };
-export const goBool: GoType = { kind: "bool" };
-export const goInt: GoType = { kind: "int" };
-export const goFloat32: GoType = { kind: "float", bits: 32 };
-export const goFloat64: GoType = { kind: "float", bits: 64 };
-export const goTime: GoType = { kind: "time" };
-export const goAny: GoType = { kind: "any" };
+export const shapeString: OutputShape = { kind: "string" };
+export const shapeUuid: OutputShape = { kind: "uuid" };
+export const shapeBool: OutputShape = { kind: "bool" };
+export const shapeInt: OutputShape = { kind: "int" };
+export const shapeFloat32: OutputShape = { kind: "float", bits: 32 };
+export const shapeFloat64: OutputShape = { kind: "float", bits: 64 };
+export const shapeTime: OutputShape = { kind: "time" };
+export const shapeAny: OutputShape = { kind: "any" };
 
-export function goPtr(elem: GoType): GoType {
+export function shapePtr(elem: OutputShape): OutputShape {
   return { kind: "ptr", elem };
 }
-export function goNullable(elem: GoType): GoType {
+export function shapeNullable(elem: OutputShape): OutputShape {
   return { kind: "nullable", elem };
 }
-export function goSlice(elem: GoType): GoType {
+export function shapeSlice(elem: OutputShape): OutputShape {
   return { kind: "slice", elem };
 }
-export function goMap(value: GoType): GoType {
+export function shapeMap(value: OutputShape): OutputShape {
   return { kind: "map", value };
 }
 
 /**
- * A struct field spec entry: `[jsonName, type]` derives the Go field name mechanically (each
- * snake_case token capitalized: `api_key` → `ApiKey`), or `[jsonName, type, goName]` for explicit
+ * A struct field spec entry: `[jsonName, type]` derives the field name mechanically (each
+ * snake_case token capitalized: `api_key` → `ApiKey`), or `[jsonName, type, fieldName]` for explicit
  * names.
  */
-export type GoFieldSpec =
-  | readonly [json: string, type: GoType]
-  | readonly [json: string, type: GoType, goName: string];
+export type OutputShapeFieldSpec =
+  | readonly [json: string, type: OutputShape]
+  | readonly [json: string, type: OutputShape, fieldName: string];
 
-export function goStruct(fields: ReadonlyArray<GoFieldSpec>): GoType {
+export function shapeStruct(fields: ReadonlyArray<OutputShapeFieldSpec>): OutputShape {
   return {
     kind: "struct",
-    fields: fields.map(([json, type, goName]) => ({
+    fields: fields.map(([json, type, fieldName]) => ({
       json,
-      go: goName ?? goFieldName(json),
+      name: fieldName ?? pascalCaseFieldName(json),
       type,
     })),
   };
@@ -83,57 +82,61 @@ export function goStruct(fields: ReadonlyArray<GoFieldSpec>): GoType {
 
 /**
  * The anonymous wrapper struct list commands use for TOML output (a `toml:` tag keeps the wrapper
- * key lowercase while the elements keep Go field names), and also models a single-key map wrapper
+ * key lowercase while the elements keep PascalCase field names), and also models a single-key map wrapper
  * (`sso list`), since a one-field lowercase-keyed struct renders identically to a one-key map in
  * both encoders.
  */
-export function goTomlListWrapper(key: string, elem: GoType): GoType {
-  return { kind: "struct", fields: [{ json: key, go: key, type: goSlice(elem) }] };
+export function shapeTomlListWrapper(key: string, elem: OutputShape): OutputShape {
+  return { kind: "struct", fields: [{ json: key, name: key, type: shapeSlice(elem) }] };
 }
 
 /** `api_key` → `ApiKey`, `dbAllowedCidrs` → `DbAllowedCidrs`. */
-export function goFieldName(jsonName: string): string {
+export function pascalCaseFieldName(jsonName: string): string {
   return jsonName
     .split("_")
     .map((part) => (part.length === 0 ? part : part[0]?.toUpperCase() + part.slice(1)))
     .join("");
 }
 
-type GoValue =
+type NormalizedValue =
   | { readonly k: "nil" }
   | { readonly k: "str"; readonly v: string }
   | { readonly k: "bool"; readonly v: boolean }
   | { readonly k: "int"; readonly v: number }
   | { readonly k: "float"; readonly v: number; readonly bits: 32 | 64 }
   | { readonly k: "time"; readonly v: string }
-  | { readonly k: "struct"; readonly entries: ReadonlyArray<readonly [string, GoValue]> }
+  | { readonly k: "struct"; readonly entries: ReadonlyArray<readonly [string, NormalizedValue]> }
   | {
       readonly k: "map";
       readonly nil: boolean;
-      readonly entries: ReadonlyArray<readonly [string, GoValue]>;
+      readonly entries: ReadonlyArray<readonly [string, NormalizedValue]>;
     }
-  /** `nullable.Nullable[T]`: nil map, `{false: zero}` (explicit null) or `{true: value}`. */
-  | { readonly k: "nullable"; readonly present: boolean | undefined; readonly value?: GoValue }
+  /** A nullable field: absent (nil), `{false: zero}` (explicit null) or `{true: value}`. */
+  | {
+      readonly k: "nullable";
+      readonly present: boolean | undefined;
+      readonly value?: NormalizedValue;
+    }
   | {
       readonly k: "slice";
       readonly nil: boolean;
-      readonly items: ReadonlyArray<GoValue>;
+      readonly items: ReadonlyArray<NormalizedValue>;
       readonly tables: boolean;
     };
 
-const GO_ZERO_TIME = "0001-01-01T00:00:00Z";
-const GO_ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+const ZERO_TIME = "0001-01-01T00:00:00Z";
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function zeroValue(type: GoType): GoValue {
+function zeroValue(type: OutputShape): NormalizedValue {
   switch (type.kind) {
     case "string":
       return { k: "str", v: "" };
     case "uuid":
-      return { k: "str", v: GO_ZERO_UUID };
+      return { k: "str", v: ZERO_UUID };
     case "bool":
       return { k: "bool", v: false };
     case "int":
@@ -141,7 +144,7 @@ function zeroValue(type: GoType): GoValue {
     case "float":
       return { k: "float", v: 0, bits: type.bits };
     case "time":
-      return { k: "time", v: GO_ZERO_TIME };
+      return { k: "time", v: ZERO_TIME };
     case "struct":
       return normalize(undefined, type);
     case "ptr":
@@ -156,7 +159,7 @@ function zeroValue(type: GoType): GoValue {
   }
 }
 
-function elementsAreTables(elem: GoType, items: ReadonlyArray<unknown>): boolean {
+function elementsAreTables(elem: OutputShape, items: ReadonlyArray<unknown>): boolean {
   switch (elem.kind) {
     case "struct":
     case "map":
@@ -166,15 +169,14 @@ function elementsAreTables(elem: GoType, items: ReadonlyArray<unknown>): boolean
     case "slice":
       return elem.kind === "ptr" ? elementsAreTables(elem.elem, items) : false;
     case "any":
-      // Like Go's runtime type inspection: JSON objects decode to
-      // map[string]interface{} which BurntSushi treats as tables.
+      // JSON objects decode to maps, which are rendered as tables.
       return items.length > 0 && items.every(isRecord);
     default:
       return false;
   }
 }
 
-function normalize(value: unknown, type: GoType): GoValue {
+function normalize(value: unknown, type: OutputShape): NormalizedValue {
   switch (type.kind) {
     case "string":
       return typeof value === "string" ? { k: "str", v: value } : zeroValue(type);
@@ -194,13 +196,12 @@ function normalize(value: unknown, type: GoType): GoValue {
         : zeroValue(type);
     case "time":
       return typeof value === "string" && value.length > 0
-        ? { k: "time", v: normalizeGoTime(value) }
+        ? { k: "time", v: normalizeTime(value) }
         : zeroValue(type);
     case "ptr":
       return value === undefined || value === null ? { k: "nil" } : normalize(value, type.elem);
     case "nullable":
-      // oapi-codegen: absent key → nil map; explicit JSON null → {false: zero};
-      // value → {true: value}.
+      // Absent key → nil; explicit JSON null → {false: zero}; value → {true: value}.
       if (value === undefined) return { k: "nullable", present: undefined };
       if (value === null) return { k: "nullable", present: false, value: zeroValue(type.elem) };
       return { k: "nullable", present: true, value: normalize(value, type.elem) };
@@ -228,7 +229,7 @@ function normalize(value: unknown, type: GoType): GoValue {
       return {
         k: "struct",
         entries: type.fields.map(
-          (field) => [field.go, normalize(record[field.json], field.type)] as const,
+          (field) => [field.name, normalize(record[field.json], field.type)] as const,
         ),
       };
     }
@@ -237,13 +238,13 @@ function normalize(value: unknown, type: GoType): GoValue {
   }
 }
 
-/** Mirror `encoding/json` decoding into `interface{}`. */
-function normalizeAny(value: unknown): GoValue {
+/** Normalize a decoded JSON value into an untyped value. */
+function normalizeAny(value: unknown): NormalizedValue {
   if (value === undefined || value === null) return { k: "nil" };
   if (typeof value === "string") return { k: "str", v: value };
   if (typeof value === "boolean") return { k: "bool", v: value };
   if (typeof value === "number") {
-    // JSON numbers decode to float64 in Go's interface{} world.
+    // JSON numbers decode to float64.
     return { k: "float", v: value, bits: 64 };
   }
   if (Array.isArray(value)) {
@@ -265,13 +266,12 @@ function normalizeAny(value: unknown): GoValue {
 }
 
 /**
- * Formats an RFC3339 input the way Go renders a decoded `time.Time` with `time.RFC3339Nano`: the
+ * Formats an RFC3339 input in `RFC3339Nano` form: the
  * fraction truncated (not rounded) to at most 9 digits, then trailing zeros trimmed and a zero
  * offset rendered as `Z`.
  */
-function normalizeGoTime(value: string): string {
-  // Both `.` and `,` are accepted as the fractional separator on decode; normalize to the dot Go
-  // emits.
+function normalizeTime(value: string): string {
+  // Both `.` and `,` are accepted as the fractional separator on decode; normalize to the dot.
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([.,]\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (match === null) return value;
   const [, base, fraction, offset] = match;
@@ -285,10 +285,9 @@ function normalizeGoTime(value: string): string {
 }
 
 /**
- * Shortest round-trip digits for a float32 value, matching `strconv.FormatFloat(f, 'g', -1, 32)`'s
- * Ryu algorithm: the fewest significant digits that parse back to the same float32, with an exact
+ * Shortest round-trip digits for a float32 value (Ryu algorithm): the fewest significant digits that parse back to the same float32, with an exact
  * decimal tie rounded to the even final digit (unlike JS `toPrecision`, which rounds half up).
- * Returns `<digits>e<±exp>` for {@link goFormatFloat}.
+ * Returns `<digits>e<±exp>` for {@link formatStructFloat}.
  */
 function shortestFloat32(value: number): string {
   const rounded = Math.fround(value);
@@ -357,16 +356,15 @@ function roundDecimalDigits(
 }
 
 /**
- * `strconv.FormatFloat(f, 'g', -1, bits)`: shortest digits, switching to
- * scientific notation when the decimal exponent is < -4 or >= 6 (Go uses
- * `eprec = 6` for shortest formatting), with a sign and >= 2 exponent digits.
+ * Shortest round-trip digits, switching to scientific notation when the decimal exponent is
+ * < -4 or >= 6, with a sign and >= 2 exponent digits.
  */
-export function goFormatFloat(value: number, bits: 32 | 64): string {
+export function formatStructFloat(value: number, bits: 32 | 64): string {
   if (Number.isNaN(value)) return "NaN";
   if (value === Infinity) return "+Inf";
   if (value === -Infinity) return "-Inf";
   const repr = bits === 32 ? shortestFloat32(value) : String(value);
-  // JS String(-0) drops the sign; Go's FormatFloat keeps it ("-0").
+  // JS String(-0) drops the sign; the output keeps it ("-0").
   const negative = repr.startsWith("-") || Object.is(value, -0);
   const unsigned = negative ? repr.slice(1) : repr;
   // Decompose into digits + decimal exponent.
@@ -403,14 +401,13 @@ export function goFormatFloat(value: number, bits: 32 | 64): string {
 }
 
 /**
- * Encode a decoded payload as the Go CLI's `-o yaml` output for the given Go
- * struct spec. Returns the full document bytes (trailing newline included).
+ * Encode a decoded payload as `-o yaml` output for the given struct spec. Returns the full document bytes (trailing newline included).
  */
-export function encodeGoYaml(value: unknown, type: GoType): string {
+export function encodeStructYaml(value: unknown, type: OutputShape): string {
   return yamlDocument(normalize(value, type));
 }
 
-function yamlDocument(root: GoValue): string {
+function yamlDocument(root: NormalizedValue): string {
   switch (root.k) {
     case "slice":
       if (root.items.length === 0) return "[]\n";
@@ -431,43 +428,40 @@ function yamlDocument(root: GoValue): string {
 }
 
 /**
- * A populated `nullable.Nullable[T]` is a `map[bool]T`; yaml.v3 renders the
- * bool key plain (`true:` / `false:`), unlike the string keys `"true"` would
- * produce.
+ * A populated nullable renders as a mapping with a plain bool key (`true:` / `false:`),
+ * unlike the quoted string keys `"true"` would produce.
  */
-function yamlNullableBlock(present: boolean, value: GoValue, indent: number): string {
+function yamlNullableBlock(present: boolean, value: NormalizedValue, indent: number): string {
   const pad = " ".repeat(indent);
   return `${pad}${present ? "true" : "false"}:${yamlValueSuffix(value, indent)}`;
 }
 
-/** yaml.v3's indent algorithm: children of a mapping align to the next 4-column stop. */
+/** Children of a mapping align to the next 4-column stop. */
 function yamlNextIndent(indent: number): number {
   return 4 * Math.floor((indent + 4) / 4);
 }
 
 function yamlStructEntries(
-  entries: ReadonlyArray<readonly [string, GoValue]>,
-): ReadonlyArray<readonly [string, GoValue]> {
-  // yaml.v3 lowercases Go field names wholesale (no yaml tags on these structs).
-  return entries.map(([go, value]) => [go.toLowerCase(), value] as const);
+  entries: ReadonlyArray<readonly [string, NormalizedValue]>,
+): ReadonlyArray<readonly [string, NormalizedValue]> {
+  // Field names are lowercased wholesale in YAML output.
+  return entries.map(([name, value]) => [name.toLowerCase(), value] as const);
 }
 
 function yamlMapEntries(
-  entries: ReadonlyArray<readonly [string, GoValue]>,
-): ReadonlyArray<readonly [string, GoValue]> {
+  entries: ReadonlyArray<readonly [string, NormalizedValue]>,
+): ReadonlyArray<readonly [string, NormalizedValue]> {
   return [...entries].sort(([a], [b]) => (yamlKeyLess(a, b) ? -1 : yamlKeyLess(b, a) ? 1 : 0));
 }
 
 /**
- * Unicode code-point string ordering, matching both `sort.Strings` (UTF-8 byte order) and
- * yaml.v3's `keyList.Less` (rune order) — the two are equivalent, and both differ from JS `<`
- * (UTF-16 code-unit order) when an astral character meets a high-BMP one (Go sorts U+E000 before
- * U+1F600, UTF-16 the reverse).
+ * Unicode code-point string ordering (equivalent to UTF-8 byte order), which differs from JS `<`
+ * (UTF-16 code-unit order) when an astral character meets a high-BMP one (code-point order sorts
+ * U+E000 before U+1F600, UTF-16 the reverse).
  *
- * Also used by `go-output.encoders.ts`'s `sortKeysDeep`, since `encoding/json`'s map-key sort is
- * the same order.
+ * Also used by `output.encoders.ts`'s `sortKeysDeep`.
  */
-export function goStringCompare(a: string, b: string): number {
+export function compareByCodepoint(a: string, b: string): number {
   let i = 0;
   while (i < a.length && i < b.length) {
     const ac = a.codePointAt(i) as number;
@@ -479,8 +473,8 @@ export function goStringCompare(a: string, b: string): number {
 }
 
 /**
- * yaml.v3's `keyList.Less` natural string ordering. Digit runs use `unicode.IsDigit` (any Unicode
- * `Nd` digit), so a non-ASCII digit like Arabic-Indic sorts by its raw code point and ends up
+ * Natural string ordering: runs of digits compare numerically. Digit runs match any Unicode
+ * `Nd` digit, so a non-ASCII digit like Arabic-Indic sorts by its raw code point and ends up
  * after ASCII digit runs. The ASCII-only {@link isDigit} stays for the scalar parser.
  */
 function yamlKeyLess(a: string, b: string): boolean {
@@ -496,7 +490,7 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     const al = isLetter(ac);
     const bl = isLetter(bc);
-    // Go compares runes (`ar[i] < br[i]`), i.e. code points, not UTF-16 units.
+    // Compare code points, not UTF-16 units.
     if (al && bl) return (ac.codePointAt(0) as number) < (bc.codePointAt(0) as number);
     if (al || bl) return digits ? al : bl;
     let an = 0n;
@@ -512,7 +506,7 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     let ai = i;
     let bi = i;
-    // Go accumulates into `int64` without overflow checks, so a 19+-digit run wraps negative and
+    // Digit runs accumulate into `int64` without overflow checks, so a 19+-digit run wraps negative and
     // sorts before a shorter positive run. `BigInt.asIntN(64, …)` reproduces the wrap.
     for (; ai < ar.length && isSortDigit(ar[ai] as string); ai++) {
       an = BigInt.asIntN(64, an * 10n + BigInt(((ar[ai] as string).codePointAt(0) as number) - 48));
@@ -527,7 +521,7 @@ function yamlKeyLess(a: string, b: string): boolean {
   return ar.length < br.length;
 }
 
-/** yaml.v3 sorter's `unicode.IsDigit` — any Unicode decimal digit (`Nd`). */
+/** Any Unicode decimal digit (`Nd`), as used by the key sorter. */
 function isSortDigit(c: string): boolean {
   return /\p{Nd}/u.test(c);
 }
@@ -540,7 +534,10 @@ function isLetter(c: string): boolean {
   return /\p{L}/u.test(c);
 }
 
-function yamlMapping(entries: ReadonlyArray<readonly [string, GoValue]>, indent: number): string {
+function yamlMapping(
+  entries: ReadonlyArray<readonly [string, NormalizedValue]>,
+  indent: number,
+): string {
   const pad = " ".repeat(indent);
   let out = "";
   for (const [key, value] of entries) {
@@ -554,7 +551,7 @@ function yamlMapping(entries: ReadonlyArray<readonly [string, GoValue]>, indent:
  * Everything after `key:` — either ` <scalar>\n`, a block-literal header plus
  * content lines, or `\n` plus an indented child block.
  */
-function yamlValueSuffix(value: GoValue, indent: number): string {
+function yamlValueSuffix(value: NormalizedValue, indent: number): string {
   switch (value.k) {
     case "nil":
       return " null\n";
@@ -589,7 +586,7 @@ function yamlValueSuffix(value: GoValue, indent: number): string {
   }
 }
 
-function yamlSequence(items: ReadonlyArray<GoValue>, indent: number): string {
+function yamlSequence(items: ReadonlyArray<NormalizedValue>, indent: number): string {
   const pad = " ".repeat(indent);
   let out = "";
   for (const item of items) {
@@ -603,7 +600,7 @@ function yamlSequence(items: ReadonlyArray<GoValue>, indent: number): string {
           break;
         }
         // Compact form: the first key rides on the `- ` line; the block keeps
-        // a +2 indent (yaml.v3 special-cases indent inside sequence items).
+        // a +2 indent (indent inside sequence items is special-cased).
         const block = yamlMapping(entries, indent + 2);
         out += `${pad}- ${block.slice(indent + 2)}`;
         break;
@@ -642,7 +639,7 @@ function yamlSequence(items: ReadonlyArray<GoValue>, indent: number): string {
   return out;
 }
 
-function yamlScalar(value: GoValue): string {
+function yamlScalar(value: NormalizedValue): string {
   switch (value.k) {
     case "nil":
       return "null";
@@ -651,7 +648,7 @@ function yamlScalar(value: GoValue): string {
     case "int":
       return String(value.v);
     case "float":
-      return goFormatFloat(value.v, value.bits);
+      return formatStructFloat(value.v, value.bits);
     case "time":
       return value.v;
     case "str": {
@@ -673,7 +670,7 @@ function yamlKeyScalar(key: string): string {
 type YamlStringStyle = "plain" | "single" | "double" | "literal";
 
 /**
- * yaml.v3's style selection: literal for multi-line strings, double quotes for a string that
+ * Style selection: literal for multi-line strings, double quotes for a string that
  * resolves to a non-string tag, otherwise downgraded from plain to single (or double) based on
  * scalar analysis.
  */
@@ -693,7 +690,7 @@ function yamlStringStyle(s: string): YamlStringStyle {
 }
 
 /**
- * Characters yaml.v3 treats as "special" (not printable) or line breaks other
+ * Characters treated as "special" (not printable) or line breaks other
  * than `\n` — all of these force double-quoted style with escapes. U+2028 and
  * U+2029 are technically YAML line breaks, but every realistic payload
  * containing them round-trips through the double-quoted `\L` / `\P` escapes.
@@ -709,8 +706,7 @@ function yamlHasSpecialChars(s: string): boolean {
 }
 
 /**
- * libyaml's `is_printable` in code-point terms. The byte-oriented original never accepts a 4-byte
- * UTF-8 lead, so every astral character — along with C0/C1 controls, DEL, surrogates, the U+FEFF
+ * YAML printability in code-point terms: every astral character — along with C0/C1 controls, DEL, surrogates, the U+FEFF
  * BOM, and U+FFFE/U+FFFF — is "not printable" and gets double-quoted escapes.
  */
 function yamlIsPrintable(code: number): boolean {
@@ -736,7 +732,7 @@ function yamlPlainDisallowed(s: string): boolean {
 }
 
 /**
- * Would yaml.v3's `resolve("", s)` produce a non-string tag? Also covers the
+ * Would the plain scalar `s` resolve to a non-string YAML tag? Also covers the
  * YAML 1.1 "old bool" and base-60 spellings the encoder force-quotes.
  */
 function yamlResolvesToString(s: string): boolean {
@@ -745,15 +741,15 @@ function yamlResolvesToString(s: string): boolean {
   if (YAML_BASE60.test(s)) return false;
   const first = s[0] as string;
   if (first === ".") {
-    // strconv.ParseFloat errors on overflow (±Inf), so an overflowing spelling like `1e999` stays
+    // Float parsing errors on overflow (±Inf), so an overflowing spelling like `1e999` stays
     // a string and needs no quoting.
     return !(/^\.\d+(?:[eE][+-]?\d+)?$/.test(s) && Number.isFinite(Number(s)));
   }
   if (first === "+" || first === "-" || isDigit(first)) {
     if (yamlIsTimestamp(s)) return false;
     const plain = s.replaceAll("_", "");
-    if (goParseIntBase0(plain)) return false;
-    // An overflowing float (→ ±Inf) is a ParseFloat error, so it resolves as a string and stays
+    if (parsesAsBaseZeroInt(plain)) return false;
+    // An overflowing float (→ ±Inf) is a float parse error, so it resolves as a string and stays
     // plain; an underflowing one (1e-999 → 0) succeeds and stays float-tagged, hence quoted.
     // `Number` mirrors the accepted shapes since YAML_STYLE_FLOAT gates the syntax first.
     if (YAML_STYLE_FLOAT.test(plain) && Number.isFinite(Number(plain))) return false;
@@ -810,8 +806,8 @@ const YAML_RESOLVE_MAP = new Set([
 const YAML_BASE60 = /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\.[0-9_]*)?$/;
 const YAML_STYLE_FLOAT = /^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$/;
 
-/** `strconv.ParseInt(s, 0, 64)` / `ParseUint` success (underscores pre-stripped). */
-function goParseIntBase0(plain: string): boolean {
+/** Whether `plain` parses as a base-0 int64/uint64 (underscores pre-stripped). */
+function parsesAsBaseZeroInt(plain: string): boolean {
   let body = plain;
   let negative = false;
   if (body.startsWith("+") || body.startsWith("-")) {
@@ -844,20 +840,18 @@ function goParseIntBase0(plain: string): boolean {
   } else {
     return false;
   }
-  // resolve() falls back from ParseInt to ParseUint, so the accepted range is
+  // Resolution falls back from int64 to uint64, so the accepted range is
   // [-2^63, 2^64) — anything beyond either bound is not an int.
   if (negative) return parsed <= 9223372036854775808n;
   return parsed < 18446744073709551616n;
 }
 
 /**
- * yaml.v3's `parseTimestamp` layouts, which delegate to `time.Parse` — so calendar dates and zone
- * offsets are validated exactly like Go's time package (`2025-02-31` and `2100-02-29` stay plain,
- * `2024-02-29` is a timestamp).
+ * Timestamp layouts with validated calendar dates and zone offsets (`2025-02-31` and
+ * `2100-02-29` stay plain, `2024-02-29` is a timestamp).
  */
 function yamlIsTimestamp(s: string): boolean {
-  // The fraction separator is `.` or `,` — yaml.v3 resolves timestamps through `time.Parse`,
-  // which accepts either.
+  // The fraction separator is `.` or `,`.
   const match =
     /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[.,]\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
       s,
@@ -870,7 +864,7 @@ function yamlIsTimestamp(s: string): boolean {
     if (separator !== " " && offset === undefined) return false;
     if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
   }
-  // time.Parse's zone-offset range checks: the hour is rejected above 24 and the minute above 60
+  // Zone-offset range checks: the hour is rejected above 24 and the minute above 60
   // — `+24:59` and `+00:60` are accepted, `+25:00` and `+23:99` are not.
   if (offset !== undefined && offset !== "Z") {
     if (Number(offset.slice(1, 3)) > 24 || Number(offset.slice(4, 6)) > 60) return false;
@@ -878,12 +872,12 @@ function yamlIsTimestamp(s: string): boolean {
   const month = Number(monthRaw);
   const day = Number(dayRaw);
   if (month < 1 || month > 12) return false;
-  if (day < 1 || day > goDaysInMonth(Number(yearRaw), month)) return false;
+  if (day < 1 || day > daysInMonth(Number(yearRaw), month)) return false;
   return true;
 }
 
-/** `time.Parse`'s "day out of range" bound (`daysIn`, proleptic Gregorian). */
-function goDaysInMonth(year: number, month: number): number {
+/** Days in a month of the proleptic Gregorian calendar. */
+function daysInMonth(year: number, month: number): number {
   if (month === 2) {
     const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
     return leap ? 29 : 28;
@@ -950,8 +944,7 @@ function yamlDoubleQuoted(s: string): string {
         out += "\\P";
         break;
       default:
-        // Non-printables escape by rune width like yaml.v3's double-quoted
-        // writer: `\xXX`, `\uXXXX`, or `\U00XXXXXX` with uppercase hex.
+        // Non-printables escape as `\xXX`, `\uXXXX`, or `\U00XXXXXX` with uppercase hex.
         if (yamlIsPrintable(code)) {
           out += ch;
         } else if (code <= 0xff) {
@@ -971,10 +964,8 @@ function yamlDoubleQuoted(s: string): string {
  * explicit `4` indentation indicator when the first line starts with a space
  * or is empty, and content indented to the next 4-column stop.
  *
- * Unlike Go's streaming bufio-backed encoder (which can flush partial output
- * before a later error), this builds the whole document in memory — callers
- * emit all-or-nothing, which only differs observably from Go on multi-KB
- * payloads that fail mid-encode.
+ * Builds the whole document in memory — callers emit all-or-nothing, so no partial output
+ * is flushed when a later field fails mid-encode.
  */
 function yamlBlockLiteral(s: string, indent: number): string {
   const contentIndent = yamlNextIndent(indent);
@@ -984,7 +975,7 @@ function yamlBlockLiteral(s: string, indent: number): string {
   const indicator = s.startsWith(" ") || s.startsWith("\n") ? "4" : "";
   const lines = s.split("\n");
   if (s.endsWith("\n")) lines.pop();
-  // yaml.v3 merges a leading empty line's break with the header newline (e.g. "\nx" → `|4-\n
+  // A leading empty line's break merges with the header newline (e.g. "\nx" → `|4-\n
   // x\n`).
   if (lines[0] === "") lines.shift();
   const body = lines.map((line) => (line.length === 0 ? "" : `${pad}${line}`)).join("\n");
@@ -992,13 +983,13 @@ function yamlBlockLiteral(s: string, indent: number): string {
 }
 
 /**
- * Thrown when BurntSushi would refuse the payload: a populated
- * `nullable.Nullable` field (`map[bool]T` has a non-string key type — observed
- * on `snippets list -o toml`) or a `nil` element inside an inline array.
+ * Thrown when the payload has no TOML form: a populated nullable field (its bool key is not a
+ * valid TOML key — observed on `snippets list -o toml`) or a null element inside an inline array.
  */
-export class GoTomlEncodeError extends Error {
+export class TomlEncodeError extends Error {
+  // The fingerprint and `name` are the stable telemetry/output identity of this error.
   static readonly [ErrorActionabilityFingerprintId] = "GoTomlEncodeError";
-  constructor(message = "toml: cannot encode a map with non-string key type") {
+  constructor(message = "cannot encode a map with non-string keys") {
     super(message);
     this.name = "GoTomlEncodeError";
   }
@@ -1009,15 +1000,13 @@ export class GoTomlEncodeError extends Error {
 }
 
 /**
- * Encodes a decoded payload as the Go CLI's `-o toml` output. Returns the full document, which can
- * be empty (BurntSushi emits nothing for an all-nil payload). Throws {@link GoTomlEncodeError} to
- * match Go's runtime failure on a populated nullable field.
+ * Encodes a decoded payload as `-o toml` output. Returns the full document, which can
+ * be empty (an all-nil payload emits nothing). Throws {@link TomlEncodeError} on
+ * a populated nullable field.
  *
- * On the error path only, Go's real stdout can already contain partial buffered output that this
- * in-memory port doesn't reproduce; emit nothing on error rather than the accumulated prefix,
- * which would emit more than Go does.
+ * Emits nothing on error rather than the accumulated prefix.
  */
-export function encodeGoToml(value: unknown, type: GoType): string {
+export function encodeStructToml(value: unknown, type: OutputShape): string {
   const state = { out: "", hasWritten: false };
   tomlEncode(state, [], normalize(value, type));
   return state.out;
@@ -1042,7 +1031,7 @@ function tomlIndent(key: ReadonlyArray<string>): string {
   return "  ".repeat(Math.max(key.length - 1, 0));
 }
 
-function tomlIsTable(value: GoValue): boolean {
+function tomlIsTable(value: NormalizedValue): boolean {
   switch (value.k) {
     case "struct":
       return true;
@@ -1051,15 +1040,14 @@ function tomlIsTable(value: GoValue): boolean {
     case "nullable":
       return true;
     case "slice":
-      // Array-of-tables only when non-empty with table elements (BurntSushi's
-      // isTableArray returns false for empty slices).
+      // Array-of-tables only when non-empty with table elements.
       return value.tables && value.items.length > 0;
     default:
       return false;
   }
 }
 
-function tomlIsNil(value: GoValue): boolean {
+function tomlIsNil(value: NormalizedValue): boolean {
   switch (value.k) {
     case "nil":
       return true;
@@ -1074,7 +1062,7 @@ function tomlIsNil(value: GoValue): boolean {
   }
 }
 
-function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: GoValue): void {
+function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: NormalizedValue): void {
   if (tomlIsNil(value)) return;
   switch (value.k) {
     case "struct":
@@ -1082,8 +1070,8 @@ function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: GoValue
       tomlTable(state, key, value);
       return;
     case "nullable":
-      // Populated nullable.Nullable[T] is a map[bool]T — BurntSushi panics.
-      throw new GoTomlEncodeError();
+      // A populated nullable has a bool key, which TOML cannot encode.
+      throw new TomlEncodeError();
     case "slice":
       if (tomlIsTable(value)) {
         tomlArrayOfTables(state, key, value.items);
@@ -1097,19 +1085,19 @@ function tomlEncode(state: TomlState, key: ReadonlyArray<string>, value: GoValue
 }
 
 /**
- * Map/struct entries in BurntSushi's write order: map entries sorted by
- * {@link goStringCompare} (structs keep declaration order), then both
+ * Map/struct entries in TOML write order: map entries sorted by
+ * {@link compareByCodepoint} (structs keep declaration order), then both
  * partitioned into non-table ("direct") and table ("sub") groups via
- * {@link tomlIsTable} — `eStruct`/`eMap` always write direct fields before
+ * {@link tomlIsTable} — direct fields are always written before
  * sub-tables.
  */
-function tomlOrderedEntries(value: Extract<GoValue, { k: "struct" | "map" }>): {
-  direct: ReadonlyArray<readonly [string, GoValue]>;
-  sub: ReadonlyArray<readonly [string, GoValue]>;
+function tomlOrderedEntries(value: Extract<NormalizedValue, { k: "struct" | "map" }>): {
+  direct: ReadonlyArray<readonly [string, NormalizedValue]>;
+  sub: ReadonlyArray<readonly [string, NormalizedValue]>;
 } {
   const entries =
     value.k === "map"
-      ? [...value.entries].sort(([a], [b]) => goStringCompare(a, b))
+      ? [...value.entries].sort(([a], [b]) => compareByCodepoint(a, b))
       : value.entries;
   return {
     direct: entries.filter(([, v]) => !tomlIsTable(v)),
@@ -1120,7 +1108,7 @@ function tomlOrderedEntries(value: Extract<GoValue, { k: "struct" | "map" }>): {
 function tomlTable(
   state: TomlState,
   key: ReadonlyArray<string>,
-  value: Extract<GoValue, { k: "struct" | "map" }>,
+  value: Extract<NormalizedValue, { k: "struct" | "map" }>,
 ): void {
   if (key.length === 1) {
     // Extra newline between top-level tables.
@@ -1143,7 +1131,7 @@ function tomlTable(
 function tomlArrayOfTables(
   state: TomlState,
   key: ReadonlyArray<string>,
-  items: ReadonlyArray<GoValue>,
+  items: ReadonlyArray<NormalizedValue>,
 ): void {
   for (const item of items) {
     if (tomlIsNil(item)) continue;
@@ -1156,12 +1144,12 @@ function tomlArrayOfTables(
         tomlEncode(state, [...key, name], v);
       }
     } else if (item.k === "nullable") {
-      throw new GoTomlEncodeError();
+      throw new TomlEncodeError();
     }
   }
 }
 
-function tomlKeyValue(state: TomlState, key: ReadonlyArray<string>, value: GoValue): void {
+function tomlKeyValue(state: TomlState, key: ReadonlyArray<string>, value: NormalizedValue): void {
   const name = key[key.length - 1] as string;
   tomlWrite(state, `${tomlIndent(key)}${tomlKeyName(name)} = ${tomlElement(value)}\n`);
 }
@@ -1172,7 +1160,7 @@ function tomlKeyName(name: string): string {
   return TOML_BARE_KEY.test(name) ? name : tomlQuoted(name);
 }
 
-function tomlElement(value: GoValue): string {
+function tomlElement(value: NormalizedValue): string {
   switch (value.k) {
     case "str":
       return tomlQuoted(value.v);
@@ -1181,7 +1169,7 @@ function tomlElement(value: GoValue): string {
     case "int":
       return String(value.v);
     case "float": {
-      const repr = goFormatFloat(value.v, value.bits);
+      const repr = formatStructFloat(value.v, value.bits);
       // TOML floats must carry a decimal point unless in exponent form.
       return repr.includes(".") || repr.includes("e") ? repr : `${repr}.0`;
     }
@@ -1193,16 +1181,16 @@ function tomlElement(value: GoValue): string {
     case "map":
       return tomlInlineTable(value);
     case "nullable":
-      throw new GoTomlEncodeError();
+      throw new TomlEncodeError();
     case "nil":
-      // BurntSushi's `eElement` rejects nil inline-array elements (`[null, "x"]` fails), while nil
+      // Null inline-array elements are rejected (`[null, "x"]` fails), while null
       // map values are silently skipped.
-      throw new GoTomlEncodeError("toml: cannot encode array with nil element");
+      throw new TomlEncodeError("cannot encode an array with a null element");
   }
 }
 
 /**
- * BurntSushi's inline-table form, used for map/struct elements of arrays that aren't
+ * The inline-table form, used for map/struct elements of arrays that aren't
  * arrays-of-tables: `{k = v, ...}` with nil entries skipped and non-table values before table
  * values, map keys byte-sorted within each group.
  *
@@ -1210,14 +1198,14 @@ function tomlElement(value: GoValue): string {
  * written, so a skipped nil entry in the final position leaves a dangling `", "` (e.g.
  * `[{"10":1,"b":null},false]` → `[{10 = 1.0, }, false]`).
  */
-function tomlInlineTable(value: Extract<GoValue, { k: "struct" | "map" }>): string {
+function tomlInlineTable(value: Extract<NormalizedValue, { k: "struct" | "map" }>): string {
   let out = "{";
   if (value.k === "map") {
-    const sorted = [...value.entries].sort(([a], [b]) => goStringCompare(a, b));
+    const sorted = [...value.entries].sort(([a], [b]) => compareByCodepoint(a, b));
     const direct = sorted.filter(([, v]) => !tomlIsTable(v));
     const sub = sorted.filter(([, v]) => tomlIsTable(v));
     const writeGroup = (
-      group: ReadonlyArray<readonly [string, GoValue]>,
+      group: ReadonlyArray<readonly [string, NormalizedValue]>,
       trailingComma: boolean,
     ): void => {
       for (const [index, [name, v]] of group.entries()) {
@@ -1241,7 +1229,7 @@ function tomlInlineTable(value: Extract<GoValue, { k: "struct" | "map" }>): stri
   return `${out}}`;
 }
 
-/** BurntSushi's `dblQuotedReplacer` escape set. */
+/** The double-quoted TOML string escape set. */
 function tomlQuoted(s: string): string {
   let out = '"';
   for (const ch of s) {

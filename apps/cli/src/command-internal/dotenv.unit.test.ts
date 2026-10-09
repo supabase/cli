@@ -11,7 +11,7 @@ describe("parseDotEnv", () => {
     });
   });
 
-  it("expands escape sequences in double-quoted values (godotenv parity)", () => {
+  it("expands escape sequences in double-quoted values", () => {
     expect(parseDotEnv('A="line1\\nline2"\nB="a\\"b\\\\c"')).toEqual({
       A: "line1\nline2",
       B: 'a"b\\c',
@@ -22,7 +22,7 @@ describe("parseDotEnv", () => {
     expect(parseDotEnv("A='line1\\nline2'")).toEqual({ A: "line1\\nline2" });
   });
 
-  it("strips unquoted inline comments preceded by whitespace (godotenv parity)", () => {
+  it("strips unquoted inline comments preceded by whitespace", () => {
     // A `#` after whitespace begins a comment; a `#` with no leading space is
     // part of the value.
     expect(parseDotEnv("DB_PORT=54323 # local db")).toEqual({ DB_PORT: "54323" });
@@ -35,7 +35,7 @@ describe("parseDotEnv", () => {
     expect(parseDotEnv("B='has # hash inside' # comment")).toEqual({ B: "has # hash inside" });
   });
 
-  it("accepts godotenv YAML-style colon assignments", () => {
+  it("accepts YAML-style colon assignments", () => {
     expect(parseDotEnv("SUPABASE_DB_PASSWORD: secret\nDB_PORT:54323")).toEqual({
       SUPABASE_DB_PASSWORD: "secret",
       DB_PORT: "54323",
@@ -48,11 +48,11 @@ describe("parseDotEnv", () => {
     expect(() => parseDotEnv('A="unterminated')).toThrow(/unterminated quoted value/);
   });
 
-  it("throws Go's 'unexpected character' error on a malformed variable name", () => {
+  it("throws an 'unexpected character' error on a malformed variable name", () => {
     expect(() => parseDotEnv("!=")).toThrow(/unexpected character "!" in variable name/);
   });
 
-  describe("multiline quoted values (godotenv parity)", () => {
+  describe("multiline quoted values", () => {
     it("scans a double-quoted value across newlines, preserving embedded newlines", () => {
       const pem = "-----BEGIN KEY-----\nline2\nline3\n-----END KEY-----";
       const env = parseDotEnv(`KEY="${pem}"\nDB_PORT=54323`);
@@ -78,7 +78,7 @@ describe("parseDotEnv", () => {
     });
   });
 
-  describe("variable expansion (godotenv parity)", () => {
+  describe("variable expansion", () => {
     it("expands $VAR and ${VAR} from earlier same-file definitions", () => {
       expect(parseDotEnv("DB_PORT=54323\nSUPABASE_DB_PORT=$DB_PORT\nURL=${DB_PORT}/db")).toEqual({
         DB_PORT: "54323",

@@ -87,7 +87,7 @@ function pathKey(path: ReadonlyArray<string>): string {
 
 /**
  * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]` block, failing on
- * the first duplicate. {@link applyRemoteOverride} only invokes this when `goViperCompat` is
+ * the first duplicate. {@link applyRemoteOverride} only invokes this when `cliCompat` is
  * set, so it runs even for callers that don't request a specific `projectRef`. A missing
  * `project_id` reads as `""`, so two remotes that both omit it collide on the empty key.
  */
@@ -174,7 +174,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
   interpolatedRemotes: Record<string, unknown> | undefined,
   projectRef: string | undefined,
-  goViperCompat: boolean,
+  cliCompat: boolean,
 ) {
   const remotes = rawDocument["remotes"];
   if (!isObject(remotes)) {
@@ -184,7 +184,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
       remoteLeafPaths: [],
     };
   }
-  if (goViperCompat) {
+  if (cliCompat) {
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
@@ -482,7 +482,7 @@ export interface DecodeCliConfigDocumentForValidationEffectOptions {
    */
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
   /**
    * When set, merges the `[remotes.<remoteName>]` block over the root before decoding, so it's
    * checked against the root's full business rules instead of the relaxed treatment an
@@ -535,7 +535,7 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     cwd: projectRoot,
     baseEnv: process.env,
   });
-  const goViperCompat = options.goViperCompat ?? false;
+  const cliCompat = options.cliCompat ?? false;
 
   const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
     document,
@@ -546,7 +546,7 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     documentForDecode,
     cliProjectEnv?.values ?? {},
     CliConfigSchema,
-    { goViperCompat },
+    { cliCompat },
   );
   const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
   return yield* parseCliConfig(normalizedForDecode, options.format, options.path, appliedRemote);
@@ -607,13 +607,13 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       baseEnv: process.env,
       search: options?.search,
     }));
-  const goViperCompat = options?.goViperCompat ?? false;
+  const cliCompat = options?.cliCompat ?? false;
   const interpolateDocument = (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
-      goViperCompat,
+      cliCompat,
       onResolvedEnv,
     });
 
@@ -627,7 +627,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
 
   // Merge the matching `[remotes.*]` override over the raw, pre-`env()` document (see
   // `applyRemoteOverride`). The match/merge always runs; the duplicate-`project_id`/format
-  // checks only run when `goViperCompat` is set.
+  // checks only run when `cliCompat` is set.
   let documentForDecode: unknown = normalized;
   let appliedRemote: string | undefined;
   let remoteLeafPaths: Array<string[]> = [];
@@ -636,7 +636,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
       normalized,
       interpolatedRemotes,
       options?.projectRef,
-      goViperCompat,
+      cliCompat,
     );
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
@@ -664,7 +664,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
     removedProviders,
   } = normalizeDeprecatedExternalProviders(documentForDecode);
   // Pinned to the real console, same as the `[inbucket]` warning above.
-  if (goViperCompat) {
+  if (cliCompat) {
     for (const ext of deprecatedProviders) {
       yield* Console.error(
         `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,

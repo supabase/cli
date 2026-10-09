@@ -20,7 +20,7 @@ import {
  * since `packages/config` cannot import from `apps/cli`.
  */
 
-/** Formats nanoseconds in Go duration syntax (`1h0m0.5s`), keeping fractional seconds. */
+/** Formats nanoseconds in duration syntax (`1h0m0.5s`), keeping fractional seconds. */
 function durationString(ns: number): string {
   if (ns === 0) return "0s";
 
@@ -44,7 +44,7 @@ function durationString(ns: number): string {
 
   const subSecondNs = ms * 1_000_000 + us * 1_000 + ns;
   // toFixed(9), not toPrecision: a sub-microsecond fraction under a whole second would stringify
-  // in exponent notation under toPrecision, which Go duration syntax doesn't accept.
+  // in exponent notation under toPrecision, which the duration syntax doesn't accept.
   const secondsText =
     subSecondNs > 0
       ? ((secs * 1_000_000_000 + subSecondNs) / 1_000_000_000)
@@ -88,11 +88,11 @@ function durationString(ns: number): string {
   return result;
 }
 
-/** Go's maximum `time.Duration` (max int64 nanoseconds, ~292 years); 2^63 is the nearest exactly-representable float64 above it. */
-const MAX_GO_DURATION_NS = 2 ** 63;
+/** The maximum duration (max int64 nanoseconds, ~292 years); 2^63 is the nearest exactly-representable float64 above it. */
+const MAX_DURATION_NS = 2 ** 63;
 
 /**
- * Go's maximum duration in whole seconds, for the `*_max_frequency` rows: a single whole-unit
+ * The maximum duration in whole seconds, for the `*_max_frequency` rows: a single whole-unit
  * component stays float-exact at any magnitude in this range.
  */
 const MAX_CANONICAL_DURATION_SECONDS = 9_223_372_036;
@@ -104,7 +104,7 @@ const NS_PER_MS = 1_000_000;
 const NS_PER_US = 1_000;
 
 /**
- * Ports Go's `time.ParseDuration`. Returns nanoseconds; throws on invalid input, and callers below
+ * Parses a duration string. Returns nanoseconds; throws on invalid input, and callers below
  * never let that throw escape (unparsable document values stay verbatim). For valid inputs the
  * fractional arithmetic matches the push pipeline's own float rounding, since canonicalization
  * exists to predict the value push actually produces, not a more "exact" reading it never performs.
@@ -165,7 +165,7 @@ function parseDuration(s: string): number {
       unitNs = 1;
       s = s.slice(2);
     } else if (s.startsWith("us") || s.startsWith("µs")) {
-      // Only the two spellings the push pipeline accepts; Go itself also takes Greek small mu
+      // Only the two spellings the push pipeline accepts; the grammar also takes Greek small mu
       // (U+03BC), but push throws on it, so that spelling stays verbatim instead.
       unitNs = NS_PER_US;
       s = s.slice(2);
@@ -195,7 +195,7 @@ function parseDuration(s: string): number {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
     // Replicates the push parser's rounding exactly, since that's what actually processes the
-    // document on push; Go's own ParseDuration rounds differently, toward a value push never
+    // document on push; a plain duration parse rounds differently, toward a value push never
     // produces.
     const fracNs = Math.round((frac / post) * unitNs);
     // The addition itself can round onto a large exactly-scaled whole; on loss the value stays
@@ -204,18 +204,18 @@ function parseDuration(s: string): number {
     if (fracNs !== 0 && contribution - wholeContribution !== fracNs) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
-    // Enforces two bounds: Go's int64 range, and float64 exactness — the running total must not
+    // Enforces two bounds: the int64 range, and float64 exactness — the running total must not
     // round, or the value stays verbatim rather than silently losing precision.
     const next = total + contribution;
-    if (!Number.isFinite(next) || next > MAX_GO_DURATION_NS || next - total !== contribution) {
+    if (!Number.isFinite(next) || next > MAX_DURATION_NS || next - total !== contribution) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
     total = next;
   }
 
-  // int64's asymmetry: +2^63 is one nanosecond past Go's maximum, while -2^63 is the valid
+  // int64's asymmetry: +2^63 is one nanosecond past the maximum, while -2^63 is the valid
   // minimum, so only the positive case is rejected here.
-  if (!neg && total === MAX_GO_DURATION_NS) {
+  if (!neg && total === MAX_DURATION_NS) {
     throw new Error(`time: invalid duration "${orig}" (value out of range)`);
   }
 
@@ -224,7 +224,7 @@ function parseDuration(s: string): number {
 
 /**
  * Document-side duration canonicalization: a config document legally spells a duration as `"1m"`,
- * `"24h"`, or `"60s"`, while the API-side rows always emit the canonical Go form (`"1m0s"`).
+ * `"24h"`, or `"60s"`, while the API-side rows always emit the canonical form (`"1m0s"`).
  * Reparsing and re-emitting makes both sides converge on one spelling for one logical duration.
  * Never throws; an unparsable value is returned verbatim.
  */
@@ -257,7 +257,7 @@ function roundTripThroughHoursPayload(ns: number): number {
  * remainder for magnitudes of a minute or more, and re-renders sub-minute-but-whole-second-or-more
  * values through the same `toPrecision(10)` rounding the push formatter uses. Below one second both
  * formatters agree, so the value passes through unchanged. {@link durationString} (the API arm)
- * stays Go-faithful instead, since a hosted value set out-of-band can genuinely carry sub-second
+ * stays faithful to the raw value instead, since a hosted value set out-of-band can genuinely carry sub-second
  * bits there.
  */
 function truncateLikePushFormatter(ns: number): number {
@@ -294,13 +294,13 @@ function canonicalizeWholeSecondsDurationString(value: unknown): unknown {
   }
 }
 
-/** Seconds (integer, as reported by the API) → Go duration string. */
+/** Seconds (integer, as reported by the API) → duration string. */
 function secondsToDurationString(seconds: number): string {
   return durationString(seconds * 1_000_000_000);
 }
 
 /**
- * Hours (float, as reported by the API) → Go duration string, rendered faithfully rather than
+ * Hours (float, as reported by the API) → duration string, rendered faithfully rather than
  * rounded to whole hours: rounding would change the setting, break the push-side round trip
  * (which converts back to fractional hours), and hide real drift.
  */
@@ -457,7 +457,7 @@ function uintRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConf
 }
 
 /**
- * Integer seconds (API) → Go duration string (config), e.g. `"5s"`. Narrowed with `expectInteger`,
+ * Integer seconds (API) → duration string (config), e.g. `"5s"`. Narrowed with `expectInteger`,
  * not `expectNumber`: only the session-hour rows below are genuinely fractional.
  */
 function secondsDurationRow(
@@ -486,19 +486,19 @@ function secondsDurationRow(
   };
 }
 
-/** Float hours (API) → Go duration string (config), e.g. `"1h0m0s"`. */
+/** Float hours (API) → duration string (config), e.g. `"1h0m0s"`. */
 /**
- * Bound for the session-hour fields: Go's maximum duration expressed in hours, so a value at the
- * ceiling still maps back exactly (whole-hour products stay float-exact at any magnitude in Go's
+ * Bound for the session-hour fields: the maximum duration expressed in hours, so a value at the
+ * ceiling still maps back exactly (whole-hour products stay float-exact at any magnitude in the
  * range). Signed, since these fields allow negative values, which render as `-Nh0m0s`.
  */
-const MAX_SESSION_DURATION_HOURS = (MAX_GO_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
+const MAX_SESSION_DURATION_HOURS = (MAX_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
 // 2^63 - 1024 is exactly representable at that float spacing, keeping the inclusive bound below
-// Go's maximum duration (2^63 itself is one nanosecond past it).
+// the maximum duration (2^63 itself is one nanosecond past it).
 
-// Asymmetric like int64 itself: -2^63 ns is a valid Go duration (the minimum), so the floor
+// Asymmetric like int64 itself: -2^63 ns is a valid duration (the minimum), so the floor
 // includes it while the ceiling stops one nanosecond short of +2^63.
-const MIN_SESSION_DURATION_HOURS = -(MAX_GO_DURATION_NS / NS_PER_HOUR);
+const MIN_SESSION_DURATION_HOURS = -(MAX_DURATION_NS / NS_PER_HOUR);
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,

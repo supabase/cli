@@ -8,7 +8,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoAdd } from "./add.handler.ts";
 
-// `--domains` is a CSV string-slice flag; malformed CSV reports pflag's diagnostic (see `stringSliceFlag`).
+// `--domains` is a CSV string-slice flag; malformed CSV reports a diagnostic (see `stringSliceFlag`).
 export const ssoAddDomainsFlag = stringSliceFlag(
   "domains",
   "Comma separated list of email domains to associate with the added identity provider.",

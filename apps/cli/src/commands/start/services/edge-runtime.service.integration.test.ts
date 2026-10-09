@@ -212,7 +212,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   );
 
   it.effect(
-    "sets --ulimit nofile, capped at Go's 65536 and clamped to the host hard limit (CLI-2220)",
+    "sets --ulimit nofile, capped at 65536 and clamped to the host hard limit (CLI-2220)",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
@@ -525,7 +525,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   );
 
   it.effect(
-    "never reloads Kong — Go's `start` bring-up (`ServeFunctions`) never does, unlike `functions serve`'s own restart wrapper",
+    "never reloads Kong — the `start` bring-up never does, unlike `functions serve`'s own restart wrapper",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
@@ -543,7 +543,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   );
 
   it.effect(
-    "never prints functions serve's own setup banner — Go's start bring-up (ServeFunctions) never does, unlike restartEdgeRuntime",
+    "never prints functions serve's own setup banner — the start bring-up never does, unlike restartEdgeRuntime",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();

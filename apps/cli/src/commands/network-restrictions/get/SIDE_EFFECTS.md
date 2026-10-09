@@ -73,7 +73,7 @@ CLI-1975 struct-spec ones):
 - `json` — alphabetical struct-field order with trailing newline.
 - `yaml` — `stringifyYaml(response)`.
 - `toml` — `stringifyToml(response)` with trailing newline.
-- `env` — Viper-flattened SCREAMING_SNAKE_CASE keys.
+- `env` — flattened SCREAMING_SNAKE_CASE keys.
 
 ### `--output pretty`
 

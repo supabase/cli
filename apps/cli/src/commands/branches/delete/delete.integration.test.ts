@@ -93,7 +93,7 @@ describe("branches delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the force query param (Go passes nil)", () => {
+  it.live("omits the force query param", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });

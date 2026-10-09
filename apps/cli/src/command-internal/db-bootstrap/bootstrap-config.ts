@@ -14,7 +14,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
 import { makeRemoteWins } from "../db-config.toml-read.ts";
 import { resolveDbImage } from "../db-image.ts";
-import { resolveHealthTimeoutSeconds } from "../go-duration.ts";
+import { resolveHealthTimeoutSeconds } from "../duration.ts";
 import {
   envOverride,
   envOverrideBool,

@@ -46,7 +46,7 @@ describe("resolveAgentOutputFormat", () => {
     expect(
       resolveAgentOutputFormat({
         explicitOutputFormat: Option.none(),
-        goOutputFormat: Option.some("pretty"),
+        outputFlagFormat: Option.some("pretty"),
         detectedAgentName: Option.some("codex"),
       }),
     ).toBe("text");

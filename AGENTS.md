@@ -111,7 +111,7 @@ page, or upstream issue. If the rationale needs more than three lines, move it t
 ### Never write
 
 - Code narration, provenance/history, evidence trails, ticket IDs as provenance, or meta-commentary on code shape. A ticket ID belongs only in a `TODO(CLI-1234):` or when no ADR exists and the ticket is the only home for a decision.
-- Restatements of docs, section banners, or Go-parity framing. Link to maintained docs instead.
+- Restatements of docs, or section banners. Link to maintained docs instead.
 - ALL-CAPS emphasis or words such as “deliberately”, “crucially”, and “exactly”.
 
 Tests should carry intent in their names; comments only explain non-obvious fixture setup. Keep

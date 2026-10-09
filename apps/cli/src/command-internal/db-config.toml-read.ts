@@ -12,7 +12,7 @@ import {
   type ExperimentalInput,
   type HookInput,
   type MfaFactorInput,
-  parseGoBool,
+  parseBoolLiteral,
   type PasskeyInput,
   resolveEmailTemplateContentPath,
   resolveSigningKeysPath,
@@ -642,18 +642,18 @@ function expandEnv(value: string, lookup: (name: string) => string | undefined):
   return envRefValue(value, lookup(name));
 }
 
-/** `[db]` ports decode into `uint16`. */
+/** `[db]` ports are integers in 0-65535. */
 const MAX_PORT = 65535;
 
 /**
- * Resolve a `[db]` port field: the TOML value decodes into a `uint16`, and a
+ * Resolve a `[db]` port field: the TOML value must be an integer in 0-65535, and a
  * quoted `env(VAR)` reference is expanded first, then parsed as the port.
  * Resolution rules:
  *
  * - **Omitted** (`undefined`) → the schema default.
- * - **Present and resolves to a `uint16`** (a plain integer in range, or an
+ * - **Present and resolves to a valid port** (a plain integer in range, or an
  * `env(VAR)` string that expands to one) → that value.
- * - **Present but cannot unmarshal** (non-numeric, negative, out of range, or an
+ * - **Present but invalid** (non-numeric, negative, out of range, or an
  * unresolved `env(VAR)`) → `undefined`, signalling the caller to abort with
  * `DbConfigLoadError` rather than silently defaulting and running
  * against the default local database while hiding a broken config.
@@ -733,7 +733,7 @@ function joinSupabaseSeedPath(pattern: string): string {
  * relative and joins under `supabase/` — unlike Node's win32 `isAbsolute`,
  * which treats it as rooted at the current drive.
  */
-const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
+const isAbsolutePattern = (pathSvc: Path.Path, pattern: string): boolean => {
   if (process.platform !== "win32") {
     return pathSvc.isAbsolute(pattern);
   }
@@ -756,7 +756,9 @@ const goIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
  * override — all three feed the glob the same resolved paths.
  */
 export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
-  pattern.length === 0 || goIsAbs(pathSvc, pattern) ? pattern : joinSupabaseSeedPath(pattern);
+  pattern.length === 0 || isAbsolutePattern(pathSvc, pattern)
+    ? pattern
+    : joinSupabaseSeedPath(pattern);
 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
@@ -831,14 +833,14 @@ function nonEmptyString(value: unknown): Option.Option<string> {
 
 /**
  * Resolve a `[section] enabled` style bool: a native TOML bool, or a string
- * (including an `env(VAR)` reference) accepted by {@link parseGoBool}.
+ * (including an `env(VAR)` reference) accepted by {@link parseBoolLiteral}.
  * Returns `"invalid"` for a malformed string; applies `fallback` when the key
  * is absent.
  */
 function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): boolean | "invalid" {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
-    const parsed = parseGoBool(expandEnv(value, lookup));
+    const parsed = parseBoolLiteral(expandEnv(value, lookup));
     return parsed ?? "invalid";
   }
   // A numeric value decodes as a bool (`value != 0`), so `enabled = 0` is an explicit
@@ -863,7 +865,7 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
   envValue?: string,
 ) {
   if (envValue !== undefined) {
-    const parsed = parseGoBool(expandEnv(envValue, lookup));
+    const parsed = parseBoolLiteral(expandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -883,7 +885,7 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
 /**
  * Tri-state sibling of `resolveBoolOrFail` for fields that stay `None` (never
  * `false`) when absent. The `SUPABASE_*` env override wins when present;
- * otherwise a present TOML bool/string is decoded with {@link parseGoBool},
+ * otherwise a present TOML bool/string is decoded with {@link parseBoolLiteral},
  * and a malformed value aborts the load.
  */
 const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
@@ -893,7 +895,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   lookup: EnvLookup,
 ) {
   if (envValue !== undefined) {
-    const parsed = parseGoBool(expandEnv(envValue, lookup));
+    const parsed = parseBoolLiteral(expandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -905,7 +907,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   // A numeric value decodes the same way: `value != 0`.
   if (typeof value === "number") return Option.some(value !== 0);
   if (typeof value === "string") {
-    const parsed = parseGoBool(expandEnv(value, lookup));
+    const parsed = parseBoolLiteral(expandEnv(value, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -1218,7 +1220,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     );
   }
 
-  // A present-but-unmarshalable port aborts rather than defaulting, so a broken `[db]`
+  // A present-but-invalid port aborts rather than defaulting, so a broken `[db]`
   // config never silently targets the default local database.
   const port = resolvePort(
     (remoteWins("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ?? db?.["port"],
@@ -1239,7 +1241,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     );
   }
   // An explicit `db.port = 0` is a load error (an absent port is defaulted first);
-  // `resolvePort` accepts 0 as a valid uint16, so the zero check lives here. No
+  // `resolvePort` accepts 0 as a valid port, so the zero check lives here. No
   // equivalent check for `shadow_port`.
   if (port === 0) {
     return yield* Effect.fail(
@@ -1344,7 +1346,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   let webhooksEnabled: boolean;
   if (webhooksEnabledEnv !== undefined) {
     const expandedWebhooksEnabledEnv = expandEnv(webhooksEnabledEnv, lookup);
-    const parsed = parseGoBool(expandedWebhooksEnabledEnv);
+    const parsed = parseBoolLiteral(expandedWebhooksEnabledEnv);
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1359,7 +1361,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // A numeric `enabled = 1` is true (`value != 0`), same as `experimental.pgdelta.enabled` below.
     webhooksEnabled = webhooksEnabledRaw !== 0;
   } else if (typeof webhooksEnabledRaw === "string") {
-    const parsed = parseGoBool(expandEnv(webhooksEnabledRaw, lookup));
+    const parsed = parseBoolLiteral(expandEnv(webhooksEnabledRaw, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1386,7 +1388,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   if (enabledEnv !== undefined) {
     // An `env(VAR)` indirection in the override is expanded before the bool parse.
     const expandedEnabledEnv = expandEnv(enabledEnv, lookup);
-    const parsed = parseGoBool(expandedEnabledEnv);
+    const parsed = parseBoolLiteral(expandedEnabledEnv);
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1401,7 +1403,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // A numeric `enabled = 1` is true (`value != 0`), same rule as the generic `resolveBool`.
     enabled = enabledRaw !== 0;
   } else if (typeof enabledRaw === "string") {
-    const parsed = parseGoBool(expandEnv(enabledRaw, lookup));
+    const parsed = parseBoolLiteral(expandEnv(enabledRaw, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new DbConfigLoadError({
@@ -1498,7 +1500,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof value === "boolean") return value;
       if (typeof value === "number") return value !== 0;
       if (typeof value !== "string") return false;
-      const parsed = parseGoBool(expandEnv(value, lookup));
+      const parsed = parseBoolLiteral(expandEnv(value, lookup));
       if (parsed === undefined) return yield* fail(`failed to parse config: invalid ${field}.`);
       return parsed;
     });
@@ -1922,7 +1924,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // trimming; empty → `[]`). An array is decoded element-by-element: each element is
   // expanded but not re-split, so `["env(SEEDS)"]` stays one pattern. The env override
   // wins over the TOML value; absent/invalid falls back to the caller's default.
-  const splitGoSeedPaths = (value: string): ReadonlyArray<string> => {
+  const splitSeedPaths = (value: string): ReadonlyArray<string> => {
     const expanded = expandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
@@ -1932,7 +1934,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
    * way, and a negative zero keeps its sign — so the resolved pattern's hash key matches
    * an existing recorded entry.
    */
-  const formatGoWeakFloat = (value: number): string => {
+  const formatWeakFloat = (value: number): string => {
     if (Number.isNaN(value)) return "NaN";
     if (value === Number.POSITIVE_INFINITY) return "+Inf";
     if (value === Number.NEGATIVE_INFINITY) return "-Inf";
@@ -1953,28 +1955,28 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const weakCoerceGlobEntry = (value: unknown): string | undefined => {
     if (typeof value === "string") return value;
     if (typeof value === "boolean") return value ? "1" : "0";
-    if (typeof value === "number") return formatGoWeakFloat(value);
+    if (typeof value === "number") return formatWeakFloat(value);
     return undefined;
   };
   // A non-scalar glob element (nested array/table, or a bare TOML datetime) fails with
-  // an "unconvertible type" error instead of being silently dropped; each datetime
+  // an "expected a string" error instead of being silently dropped; each datetime
   // variant reports its own type name for the message. `smol-toml` parses every TOML
   // datetime to a `TomlDate` (a `Date` subclass), exposing the `isDate`/`isTime`/
   // `isLocal` discriminators needed to pick the right variant name.
-  const goTomlDateType = (value: SmolToml.TomlDate): string => {
-    if (value.isDate()) return "toml.LocalDate";
-    if (value.isTime()) return "toml.LocalTime";
-    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+  const tomlDateTypeName = (value: SmolToml.TomlDate): string => {
+    if (value.isDate()) return "local date";
+    if (value.isTime()) return "local time";
+    return value.isLocal() ? "local date-time" : "offset date-time";
   };
-  const goUnconvertibleType = (value: unknown): string | undefined =>
+  const unsupportedTypeName = (value: unknown): string | undefined =>
     value instanceof SmolToml.TomlDate
-      ? goTomlDateType(value)
+      ? tomlDateTypeName(value)
       : Array.isArray(value)
-        ? "[]interface {}"
+        ? "array"
         : typeof value === "object" && value !== null
-          ? "map[string]interface {}"
+          ? "table"
           : undefined;
-  // Returns the "unconvertible type" issue for each bad array element, without
+  // Returns the "expected a string" issue for each bad array element, without
   // failing — both `Glob` fields' issues are combined into one error afterward (see
   // `failOnGlobIssues`), with `db.migrations.schema_paths` ordered before `db.seed.sql_paths`.
   const globArrayIssues = (
@@ -1982,26 +1984,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     values: ReadonlyArray<unknown>,
   ): ReadonlyArray<string> =>
     values.flatMap((value, index) => {
-      const goType = goUnconvertibleType(value);
-      return goType === undefined
+      const typeName = unsupportedTypeName(value);
+      return typeName === undefined
         ? []
-        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${goType}'`];
+        : [`${keyPath}[${index}]: expected a string, got ${typeName}`];
     });
   // Fails once with every issue collected across both `Glob` fields, instead of
   // failing on the first field checked.
   const failOnGlobIssues = (
     issues: ReadonlyArray<string>,
   ): Effect.Effect<void, DbConfigLoadError> =>
-    issues.length === 0
-      ? Effect.void
-      : fail(
-          `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
-        );
+    issues.length === 0 ? Effect.void : fail(`failed to parse config:\n${issues.join("\n")}`);
   // A scalar top-level value (e.g. `schema_paths = 42`) is treated like a
   // single-element array: a zero-length map decodes to `[]`, anything else weakly
-  // coerces or reports an unconvertible-type issue. A `TomlDate` must not match the
+  // coerces or reports an unsupported-type issue. A `TomlDate` must not match the
   // zero-length-map case — its value is stored internally, so `Object.keys` is empty
-  // too, but it should still be treated as unconvertible.
+  // too, but it should still be reported as an unsupported type.
   const resolveScalarGlobFallback = (
     keyPath: string,
     value: unknown,
@@ -2032,7 +2030,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     absentDefault: ReadonlyArray<string>,
   ): { readonly patterns: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
     if (override !== undefined) {
-      return { patterns: splitGoSeedPaths(override), issues: [] };
+      return { patterns: splitSeedPaths(override), issues: [] };
     }
     if (Array.isArray(raw)) {
       return {
@@ -2044,7 +2042,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       };
     }
     if (typeof raw === "string") {
-      return { patterns: splitGoSeedPaths(raw), issues: [] };
+      return { patterns: splitSeedPaths(raw), issues: [] };
     }
     if (raw === undefined) {
       return { patterns: absentDefault, issues: [] };

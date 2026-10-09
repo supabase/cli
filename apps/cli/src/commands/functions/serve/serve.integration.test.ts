@@ -40,7 +40,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { SUGGEST_CONTAINER_MEMORY_LIMIT } from "../../../command-internal/docker-suggest.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
@@ -494,8 +494,7 @@ function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimer
       debug,
       networkId,
       projectIdOverride: cliSettings.projectId,
-      goViperCompat: true,
-      goConfigCompat: functionsGoConfigCompat,
+      localConfigLoader: functionsLocalConfigLoader,
       timers,
     }).pipe(Effect.ensuring(telemetryState.flush));
   });

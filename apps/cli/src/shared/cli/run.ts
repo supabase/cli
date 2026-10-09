@@ -52,7 +52,7 @@ import {
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
@@ -100,7 +100,7 @@ export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, Allowe
 // drift apart.
 //
 // `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
-// token too, but `rootFlagTokens`/`firstPositionalIndex` keep pflag's stricter rule that a bare
+// token too, but `rootFlagTokens`/`firstPositionalIndex` keep the stricter rule that a bare
 // boolean never consumes the next token — don't unify these; they answer different questions.
 const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
@@ -143,7 +143,7 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
 
 /**
  * Yields argv tokens that are actual flag occurrences, with their positions,
- * honoring cobra/pflag boundaries: everything after a bare `--` is an operand,
+ * honoring flag boundaries: everything after a bare `--` is an operand,
  * and a token consumed as a value-taking global flag's value (`--profile -v`)
  * is not a flag.
  */
@@ -169,7 +169,7 @@ const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues
 
 /**
  * The full value-taking-token predicate for a real invocation: the global
- * flags plus the resolved leaf command's own value flags — pflag parses with
+ * flags plus the resolved leaf command's own value flags — parsing uses
  * the resolved command's complete flagset, so `login --name --debug` hands
  * `--debug` to `--name` and never sets the debug flag.
  */
@@ -190,14 +190,14 @@ function isFlagOccurrence(token: string, name: string): boolean {
 }
 
 /**
- * pflag's `ParseBool` true spellings, used to resolve `--version=<value>` here. This answers a
+ * The boolean true spellings (`1`, `t`, `T`, `TRUE`, `true`, `True`), used to resolve `--version=<value>` here. This answers a
  * different question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether the
  * shipped parser accepts the value at all — the two sets must not be merged.
  */
-const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
- * pflag reads a single-dash token as a cluster of shorthand flags until a
+ * A single-dash token is read as a cluster of shorthand flags until a
  * value-taking shorthand consumes the rest of the cluster as its value.
  */
 function* shortClusterFlagNames(
@@ -216,7 +216,7 @@ function* shortClusterFlagNames(
   }
 }
 
-/** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
+/** Whether a short cluster ends in a value-taking shorthand with no inline value, which consumes the NEXT argv token (`-ho json`). */
 function shortClusterConsumesNextToken(
   token: string,
   isValueTakingToken: (token: string) => boolean,
@@ -230,7 +230,7 @@ function shortClusterConsumesNextToken(
 }
 
 /**
- * Index of the first positional token — pflag's view, with flags and their
+ * Index of the first positional token, with flags and their
  * consumed values skipped and everything from a bare `--` on positional —
  * or `args.length` when there is none.
  */
@@ -253,7 +253,7 @@ function firstPositionalIndex(
 }
 
 /**
- * Whether argv sets the root `--version` flag, in any spelling pflag marks as changed: bare,
+ * Whether argv sets the root `--version` flag, in any spelling that marks it as changed: bare,
  * valued (`--version=false` included), or followed by a space-form operand (`--version true`,
  * since the version built-in is served before the stray operand is validated). A subcommand's
  * own `--version` (`db reset --version x`) does not count, since a positional precedes it.
@@ -273,7 +273,7 @@ export function hasRootVersionFlag(
 /**
  * Whether this argv resolves to a built-in action — help at any depth, or the root version —
  * without ever running a command handler. Help counts on presence, regardless of value. The
- * version flag resolves pflag-style, last value wins: a true value counts as the version
+ * version flag resolves last-value-wins: a true value counts as the version
  * built-in, `--version=false <leaf>` counts as running the leaf, and only a bare invocation with
  * no positional falls back to the root's help. Used only by the upgrade-notice checks below.
  */
@@ -290,7 +290,7 @@ export function hasRootHelpOrVersionFlag(
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
-        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+        version = BOOL_TRUE_VALUES.has(token.slice("--version=".length));
       }
     }
   }
@@ -429,7 +429,7 @@ function isMissingFlagTokenPresent(
     const equalIndex = arg.indexOf("=");
     const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
     if (equalIndex === -1 && isValueTakingToken(bareToken)) {
-      // pflag consumes the following argv entry as `bareToken`'s value unconditionally — even a
+      // The following argv entry is consumed as `bareToken`'s value unconditionally — even a
       // literal "--" — so skip it here too, before the terminator check ever sees it.
       index++;
     }

@@ -106,7 +106,7 @@ function fakeShadowDbConnection() {
   return { layer };
 }
 
-/** The shadow's own PG15+ one-shot platform-baseline job(s) — Go's `initSchema15`. */
+/** The shadow's own PG15+ one-shot platform-baseline job(s). */
 function fakeShadowSetupDocker() {
   const layer = Layer.succeed(DockerRun, {
     run: () => Effect.die("run unused"),
@@ -193,8 +193,7 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   it.effect(
     "carries the inspect failure's daemon marker AND recovery suggestion onto the seam error",
     () => {
-      // Go's `AssertSupabaseDbIsRunning` sets `CmdSuggestion = suggestDockerInstall` on a
-      // daemon-connection failure — the seam's inspect-error mapping must preserve both the
+      // A daemon-connection failure carries a Docker-install suggestion — the seam's inspect-error mapping must preserve both the
       // daemon classification and that suggestion, or the normalizer renders its generic
       // debug hint instead of the actionable Docker recovery text (review: the start-failure
       // catch below it already propagates `suggestion`; this asserts the inspect mapping does

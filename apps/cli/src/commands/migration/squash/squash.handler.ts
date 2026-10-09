@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -475,12 +475,12 @@ const runSquash = Effect.fnUntraced(function* (
     // Checked here, ahead of the root pre-run.
     if (target.setFlags.length > 1) {
       return yield* new MigrationTargetFlagsError({
-        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
+        message: mutuallyExclusiveFlagsMessage(["db-url", "linked", "local"], target.setFlags),
       });
     }
     if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
       return yield* new MigrationPasswordFlagsError({
-        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
+        message: mutuallyExclusiveFlagsMessage(["db-url", "password"], ["db-url", "password"]),
       });
     }
 

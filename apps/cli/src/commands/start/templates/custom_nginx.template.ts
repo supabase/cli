@@ -1,6 +1,6 @@
 /**
  * Canonical custom_nginx.template body; do not hand-edit. Unlike `kong.yml`, this is not parsed
- * as a Go template — Kong's own openresty templating substitutes `${{VAR}}` at container boot, so
+ * as a text template — Kong's own openresty templating substitutes `${{VAR}}` at container boot, so
  * the backslash in `\${{...}}` here only escapes JS template-literal syntax.
  */
 export const START_CUSTOM_NGINX_TEMPLATE = `pid pids/nginx.pid;                      # this setting is mandatory

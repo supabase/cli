@@ -157,7 +157,7 @@ describe("walkSqlFiles", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("recurses into subdirectories, already sorted in Go's byte order", () => {
+  it.effect("recurses into subdirectories, already sorted in byte order", () => {
     const layer = fakeWalkFs(
       { "/schemas": ["nested", "top.sql"], "/schemas/nested": ["inner.sql"] },
       {
@@ -194,22 +194,19 @@ describe("walkSqlFiles", () => {
     },
   );
 
-  it.effect(
-    "does not descend into a symlinked subdirectory (Go's fs.WalkDir/afero.Walk no-follow)",
-    () => {
-      const layer = fakeWalkFs(
-        { "/schemas": ["linked", "top.sql"], "/schemas/linked": ["secret.sql"] },
-        { "/schemas/linked": "Directory", "/schemas/top.sql": "File" },
-        undefined,
-        new Set(["/schemas/linked"]),
-      );
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const files = yield* walkSqlFiles(fs, "/schemas", "");
-        expect([...files]).toEqual(["top.sql"]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("does not descend into a symlinked subdirectory", () => {
+    const layer = fakeWalkFs(
+      { "/schemas": ["linked", "top.sql"], "/schemas/linked": ["secret.sql"] },
+      { "/schemas/linked": "Directory", "/schemas/top.sql": "File" },
+      undefined,
+      new Set(["/schemas/linked"]),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* walkSqlFiles(fs, "/schemas", "");
+      expect([...files]).toEqual(["top.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("excludes a symlinked .sql file instead of applying its target", () => {
     const layer = fakeWalkFs(

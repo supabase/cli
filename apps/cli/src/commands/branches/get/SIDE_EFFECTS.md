@@ -2,7 +2,7 @@
 
 ## Files Read
 
-Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every Management-API command. Project-ref discovery is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
+Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every Management-API command. Project-ref discovery is PARENT-scoped (CLI-2167 follow-up): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
@@ -45,7 +45,7 @@ Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every M
 
 ### `--output pretty` (default) / `--output-format text`
 
-Glamour-styled 7-column table: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGRES VERSION`, `STATUS`. Missing `db_user` / `db_pass` / `jwt_secret` render as `******`.
+styled 7-column table: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGRES VERSION`, `STATUS`. Missing `db_user` / `db_pass` / `jwt_secret` render as `******`.
 
 ### `--output {json,yaml,toml,env}` / `--output-format json` / `stream-json`
 

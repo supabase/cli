@@ -4,7 +4,7 @@ import {
   type LoadedCliConfig,
   type CliConfig,
 } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "./cli-config-load.ts";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 
 import { recordOrioleDbTelemetry } from "./db-image.ts";
@@ -68,7 +68,6 @@ export const loadLocalProjectContext = <E>(
       // Restricts resolution to `supabase/config.toml`; without this, a workdir with a stray
       // `config.json` would be preferred over it.
       tomlOnly: true,
-      goViperCompat: true,
       projectRef,
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),

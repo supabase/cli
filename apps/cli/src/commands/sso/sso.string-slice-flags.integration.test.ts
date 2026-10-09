@@ -18,7 +18,7 @@ import { ssoCommand } from "./sso.command.ts";
 
 // All four sso domain-list flags are CSV string-slice flags, so malformed CSV
 // aborts flag parsing — before the handler and its eager token resolution —
-// with an `invalid argument %q for %q flag: %v` line on stderr. These run
+// with an `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr. These run
 // through the whole command tree to cover the real flag wiring and renderer.
 
 const tempRoot = useTempWorkdir("supabase-sso-string-slice-int-");
@@ -67,7 +67,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("sso StringSlice flags (pflag CSV parity)", () => {
+describe("sso StringSlice flags", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -100,7 +100,7 @@ describe("sso StringSlice flags (pflag CSV parity)", () => {
   ];
 
   for (const { name, args, message } of cases) {
-    it.live(`${name} CSV fails at parse time with pflag's exact diagnostic`, () => {
+    it.live(`${name} CSV fails at parse time with the exact diagnostic`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));

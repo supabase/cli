@@ -58,7 +58,7 @@ The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,j
 
 ### `--output pretty` (default) / `--output-format text`
 
-Prints a Glamour-styled markdown table with columns `NAME` and `DIGEST`. The table is rendered byte-for-byte using `glamour.WithStandardStyle(styles.AsciiStyle)`. Secrets are sorted alphabetically by `name`.
+Prints a styled markdown table with columns `NAME` and `DIGEST`. Secrets are sorted alphabetically by `name`.
 
 ### `--output json`
 

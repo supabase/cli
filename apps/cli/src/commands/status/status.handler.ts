@@ -18,13 +18,13 @@ import {
 } from "../../command-internal/docker-lifecycle.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../command-internal/go-output.encoders.ts";
+} from "../../command-internal/output.encoders.ts";
 import {
   formatLinkedStateBlock,
-  linkedStateGoFields,
+  linkedStateFields,
   linkedStateJsonField,
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
@@ -82,13 +82,13 @@ function parseOverrides(
 }
 
 /** The established `"Stopped services:", stopped` slice format. */
-function formatGoStringSlice(items: ReadonlyArray<string>): string {
+function formatStringSlice(items: ReadonlyArray<string>): string {
   return `[${items.join(" ")}]`;
 }
 
 export const status = Effect.fn("status")(function* (flags: StatusFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -97,7 +97,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
   // `-o` (env|json|toml|yaml|pretty) is a complete format choice and takes priority over
   // `--output-format` — hoisted so the linked-state print gate below and the final render
   // branching share one computation.
-  const goFmt = Option.getOrUndefined(goOutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
   yield* Effect.gen(function* () {
     // Resolves the current linked project/branch in every output mode (never fails) so agents
@@ -106,7 +106,10 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // fails to reach Docker, and inside the telemetry-ensured scope so an interrupted lookup
     // still flushes telemetry state.
     const linkedState = yield* resolveLinkedState();
-    if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
+    if (
+      output.format === "text" &&
+      (outputFlagFormat === undefined || outputFlagFormat === "pretty")
+    ) {
       yield* output.raw(formatLinkedStateBlock(linkedState));
     }
     if (output.format === "json" || output.format === "stream-json") {
@@ -212,7 +215,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       "status.ignore_health_check": flags.ignoreHealthCheck,
     });
     if (stopped.length > 0) {
-      yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
+      yield* output.raw(`Stopped services: ${formatStringSlice(stopped)}\n`, "stderr");
     }
 
     // 7. Merge health-derived exclusions with the user's --exclude flag.
@@ -239,30 +242,30 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // fields resolved above (absent entirely when not linked); the pretty table never sees them.
     // `values` spreads last so an `--override-name`-renamed field always wins a key collision
     // with the linked-state extension, never the other way round.
-    const valuesWithLinkedState = { ...linkedStateGoFields(linkedState), ...values };
+    const valuesWithLinkedState = { ...linkedStateFields(linkedState), ...values };
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");
       return;
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(valuesWithLinkedState));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(valuesWithLinkedState));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(encodeToml(valuesWithLinkedState) + "\n");
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw(encodeYaml(valuesWithLinkedState));
       return;
     }
-    if (goFmt === "pretty") {
+    if (outputFlagFormat === "pretty") {
       yield* renderPretty();
       return;
     }
 
-    // goFmt is undefined: defer to --output-format for json/stream-json, otherwise render the
+    // outputFlagFormat is undefined: defer to --output-format for json/stream-json, otherwise render the
     // grouped rounded-table (the `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
       // `null` when not linked. `values` spreads last so an `--override-name`-renamed field

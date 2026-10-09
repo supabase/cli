@@ -196,20 +196,20 @@ describe("subcommand flag placement suggestions", () => {
     );
   });
 
-  it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    const pflagMessage =
+  it("passes a complete `invalid argument` diagnostic through verbatim", () => {
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
         option: "db-unban-ip",
         value: '"1.2.3.4',
-        expected: pflagMessage,
+        expected: invalidValueMessage,
         kind: "flag",
       }),
     ]);
 
     expect(errors.changed).toBe(true);
-    expect(errors.errors[0]?.message).toBe(pflagMessage);
+    expect(errors.errors[0]?.message).toBe(invalidValueMessage);
   });
 
   it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {

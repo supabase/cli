@@ -624,7 +624,7 @@ describe("compute logs", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [LOGS_ROUTE]: logsResponse([computeLogRow({})]) },
       });
 
@@ -642,7 +642,7 @@ describe("compute logs", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         routes: {
           [LOGS_ROUTE]: logsResponse([
             computeIngressLogRow({ tsMs: T1, status: "503", durationMs: "12" }),
@@ -955,7 +955,7 @@ describe("compute logs", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "pretty",
+        outputFlag: "pretty",
         format: "json",
         routes: { [LOGS_ROUTE]: logsResponse([computeLogRow({ tsMs: T1 })]) },
       });
@@ -976,7 +976,7 @@ describe("compute logs", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "pretty",
+        outputFlag: "pretty",
         format: "json",
         routes: { [LOGS_ROUTE]: logsResponse([computeLogRow({ tsMs: T1 })]) },
       });
@@ -995,7 +995,7 @@ describe("compute logs", () => {
 
       return yield* Effect.gen(function* () {
         for (const setup of [
-          setupCompute({ workdir: repo.dir, goOutput: "json", routes: {} }),
+          setupCompute({ workdir: repo.dir, outputFlag: "json", routes: {} }),
           setupCompute({ workdir: repo.dir, format: "json", routes: {} }),
         ]) {
           const error = yield* computeLogs(flags({ follow: true })).pipe(

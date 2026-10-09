@@ -366,32 +366,29 @@ describe("startSetupLocalDatabase", () => {
       },
     );
 
-    it.effect(
-      "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
-      () => {
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        // Default config: realtime, storage, and auth are all enabled — 3 jobs.
-        return run(
-          baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(3);
-            for (const job of docker.runs) {
-              expect(job.labels).toEqual({
-                "com.supabase.cli.project": "labeled-proj",
-                "com.docker.compose.project": "labeled-proj",
-              });
-            }
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
+    it.effect("labels every one-shot job with the project's Docker labels", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      // Default config: realtime, storage, and auth are all enabled — 3 jobs.
+      return run(
+        baseInput(workdir, session, { majorVersion: 15, projectId: "labeled-proj" }),
+        out,
+        docker,
+      ).pipe(
+        Effect.map(() => {
+          expect(docker.runs.length).toBe(3);
+          for (const job of docker.runs) {
+            expect(job.labels).toEqual({
+              "com.supabase.cli.project": "labeled-proj",
+              "com.docker.compose.project": "labeled-proj",
+            });
+          }
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
 
     it.effect(
       "the realtime job's env matches `buildRealtimeEnv` on the internal db address + jwks",
@@ -489,31 +486,28 @@ describe("startSetupLocalDatabase", () => {
       },
     );
 
-    it.effect(
-      "--debug tees every one-shot job's stderr, matching Go's utils.GetDebugLogger()",
-      () => {
-        const workdir = makeWorkdir();
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        const config = decodeConfig({
-          realtime: { enabled: true },
-          storage: { enabled: false },
-          auth: { enabled: true },
-        });
-        return run(
-          baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
-          out,
-          docker,
-        ).pipe(
-          Effect.map(() => {
-            expect(docker.runs.length).toBe(2);
-            expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
+    it.effect("--debug tees every one-shot job's stderr", () => {
+      const workdir = makeWorkdir();
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const config = decodeConfig({
+        realtime: { enabled: true },
+        storage: { enabled: false },
+        auth: { enabled: true },
+      });
+      return run(
+        baseInput(workdir, session, { majorVersion: 15, config, debug: true }),
+        out,
+        docker,
+      ).pipe(
+        Effect.map(() => {
+          expect(docker.runs.length).toBe(2);
+          expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
 
     it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
       const workdir = makeWorkdir();
@@ -679,46 +673,40 @@ describe("resolveDbSetupPrelude", () => {
     );
   });
 
-  it.effect(
-    'prints the banner BEFORE a JWKS resolution failure — matching Go\'s "initSchema" printing the banner before ever calling "initSchema15" -> "ResolveJWKS" (review: PRRT_kwDOErm0O86W6R-O)',
-    () => {
-      const out = mockOutput();
-      return run(
-        {
-          majorVersion: 15,
-          realtimeEnabledForSetup: true,
-          jwks: Effect.fail(new Error("jwks discovery failed")),
-        },
-        out,
-      ).pipe(
-        Effect.flip,
-        Effect.map((error) => {
-          expect(error.message).toBe("jwks discovery failed");
-          const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
-          expect(banner.length).toBe(1);
-          expect(banner[0]?.stream).toBe("stderr");
-        }),
-      );
-    },
-  );
+  it.effect("prints the banner BEFORE a JWKS resolution failure", () => {
+    const out = mockOutput();
+    return run(
+      {
+        majorVersion: 15,
+        realtimeEnabledForSetup: true,
+        jwks: Effect.fail(new Error("jwks discovery failed")),
+      },
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error.message).toBe("jwks discovery failed");
+        const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
+        expect(banner.length).toBe(1);
+        expect(banner[0]?.stream).toBe("stderr");
+      }),
+    );
+  });
 
-  it.effect(
-    "does not resolve JWKS on PG <= 14 even with realtime enabled — Go's initSchema never reaches initSchema15 there",
-    () => {
-      const out = mockOutput();
-      let jwksCalled = false;
-      const jwks = Effect.sync(() => {
-        jwksCalled = true;
-        return "unused";
-      });
-      return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
-        Effect.map((resolved) => {
-          expect(jwksCalled).toBe(false);
-          expect(resolved.jwks).toBe("");
-        }),
-      );
-    },
-  );
+  it.effect("does not resolve JWKS on PG <= 14 even with realtime enabled", () => {
+    const out = mockOutput();
+    let jwksCalled = false;
+    const jwks = Effect.sync(() => {
+      jwksCalled = true;
+      return "unused";
+    });
+    return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
+      Effect.map((resolved) => {
+        expect(jwksCalled).toBe(false);
+        expect(resolved.jwks).toBe("");
+      }),
+    );
+  });
 });
 
 /**

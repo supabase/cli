@@ -1,5 +1,5 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { resolveCliConfigSubtree } from "./cli-config-load.ts";
 import { validateCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -15,7 +15,7 @@ import { loadLocalProjectContext, type LocalProjectContext } from "./local-proje
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
-import { parseGoDuration } from "./go-duration.ts";
+import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
 import {
@@ -53,7 +53,7 @@ import {
   resolveGotrueWeb3,
   strToArr,
 } from "./local-config-values.ts";
-import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import { generateAsymmetricLocalJwt } from "./local-jwt.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
@@ -982,12 +982,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             ...(configuredAnonKey === undefined
               ? signingKey === undefined
                 ? {}
-                : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
+                : { anonKey: generateAsymmetricLocalJwt(signingKey, "anon") }
               : { anonKey: configuredAnonKey }),
             ...(configuredServiceRoleKey === undefined
               ? signingKey === undefined
                 ? {}
-                : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
+                : { serviceRoleKey: generateAsymmetricLocalJwt(signingKey, "service_role") }
               : { serviceRoleKey: configuredServiceRoleKey }),
             anonKeyIsOverride: configuredAnonKey !== undefined,
             serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
@@ -1029,7 +1029,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             config.env,
             { values: context.projectEnvValues },
             `functions.${name}.env`,
-            { goViperCompat: true },
           ).pipe(
             Effect.map(
               (env) =>
@@ -1098,7 +1097,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           new StackConfigError({ message: `Invalid storage.file_size_limit: ${String(cause)}` }),
       });
       const healthTimeoutMs = yield* Effect.try({
-        try: () => parseGoDuration(validatedConfig.db.health_timeout) / 1_000_000,
+        try: () => parseDuration(validatedConfig.db.health_timeout) / 1_000_000,
         catch: (cause) =>
           new StackConfigError({ message: `Invalid db.health_timeout: ${String(cause)}` }),
       });

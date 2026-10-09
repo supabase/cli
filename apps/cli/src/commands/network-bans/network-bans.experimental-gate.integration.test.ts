@@ -51,7 +51,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-bans experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-bans", "get"] },
     { name: "remove", args: ["network-bans", "remove"] },
@@ -88,9 +88,9 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
   }
 
   it.live(
-    "remove: malformed --db-unban-ip CSV fails at parse time with pflag's exact diagnostic, before the gate",
+    "remove: malformed --db-unban-ip CSV fails at parse time with the exact diagnostic, before the gate",
     () => {
-      // `"1.2.3.4` is 8 bytes, so pflag's CSV reader hits EOF at column 9.
+      // `"1.2.3.4` is 8 bytes, so the CSV reader hits EOF at column 9.
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

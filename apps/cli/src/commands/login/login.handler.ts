@@ -10,7 +10,7 @@ import {
   postLoginTelemetry,
 } from "../../command-internal/ensure-login.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../../shared/cli/flag-groups.ts";
 import { ProfileFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";

@@ -9,7 +9,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
-import { goUrlParse } from "./storage-url.ts";
+import { parseUrl } from "./storage-url.ts";
 
 /**
  * Single home for config validation, shared by the two config readers:
@@ -45,19 +45,20 @@ export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Accepted boolean string forms, matching Go's `strconv.ParseBool`; any other value is a
-// parse error.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
+// Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`,
+// and the empty string as false); any other value is a parse error.
+const BOOL_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const BOOL_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
 
 /**
- * Parses a config bool value: accepts the same string forms as `strconv.ParseBool`, returns
+ * Parses a config bool value: accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and
+ * `0`/`f`/`F`/`FALSE`/`false`/`False` (and the empty string as false), returns
  * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
  * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
  */
-export function parseGoBool(value: string): boolean | undefined {
-  if (GO_BOOL_TRUE.has(value)) return true;
-  if (GO_BOOL_FALSE.has(value)) return false;
+export function parseBoolLiteral(value: string): boolean | undefined {
+  if (BOOL_TRUE_LITERALS.has(value)) return true;
+  if (BOOL_FALSE_LITERALS.has(value)) return false;
   return undefined;
 }
 
@@ -312,7 +313,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       throw new ConfigValidateError("Missing required field in config: studio.port");
     }
     try {
-      goUrlParse(input.studio.apiUrl);
+      parseUrl(input.studio.apiUrl);
     } catch (cause) {
       throw new ConfigValidateError(`Invalid config for studio.api_url: ${messageOf(cause)}`);
     }
@@ -340,7 +341,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
         provider !== "turnstile"
       ) {
         throw new ConfigValidateError(
-          "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+          "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
         );
       }
       if (auth.captcha.enabled) {
@@ -377,12 +378,12 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Uses `goUrlParse`'s stricter semantics (the same port used for `studio.api_url`
+      // Uses `parseUrl`'s stricter semantics (the same port used for `studio.api_url`
       // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
       // whole load instead of passing a bare scheme-prefix regex.
       let scheme: string;
       try {
-        scheme = goUrlParse(hook.uri).scheme;
+        scheme = parseUrl(hook.uri).scheme;
       } catch (cause) {
         throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
       }
@@ -537,7 +538,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     backend !== "bigquery"
   ) {
     throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
+      "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
     );
   }
   if (input.analytics.enabled && backend === "bigquery") {

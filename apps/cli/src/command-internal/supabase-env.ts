@@ -6,16 +6,16 @@
  * so callers OR the parsed flag value with this read (flag-set wins).
  */
 
-const VIPER_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /** Truthiness for an already-resolved env value (see module doc). */
-function viperBool(raw: string | undefined): boolean {
-  return raw !== undefined && VIPER_TRUE.has(raw);
+function parseEnvBool(raw: string | undefined): boolean {
+  return raw !== undefined && TRUE_VALUES.has(raw);
 }
 
 /** Reads a single `SUPABASE_*` boolean env var from `process.env` (see module doc). */
-export function viperEnvBool(name: string): boolean {
-  return viperBool(process.env[name]);
+export function supabaseEnvBool(name: string): boolean {
+  return parseEnvBool(process.env[name]);
 }
 
 /**
@@ -26,23 +26,23 @@ export function viperEnvBool(name: string): boolean {
  * project env, letting an opt-out gate default on while any present value
  * still disables.
  */
-export function viperEnvBoolWithProjectFallback(
+export function supabaseEnvBoolWithProjectFallback(
   name: string,
   projectEnv: Record<string, string>,
   opts: { readonly whenUnset?: boolean } = {},
 ): boolean {
   const raw = process.env[name] ?? projectEnv[name];
   if (raw === undefined) return opts.whenUnset ?? false;
-  return viperBool(raw);
+  return parseEnvBool(raw);
 }
 
 /**
  * Resolves a `SUPABASE_*` string with the same shell-presence-wins semantics
- * as {@link viperEnvBoolWithProjectFallback}, but with no boolean coercion —
+ * as {@link supabaseEnvBoolWithProjectFallback}, but with no boolean coercion —
  * the raw merged string, or `""` when absent from both. `??` (not `||`)
  * encodes the presence check.
  */
-export function viperEnvStringWithProjectFallback(
+export function supabaseEnvStringWithProjectFallback(
   name: string,
   projectEnv: Record<string, string>,
 ): string {

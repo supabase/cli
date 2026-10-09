@@ -120,7 +120,7 @@ interface SetupOpts {
   // Bytes the first dump attempt streams before failing with `dumpFailFirstWith`.
   readonly dumpFailFirstPartialBytes?: string;
   // Raw argv seen by the handler (CliArgs). Only consulted when both `--declarative`
-  // and `--use-pg-delta` are present, to replay pflag's last-occurrence-wins ordering.
+  // and `--use-pg-delta` are present, to replay last-occurrence-wins ordering.
   readonly args?: ReadonlyArray<string>;
   readonly networkId?: string;
   readonly platform?: NodeJS.Platform;
@@ -1066,7 +1066,7 @@ describe("db pull", () => {
   );
 
   it.effect(
-    "--declarative --use-pg-delta=false stays in migration mode (Go last-occurrence-wins)",
+    "--declarative --use-pg-delta=false stays in migration mode (last occurrence wins)",
     () => {
       // Both flags bind to one variable, so the last occurrence wins — ORing the two
       // parsed flags would wrongly take the declarative path instead.
@@ -1085,7 +1085,7 @@ describe("db pull", () => {
   );
 
   it.effect(
-    "--use-pg-delta --declarative=false stays in migration mode (Go last-occurrence-wins)",
+    "--use-pg-delta --declarative=false stays in migration mode (last occurrence wins)",
     () => {
       const s = setup(tmp.current, {
         migrations: ["20240101000000"],
@@ -1489,7 +1489,7 @@ describe("db pull", () => {
     },
   );
 
-  it.effect("updates history on an empty non-interactive stdin (Go default)", () => {
+  it.effect("updates history on an empty non-interactive stdin", () => {
     // Only falls back to the default (`true`) when the piped scan is empty/exhausted;
     // a non-interactive pull without piped input therefore updates history. (The clack
     // prompt would hang on a non-TTY; see `pull.live.test.ts` for that end-to-end proof.)
@@ -1875,7 +1875,7 @@ describe("db pull", () => {
   it.effect(
     "a migration name literally '--experimental=false' after -- does not suppress SUPABASE_EXPERIMENTAL",
     () => {
-      // Both pflag/cobra and this CLI's own lexer stop parsing flags at the first bare
+      // Flag parsing stops at the first bare
       // `--`, so `db pull -- --experimental=false` passes it as the positional
       // migration-name argument, not a flag occurrence — unlike the unterminated case
       // above, this must still take the experimental export.
@@ -1893,7 +1893,7 @@ describe("db pull", () => {
   it.effect(
     "a repeated --experimental=false --experimental=true still exports (last Set() wins)",
     () => {
-      // pflag/viper bind one variable per flag: repeated occurrences collapse to
+      // Each flag binds one variable: repeated occurrences collapse to
       // whichever Set() call happened last, so a resolver must not get this ordering
       // backwards.
       const s = setup(tmp.current, {

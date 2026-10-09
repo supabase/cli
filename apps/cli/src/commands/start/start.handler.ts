@@ -4,7 +4,7 @@
  */
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
+import { resolveCliConfigSubtree } from "../../command-internal/cli-config-load.ts";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -50,7 +50,7 @@ import {
   decryptSecret,
   isEncryptedSecret,
 } from "../../command-internal/vault-decrypt.ts";
-import { parseGoDuration } from "../../command-internal/go-duration.ts";
+import { parseDuration } from "../../command-internal/duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
   cliProjectFilterValue,
@@ -59,7 +59,7 @@ import {
   localDbContainerId,
 } from "../../command-internal/docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   inspectContainerState,
   listContainersByLabel,
@@ -492,7 +492,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       fs,
     );
-    // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
+    // Duration fields (duration syntax) are otherwise only parsed inside GoTrue's own env
     // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
     // value must be validated eagerly here or it would be silently accepted.
     const gotrueSessionsForValidation = resolveGotrueSessions(
@@ -500,7 +500,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       projectEnvValues,
     );
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
-      parseGoDuration(resolvedEmail.max_frequency),
+      parseDuration(resolvedEmail.max_frequency),
     );
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
@@ -517,7 +517,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }),
     });
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      parseGoDuration(smsForValidation.max_frequency),
+      parseDuration(smsForValidation.max_frequency),
     );
     // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
     // detects whether that branch fired, to print the matching warning.
@@ -538,16 +538,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     }
     if (gotrueSessionsForValidation?.timebox !== undefined) {
       yield* wrapConfigOverride("auth.sessions.timebox", () =>
-        parseGoDuration(gotrueSessionsForValidation.timebox!),
+        parseDuration(gotrueSessionsForValidation.timebox!),
       );
     }
     if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
       yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+        parseDuration(gotrueSessionsForValidation.inactivity_timeout!),
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+      parseDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
     );
     // These GoTrue overrides must validate unconditionally too, regardless of
     // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
@@ -585,7 +585,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     for (const [slug, func] of Object.entries(config.functions)) {
       if (Object.keys(func.env).length > 0) {
         return yield* new StartInvalidConfigError({
-          message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
+          message: `failed to parse config:\nfunctions[${slug}]: unknown keys: env`,
         });
       }
     }
@@ -806,7 +806,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       config.functions,
       { values: projectEnvValues ?? {} },
       "functions",
-      { goViperCompat: true },
     );
     const configDeclaredFunctions = toPlainFunctionRecord(resolvedFunctions);
     const configFunctions = yield* inferFunctionsManifest({
@@ -843,7 +842,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
       projectId,
     });
     // Linux-only `host.docker.internal:host-gateway` extra host; empty on darwin/windows, where
@@ -1542,7 +1541,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             config.edge_runtime,
             { values: projectEnvValues ?? {} },
             "edge_runtime",
-            { goViperCompat: true },
           );
           // Every `config.Secret`-typed field must be decrypted unconditionally so the Edge
           // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates

@@ -546,7 +546,7 @@ describe("migration squash", () => {
     });
 
     it.effect(
-      "rejects a non-numeric --version with the bare Go message (no 'failed to parse' prefix)",
+      "rejects a non-numeric --version with the bare message (no 'failed to parse' prefix)",
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {

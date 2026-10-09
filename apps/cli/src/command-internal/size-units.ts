@@ -1,9 +1,7 @@
 /**
- * Parses `file_size_limit` config values using `docker/go-units`' `RAMInBytes` grammar
- * (1024-based, case-insensitive, optional trailing `b`) before sending them to service APIs.
+ * Parses `file_size_limit` config values (1024-based, case-insensitive, optional trailing `b`)
+ * before sending them to service APIs.
  * Shared by `config push` (storage/auth/api/db diffing) and `seed buckets`.
- *
- * @see github.com/docker/go-units@v0.5.0/size.go
  */
 
 const BINARY_MAP: Readonly<Record<string, number>> = {
@@ -48,7 +46,7 @@ export function ramInBytes(sizeStr: string): number {
     throw new Error(`invalid size: '${sizeStr}'`);
   }
   // Strip the (already-validated, between-digits) underscores before parsing:
-  // JS `Number.parseFloat("1_000")` stops at the underscore (→1), unlike Go.
+  // JS `Number.parseFloat("1_000")` stops at the underscore (→1).
   const size = Number.parseFloat(num.replace(/_/g, ""));
   // Reject NaN and ±Infinity: an overflowing numeral like `1e309` parses to Infinity in JS,
   // but must fail here rather than flow through as `null` in the request body.

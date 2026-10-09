@@ -55,11 +55,11 @@ This command does not call a delete endpoint: it fetches the current config, rem
 
 ## Output
 
-Matches `get` on success: stderr headings plus the Glamour-rendered table for the remaining config.
+Matches `get` on success: stderr headings plus the rendered table for the remaining config.
 
 ### `--output-format text` (default)
 
-Renders the remaining config map as a Glamour ASCII table.
+Renders the remaining config map as an ASCII table.
 
 ### `--output pretty`
 

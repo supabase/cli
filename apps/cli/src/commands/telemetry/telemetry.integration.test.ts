@@ -104,7 +104,7 @@ function runTelemetry(args: Array<string>) {
 }
 
 describe("telemetry integration", () => {
-  it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
+  it.live("status creates legacy telemetry.json and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
 
@@ -118,7 +118,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable preserves prior identity fields and prints Go-style enabled output", () => {
+  it.live("enable preserves prior identity fields and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({
@@ -142,7 +142,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("disable preserves prior identity fields and prints Go-style disabled output", () => {
+  it.live("disable preserves prior identity fields and prints the disabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({

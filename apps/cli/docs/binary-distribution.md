@@ -59,17 +59,7 @@ This:
 3. Bundles the binary into the platform archives (`.tar.gz` / `.zip`)
 4. Includes the binary in the Linux package manager packages (deb/rpm/apk)
 
-## History
-
-The CLI was originally a two-binary distribution during its gradual port from a Go CLI to
-TypeScript: a `supabase` Bun single-file executable alongside a `supabase-go` binary that the TS
-CLI proxied to for not-yet-ported commands. The port completed (CLI-1970), the last residual
-delegation surface was removed (CLI-2432), and the Go source tree (`apps/cli-go/`) was deleted in
-the same effort — the CLI now ships as a single compiled binary per platform. See
-[ADR 0030](../../../docs/adr/0030-go-cli-removal.md) for the full removal record.
-
 ## See Also
 
 - [ADR 0011](../../../docs/adr/0011-cli-release-and-distribution-strategy.md) — the release & distribution strategy decision (binary packaging choice, per-channel publish mechanisms, CI pipeline design, open blockers).
-- [ADR 0030](../../../docs/adr/0030-go-cli-removal.md) — the Go CLI removal decision record.
 - [`release-process.md`](./release-process.md) — operational playbook for local, PoC, and production releases.

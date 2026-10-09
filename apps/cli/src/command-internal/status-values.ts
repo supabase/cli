@@ -240,7 +240,7 @@ export interface StatusLocalState {
  * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
  * doesn't parse as a valid bool.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its
- * first key is unsupported — see {@link generateAsymmetricGoJwt}.
+ * first key is unsupported — see {@link generateAsymmetricLocalJwt}.
  */
 export function resolveStatusLocalState(
   config: CliConfig,
@@ -253,7 +253,7 @@ export function resolveStatusLocalState(
    * An already-resolved {@link resolveLocalConfigValues} result to reuse instead of
    * re-deriving one. Callers that resolved `local` earlier in the same process (e.g.
    * `start`'s success-path status print) must pass it here: a second call re-mints a
-   * time-dependent asymmetric JWT (`auth.signing_keys_path` + {@link generateAsymmetricGoJwt}'s
+   * time-dependent asymmetric JWT (`auth.signing_keys_path` + {@link generateAsymmetricLocalJwt}'s
    * `exp` claim) with a different signature than the one baked into the already-running
    * containers.
    */

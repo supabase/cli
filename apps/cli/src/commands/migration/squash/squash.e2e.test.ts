@@ -20,7 +20,7 @@ describe("supabase migration squash", () => {
   // Docker/Postgres. This is a validation error, not a cancellation, so the usual
   // --debug hint still follows it.
   it.live(
-    "rejects a non-numeric --version with the bare Go message",
+    "rejects a non-numeric --version with the bare message",
     () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("sb-mig-squash-version-e2e-");

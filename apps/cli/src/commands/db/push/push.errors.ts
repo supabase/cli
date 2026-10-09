@@ -57,7 +57,7 @@ export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError
   }
 }
 
-/** Locating `supabase/roles.sql` failed; message text (`failed to find custom roles: %w`) is an established output contract. */
+/** Locating `supabase/roles.sql` failed; message text (`failed to find custom roles: <cause>`) is an established output contract. */
 export class DbPushRolesError extends Data.TaggedError("DbPushRolesError")<{
   readonly message: string;
 }> {

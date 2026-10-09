@@ -1180,77 +1180,68 @@ describe("db start", () => {
     },
   );
 
-  it.live(
-    "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
-    () => {
-      // auth.passkey has no @supabase/config schema, so the malformed value must live in
-      // config.toml directly — an env override would never reach the raw-document read that
-      // decodes it.
-      const { layer, child } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.passkey");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.live("fails on an invalid auth.passkey.enabled even when auth is disabled", () => {
+    // auth.passkey has no @supabase/config schema, so the malformed value must live in
+    // config.toml directly — an env override would never reach the raw-document read that
+    // decodes it.
+    const { layer, child } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("auth.passkey");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
+
+  it.live("fails on an invalid auth.external.<custom>.enabled even when auth is disabled", () => {
+    // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
+    // dropped by @supabase/config's schema, so the malformed value must live in config.toml
+    // directly.
+    const { layer, child } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("auth.external");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
+
+  it.live("fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override", () => {
+    // The [auth.hook.send_email] section must be present for the env override to reach the
+    // decode — an absent section decodes a schema default that erases the presence signal
+    // the override needs.
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
+      projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("auth.hook");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.live(
-    "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
-    () => {
-      // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
-      // dropped by @supabase/config's schema, so the malformed value must live in config.toml
-      // directly.
-      const { layer, child } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.external");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
-
-  it.live(
-    "fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override, matching Go's Config.Load",
-    () => {
-      // The [auth.hook.send_email] section must be present for the env override to reach the
-      // decode — an absent section decodes a schema default that erases the presence signal
-      // the override needs.
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
-        projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("auth.hook");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
-
-  it.live(
-    "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled, matching Go's Config.Load",
+    "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled",
     () => {
       // [auth.email.smtp] must be present in config.toml for the env override to reach the
       // decode.
@@ -1287,27 +1278,24 @@ describe("db start", () => {
     },
   );
 
-  it.live(
-    "fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override, matching Go's Config.Load",
-    () => {
-      // [storage.image_transformation] must be present in config.toml for the env override to
-      // reach the decode.
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("storage.image_transformation.enabled");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.live("fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override", () => {
+    // [storage.image_transformation] must be present in config.toml for the env override to
+    // reach the decode.
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
+      projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("storage.image_transformation.enabled");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.live(
     "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
@@ -1323,27 +1311,24 @@ describe("db start", () => {
     },
   );
 
-  it.live(
-    "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override, matching Go's Config.Load",
-    () => {
-      // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
-      // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
-      const { layer, child } = setup({
-        configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const message = Cause.pretty(exit.cause);
-          expect(message).toContain("DbConfigLoadError");
-          expect(message).toContain("db.ssl_enforcement.enabled");
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
+  it.live("fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override", () => {
+    // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
+    // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
+    const { layer, child } = setup({
+      configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+      projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = Cause.pretty(exit.cause);
+        expect(message).toContain("DbConfigLoadError");
+        expect(message).toContain("db.ssl_enforcement.enabled");
+      }
+      expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+    });
+  });
 
   it.live(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override even when Postgres is already running",
@@ -1481,34 +1466,28 @@ describe("db start", () => {
     });
   });
 
-  it.live(
-    "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
-    () => {
-      const { layer, out } = setup({
-        configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
-      });
-    },
-  );
+  it.live("warns when auth.sms.enable_signup is true but no SMS provider is enabled", () => {
+    const { layer, out } = setup({
+      configContents: 'project_id = "test"\n[auth.sms]\nenable_signup = true\n',
+      route: freshVolumeRoute(defaultRoute()),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
+    });
+  });
 
-  it.live(
-    "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
-    () => {
-      const { layer, out } = setup({
-        configContents:
-          'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("no SMS provider is enabled");
-      });
-    },
-  );
+  it.live("does not warn about SMS when auth is disabled", () => {
+    const { layer, out } = setup({
+      configContents:
+        'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
+      route: freshVolumeRoute(defaultRoute()),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("no SMS provider is enabled");
+    });
+  });
 
   it.live(
     "does not add the Linux-only host.docker.internal extra host on a non-Linux platform",

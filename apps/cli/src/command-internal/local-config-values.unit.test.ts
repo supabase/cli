@@ -9,7 +9,7 @@ import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { DEFAULT_SIGNING_KEY } from "./go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "./local-jwt.ts";
 import {
   POSTGRES_DEFAULT_ROOT_KEY,
   InvalidAnalyticsBackendEnvOverrideError,
@@ -189,21 +189,21 @@ describe("resolveLocalConfigValues", () => {
       expect(values.publishableKey).toBe("value");
     });
 
-    it("fails config loading for an encrypted: secret with no private key, matching Go", () => {
+    it("fails config loading for an encrypted: secret with no private key", () => {
       const config = baseConfig({ auth: { publishable_key: VAULT_ENCRYPTED } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         "failed to parse config: missing private key",
       );
     });
 
-    it("decrypts an encrypted: auth.email.smtp.pass, matching Go's Secret-typed Smtp.Pass field", () => {
+    it("decrypts an encrypted: auth.email.smtp.pass", () => {
       process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
       const document = { auth: { email: { smtp: { enabled: true, pass: VAULT_ENCRYPTED } } } };
       const resolved = resolveAuthEmailSmtp(document.auth, undefined);
       expect(resolved?.pass).toBe("value");
     });
 
-    it("decrypts an encrypted: studio.openai_api_key, matching Go's Secret-typed OpenaiApiKey field", () => {
+    it("decrypts an encrypted: studio.openai_api_key", () => {
       process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
       const config = baseConfig({ studio: { openai_api_key: VAULT_ENCRYPTED } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -221,7 +221,7 @@ describe("resolveLocalConfigValues", () => {
     });
   });
 
-  it("rejects an explicit empty project_id, matching Go's Config.Validate", () => {
+  it("rejects an explicit empty project_id", () => {
     // An explicit `project_id = ""` overwrites the workdir-basename default with the literal
     // empty string, unlike an absent key.
     const config = baseConfig({ project_id: "" });
@@ -235,7 +235,7 @@ describe("resolveLocalConfigValues", () => {
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
   });
 
-  it("rejects an absent project_id when the workdir basename sanitizes to empty, matching Go", () => {
+  it("rejects an absent project_id when the workdir basename sanitizes to empty", () => {
     // The workdir-basename default still applies with no `project_id` key present, so a workdir
     // whose basename sanitizes to empty (e.g. `!!!`) still fails validation.
     const config = Schema.decodeUnknownSync(CliConfigSchema)({});
@@ -262,7 +262,7 @@ describe("resolveLocalConfigValues", () => {
     ).not.toThrow();
   });
 
-  it("hardcodes the Go-parity local S3 credentials", () => {
+  it("hardcodes the local S3 credentials", () => {
     const config = baseConfig();
     const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
     expect(values.storageS3AccessKeyId).toBe("625729a08b95bf1b7ff351a663f3a23c");
@@ -317,7 +317,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.serviceRoleKey).toBe("env-service-role");
     });
 
-    it("treats an empty env var as unset, matching Viper's default", () => {
+    it("treats an empty env var as unset", () => {
       process.env["SUPABASE_AUTH_JWT_SECRET"] = "";
       const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -361,7 +361,7 @@ describe("resolveLocalConfigValues", () => {
     });
   });
 
-  describe("SUPABASE_* env(VAR) indirection (Go's LoadEnvHook)", () => {
+  describe("SUPABASE_* env(VAR) indirection ", () => {
     // `env(VAR)` indirection resolves inside any string field, including a `SUPABASE_*` override
     // value itself, not just a config.toml literal.
     const ENV_KEYS = ["SUPABASE_AUTH_JWT_SECRET", "SUPABASE_DB_PORT", "SUPABASE_API_ENABLED"];
@@ -398,7 +398,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
 
-    it("preserves the env(VAR) literal when the indirected var is unset, matching Go", () => {
+    it("preserves the env(VAR) literal when the indirected var is unset", () => {
       process.env["SUPABASE_AUTH_JWT_SECRET"] = "env(INDIRECT_JWT_SECRET)";
       const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -457,7 +457,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.apiUrl).toBe("https://env-override.example");
     });
 
-    it("treats an empty non-auth env var as unset, matching Viper's default", () => {
+    it("treats an empty non-auth env var as unset", () => {
       process.env["SUPABASE_DB_PORT"] = "";
       const config = baseConfig({ db: { port: 54322 } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -477,7 +477,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("rejects a SUPABASE_DB_PORT override above the uint16 range", () => {
+    it("rejects a SUPABASE_DB_PORT override above the 65535 port maximum", () => {
       process.env["SUPABASE_DB_PORT"] = "99999";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -507,7 +507,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.dbPort).toBe(5432);
     });
 
-    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the uint16 range", () => {
+    it("rejects a 0x-prefixed SUPABASE_DB_PORT override exceeding the 65535 port maximum", () => {
       process.env["SUPABASE_DB_PORT"] = "0x1FFFF";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -517,7 +517,7 @@ describe("resolveLocalConfigValues", () => {
 
     // Unlike the malformed/out-of-range cases above, db.port=0 is a required-field failure with
     // no `enabled` gate, unlike api.port/studio.port/local_smtp.port.
-    it("rejects a zero SUPABASE_DB_PORT override, matching Go's required-field check", () => {
+    it("rejects a zero SUPABASE_DB_PORT override", () => {
       process.env["SUPABASE_DB_PORT"] = "0";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -646,7 +646,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty SUPABASE_DB_MAJOR_VERSION override as unset, matching Viper's default", () => {
+    it("treats an empty SUPABASE_DB_MAJOR_VERSION override as unset", () => {
       process.env["SUPABASE_DB_MAJOR_VERSION"] = "";
       const config = baseConfig({ db: { major_version: 17 } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
@@ -673,7 +673,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidBoolEnvOverrideError,
       );
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'Invalid config for db.network_restrictions.enabled: cannot parse "notabool" as a bool',
+        'Invalid config for db.network_restrictions.enabled: "notabool" is not a valid boolean',
       );
     });
   });
@@ -692,14 +692,12 @@ describe("resolveLocalConfigValues", () => {
       expect(values.rootKey).toBe("custom-root-key");
     });
 
-    it("rejects a non-string root_key (e.g. a bare TOML integer), matching Go's Secret decode failure", () => {
+    it("rejects a non-string root_key (e.g. a bare TOML integer)", () => {
       const config = baseConfig();
       const document = { db: { root_key: 12345 } };
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
-      );
+      ).toThrow("failed to parse config:\ndb.root_key: expected a table");
     });
   });
 
@@ -738,7 +736,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty SUPABASE_EDGE_RUNTIME_DENO_VERSION override as unset, matching Viper's default", () => {
+    it("treats an empty SUPABASE_EDGE_RUNTIME_DENO_VERSION override as unset", () => {
       process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "";
       const config = baseConfig({ edge_runtime: { deno_version: 2 } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
@@ -787,7 +785,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidAnalyticsBackendEnvOverrideError,
       );
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'Invalid config for analytics.backend: cannot parse "mysql" as one of "postgres", "bigquery"',
+        'Invalid config for analytics.backend: "mysql" must be one of "postgres", "bigquery"',
       );
     });
   });
@@ -826,7 +824,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
       ).toThrow(
-        'Invalid config for experimental.webhooks.enabled: cannot parse "notabool" as a bool',
+        'Invalid config for experimental.webhooks.enabled: "notabool" is not a valid boolean',
       );
     });
 
@@ -898,7 +896,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty override as unset, matching Viper's default", () => {
+    it("treats an empty override as unset", () => {
       process.env["SUPABASE_API_TLS_ENABLED"] = "";
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -926,7 +924,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidRealtimeIpVersionEnvOverrideError,
       );
       expect(() => envOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
-        'Invalid config for realtime.ip_version: cannot parse "IPv5" as one of "IPv4", "IPv6"',
+        'Invalid config for realtime.ip_version: "IPv5" must be one of "IPv4", "IPv6"',
       );
     });
   });
@@ -953,7 +951,7 @@ describe("resolveLocalConfigValues", () => {
       ).toBe(16384);
     });
 
-    it("rejects an override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects an override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "18446744073709551616";
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
         "Failed reading config: Invalid realtime.max_header_length: 18446744073709551616.",
@@ -965,7 +963,7 @@ describe("resolveLocalConfigValues", () => {
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).not.toThrow();
     });
 
-    it("rejects a hex override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects a hex override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "0x10000000000000000";
       expect(() => envOverrideRealtimeMaxHeaderLength(4096, undefined)).toThrow(
         "Failed reading config: Invalid realtime.max_header_length: 0x10000000000000000.",
@@ -1060,7 +1058,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidPoolModeEnvOverrideError,
       );
       expect(() => envOverridePoolMode("transaction", undefined)).toThrow(
-        'Invalid config for db.pooler.pool_mode: cannot parse "invalid" as one of "transaction", "session"',
+        'Invalid config for db.pooler.pool_mode: "invalid" must be one of "transaction", "session"',
       );
     });
   });
@@ -1085,7 +1083,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidEdgeRuntimePolicyEnvOverrideError,
       );
       expect(() => envOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
-        'Invalid config for edge_runtime.policy: cannot parse "invalid" as one of "per_worker", "oneshot"',
+        'Invalid config for edge_runtime.policy: "invalid" must be one of "per_worker", "oneshot"',
       );
     });
   });
@@ -1194,7 +1192,7 @@ describe("resolveLocalConfigValues", () => {
           { enabled: false, provider: "hcaptcha", secret: "shh" },
           undefined,
         ),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("suppresses a malformed SUPABASE_AUTH_CAPTCHA_SECRET when a remote block already set auth.captcha.secret", () => {
@@ -1360,7 +1358,7 @@ describe("resolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "not-a-bool";
       const authDocument = { hook: { custom_access_token: { enabled: false } } };
       expect(() => resolveAuthHooks(authDocument, allHooks, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -1424,7 +1422,7 @@ describe("resolveLocalConfigValues", () => {
     it("still rejects a malformed SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED when no remote block matched", () => {
       process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "not-a-bool";
       const mfa = baseConfig().auth.mfa;
-      expect(() => resolveAuthMfa(mfa, undefined)).toThrow('cannot parse "not-a-bool" as a bool');
+      expect(() => resolveAuthMfa(mfa, undefined)).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("prefers a remote-set auth.mfa.phone.template over a conflicting SUPABASE_AUTH_MFA_PHONE_TEMPLATE", () => {
@@ -1490,7 +1488,7 @@ describe("resolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "not-a-bool";
       const authDocument = { email: { smtp: { enabled: true } } };
       expect(() => resolveAuthEmailSmtp(authDocument, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -1626,7 +1624,7 @@ describe("resolveLocalConfigValues", () => {
       };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("leaves an absent custom-provider boolean field at its schema default without throwing", () => {
@@ -1641,7 +1639,7 @@ describe("resolveLocalConfigValues", () => {
       expect(resolved["my_custom"]?.enabled).toBe(false);
     });
 
-    it("weakly coerces a raw numeric custom-provider boolean by truthiness, matching Go's WeaklyTypedInput decode", () => {
+    it("weakly coerces a raw numeric custom-provider boolean by truthiness", () => {
       const authDocument = {
         external: { my_custom: { enabled: 1, client_id: "custom-client-id" } },
       };
@@ -1659,10 +1657,10 @@ describe("resolveLocalConfigValues", () => {
       };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
-      ).toThrow('cannot parse "1,2" as a bool');
+      ).toThrow('"1,2" is not a valid boolean');
     });
 
-    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all, matching Go's ejected default template", () => {
+    it("resolves apple purely from env overrides even with no config.toml [auth.external] section at all", () => {
       const projectEnvValues = {
         SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED: "true",
         SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: "apple-client-id",
@@ -1685,7 +1683,7 @@ describe("resolveLocalConfigValues", () => {
       });
     });
 
-    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets Go's default-template exception", () => {
+    it("does not synthesize any other provider purely from an env override with no TOML table, only apple gets the default-template exception", () => {
       const projectEnvValues = {
         SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED: "true",
         SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: "google-client-id",
@@ -1743,7 +1741,7 @@ describe("resolveLocalConfigValues", () => {
       const projectEnvValues = { SUPABASE_AUTH_EXTERNAL_MY_CUSTOM_ENABLED: "not-a-bool" };
       expect(() =>
         resolveAuthExternalProviders(authDocument, baseConfig().auth.external, projectEnvValues),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
 
     it("prefers a remote-set auth.external.<name>.client_id over a conflicting SUPABASE_AUTH_EXTERNAL_<NAME>_CLIENT_ID", () => {
@@ -1764,7 +1762,7 @@ describe("resolveLocalConfigValues", () => {
   });
 
   describe("rawUnmodeledBool", () => {
-    it("returns false for an absent value, matching Go's zero-value bool default", () => {
+    it("returns false for an absent value", () => {
       expect(rawUnmodeledBool(undefined, "auth.passkey.enabled")).toBe(false);
     });
 
@@ -1773,13 +1771,13 @@ describe("resolveLocalConfigValues", () => {
       expect(rawUnmodeledBool(false, "auth.passkey.enabled")).toBe(false);
     });
 
-    it("weakly coerces a raw number by truthiness, matching mapstructure's WeaklyTypedInput decodeBool", () => {
+    it("weakly coerces a raw number by truthiness", () => {
       expect(rawUnmodeledBool(123, "auth.passkey.enabled")).toBe(true);
       expect(rawUnmodeledBool(0, "auth.passkey.enabled")).toBe(false);
       expect(rawUnmodeledBool(1.5, "auth.passkey.enabled")).toBe(true);
     });
 
-    it("parses a valid boolean-ish string the way Go's strconv.ParseBool does", () => {
+    it("parses a valid boolean-ish string", () => {
       expect(rawUnmodeledBool("true", "auth.passkey.enabled")).toBe(true);
       expect(rawUnmodeledBool("False", "auth.passkey.enabled")).toBe(false);
       expect(rawUnmodeledBool("", "auth.passkey.enabled")).toBe(false);
@@ -1787,11 +1785,11 @@ describe("resolveLocalConfigValues", () => {
 
     it("throws on an unparsable string instead of silently disabling it", () => {
       expect(() => rawUnmodeledBool("not-a-bool", "auth.passkey.enabled")).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
-    it("throws on an array or table value — mapstructure's decodeBool errors on these unconditionally, never weakly coerced", () => {
+    it("throws on an array or table value — never weakly coerced", () => {
       expect(() => rawUnmodeledBool([1, 2], "auth.passkey.enabled")).toThrow(
         InvalidBoolEnvOverrideError,
       );
@@ -1874,7 +1872,7 @@ describe("resolveLocalConfigValues", () => {
       ).toBe(16);
     });
 
-    it("rejects a uint override exceeding the uint64 max (2^64), matching Go's ParseUint failure", () => {
+    it("rejects a uint override exceeding the uint64 max (2^64)", () => {
       process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "18446744073709551616";
       expect(() => resolveDbSettingsEnvOverrides({}, undefined)).toThrow(
         "Failed reading config: Invalid db.settings.max_connections: 18446744073709551616.",
@@ -1914,7 +1912,7 @@ describe("resolveLocalConfigValues", () => {
         InvalidSessionReplicationRoleEnvOverrideError,
       );
       expect(() => resolveDbSettingsEnvOverrides({}, undefined)).toThrow(
-        'Invalid config for db.settings.session_replication_role: cannot parse "invalid" as one of "origin", "replica", "local"',
+        'Invalid config for db.settings.session_replication_role: "invalid" must be one of "origin", "replica", "local"',
       );
     });
 
@@ -1986,14 +1984,14 @@ describe("resolveLocalConfigValues", () => {
       });
     });
 
-    it("throws a Go-worded error when the signing keys file does not exist", () => {
+    it("throws a descriptive error when the signing keys file does not exist", () => {
       const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
         "failed to read signing keys: ",
       );
     });
 
-    it("throws a Go-worded error when the signing keys file is malformed JSON", () => {
+    it("throws a descriptive error when the signing keys file is malformed JSON", () => {
       const supabaseDir = join(tempRoot.current, "supabase");
       mkdirSync(supabaseDir, { recursive: true });
       writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -2173,7 +2171,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.authPasswordRequirements).toBe("lower_upper_letters_digits");
     });
 
-    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override, matching Go's UnmarshalText", () => {
+    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override", () => {
       process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "bogus";
       const config = baseConfig();
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -2270,7 +2268,7 @@ describe("resolveLocalConfigValues", () => {
       const document = { auth: { passkey: { enabled: "not-a-bool" } } };
       expect(() =>
         resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-      ).toThrow('cannot parse "not-a-bool" as a bool');
+      ).toThrow('"not-a-bool" is not a valid boolean');
     });
   });
 
@@ -2879,7 +2877,7 @@ describe("resolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    it("only validates the first enabled provider in Go's fixed priority order", () => {
+    it("only validates the first enabled provider in fixed priority order", () => {
       process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "false";
       process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"] = "true";
       const config = baseConfig();
@@ -3024,7 +3022,7 @@ describe("resolveLocalConfigValues", () => {
         vonage: { ...baseConfig().auth.sms.vonage, enabled: true },
       };
       expect(() => resolveAuthSms(undefined, configured, undefined)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
     });
 
@@ -3215,7 +3213,7 @@ describe("resolveLocalConfigValues", () => {
         },
       };
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'cannot parse "not-a-bool" as a bool',
+        '"not-a-bool" is not a valid boolean',
       );
       expect(() =>
         resolveLocalConfigValues(
@@ -3247,7 +3245,7 @@ describe("resolveLocalConfigValues", () => {
     // The "exactly one of cert/key set" checks live in config-validate.unit.test.ts; the file-read
     // behavior below is tested here.
 
-    it("throws a Go-worded error when the configured cert file does not exist", () => {
+    it("throws a descriptive error when the configured cert file does not exist", () => {
       writeTlsFile(tempRoot.current, "key.pem");
       const config = baseConfig({
         api: { tls: { enabled: true, cert_path: "missing-cert.pem", key_path: "key.pem" } },
@@ -3257,7 +3255,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("throws a Go-worded error when the configured key file does not exist", () => {
+    it("throws a descriptive error when the configured key file does not exist", () => {
       writeTlsFile(tempRoot.current, "cert.pem");
       const config = baseConfig({
         api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "missing-key.pem" } },
@@ -3704,7 +3702,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
     const config = baseConfig({ auth: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3727,7 +3725,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_ANALYTICS_ENABLED"] = "not-a-bool";
     const config = baseConfig({ analytics: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for analytics.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for analytics.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3942,7 +3940,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
       auth: { enabled: true, third_party: { firebase: { enabled: false } } },
     });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.third_party.firebase.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.third_party.firebase.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -3988,7 +3986,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
     const config = baseConfig({ api: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for api.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for api.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4011,7 +4009,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_STUDIO_ENABLED"] = "not-a-bool";
     const config = baseConfig({ studio: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for studio.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for studio.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4049,7 +4047,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_LOCAL_SMTP_ENABLED"] = "not-a-bool";
     const config = baseConfig({ local_smtp: { enabled: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for local_smtp.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for local_smtp.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4072,7 +4070,7 @@ describe("resolveLocalConfigValues — remoteOverrideKeys (linked shadow provisi
     process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "not-a-bool";
     const config = baseConfig({ auth: { enable_signup: false } });
     expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-      'Invalid config for auth.enable_signup: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enable_signup: "not-a-bool" is not a valid boolean',
     );
   });
 
@@ -4224,14 +4222,14 @@ describe("resolveLocalJwks", () => {
     });
   });
 
-  it("throws a Go-worded error when the signing keys file does not exist", async () => {
+  it("throws a descriptive error when the signing keys file does not exist", async () => {
     const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
     await expect(runLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
       "failed to read signing keys: ",
     );
   });
 
-  it("throws a Go-worded error when the signing keys file is malformed JSON", async () => {
+  it("throws a descriptive error when the signing keys file is malformed JSON", async () => {
     const supabaseDir = join(tempRoot.current, "supabase");
     mkdirSync(supabaseDir, { recursive: true });
     writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
@@ -4267,7 +4265,7 @@ describe("resolveLocalJwks", () => {
       );
     });
 
-    it("does not validate third-party providers when auth is disabled, matching Go's ResolveJWKS/IssuerURL", async () => {
+    it("does not validate third-party providers when auth is disabled", async () => {
       const remoteKeys = [{ kty: "RSA", kid: "firebase-key", n: "abc", e: "AQAB" }];
       const issuerUrl = "https://securetoken.google.com/my-project";
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -4302,7 +4300,7 @@ describe("resolveLocalJwks", () => {
       fetchMock.mockRestore();
     });
 
-    it('does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url, matching Go\'s issuerURL != "" check', async () => {
+    it("does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url", async () => {
       const fetchMock = vi.spyOn(globalThis, "fetch");
       const config = baseConfig({
         auth: {
@@ -4453,7 +4451,7 @@ describe("resolveLocalJwks", () => {
       process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
       const config = baseConfig({ auth: { enabled: false } });
       await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
-        'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+        'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
       );
     });
   });
@@ -4524,7 +4522,7 @@ describe("resolveConfiguredSigningKeys — remoteOverrideKeys (linked shadow pro
     process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
     const config = baseConfig({ auth: { enabled: false } });
     expect(() => resolveConfiguredSigningKeys(config, tempRoot.current, undefined)).toThrow(
-      'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
+      'Invalid config for auth.enabled: "not-a-bool" is not a valid boolean',
     );
   });
 });

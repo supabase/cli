@@ -1,5 +1,5 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
+import { loadCliConfig, type CliConfigLoadOptions } from "./cli-config-load.ts";
 import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -171,10 +171,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   // An explicit `opts.workdir` is the exact project root; only the caller's own workdir
   // (`cliSettings.workdir`) may still search ancestors for `config.toml`.
   const search = opts.workdir === undefined && shouldSearchAncestors(cliSettings);
-  const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== ""
-      ? { projectRef, goViperCompat: true, search }
-      : { goViperCompat: true, search };
+  const loadOptions: CliConfigLoadOptions = projectRef !== "" ? { projectRef, search } : { search };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null

@@ -80,7 +80,7 @@ describe("parseDockerHostUrl", () => {
     });
   });
 
-  test("strips a trailing path from a tcp host, matching Go's url.Parse round-trip", () => {
+  test("strips a trailing path from a tcp host", () => {
     expect(parseDockerHostUrl("tcp://127.0.0.1:2375/some/path")).toEqual({
       scheme: "tcp",
       host: "127.0.0.1:2375",
@@ -141,7 +141,7 @@ describe("shouldMountRootDockerSocket", () => {
 });
 
 describe("resolveVectorDockerSocketPlan", () => {
-  test("tcp: proxies through host.docker.internal on the daemon's own port, no binds/securityOpt (start.go:422-426)", () => {
+  test("tcp: proxies through host.docker.internal on the daemon's own port, no binds/securityOpt", () => {
     const plan = resolveVectorDockerSocketPlan("tcp://127.0.0.1:2376");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2376" },
@@ -156,7 +156,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     expect(plan.env).toEqual({ DOCKER_HOST: "http://host.docker.internal:2375" });
   });
 
-  test("npipe: proxies through host.docker.internal:2375 and flags isNpipe (start.go:427-430,481)", () => {
+  test("npipe: proxies through host.docker.internal:2375 and flags isNpipe", () => {
     const plan = resolveVectorDockerSocketPlan("npipe:////./pipe/docker_engine");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2375" },
@@ -166,7 +166,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     });
   });
 
-  test("unix + known rootful socket (Docker Desktop): binds the STANDARD socket path to itself, no env/securityOpt (start.go:431-437)", () => {
+  test("unix + known rootful socket (Docker Desktop): binds the STANDARD socket path to itself, no env/securityOpt", () => {
     const plan = resolveVectorDockerSocketPlan(
       "unix:///Users/me/.docker/run/docker.sock",
       "darwin",
@@ -188,7 +188,7 @@ describe("resolveVectorDockerSocketPlan", () => {
     expect(plan.securityOpt).toEqual([]);
   });
 
-  test("unix + rootless socket (Podman/OrbStack): binds the ACTUAL detected path onto the standard path, plus label:disable (start.go:438-442)", () => {
+  test("unix + rootless socket (Podman/OrbStack): binds the ACTUAL detected path onto the standard path, plus label:disable", () => {
     const plan = resolveVectorDockerSocketPlan("unix:///run/user/1000/podman/podman.sock", "linux");
     expect(plan).toEqual<VectorDockerSocketPlan>({
       env: {},
@@ -206,7 +206,7 @@ describe("resolveVectorDockerSocketPlan", () => {
 });
 
 describe("buildVectorEntrypointScript", () => {
-  test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector (start.go:449-454)", () => {
+  test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector", () => {
     expect(buildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
       "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
@@ -235,7 +235,7 @@ const base: VectorContainerSpecInput = {
 };
 
 describe("buildVectorContainerSpec", () => {
-  test("builds identity, entrypoint, healthcheck, restart policy, network aliases (start.go:444-477)", () => {
+  test("builds identity, entrypoint, healthcheck, restart policy, network aliases", () => {
     const spec = buildVectorContainerSpec(base);
     expect(spec.image).toBe("supabase/vector:0.28.1");
     expect(spec.containerName).toBe("supabase_vector_proj");

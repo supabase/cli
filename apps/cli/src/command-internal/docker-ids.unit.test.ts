@@ -10,7 +10,7 @@ import {
   localNetworkId,
 } from "./docker-ids.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 
 describe("resolveLocalProjectId", () => {
   it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
@@ -34,7 +34,7 @@ describe("resolveLocalProjectId", () => {
 });
 
 describe("serviceContainerIds", () => {
-  it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
+  it("returns the 13 service container ids in order", () => {
     expect(serviceContainerIds("my-app")).toEqual([
       "supabase_kong_my-app",
       "supabase_auth_my-app",
@@ -59,7 +59,7 @@ describe("serviceContainerIds", () => {
 });
 
 describe("cliProjectFilterValue", () => {
-  it("returns the bare label when the project id is empty (Go's --all path)", () => {
+  it("returns the bare label when the project id is empty (the --all path)", () => {
     expect(cliProjectFilterValue("")).toBe(CLI_PROJECT_LABEL);
   });
 
@@ -74,7 +74,7 @@ describe("cliProjectFilterValue", () => {
   });
 });
 
-describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallback (start/db start call shape)", () => {
+describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFallback (start/db start call shape)", () => {
   const KEY = "SUPABASE_NETWORK_ID";
 
   afterEach(() => {
@@ -84,7 +84,7 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
   function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
     return resolveDockerNetworkMode({
       explicit: flagValue,
-      envOverride: viperEnvStringWithProjectFallback(KEY, projectEnv),
+      envOverride: supabaseEnvStringWithProjectFallback(KEY, projectEnv),
       projectId: "my-app",
     });
   }
@@ -104,7 +104,7 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
     expect(resolve(undefined, { [KEY]: "project-network" })).toBe("project-network");
   });
 
-  it("prefers the shell value over the project .env value (presence wins, matching godotenv.Load)", () => {
+  it("prefers the shell value over the project .env value (presence wins)", () => {
     process.env[KEY] = "shell-network";
     expect(resolve(undefined, { [KEY]: "project-network" })).toBe("shell-network");
   });
@@ -115,7 +115,7 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
     expect(resolve("", {})).toBe(localNetworkId("my-app"));
   });
 
-  it("an explicit-but-empty --network-id= skips the env var entirely (viper: a Changed pflag resolves before AutomaticEnv)", () => {
+  it("an explicit-but-empty --network-id= skips the env var entirely (an explicit flag beats the env var)", () => {
     process.env[KEY] = "env-network";
     expect(resolve("", { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
   });

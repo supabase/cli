@@ -21,27 +21,27 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
-  parseGoBool,
+  parseBoolLiteral,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
 
-describe("parseGoBool", () => {
-  it("accepts Go's strconv.ParseBool true forms", () => {
+describe("parseBoolLiteral", () => {
+  it("accepts the true forms", () => {
     for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(parseGoBool(value)).toBe(true);
+      expect(parseBoolLiteral(value)).toBe(true);
     }
   });
 
-  it("accepts Go's strconv.ParseBool false forms, including the empty string", () => {
+  it("accepts the false forms, including the empty string", () => {
     for (const value of ["0", "f", "F", "FALSE", "false", "False", ""]) {
-      expect(parseGoBool(value)).toBe(false);
+      expect(parseBoolLiteral(value)).toBe(false);
     }
   });
 
-  it("returns undefined for a value outside Go's strconv.ParseBool acceptance set", () => {
-    expect(parseGoBool("yes")).toBeUndefined();
-    expect(parseGoBool("2")).toBeUndefined();
+  it("returns undefined for a value outside the accepted set", () => {
+    expect(parseBoolLiteral("yes")).toBeUndefined();
+    expect(parseBoolLiteral("2")).toBeUndefined();
   });
 });
 
@@ -57,11 +57,11 @@ describe("PROJECT_REF_PATTERN", () => {
 });
 
 describe("BUCKET_NAME_PATTERN", () => {
-  it("matches Go-legal bucket name characters", () => {
+  it("matches legal bucket name characters", () => {
     expect(BUCKET_NAME_PATTERN.test("my-bucket.1")).toBe(true);
   });
 
-  it("rejects characters outside Go's bucketNamePattern", () => {
+  it("rejects characters outside the bucket name pattern", () => {
     expect(BUCKET_NAME_PATTERN.test("bad#name")).toBe(false);
     expect(BUCKET_NAME_PATTERN.test("bad/name")).toBe(false);
   });
@@ -84,7 +84,7 @@ describe("HOOK_SECRET_PATTERN", () => {
     expect(HOOK_SECRET_PATTERN.test(`v1,whsec_${"a".repeat(32)}`)).toBe(true);
   });
 
-  it("rejects a secret that doesn't match Go's hookSecretPattern", () => {
+  it("rejects a secret that doesn't match the hook secret pattern", () => {
     expect(HOOK_SECRET_PATTERN.test("not-a-valid-secret")).toBe(false);
   });
 });
@@ -98,7 +98,7 @@ describe("CLERK_DOMAIN_PATTERN", () => {
     expect(CLERK_DOMAIN_PATTERN.test("example.clerk.accounts.dev")).toBe(true);
   });
 
-  it("rejects a domain that doesn't match Go's clerkDomainPattern", () => {
+  it("rejects a domain that doesn't match the clerk domain pattern", () => {
     expect(CLERK_DOMAIN_PATTERN.test("not-a-clerk-domain")).toBe(false);
   });
 });
@@ -444,7 +444,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Missing required field in config: db.major_version");
     });
 
-    it("rejects the unsupported Postgres 12.x major_version with Go's dedicated message", () => {
+    it("rejects the unsupported Postgres 12.x major_version with its dedicated message", () => {
       expect(() =>
         validateResolvedConfig(minimalInput({ db: { port: 5432, majorVersion: 12 } })),
       ).toThrow("Postgres version 12.x is unsupported.");
@@ -464,7 +464,7 @@ describe("validateResolvedConfig", () => {
   });
 
   describe("storage.buckets", () => {
-    it("rejects a bucket name Go's ValidateBucketName refuses", () => {
+    it("rejects an invalid bucket name", () => {
       expect(() =>
         validateResolvedConfig(minimalInput({ storageBucketNames: ["bad/name"] })),
       ).toThrow("Invalid Bucket name: bad/name.");
@@ -948,7 +948,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Missing required field in config: auth.hook.custom_access_token.secrets");
     });
 
-    it("rejects an http(s) hook secret that doesn't match Go's hookSecretPattern", () => {
+    it("rejects an http(s) hook secret that doesn't match the hook secret pattern", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1034,7 +1034,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
     });
 
-    it("rejects a hook uri that fails Go's url.Parse (malformed IPv6 host)", () => {
+    it("rejects a hook uri that fails URL parsing (malformed IPv6 host)", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1150,7 +1150,7 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Invalid config: auth.third_party.clerk is enabled but without a domain.");
     });
 
-    it("rejects clerk enabled with a domain that doesn't match Go's clerkDomainPattern", () => {
+    it("rejects clerk enabled with a domain that doesn't match the clerk domain pattern", () => {
       expect(() =>
         validateResolvedConfig(
           minimalInput({
@@ -1211,7 +1211,7 @@ describe("validateResolvedConfig", () => {
   });
 
   describe("functions.*", () => {
-    it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
+    it("rejects an invalid function slug", () => {
       expect(() => validateResolvedConfig(minimalInput({ functionSlugs: ["1bad"] }))).toThrow(
         "Invalid Function name: 1bad.",
       );
@@ -1269,13 +1269,13 @@ describe("validateResolvedConfig", () => {
   // Coverage for behavior only meaningfully testable at this shared layer (e.g. the captcha
   // enum), not moved from either caller's own suite.
   describe("Config.Validate divergence regression coverage", () => {
-    it("throws the Go-parity missing-required message for db.major_version = 0 (regression for the D fix in 0c62a914)", () => {
+    it("throws the missing-required message for db.major_version = 0 (regression for the D fix in 0c62a914)", () => {
       expect(() =>
         validateResolvedConfig({ ...minimalInput(), db: { port: 5432, majorVersion: 0 } }),
       ).toThrow("Missing required field in config: db.major_version");
     });
 
-    it("throws Go's decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
+    it("throws the decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
       // Unreachable through L's real flow: `@supabase/config`'s schema already narrows
       // `provider` to "hcaptcha" | "turnstile" | undefined, so an invalid value fails schema
       // decoding first. D's real TOML flow can reach this branch; its own suite covers that
@@ -1289,7 +1289,7 @@ describe("validateResolvedConfig", () => {
           }),
         ),
       ).toThrow(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+        "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
       );
     });
   });

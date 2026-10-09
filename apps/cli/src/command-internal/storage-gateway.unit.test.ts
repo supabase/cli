@@ -10,7 +10,7 @@ import { StorageGatewayStatusError } from "./storage-gateway.errors.ts";
 import { bucketBody, makeStorageGateway } from "./storage-gateway.ts";
 
 describe("bucketBody", () => {
-  it("omits public when undefined (Go *bool nil / omitempty)", () => {
+  it("omits public when undefined", () => {
     expect(bucketBody({ public: undefined, fileSizeLimit: 0, allowedMimeTypes: [] })).toEqual({});
   });
 
