@@ -35,9 +35,10 @@ import {
   mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
+  withEmptyConfigEnv,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -385,6 +386,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true
       ? [stackBackendLayer("stack"), syncStackApi(workdir, STACK_APPLY_PORT)]
       : []),
@@ -481,7 +483,6 @@ const uuidLoadError = () =>
 
 describe("db schema declarative sync integration", () => {
   const tmp = useTempWorkdir();
-  useShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
     const { layer } = setup(tmp.current, { experimental: false });
@@ -527,9 +528,8 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(
-          ENV,
-          "1",
+        const exit = yield* withConfigEnv(
+          { [ENV]: "1" },
           Effect.exit(
             dbSchemaDeclarativeSync(
               flags({ apply: Option.some(true), noApply: Option.some(true) }),
@@ -555,7 +555,10 @@ describe("db schema declarative sync integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(ENV, "1", Effect.exit(dbSchemaDeclarativeSync(flags())));
+        const exit = yield* withConfigEnv(
+          { [ENV]: "1" },
+          Effect.exit(dbSchemaDeclarativeSync(flags())),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
       }).pipe(Effect.provide(layer));
@@ -566,9 +569,7 @@ describe("db schema declarative sync integration", () => {
     "--apply and --no-apply together with SUPABASE_EXPERIMENTAL set only in the project .env fail with the mutex error",
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;

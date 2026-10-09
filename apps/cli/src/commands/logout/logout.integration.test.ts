@@ -6,7 +6,7 @@ import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   mockCommandCredentialsTracked,
   mockTelemetryStateTracked,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../command-internal/global-flags.ts";
 import { logout } from "./logout.handler.ts";
@@ -106,9 +106,8 @@ describe("logout integration", () => {
 
   it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         yield* logout();
         expect(credentials.deletedAll).toBe(true);

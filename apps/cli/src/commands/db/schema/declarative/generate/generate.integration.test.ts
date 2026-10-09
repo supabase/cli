@@ -38,7 +38,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
-  withEnvVar,
+  withConfigEnv,
+  withEmptyConfigEnv,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -450,9 +451,8 @@ describe("db schema declarative generate integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(
-          ENV,
-          "1",
+        const exit = yield* withConfigEnv(
+          { [ENV]: "1" },
           Effect.exit(
             dbSchemaDeclarativeGenerate(
               flags({ local: Option.some(true), linked: Option.some(true) }),
@@ -478,9 +478,8 @@ describe("db schema declarative generate integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(
-          ENV,
-          "1",
+        const exit = yield* withConfigEnv(
+          { [ENV]: "1" },
           Effect.exit(dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }))),
         );
         expect(Exit.isFailure(exit)).toBe(true);
@@ -493,9 +492,7 @@ describe("db schema declarative generate integration", () => {
     "--local --linked with SUPABASE_EXPERIMENTAL set only in the project .env fails with the mutex error",
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -943,9 +940,8 @@ describe("db schema declarative generate integration", () => {
 
   it.effect("smart mode: SUPABASE_YES=1 regenerates over existing files like --yes", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;

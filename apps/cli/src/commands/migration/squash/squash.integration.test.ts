@@ -24,8 +24,9 @@ import {
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
+  withEmptyConfigEnv,
   withEnvVar,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -374,6 +375,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     mockRuntimeInfo(),
+    shadowCacheDisabledLayer,
   );
 
   const layer =
@@ -463,7 +465,6 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 };
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 describe("migration squash", () => {
   describe("flag surface & ordering", () => {
@@ -864,7 +865,7 @@ describe("migration squash", () => {
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
           }
-        }).pipe(Effect.provide(s.layer), (body) =>
+        }).pipe(Effect.provide(s.layer), withEmptyConfigEnv, (body) =>
           withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
         );
       },

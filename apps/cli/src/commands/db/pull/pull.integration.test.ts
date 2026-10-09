@@ -19,13 +19,15 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   VALID_REF,
+  withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockDockerDaemonCliSpawner,
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
@@ -495,6 +497,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(opts.platform === undefined ? {} : { platform: opts.platform }),
     workdirFiles,
+    shadowCacheDisabledLayer,
   );
   return {
     layer: baseLayer,
@@ -565,7 +568,6 @@ const readFileText = (file: string) =>
   });
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 describe("db pull", () => {
   it.effect("pulls a migration (pgdelta engine) and updates remote history under --yes", () => {
@@ -1597,7 +1599,7 @@ describe("db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] y",
       );
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.effect("honors SUPABASE_YES from supabase/.env for the initial-pull history update", () => {
@@ -1620,7 +1622,7 @@ describe("db pull", () => {
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer), (body) =>
       // only the project .env value must apply
-      withEnvVar("SUPABASE_YES", undefined, body),
+      withEmptyConfigEnv(body),
     );
   });
 
@@ -1646,7 +1648,10 @@ describe("db pull", () => {
       }).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_SHADOW_CACHE: "0" },
+            { preserveEmptyStrings: true },
+          ),
         ),
         Effect.provide(s.layer),
       );
@@ -1671,9 +1676,7 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
         expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
-      );
+      }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
     },
   );
 
@@ -1691,7 +1694,7 @@ describe("db pull", () => {
       yield* dbPull(flags({ local: Option.some(true) }));
       expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
       expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("host.docker.internal");
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("keeps a loopback target for a Linux pg_dump container on --network-id host", () => {
@@ -1706,7 +1709,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ local: Option.some(true) }));
       expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("127.0.0.1");
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
@@ -1723,7 +1726,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(s.historyUpserts.length).toBe(0);
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.effect(
@@ -1746,7 +1749,7 @@ describe("db pull", () => {
         expect(streamText(s.out, "stderr")).toContain(
           "Update remote migration history table? [Y/n] y",
         );
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+      }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
     },
   );
 
@@ -1755,7 +1758,7 @@ describe("db pull", () => {
     () => {
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
-        yield* withEnvVar("SUPABASE_EXPERIMENTAL", "true", dbPull(flags()));
+        yield* withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, dbPull(flags()));
         expect(s.proxyCalls).toHaveLength(0);
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
@@ -1778,9 +1781,8 @@ describe("db pull", () => {
         ]),
       });
       const unforced = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        "true",
+      return withConfigEnv(
+        { SUPABASE_EXPERIMENTAL: "true" },
         Effect.gen(function* () {
           // `forceMigrationMode: true` keeps an in-process caller in migration mode
           // even though the ambient `SUPABASE_EXPERIMENTAL` gate would otherwise select
@@ -1899,7 +1901,9 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags());
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -1918,7 +1922,9 @@ describe("db pull", () => {
         yield* dbPull(flags({ name: Option.some("--experimental=false") }));
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -1954,7 +1960,9 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -2318,13 +2326,10 @@ describe("db pull", () => {
         return yield* withEnvVar(
           "SUPABASE_HOME",
           path.join(tmp.current, "_supabase_home"),
-          withEnvVar(
-            "SUPABASE_SHADOW_CACHE",
-            "1",
-            dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
-              Effect.provide(s.layer),
-            ),
-          ),
+          withConfigEnv(
+            { SUPABASE_SHADOW_CACHE: "1" },
+            dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})),
+          ).pipe(Effect.provide(s.layer)),
         ).pipe(Effect.as(s));
       });
 

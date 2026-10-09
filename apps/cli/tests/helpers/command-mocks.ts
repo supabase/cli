@@ -755,8 +755,7 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
 
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
- * restoring whatever was there before — including a surrounding
- * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in.
+ * restoring whatever was there before.
  */
 export const withEnvVar = <A, E, R>(
   name: string,
@@ -801,24 +800,28 @@ export const withConfigEnv = <A, E, R>(
   );
 
 /**
- * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so the default-ON cache cannot
- * flip mocked-spawner suites onto the cache path. Call at module scope (or
- * inside the surrounding `describe`). Cache-subject tests opt back in with
- * {@link withEnvVar}.
+ * Hides every ambient env var from the `Config` reads in `body`; `process.env` is untouched.
+ * Where `loadLocalProjectContext` also reads `process.env` as its `baseEnv`, pair it with
+ * `withEnvVar(name, undefined, ...)` so neither source sees the shell value.
  */
-export function useShadowCacheDisabled(): void {
-  const name = "SUPABASE_SHADOW_CACHE";
-  let previous: string | undefined;
-  beforeEach(() => {
-    previous = process.env[name];
-    process.env[name] = "0";
-  });
-  afterEach(() => {
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
-    previous = undefined;
-  });
-}
+export const withEmptyConfigEnv = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.provideService(
+    body,
+    ConfigProvider.ConfigProvider,
+    ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+  );
+
+/**
+ * Pins `SUPABASE_SHADOW_CACHE=0` under the layer it is merged into so the default-ON cache
+ * cannot flip mocked-spawner suites onto the cache path. Merge into the file's setup layer.
+ * A test that replaces the whole `ConfigProvider` inside it drops the pin, so such a provider
+ * must carry `SUPABASE_SHADOW_CACHE: "0"` itself. Cache-subject tests opt back in with
+ * {@link withConfigEnv} inside that layer.
+ */
+export const shadowCacheDisabledLayer = ConfigProvider.layerAdd(
+  ConfigProvider.fromEnvRecord({ SUPABASE_SHADOW_CACHE: "0" }, { preserveEmptyStrings: true }),
+  { asPrimary: true },
+);
 
 /**
  * Ambient isolation for tests that construct the real `commandSettingsLayer` /

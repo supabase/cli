@@ -2604,7 +2604,10 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           envOverride:
             context.projectEnvValues === undefined
               ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
+              : yield* viperEnvStringWithProjectFallback(
+                  "SUPABASE_NETWORK_ID",
+                  context.projectEnvValues,
+                ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

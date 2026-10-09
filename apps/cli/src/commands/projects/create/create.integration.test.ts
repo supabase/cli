@@ -15,7 +15,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { projectsCreateCommand, type ProjectsCreateFlags } from "./create.command.ts";
 import { projectsCreate } from "./create.handler.ts";
@@ -276,9 +276,8 @@ describe("projects create integration", () => {
     "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, api } = setup();
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        "true",
+      return withConfigEnv(
+        { SUPABASE_EXPERIMENTAL: "true" },
         Effect.gen(function* () {
           yield* projectsCreate({
             ...BASE_FLAGS,
