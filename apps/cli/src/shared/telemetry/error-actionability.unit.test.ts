@@ -297,8 +297,8 @@ describe("classifyCliCauseActionability", () => {
     });
   });
 
-  it("names an unclassified defect by its tag, name, and errno code, never its message", () => {
-    const secret = "private-token";
+  it("names an unclassified defect by its source-owned tag and errno code, never instance data", () => {
+    const secret = "privateToken";
     class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
       readonly message: string;
     }> {}
@@ -307,6 +307,20 @@ describe("classifyCliCauseActionability", () => {
       [new NamespaceDefect({ message: secret }), "error:Defect:Namespace.NamespaceError"],
       [Object.assign(new Error(secret), { code: "ENOENT" }), "error:Defect:Error:ENOENT"],
       [new Error(secret), "error:Defect:Error"],
+      [Object.assign(new Error(secret), { name: secret, _tag: secret }), "error:Defect:Error"],
+      [
+        Object.assign(new Error(secret), { code: `E${secret.toUpperCase()}` }),
+        "error:Defect:Error",
+      ],
+      [{ _tag: secret }, "error:Defect:object"],
+      [
+        Object.defineProperty(new Error(secret), "code", {
+          get: () => {
+            throw new Error(secret);
+          },
+        }),
+        "error:Defect:Unreadable",
+      ],
       [secret, "error:Defect:string"],
     ];
 

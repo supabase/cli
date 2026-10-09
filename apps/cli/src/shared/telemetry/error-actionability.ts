@@ -1,3 +1,4 @@
+import { constants as osConstants } from "node:os";
 import { Cause, Option, Predicate } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -656,11 +657,13 @@ function readDeclaration(error: unknown): CliErrorActionabilityDeclaration | und
   }
 }
 
-function safeIdentifier(value: string | undefined): string | undefined {
+/** `allowDots` admits namespaced tags such as `Namespace.NamespaceError`. */
+function safeIdentifier(value: string | undefined, allowDots = false): string | undefined {
   if (value === undefined) return undefined;
   // The length cap is defense-in-depth: every legitimate identifier is a
   // class/tag name, so an oversized value is never a real CLI error source.
-  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : undefined;
+  const pattern = allowDots ? /^[A-Za-z][A-Za-z0-9_.]{0,63}$/ : /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+  return pattern.test(value) ? value : undefined;
 }
 
 function readErrorTag(error: unknown): string | undefined {
@@ -698,7 +701,7 @@ function readDeclaredErrorFingerprintId(error: unknown): string | undefined {
  * identifier minification. Never invoke prototype getters here: only the
  * static data property created by Effect is a safe fingerprint authority.
  */
-function readStableTaggedPrototypeName(error: unknown): string | undefined {
+function readStableTaggedPrototypeName(error: unknown, allowDots = false): string | undefined {
   if (!(error instanceof Error)) return undefined;
   let prototype: unknown = Object.getPrototypeOf(error);
   while (prototype !== Error.prototype) {
@@ -706,7 +709,9 @@ function readStableTaggedPrototypeName(error: unknown): string | undefined {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "name");
     if (descriptor !== undefined && "value" in descriptor) {
       const name =
-        typeof descriptor.value === "string" ? safeIdentifier(descriptor.value) : undefined;
+        typeof descriptor.value === "string"
+          ? safeIdentifier(descriptor.value, allowDots)
+          : undefined;
       if (name !== undefined && name !== "Error") return name;
     }
     prototype = Object.getPrototypeOf(prototype);
@@ -962,24 +967,22 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   return toActionability(actionability.unknown, "error", undefined);
 }
 
-/** A dotted tag such as `Namespace.NamespaceError` is still a source-owned identifier. */
-function safeDefectIdentifier(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  return /^[A-Za-z][A-Za-z0-9_.]{0,63}$/.test(value) ? value : undefined;
-}
-
 /**
- * Names an unclassified defect by its tag, error name, and errno-style code, or by its type for
- * a non-error value. Never reads the message, so it carries no user data.
+ * Names an unclassified defect by its class's prototype tag and a known errno code, or by its type
+ * for a non-error value. Instance fields other than an errno code are never read, so only
+ * source-owned identifiers reach telemetry.
  */
 function defectIdentity(defect: unknown): string {
-  const error = unwrapNativeFailure(defect);
-  if (!isErrorRecord(error)) return typeof error;
-  const tag = safeDefectIdentifier(readString(error, "_tag"));
-  const name = error instanceof Error ? safeDefectIdentifier(error.name) : undefined;
-  const base = tag ?? name ?? (error instanceof Error ? "Error" : "object");
-  const code = readString(error, "code");
-  return code !== undefined && /^E[A-Z0-9]{1,30}$/.test(code) ? `${base}:${code}` : base;
+  try {
+    const error = unwrapNativeFailure(defect);
+    if (!isErrorRecord(error)) return typeof error;
+    if (!(error instanceof Error)) return "object";
+    const base = readStableTaggedPrototypeName(error, true) ?? "Error";
+    const code = readString(error, "code");
+    return code !== undefined && Object.hasOwn(osConstants.errno, code) ? `${base}:${code}` : base;
+  } catch {
+    return "Unreadable";
+  }
 }
 
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {
