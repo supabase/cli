@@ -762,6 +762,7 @@ function mockResetStackApi(opts: {
   const members = opts.postgresOnly === true ? [db] : composed;
   const stack: Stack = {
     id: RESET_STACK_ID,
+    launchedOwner: false,
     services: {
       create: () => Effect.die("unused"),
       get: (id) => {

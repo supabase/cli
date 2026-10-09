@@ -109,7 +109,7 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
       });
-    return yield* launchHost(state, { stateRoot, cacheRoot, stackId });
+    return (yield* launchHost(state, { stateRoot, cacheRoot, stackId })).access;
   });
 
 it.live.skipIf(process.platform === "win32")(
@@ -276,15 +276,16 @@ it.live.skipIf(process.platform === "win32")(
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
         });
-        const accessA3 = yield* launchHost(stateA3, {
+        const accessA3 = (yield* launchHost(stateA3, {
           stateRoot: rootA,
           cacheRoot,
           stackId,
           entrypoint: shortRegistrationPollFixture,
-        });
+        })).access;
         activeA = accessA3.endpoint;
         stoppedA = false;
-        const accessB3 = yield* launchHost(stateB3, { stateRoot: rootB, cacheRoot, stackId });
+        const accessB3 = (yield* launchHost(stateB3, { stateRoot: rootB, cacheRoot, stackId }))
+          .access;
         activeB = accessB3.endpoint;
         stoppedB = false;
 
@@ -377,12 +378,12 @@ it.live.skipIf(process.platform === "win32")(
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         // The shortened poll interval comes only from this dedicated test entrypoint, through
         // the internal `Context.Reference`; production startup never reads an env var or `Config`.
-        const access = yield* launchHost(state, {
+        const access = (yield* launchHost(state, {
           stateRoot,
           cacheRoot,
           stackId,
           entrypoint: shortRegistrationPollFixture,
-        });
+        })).access;
         const client = yield* ownerClient(access);
         const database = yield* client.createService({
           service: "database",
@@ -513,13 +514,13 @@ const losesRegistrationWhileStopRuns = (trigger: StopTrigger) =>
         composition: { members: [], dependencies: [] },
       });
       yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-      const access = yield* launchHost(state, {
+      const access = (yield* launchHost(state, {
         stateRoot,
         cacheRoot,
         stackId,
         entrypoint: gatedDockerStopFixture,
         entrypointArgs: [gateDir],
-      });
+      })).access;
       // Runs before the container and gate-directory cleanup: frees the held stop, signals the
       // owner (a signal during a running stop stays queued), and requires its exit.
       yield* Effect.addFinalizer(() =>
@@ -624,12 +625,12 @@ it.live.skipIf(process.platform === "win32")(
           composition: { members: [], dependencies: [] },
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        const access = yield* launchHost(state, {
+        const access = (yield* launchHost(state, {
           stateRoot,
           cacheRoot,
           stackId,
           entrypoint: shortRegistrationPollFixture,
-        });
+        })).access;
         const client = yield* ownerClient(access);
         // `mail` rather than `database`: its container holds no host-mounted data volume, so
         // deleting the state root out from under it doesn't also disrupt its own stop path — this
@@ -740,11 +741,11 @@ it.live.skipIf(process.platform === "win32")(
           composition: { members: [], dependencies: [] },
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        const access = yield* launchHost(state, {
+        const access = (yield* launchHost(state, {
           stateRoot,
           cacheRoot,
           stackId,
-        });
+        })).access;
         const client = yield* ownerClient(access);
         const password = Redacted.make("pinned-postgres-password");
         const database = yield* client.createService({

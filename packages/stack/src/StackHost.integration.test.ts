@@ -491,11 +491,11 @@ it.live(
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
         });
-        const access = yield* launchHost(state, {
+        const access = (yield* launchHost(state, {
           stateRoot: `${root}/state`,
           cacheRoot: testArtifactCacheRoot,
           stackId: "stack",
-        });
+        })).access;
         const { endpoint } = access;
         const http = yield* HttpClient.HttpClient;
         const identityUrl = `http://127.0.0.1:${endpoint.port}/identity`;
@@ -1052,7 +1052,7 @@ const endedOwnership = (prefix: string) =>
       stackId: saved.id,
       entrypoint: shortRegistrationPollFixture,
     });
-    const access = yield* launch;
+    const { access } = yield* launch;
     yield* Effect.addFinalizer(() =>
       shutdownOwner(access, true).pipe(
         Effect.ignore,
@@ -1074,7 +1074,7 @@ it.live.skipIf(process.platform === "win32")(
         const exited = yield* watchLeaseRelease(stateRoot, saved.id);
         yield* fs.remove(`${stateRoot}/${saved.id}`, { recursive: true });
         yield* state.save(saved);
-        const successor = yield* launch;
+        const { access: successor } = yield* launch;
         yield* Effect.addFinalizer(() =>
           shutdownOwner(successor, true).pipe(
             Effect.ignore,
@@ -1092,7 +1092,7 @@ it.live.skipIf(process.platform === "win32")(
           access.endpoint.pid,
         );
         expect((yield* state.readHolder(saved.id))?.role === "owner").toBe(true);
-        expect((yield* launch).endpoint.pid, "the successor is still discoverable").toBe(
+        expect((yield* launch).access.endpoint.pid, "the successor is still discoverable").toBe(
           successor.endpoint.pid,
         );
         yield* shutdownOwner(successor, false);

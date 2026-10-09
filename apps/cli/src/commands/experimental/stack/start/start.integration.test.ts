@@ -9,6 +9,7 @@ import {
   Layer,
   Option,
   Redacted,
+  Result,
   Schema,
   Sink,
   Stdio,
@@ -57,6 +58,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
+import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 
@@ -315,6 +317,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   };
   const stack: Stack = {
     id: "a".repeat(64),
+    launchedOwner: true,
     services: {
       create: <Input extends ServiceCreationInput>(_creation: Input) => Effect.die("unused"),
       get: (id: string) => {
@@ -1909,6 +1912,7 @@ describe("experimental stack start", () => {
             }),
           );
         }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      { timeout: 60_000 },
     );
   }
 
@@ -1945,5 +1949,134 @@ describe("experimental stack start", () => {
           expect(fixture.hostDestroyed).toBe(0);
         }
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "keeps the owner running when a concurrent start that attached to it fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-concurrent-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "concurrent"\n');
+        const stateRoot = `${root}/.supabase/stacks`;
+        const cacheRoot = `${root}/.supabase/cache/stack`;
+        const realApi = yield* StackApi.pipe(
+          Effect.provide(stackApiLayer.pipe(Layer.provide(BunServices.layer))),
+        );
+        const registered = yield* Effect.scoped(
+          realApi.create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" }),
+        );
+        yield* Effect.addFinalizer(() => destroyTestStacks(realApi, stateRoot, cacheRoot));
+
+        const launcher = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, launcher)));
+        const attacher = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, attacher)));
+        const auth = attacher.members.find(({ service }) => service === "auth");
+        if (auth === undefined) return yield* Effect.die("Expected an Auth member");
+        attacher.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+        attacher.setMemberReadiness(
+          auth.id,
+          Effect.fail(
+            new StackError({
+              operation: "service.ready",
+              message: "auth HTTP readiness timed out",
+            }),
+          ),
+        );
+
+        const launcherOpened = yield* Deferred.make<void>();
+        const attacherExited = yield* Deferred.make<void>();
+        const target = Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({
+              projectRoot: root,
+              id: registered.id,
+              runtime: "native" as const,
+              hostRunning: false,
+            }),
+        });
+        const run = (
+          fixture: typeof launcher,
+          output: ReturnType<typeof mockOutput>,
+          hooks: {
+            readonly opened: Effect.Effect<void>;
+            readonly listGate: Effect.Effect<void>;
+          },
+        ) => {
+          let launchedOwner: boolean | undefined;
+          const api = Layer.succeed(
+            StackApi,
+            StackApi.of({
+              ...realApi,
+              open: (options) =>
+                realApi.open(options).pipe(
+                  Effect.tap((handle) => {
+                    launchedOwner = handle.launchedOwner;
+                    return hooks.opened;
+                  }),
+                  Effect.map((handle) => ({
+                    ...fixture.stack,
+                    id: handle.id,
+                    launchedOwner: handle.launchedOwner,
+                    stop: handle.stop,
+                    services: {
+                      ...fixture.stack.services,
+                      list: hooks.listGate.pipe(Effect.andThen(fixture.stack.services.list)),
+                    },
+                  })),
+                ),
+            }),
+          );
+          return {
+            launched: () => launchedOwner,
+            effect: stackStart(flags()).pipe(
+              Effect.scoped,
+              Effect.provide(Layer.mergeAll(layers(root, fixture, output), target, api)),
+            ),
+          };
+        };
+        const launcherOutput = mockOutput();
+        const attacherOutput = mockOutput();
+        const launcherRun = run(launcher, launcherOutput, {
+          opened: Deferred.succeed(launcherOpened, undefined),
+          listGate: Deferred.await(attacherExited),
+        });
+        const attacherRun = run(attacher, attacherOutput, {
+          opened: Effect.void,
+          listGate: Effect.void,
+        });
+
+        const [launcherResult, attacherResult] = yield* Effect.all(
+          [
+            launcherRun.effect.pipe(Effect.result),
+            Deferred.await(launcherOpened).pipe(
+              Effect.andThen(
+                attacherRun.effect.pipe(
+                  Effect.ensuring(Deferred.succeed(attacherExited, undefined)),
+                  Effect.result,
+                ),
+              ),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(launcherRun.launched()).toBe(true);
+        expect(attacherRun.launched()).toBe(false);
+        expect(Result.isFailure(attacherResult)).toBe(true);
+        if (Result.isFailure(attacherResult)) {
+          expect(attacherResult.failure).toBeInstanceOf(StackCommandStartError);
+          expect(String(attacherResult.failure)).toContain("auth");
+        }
+        expect(launcherResult).toEqual(Result.succeed(registered.id));
+        for (const output of [launcherOutput, attacherOutput])
+          expect(output.stderrText).not.toContain("Failed to stop");
+        const [found] = yield* realApi.discover({ stateRoot });
+        expect(found?.definition.id).toBe(registered.id);
+        expect(found?.host).toBeDefined();
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    { timeout: 60_000 },
   );
 });

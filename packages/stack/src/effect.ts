@@ -246,6 +246,8 @@ export interface CommandRunner {
 /** A client handle; only the creating handle of a session stack owns its services. */
 export interface Stack {
   readonly id: string;
+  /** Whether opening this handle spawned the owner it reached, rather than attaching to a live one. */
+  readonly launchedOwner: boolean;
   readonly services: {
     readonly create: <Input extends ServiceCreationInput>(
       creation: Input,
@@ -328,7 +330,11 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   state: StackNamespace.Interface,
   saved: SavedStack,
   locations: StackLocations,
-  seed: { readonly access?: HostAccess; readonly creator?: boolean } = {},
+  seed: {
+    readonly access?: HostAccess;
+    readonly creator?: boolean;
+    readonly launchedOwner?: boolean;
+  } = {},
 ) {
   // Calls and streams release what they borrow in their own scope, not in the handle's.
   const services = Context.omit(Scope.Scope)(
@@ -358,7 +364,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const resolve = (reach: Reach) =>
     // A session stack's owner is spawned only by its creator, which holds the lifeline.
     reach === "launch" && (!session || seed.creator === true)
-      ? launchHost(state, launchOptions)
+      ? launchHost(state, launchOptions).pipe(Effect.map(({ access }) => access))
       : connectHost(state, saved.id).pipe(
           Effect.mapError((cause) =>
             session && ownerAbsent(cause) && reach === "launch"
@@ -514,7 +520,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.map(Option.some),
           Effect.catchIf(ownerAbsent, () =>
             Effect.gen(function* () {
-              if (destroy) return Option.some(yield* launchHost(state, launchOptions));
+              if (destroy) return Option.some((yield* launchHost(state, launchOptions)).access);
               yield* reclaimWithoutOwner;
               return Option.none<HostAccess>();
             }),
@@ -790,6 +796,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const definitions = savedDefinition.pipe(Effect.map((current) => current.instances));
   return {
     id: saved.id,
+    launchedOwner: seed.launchedOwner === true,
     services: {
       create,
       get: (id: string) =>
@@ -880,13 +887,17 @@ export const create = Effect.fn("Stack.create")(
         return yield* failure("create", "Stack already exists; use open", "already-exists");
       // The owner registers the stack under its lease and removes it if its startup fails, so no
       // sweep sees a session stack unowned and a failed launch leaves no registration behind.
-      const access = yield* launchHost(state, {
+      const { access, launched } = yield* launchHost(state, {
         ...locations,
         stackId: id,
         register: saved,
         lifeline: session,
       });
-      return yield* makeHandle(state, saved, locations, { access, creator: true });
+      return yield* makeHandle(state, saved, locations, {
+        access,
+        creator: true,
+        launchedOwner: launched,
+      });
     }
     yield* state.withLock(
       Effect.gen(function* () {
@@ -907,12 +918,12 @@ export const open = Effect.fn("Stack.open")(
     const saved = yield* state.read(options.id);
     if (saved === undefined) return yield* failure("open", "Stack does not exist", "state");
     const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
-    const access = !options.startOwner
-      ? undefined
+    const { access, launched } = !options.startOwner
+      ? { access: undefined, launched: false }
       : saved.lifetime === "session"
-        ? yield* connectHost(state, saved.id)
+        ? { access: yield* connectHost(state, saved.id), launched: false }
         : yield* launchHost(state, { ...locations, stackId: saved.id });
-    return yield* makeHandle(state, saved, locations, { access });
+    return yield* makeHandle(state, saved, locations, { access, launchedOwner: launched });
   },
   Effect.mapError((cause) => failure("open", cause)),
 );

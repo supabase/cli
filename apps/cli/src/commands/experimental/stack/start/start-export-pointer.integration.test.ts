@@ -89,6 +89,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
   };
   return {
     id: `stack-${sqlPort}`,
+    launchedOwner: false,
     services: {
       create: () => Effect.die("unused"),
       get: () => Effect.succeed(databaseInstance),

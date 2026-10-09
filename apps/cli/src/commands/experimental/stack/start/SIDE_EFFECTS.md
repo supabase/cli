@@ -187,9 +187,11 @@ A new stack is registered by its owner once that owner starts; if the owner fail
 example, Docker is unavailable) or the launch is interrupted, it removes that registration, and the
 CLI reports the single launch failure with no separate stop diagnostic. Any other failure or interruption during the first startup stops and
 unconfigures that initial composition, then destroys only the service instances created by this
-invocation. When startup began without a running owner, failure cleanup stops any owner launched
-during startup and waits for its exit. A target with a running owner keeps it. Existing instances and
-their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
+invocation. When this invocation launched the owner it reached, failure cleanup stops that owner and
+waits for its exit. An owner this invocation attached to, including one a concurrent start launched
+first, is kept. Ownership is decided when the stack is opened: if that owner exits and this invocation
+starts a replacement later in the same startup, a failed start leaves the replacement running, and
+`supabase stack stop --stack-id <id>` stops it. Existing instances and their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
 instance that could not be removed or owner that could not be stopped. After successful cleanup,
 fixing the cause and retrying starts from an empty composition.
 Successful startup leaves the owner available after the CLI exits. Abrupt process termination that

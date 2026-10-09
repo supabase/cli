@@ -498,7 +498,7 @@ it.live("rejects an owner of another release while stop and destroy still reach 
       ...options,
       stackId: stack.id,
       entrypoint: fileURLToPath(new URL("../tests/release-owner-fixture.ts", import.meta.url)),
-    });
+    }).pipe(Effect.map(({ access }) => access));
 
     const stale = yield* startForeignOwner;
     expect(stale.endpoint.release).toBe(foreignRelease);
@@ -1018,11 +1018,11 @@ it.live("confirms owner exit after shutdown even while a stray handle keeps its 
     const state = yield* StackNamespace.Service.pipe(
       Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
-    const owner = yield* launchHost(state, {
+    const owner = (yield* launchHost(state, {
       ...options,
       stackId: stack.id,
       entrypoint: fileURLToPath(new URL("../tests/lingering-owner-fixture.ts", import.meta.url)),
-    });
+    })).access;
 
     yield* stack.stop;
 

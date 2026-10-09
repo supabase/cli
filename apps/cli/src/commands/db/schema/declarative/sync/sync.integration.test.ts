@@ -143,6 +143,7 @@ function syncStackApi(workdir: string, port: number) {
   };
   const stack: Stack = {
     id: SYNC_STACK_ID,
+    launchedOwner: false,
     services: {
       create: unusedSyncFn,
       list: Effect.succeed([database]),

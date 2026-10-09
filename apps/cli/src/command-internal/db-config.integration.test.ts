@@ -465,6 +465,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     };
     const stack: Stack = {
       id: "b".repeat(64),
+      launchedOwner: false,
       services: { create: () => unused, get: () => Effect.succeed(database), list: unused },
       credentials: { get: unused },
       composition: {

@@ -516,7 +516,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       (stack) =>
         Ref.get(startupComplete).pipe(
           Effect.flatMap((complete) =>
-            complete || target.hostRunning
+            complete || !stack.launchedOwner
               ? Effect.void
               : stack.stop.pipe(
                   Effect.catch((error) =>

@@ -130,6 +130,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
   };
   const stack = {
     id,
+    launchedOwner: false,
     services: {
       create: () => Effect.die("unused"),
       get: () => Effect.succeed(database),

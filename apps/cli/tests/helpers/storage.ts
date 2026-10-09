@@ -242,6 +242,7 @@ export function buildStorageStackApi(
     : [{ id: database.id, activation: "eager" as const }];
   const stack: Stack = {
     id: STORAGE_STACK_ID,
+    launchedOwner: false,
     services: {
       create: () => Effect.die("unused"),
       get: (id: string) =>
