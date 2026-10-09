@@ -3,7 +3,7 @@ import { NodeServices } from "@effect/platform-node";
 import { Config, Effect, Option, Path } from "effect";
 import { existsSync, watch, writeFileSync } from "node:fs"; // oxlint-disable-line effecttsgo/node-builtin-import -- synchronous watcher subscription and marker writes are the fixture boundary.
 
-const environment = (name: string) => Effect.runSync(Config.option(Config.string(name)));
+const environment = (name: string) => Effect.runSync(Config.option(Config.String(name)));
 const marker = environment("SUPABASE_TIMEOUT_MARKER");
 const defectMarker = environment("SUPABASE_TIMEOUT_DEFECT_MARKER");
 const doubleFailure = environment("SUPABASE_TIMEOUT_DOUBLE_FAILURE");

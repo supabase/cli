@@ -402,7 +402,7 @@ export const accessTokenForProfile = Effect.fn("CommandCredentials.accessTokenFo
       return Option.some(cliSettings.accessToken.value);
     }
 
-    const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
+    const noKeyring = yield* Config.option(Config.String("SUPABASE_NO_KEYRING")).parse(
       configProvider,
     );
     const keyringModule = yield* loadKeyringModule(fs, noKeyring);
@@ -435,7 +435,7 @@ const makeCommandCredentials = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
   const configProvider = yield* ConfigProvider.ConfigProvider;
-  const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
+  const noKeyring = yield* Config.option(Config.String("SUPABASE_NO_KEYRING")).parse(
     configProvider,
   );
   const debugLogger = yield* DebugLogger;

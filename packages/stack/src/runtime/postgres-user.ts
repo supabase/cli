@@ -1,5 +1,5 @@
 import { Config, Context, Crypto, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { contentDigestHex } from "../internal/content-digest.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";
@@ -121,7 +121,7 @@ export const resolveNativePostgresUser = Effect.fn("NativePostgresUser.resolve")
   const fs = yield* FileSystem.FileSystem;
   const env: Record<string, string> = {};
   for (const name of environmentNames) {
-    const value = yield* Config.option(Config.string(name)).pipe(
+    const value = yield* Config.option(Config.String(name)).pipe(
       Effect.orElseSucceed(() => Option.none()),
     );
     if (Option.isSome(value)) env[name] = value.value;

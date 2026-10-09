@@ -43,7 +43,7 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
 
 /** The slim-image flag from the process environment, never the active `ConfigProvider`. */
 export const slimImagesEnabled = Effect.suspend(() =>
-  Config.option(Config.string(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
+  Config.option(Config.String(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
 ).pipe(Effect.map(Option.exists((value) => value === "true" || value === "1")), Effect.orDie);
 
 /** Catalog tag: `v`-prefixed for application services; postgres, studio, and vector stay bare. */

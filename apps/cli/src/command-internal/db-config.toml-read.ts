@@ -44,7 +44,7 @@ export interface DbTomlValues {
    * loaded project `.env*` files (non-empty), else `undefined`. Handlers must
    * call this rather than reading `process.env` directly.
    */
-  readonly envLookup: (name: string) => string | undefined;
+  readonly envLookup: (name: EnvOverrideName) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
@@ -228,6 +228,9 @@ interface RemoteOverride {
   readonly remoteOverrideKeys: ReadonlySet<string>;
 }
 
+const remoteProjectIdEnvName = (name: string): string =>
+  `SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`;
+
 /**
  * The `project_id` of a `[remotes.<name>]` block for matching/duplicate
  * detection: `SUPABASE_REMOTES_<NAME>_PROJECT_ID` wins when non-empty, else
@@ -239,7 +242,7 @@ function resolveRemoteProjectId(
   block: RawDoc | undefined,
   lookup: EnvLookup,
 ): string | undefined {
-  const fromEnv = lookup(`SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`);
+  const fromEnv = lookup(remoteProjectIdEnvName(name));
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
   const literal = block?.["project_id"];
   return typeof literal === "string" ? literal : undefined;
@@ -255,7 +258,7 @@ function resolveValidatedRemoteProjectId(
   block: RawDoc | undefined,
   lookup: EnvLookup,
 ): string | undefined {
-  const fromEnv = lookup(`SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`);
+  const fromEnv = lookup(remoteProjectIdEnvName(name));
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
   const literal = block?.["project_id"];
   return typeof literal === "string" ? expandEnv(literal, lookup) : undefined;
@@ -620,6 +623,14 @@ export function envRefName(value: string): string | undefined {
   return matches === null ? undefined : (matches[1] ?? "");
 }
 
+export function envRefNames(node: unknown): ReadonlyArray<string> {
+  if (typeof node === "string") {
+    const name = envRefName(node);
+    return name === undefined ? [] : [name];
+  }
+  return typeof node === "object" && node !== null ? Object.values(node).flatMap(envRefNames) : [];
+}
+
 /**
  * The substitution rule for an `env(VAR)` reference: the resolved value wins only when it
  * is set and non-empty; otherwise the `env(VAR)` literal is preserved unchanged. Shared
@@ -762,11 +773,20 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 const DEFAULT_SUPABASE_ENV = "development";
 
 export const configEnvOption = Effect.fnUntraced(function* (name: string) {
-  return yield* Config.option(Config.string(name)).pipe(
+  return yield* Config.option(Config.String(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
     ),
   );
+});
+
+export const resolveShellEnv = Effect.fnUntraced(function* (names: Iterable<string>) {
+  const resolved = new Map<string, string>();
+  for (const name of new Set(names)) {
+    const value = yield* configEnvOption(name);
+    if (Option.isSome(value)) resolved.set(name, value.value);
+  }
+  return resolved;
 });
 
 /**
@@ -865,17 +885,13 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
   if (envValue !== undefined) {
     const parsed = parseGoBool(expandEnv(envValue, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` });
     }
     return parsed;
   }
   const resolved = resolveBool(value, fallback, lookup);
   if (resolved === "invalid") {
-    return yield* Effect.fail(
-      new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-    );
+    return yield* new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` });
   }
   return resolved;
 });
@@ -895,9 +911,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   if (envValue !== undefined) {
     const parsed = parseGoBool(expandEnv(envValue, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` });
     }
     return Option.some(parsed);
   }
@@ -907,18 +921,14 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   if (typeof value === "string") {
     const parsed = parseGoBool(expandEnv(value, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` });
     }
     return Option.some(parsed);
   }
   // A present non-scalar value is a decode failure, not absent — reject it here
   // rather than silently treating it as `None`.
   if (value === undefined) return Option.none<boolean>();
-  return yield* Effect.fail(
-    new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-  );
+  return yield* new DbConfigLoadError({ message: `failed to parse config: invalid ${field}.` });
 });
 
 const VAULT_SECRET_PATH = ["db", "vault", "*"] as const;
@@ -1030,6 +1040,34 @@ export const assertDecryptableSecrets = (
 // An absent `auth.site_url` defaults to this value; only an explicit empty string fails.
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
 
+const ENV_OVERRIDE_NAMES = [
+  "SUPABASE_PROJECT_ID",
+  "SUPABASE_DB_PORT",
+  "SUPABASE_DB_SHADOW_PORT",
+  "SUPABASE_DB_MAJOR_VERSION",
+  "SUPABASE_DB_ORIOLEDB_VERSION",
+  "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
+  "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
+  "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
+  "SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH",
+  "SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS",
+  "SUPABASE_AUTH_ENABLED",
+  "SUPABASE_ANALYTICS_BACKEND",
+  "SUPABASE_ANALYTICS_ENABLED",
+  "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
+  "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
+  "SUPABASE_ANALYTICS_GCP_JWT_PATH",
+  "SUPABASE_DB_MIGRATIONS_ENABLED",
+  "SUPABASE_DB_SEED_ENABLED",
+  "SUPABASE_DB_SEED_SQL_PATHS",
+  "SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+  "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
+  "SUPABASE_API_SCHEMAS",
+  "SUPABASE_EXPERIMENTAL_PG_DELTA",
+] as const;
+
+type EnvOverrideName = (typeof ENV_OVERRIDE_NAMES)[number];
+
 /**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
  * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
@@ -1082,7 +1120,35 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `project_id` env() forms are expanded before they are validated or used to derive
   // Docker IDs.
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
+  let doc: RawDoc | undefined;
+  if (Option.isSome(maybeContent)) {
+    doc = yield* Effect.try({
+      try: () => asRecord(SmolToml.parse(maybeContent.value)),
+      catch: (cause) =>
+        new DbConfigLoadError({
+          message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+    // Same per-section promotion as the config loader, before the remote merge; the loader owns
+    // the deprecation warning.
+    doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
+  }
+  const shellOverrideEnv = yield* resolveShellEnv(ENV_OVERRIDE_NAMES);
+  // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
+  // value/default. An empty env value is ignored, and the project `.env` files are
+  // loaded into the environment first, so consult both.
+  const envOverride = (name: EnvOverrideName): string | undefined => {
+    const fromShell = shellOverrideEnv.get(name);
+    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
+    const fromFile = projectEnv[name];
+    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
+  };
+  const shellRefEnv = yield* resolveShellEnv([
+    ...envRefNames(doc),
+    ...Object.keys(asRecord(doc?.["remotes"]) ?? {}).map(remoteProjectIdEnvName),
+    ...ENV_OVERRIDE_NAMES.flatMap((name) => envRefNames(envOverride(name))),
+  ]);
+  const lookup: EnvLookup = (name) => shellRefEnv.get(name) ?? projectEnv[name];
   // dotenvx private keys for decrypting `encrypted:` secrets below.
   const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
 
@@ -1106,39 +1172,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // The matched `[remotes.<name>]` block name, echoed as the config-override line.
   let appliedRemote: string | undefined;
   if (Option.isSome(maybeContent)) {
-    let doc: RawDoc | undefined;
-    try {
-      doc = asRecord(SmolToml.parse(maybeContent.value));
-    } catch (cause) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-      );
-    }
-    // Same per-section promotion as the config loader, before the remote merge; the loader owns
-    // the deprecation warning.
-    doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
     // Config load aborts when two `[remotes.*]` blocks share a `project_id`,
     // regardless of which command runs — check before merging.
     const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
     if (duplicateRemote !== undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `duplicate project_id for [remotes.${duplicateRemote.name}] and [remotes.${duplicateRemote.other}]`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `duplicate project_id for [remotes.${duplicateRemote.name}] and [remotes.${duplicateRemote.other}]`,
+      });
     }
     // Validation rejects any remote whose `project_id` is not a valid 20-char ref, on
     // every load, after the duplicate check. So a malformed remote fails even
     // local/direct commands before any DB connection.
     const invalidRemote = findInvalidRemoteProjectId(doc, lookup);
     if (invalidRemote !== undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `Invalid config for remotes.${invalidRemote}.project_id. Must be like: abcdefghijklmnopqrst`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `Invalid config for remotes.${invalidRemote}.project_id. Must be like: abcdefghijklmnopqrst`,
+      });
     }
     // Apply a matching `[remotes.<name>]` override: merge the block whose
     // `project_id` equals the resolved ref over the base.
@@ -1175,7 +1224,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       includeVault: resolveVaultSecrets,
     });
     if (secretError !== undefined) {
-      return yield* Effect.fail(new DbConfigLoadError({ message: secretError }));
+      return yield* new DbConfigLoadError({ message: secretError });
     }
   }
   // `remoteOverrideKeys` has its final value from here on — see `makeRemoteWins`'s own doc
@@ -1188,16 +1237,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const poolerConnectionString = yield* fs
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
-
-  // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
-  // value/default. An empty env value is ignored, and the project `.env` files are
-  // loaded into the environment first, so consult both.
-  const envOverride = (name: string): string | undefined => {
-    const fromShell = process.env[name];
-    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
-    const fromFile = projectEnv[name];
-    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
-  };
 
   // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` used to name the local
   // stack's Docker resources, unless a matched `[remotes.<ref>]` block already set
@@ -1213,9 +1252,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // remote `db reset`) fails fast instead of running against a config that should have
   // already failed validation.
   if (projectIdExplicitEmpty && Option.isNone(projectId)) {
-    return yield* Effect.fail(
-      new DbConfigLoadError({ message: "Missing required field in config: project_id" }),
-    );
+    return yield* new DbConfigLoadError({
+      message: "Missing required field in config: project_id",
+    });
   }
 
   // A present-but-unmarshalable port aborts rather than defaulting, so a broken `[db]`
@@ -1232,19 +1271,15 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
   );
   if (port === undefined || shadowPort === undefined) {
-    return yield* Effect.fail(
-      new DbConfigLoadError({
-        message: `failed to load config: invalid ${port === undefined ? "db.port" : "db.shadow_port"} value`,
-      }),
-    );
+    return yield* new DbConfigLoadError({
+      message: `failed to load config: invalid ${port === undefined ? "db.port" : "db.shadow_port"} value`,
+    });
   }
   // An explicit `db.port = 0` is a load error (an absent port is defaulted first);
   // `resolvePort` accepts 0 as a valid uint16, so the zero check lives here. No
   // equivalent check for `shadow_port`.
   if (port === 0) {
-    return yield* Effect.fail(
-      new DbConfigLoadError({ message: "Missing required field in config: db.port" }),
-    );
+    return yield* new DbConfigLoadError({ message: "Missing required field in config: db.port" });
   }
 
   // `db.password` isn't part of the config schema — it's a TS-only extension for
@@ -1265,11 +1300,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       typeof majorVersionRaw === "string"
         ? expandEnv(majorVersionRaw, lookup)
         : String(majorVersionRaw);
-    return yield* Effect.fail(
-      new DbConfigLoadError({
-        message: `Failed reading config: Invalid db.major_version: ${shown}.`,
-      }),
-    );
+    return yield* new DbConfigLoadError({
+      message: `Failed reading config: Invalid db.major_version: ${shown}.`,
+    });
   }
   // An unsupported major version is rejected by the single `validateResolvedConfig`
   // call below; an absent value defaults first, a present one (including 0) flows through.
@@ -1318,11 +1351,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       typeof denoVersionRaw === "string"
         ? expandEnv(denoVersionRaw, lookup)
         : String(denoVersionRaw);
-    return yield* Effect.fail(
-      new DbConfigLoadError({
-        message: `Failed reading config: Invalid edge_runtime.deno_version: ${shown}.`,
-      }),
-    );
+    return yield* new DbConfigLoadError({
+      message: `Failed reading config: Invalid edge_runtime.deno_version: ${shown}.`,
+    });
   }
   // An invalid deno_version is rejected by the single `validateResolvedConfig` call
   // below; an absent key falls through to the default (2).
@@ -1346,11 +1377,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expandedWebhooksEnabledEnv = expandEnv(webhooksEnabledEnv, lookup);
     const parsed = parseGoBool(expandedWebhooksEnabledEnv);
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
+      });
     }
     webhooksEnabled = parsed;
   } else if (typeof webhooksEnabledRaw === "boolean") {
@@ -1361,11 +1390,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   } else if (typeof webhooksEnabledRaw === "string") {
     const parsed = parseGoBool(expandEnv(webhooksEnabledRaw, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandEnv(webhooksEnabledRaw, lookup)}.`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandEnv(webhooksEnabledRaw, lookup)}.`,
+      });
     }
     webhooksEnabled = parsed;
   } else {
@@ -1388,11 +1415,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expandedEnabledEnv = expandEnv(enabledEnv, lookup);
     const parsed = parseGoBool(expandedEnabledEnv);
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandedEnabledEnv}.`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandedEnabledEnv}.`,
+      });
     }
     enabled = parsed;
   } else if (typeof enabledRaw === "boolean") {
@@ -1403,11 +1428,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   } else if (typeof enabledRaw === "string") {
     const parsed = parseGoBool(expandEnv(enabledRaw, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new DbConfigLoadError({
-          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandEnv(enabledRaw, lookup)}.`,
-        }),
-      );
+      return yield* new DbConfigLoadError({
+        message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandEnv(enabledRaw, lookup)}.`,
+      });
     }
     enabled = parsed;
   } else {
@@ -1459,15 +1482,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof rawLimit !== "string" && typeof rawLimit !== "number") continue;
       const limitString =
         typeof rawLimit === "number" ? String(rawLimit) : expandEnv(rawLimit, lookup);
-      try {
-        ramInBytes(limitString);
-      } catch {
-        return yield* Effect.fail(
+      yield* Effect.try({
+        try: () => ramInBytes(limitString),
+        catch: () =>
           new DbConfigLoadError({
             message: `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
           }),
-        );
-      }
+      });
     }
   }
 
@@ -1541,15 +1562,18 @@ const readDbTomlCore = Effect.fnUntraced(function* (
           ),
         );
       yield* Effect.try({
-        try: () => {
-          const parsed: unknown = JSON.parse(keysJson);
-          if (!Array.isArray(parsed)) {
-            throw new Error("signing keys must be a JSON array of JWKs");
-          }
-          return parsed;
-        },
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+        try: (): unknown => JSON.parse(keysJson),
         catch: (cause) => new DbConfigLoadError({ message: signingKeysDecodeErrorMessage(cause) }),
-      });
+      }).pipe(
+        Effect.filterOrFail(
+          Array.isArray,
+          () =>
+            new DbConfigLoadError({
+              message: signingKeysDecodeErrorMessage("signing keys must be a JSON array of JWKs"),
+            }),
+        ),
+      );
     }
 
     // A6: passkey/webauthn when passkey enabled.
@@ -1758,7 +1782,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // section defaults to enabled+postgres.
   const analyticsString = (
     key: "backend" | "gcp_project_id" | "gcp_project_number" | "gcp_jwt_path",
-    envName: string,
+    envName: EnvOverrideName,
   ): string => {
     const fromEnv = remoteWins(`analytics.${key}`) ? undefined : envOverride(envName);
     const raw = fromEnv ?? analyticsRaw?.[key];
@@ -2105,9 +2129,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (isEncryptedSecret(value)) {
         const decrypted = decryptSecret(value, dotenvPrivateKeys);
         if (!decrypted.ok) {
-          return yield* Effect.fail(
-            new DbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` }),
-          );
+          return yield* new DbConfigLoadError({
+            message: `failed to parse config: ${decrypted.error}`,
+          });
         }
         vault.push({ name, value: decrypted.value, resolved: true });
         continue;
@@ -2134,9 +2158,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
   );
   if (apiSchemas === undefined) {
-    return yield* Effect.fail(
-      new DbConfigLoadError({ message: "failed to parse config: invalid api.schemas." }),
-    );
+    return yield* new DbConfigLoadError({
+      message: "failed to parse config: invalid api.schemas.",
+    });
   }
 
   const values: DbTomlValues = {

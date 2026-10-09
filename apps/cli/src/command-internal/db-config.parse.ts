@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { type Cause, Config, Effect, FileSystem, Option, Path } from "effect";
 import { getDomain } from "tldts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import { pgpassPassword } from "./pgpass.ts";
@@ -12,12 +11,31 @@ const DIRECT_PORT = 5432;
 /**
  * Environment lookup used for libpq `PG*` fallbacks. Injected so the resolver can layer the
  * project `.env*` files under the shell environment before reading
- * `PGHOST`/`PGPASSWORD`/`PGSSLMODE`/…. Defaults to `process.env` so the pure call sites (and the
+ * `PGHOST`/`PGPASSWORD`/`PGSSLMODE`/…. Defaults to the shell env so the other call sites (and the
  * pooler path, whose connection string is fully specified) keep their existing behavior.
  */
-export type ParseEnv = (name: string) => string | undefined;
+export type ParseEnv = (name: ParseEnvName) => string | undefined;
 
-const processEnv: ParseEnv = (name) => process.env[name];
+const PARSE_ENV_NAMES = [
+  "APPDATA",
+  "PGAPPNAME",
+  "PGCONNECT_TIMEOUT",
+  "PGDATABASE",
+  "PGHOST",
+  "PGPASSFILE",
+  "PGPASSWORD",
+  "PGPORT",
+  "PGSERVICE",
+  "PGSERVICEFILE",
+  "PGSSLCERT",
+  "PGSSLKEY",
+  "PGSSLMODE",
+  "PGSSLPASSWORD",
+  "PGSSLROOTCERT",
+  "PGUSER",
+] as const;
+
+type ParseEnvName = (typeof PARSE_ENV_NAMES)[number];
 
 /**
  * The `sslmode` values libpq accepts; any other value is a parse error
@@ -104,7 +122,7 @@ function resolveClientCert(
   svc: (key: string) => string | undefined,
   env: ParseEnv,
 ): { sslcert?: string; sslkey?: string; sslpassword?: string } | "invalid" {
-  const pick = (key: string, pg: string): string | undefined => {
+  const pick = (key: string, pg: ParseEnvName): string | undefined => {
     const value = get(key) ?? svc(key) ?? libpqEnv(env, pg);
     return value !== null && value !== undefined && value.length > 0 ? value : undefined;
   };
@@ -124,7 +142,7 @@ function isInvalidSslmode(sslmode: string | null | undefined): boolean {
 }
 
 /** Read a libpq `PG*` env var, treating empty as unset. */
-function libpqEnv(env: ParseEnv, name: string): string | undefined {
+function libpqEnv(env: ParseEnv, name: ParseEnvName): string | undefined {
   const value = env(name);
   return value !== undefined && value.length > 0 ? value : undefined;
 }
@@ -134,13 +152,18 @@ function libpqEnv(env: ParseEnv, name: string): string | undefined {
  * common unix-socket directory, else `localhost`; Windows always uses `localhost`. `PGHOST`
  * (applied by the callers) takes priority over this.
  */
-function defaultLibpqHost(): string {
+const defaultLibpqHost = Effect.fnUntraced(function* (): Effect.fn.Return<
+  string,
+  never,
+  FileSystem.FileSystem
+> {
   if (process.platform === "win32") return "localhost";
+  const fs = yield* FileSystem.FileSystem;
   for (const candidate of ["/var/run/postgresql", "/private/tmp", "/tmp"]) {
-    if (existsSync(candidate)) return candidate;
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
   }
   return "localhost";
-}
+});
 
 /**
  * Resolve the libpq `PGPORT` fallback. An unset/empty value uses the default 5432, a numeric
@@ -185,10 +208,15 @@ function libpqConnectTimeout(
 const SERVICE_RESOLUTION_FAILED = Symbol("service-resolution-failed");
 
 /** libpq's default service file (`~/.pg_service.conf`); `PGSERVICEFILE` overrides. */
-function defaultServiceFilePath(): string | undefined {
-  const home = homedir();
-  return home.length > 0 ? join(home, ".pg_service.conf") : undefined;
-}
+const defaultServiceFilePath = Effect.fnUntraced(function* (): Effect.fn.Return<
+  string | undefined,
+  Cause.UnknownError,
+  Path.Path
+> {
+  const path = yield* Path.Path;
+  const home = yield* Effect.try(() => homedir());
+  return home.length > 0 ? path.join(home, ".pg_service.conf") : undefined;
+});
 
 /**
  * Resolve pgservice settings: when a `service` is set (connection string `service=`/`?service=`,
@@ -203,11 +231,15 @@ function defaultServiceFilePath(): string | undefined {
  * then fails resolution rather than silently falling back to `PGSERVICE`/defaults, so
  * `connStringService` is `null`/`undefined` only when the key is absent.
  */
-function resolveServiceSettings(
+const resolveServiceSettings = Effect.fnUntraced(function* (
   connStringService: string | null | undefined,
   connStringServicefile: string | undefined,
   env: ParseEnv,
-): Map<string, string> | typeof SERVICE_RESOLUTION_FAILED | undefined {
+): Effect.fn.Return<
+  Map<string, string> | typeof SERVICE_RESOLUTION_FAILED | undefined,
+  Cause.UnknownError,
+  FileSystem.FileSystem | Path.Path
+> {
   const service =
     connStringService !== null && connStringService !== undefined
       ? connStringService
@@ -226,12 +258,12 @@ function resolveServiceSettings(
   const servicefile =
     connStringServicefile !== undefined
       ? connStringServicefile
-      : (libpqEnv(env, "PGSERVICEFILE") ?? defaultServiceFilePath());
+      : (libpqEnv(env, "PGSERVICEFILE") ?? (yield* defaultServiceFilePath()));
   if (servicefile === undefined || servicefile.length === 0) {
     return SERVICE_RESOLUTION_FAILED;
   }
-  return pgServiceSettings(service, servicefile) ?? SERVICE_RESOLUTION_FAILED;
-}
+  return (yield* pgServiceSettings(service, servicefile)) ?? SERVICE_RESOLUTION_FAILED;
+});
 
 /**
  * A service setting: the raw value (including an intentional empty string) when the key is
@@ -256,7 +288,7 @@ function serviceValue(settings: Map<string, string> | undefined, key: string): s
  * It's honored ahead of `PGPASSFILE`/the default `~/.pgpass`; consumed only for password
  * resolution, never emitted as a runtime param.
  */
-function resolveLibpqPassword(
+const resolveLibpqPassword = Effect.fnUntraced(function* (
   connStringPassword: string | undefined,
   host: string,
   port: number,
@@ -264,10 +296,12 @@ function resolveLibpqPassword(
   user: string,
   env: ParseEnv,
   passfile: string | undefined,
-): string {
+): Effect.fn.Return<string, Cause.UnknownError, FileSystem.FileSystem | Path.Path> {
   const resolved = connStringPassword ?? libpqEnv(env, "PGPASSWORD") ?? "";
-  return resolved.length > 0 ? resolved : pgpassPassword(host, port, database, user, env, passfile);
-}
+  return resolved.length > 0
+    ? resolved
+    : yield* pgpassPassword(host, port, database, user, env, passfile);
+});
 
 /**
  * Zip a comma-separated host list with a comma-separated port list into the ordered dial
@@ -348,24 +382,36 @@ function parseHostPortSegment(segment: string): { host: string; port: string } {
  * `env` supplies the libpq `PG*` fallbacks; pass a lookup that layers the project `.env*` files
  * under the shell env so they apply before the parse.
  */
-export function parseConnectionString(
+export const parseConnectionString = Effect.fnUntraced(function* (
   value: string,
-  env: ParseEnv = processEnv,
-): PgConnInput | undefined {
+  env?: ParseEnv,
+): Effect.fn.Return<PgConnInput | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const parseEnv = env ?? (yield* layeredParseEnv({}));
   const trimmed = value.trim();
   // Only a literal `postgres://`/`postgresql://` prefix is parsed as a URL; everything else is
   // a libpq keyword/value DSN. A mistyped scheme like `https://host/db` falls through to the DSN
   // parser, which rejects it (no `key=value`) rather than connecting to a bogus host.
   if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
-    return parseUrlConnectionString(value, env);
+    return yield* parseUrlConnectionString(value, parseEnv).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
   }
-  return parseKeywordValueDsn(trimmed, env);
-}
+  return yield* parseKeywordValueDsn(trimmed, parseEnv).pipe(
+    Effect.catchTag("UnknownError", (error) => Effect.die(error.cause)),
+  );
+});
 
 /** Layers a project `.env*` lookup under the shell environment: shell presence wins over the project file. */
-export function layeredParseEnv(projectEnv: Readonly<Record<string, string>>): ParseEnv {
-  return (name) => process.env[name] ?? projectEnv[name];
-}
+export const layeredParseEnv = Effect.fnUntraced(function* (
+  projectEnv: Readonly<Record<string, string>>,
+): Effect.fn.Return<ParseEnv> {
+  const shell = new Map<string, string>();
+  for (const name of PARSE_ENV_NAMES) {
+    const value = yield* Config.option(Config.String(name)).pipe(Effect.orDie);
+    if (Option.isSome(value)) shell.set(name, value.value);
+  }
+  return (name) => shell.get(name) ?? projectEnv[name];
+});
 
 export type PoolerConfigResult =
   | { readonly _tag: "ok"; readonly conn: PgConnInput }
@@ -376,13 +422,13 @@ export type PoolerConfigResult =
  * require the project ref in the tenant user/options, verify the pooler domain belongs to the
  * active profile, and force transaction-pooler port 5432.
  */
-export function poolerConfigFromConnectionString(
+export const poolerConfigFromConnectionString = Effect.fnUntraced(function* (
   ref: string,
   connectionString: string,
   expectedPoolerHost: string,
-): PoolerConfigResult {
+): Effect.fn.Return<PoolerConfigResult, never, FileSystem.FileSystem | Path.Path> {
   const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
-  const parsed = parseConnectionString(sanitized);
+  const parsed = yield* parseConnectionString(sanitized);
   if (parsed === undefined) {
     return { _tag: "invalid", reason: "failed to parse pooler URL" };
   }
@@ -421,10 +467,17 @@ export function poolerConfigFromConnectionString(
       ...(optionsParam.length > 0 ? { options: optionsParam } : {}),
     },
   };
-}
+});
 
 /** Parse the WHATWG `postgres(ql)://` URL form. */
-function parseUrlConnectionString(value: string, env: ParseEnv): PgConnInput | undefined {
+const parseUrlConnectionString = Effect.fnUntraced(function* (
+  value: string,
+  env: ParseEnv,
+): Effect.fn.Return<
+  PgConnInput | undefined,
+  Cause.UnknownError,
+  FileSystem.FileSystem | Path.Path
+> {
   const trimmed = value.trim();
   // libpq accepts multi-host failover URLs (`postgres://h1:5432,h2:5433/db`), which WHATWG
   // `new URL()` rejects (the comma'd host:port is not a valid authority). Hand-extract the
@@ -461,198 +514,196 @@ function parseUrlConnectionString(value: string, env: ParseEnv): PgConnInput | u
       trimmed.slice(authorityStart + authority.length);
   }
 
-  let url: URL;
-  try {
-    url = new URL(normalized);
-  } catch {
+  const url = yield* Effect.try(() => new URL(normalized));
+  // `decodeURIComponent` throws on a malformed percent escape (e.g. `p%zz`).
+  // Keep each call inside `Effect.try` so a bad escape yields a normal parse failure
+  // rather than an untyped defect (CWE-209-safe: the caller redacts the URL).
+  const query = url.searchParams;
+  // Query-param settings are applied last and unconditionally, so a libpq URL query setting
+  // (`?host=`, `?port=`, `?dbname=`, `?user=`, `?password=`) overrides the structural
+  // userinfo/host/path even when empty — a present-but-empty `?dbname=` yields an empty
+  // database, distinct from an absent param. So branch on `query.has(key)` (present, even ""),
+  // not on a non-empty check. `searchParams` already percent-decodes, so query values are used
+  // verbatim.
+
+  // A URL that omits a field falls back to the libpq `PG*` env vars and then the libpq
+  // defaults. Resolve a pgservice (`?service=`/`PGSERVICE`) before applying defaults; its
+  // settings sit above env/defaults but below the explicit URL fields.
+  const serviceSettings = yield* resolveServiceSettings(
+    query.get("service"),
+    query.get("servicefile") ?? undefined,
+    env,
+  );
+  if (serviceSettings === SERVICE_RESOLUTION_FAILED) {
     return undefined;
   }
-  try {
-    // `decodeURIComponent` throws on a malformed percent escape (e.g. `p%zz`).
-    // Keep it inside the try so a bad escape yields a normal parse failure
-    // rather than an untyped defect (CWE-209-safe: the caller redacts the URL).
-    const query = url.searchParams;
-    // Query-param settings are applied last and unconditionally, so a libpq URL query setting
-    // (`?host=`, `?port=`, `?dbname=`, `?user=`, `?password=`) overrides the structural
-    // userinfo/host/path even when empty — a present-but-empty `?dbname=` yields an empty
-    // database, distinct from an absent param. So branch on `query.has(key)` (present, even ""),
-    // not on a non-empty check. `searchParams` already percent-decodes, so query values are used
-    // verbatim.
+  const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
 
-    // A URL that omits a field falls back to the libpq `PG*` env vars and then the libpq
-    // defaults. Resolve a pgservice (`?service=`/`PGSERVICE`) before applying defaults; its
-    // settings sit above env/defaults but below the explicit URL fields.
-    const serviceSettings = resolveServiceSettings(
-      query.get("service"),
-      query.get("servicefile") ?? undefined,
-      env,
-    );
-    if (serviceSettings === SERVICE_RESOLUTION_FAILED) {
-      return undefined;
-    }
-    const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
-
-    // A present `?user=` (even empty) overrides the userinfo; only an absent param
-    // falls back to userinfo → service → OS user.
-    const userQuery = query.get("user");
-    const structuralUser = decodeURIComponent(url.username);
-    const user =
-      userQuery !== null
-        ? userQuery
-        : structuralUser.length > 0
-          ? structuralUser
-          : (svc("user") ?? defaultOsUser(env));
-    // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the connection string
-    // omits it, before the TLS-mode default.
-    const sslmode =
-      url.searchParams.get("sslmode") ?? svc("sslmode") ?? libpqEnv(env, "PGSSLMODE") ?? null;
-    if (isInvalidSslmode(sslmode)) {
-      return undefined;
-    }
-    // libpq `sslrootcert` (query, service, or `PGSSLROOTCERT`) pins the server CA.
-    const sslrootcert =
-      url.searchParams.get("sslrootcert") ??
-      svc("sslrootcert") ??
-      libpqEnv(env, "PGSSLROOTCERT") ??
-      null;
-    // libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD); both or neither,
-    // else this is a parse error.
-    const clientCert = resolveClientCert((key) => url.searchParams.get(key), svc, env);
-    if (clientCert === "invalid") {
-      return undefined;
-    }
-    const options = url.searchParams.get("options") ?? svc("options") ?? null;
-    // Every other query setting (e.g. search_path, statement_timeout) is a startup runtime
-    // param forwarded to the server / pg-delta.
-    const runtimeParams = collectRuntimeParams(query, serviceSettings, env);
-    // A `passfile=` setting (query or service) points `.pgpass` resolution at a non-default
-    // file; a present `passfile=` (even empty) overrides PGPASSFILE/default, and a present-empty
-    // value then resolves to no `.pgpass` → empty password. Only an absent param falls back to
-    // the service value.
-    const passfileQuery = url.searchParams.get("passfile");
-    const passfile = passfileQuery !== null ? passfileQuery : svc("passfile");
-    // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`). A present query value
-    // (even empty) overrides service/env and is parsed (empty → error); only an absent query
-    // param falls back.
-    const connectTimeoutRaw = url.searchParams.has("connect_timeout")
-      ? url.searchParams.get("connect_timeout")
-      : (svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"));
-    const connectTimeout = libpqConnectTimeout(connectTimeoutRaw);
-    if (connectTimeout === CONNECT_TIMEOUT_INVALID) {
-      return undefined;
-    }
-
-    // Structural hosts/ports become comma-joined `host`/`port` settings. WHATWG `URL.hostname`
-    // keeps the brackets around an IPv6 literal (`[::1]`), so strip them before rejoining. For a
-    // multi-host URL the per-segment host/port were already split out by hand.
-    const structuralHosts = useHandSplit
-      ? segments.map((s) => parseHostPortSegment(s).host).filter((h) => h.length > 0)
-      : url.hostname.length > 0
-        ? [unbracketIpv6(url.hostname)]
-        : [];
-    const structuralPorts = useHandSplit
-      ? segments.map((s) => parseHostPortSegment(s).port).filter((p) => p.length > 0)
-      : url.port.length > 0
-        ? [url.port]
-        : [];
-
-    // A present `?host=` (even empty) overrides the structural host verbatim, and an empty
-    // value is a literal empty host — it does not fall back to PGHOST/default. Only an absent
-    // param falls back to structural → service → PGHOST → default.
-    const hostQuery = query.get("host");
-    const hostString =
-      hostQuery !== null
-        ? hostQuery
-        : structuralHosts.length > 0
-          ? structuralHosts.join(",")
-          : (svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost());
-    // A `?port=` query value is copied verbatim, and a multi-host URL may carry a
-    // comma-separated port list (`?port=5432,5433`). Reject only an empty `?port=` or a segment
-    // that is not numeric; `buildHostList` then zips and range-checks each. `url.port` is always
-    // digits.
-    const portQuery = query.get("port");
-    if (
-      portQuery !== null &&
-      (portQuery.length === 0 || portQuery.split(",").some((p) => !/^\d+$/.test(p)))
-    ) {
-      return undefined;
-    }
-    let portString: string;
-    if (portQuery !== null) {
-      portString = portQuery;
-    } else if (structuralPorts.length > 0) {
-      portString = structuralPorts.join(",");
-    } else {
-      const envPort = libpqPort(svc("port") ?? libpqEnv(env, "PGPORT"));
-      if (envPort === undefined) return undefined;
-      portString = String(envPort);
-    }
-
-    const hostList = buildHostList(hostString, portString);
-    if (hostList === undefined || hostList.length === 0) {
-      return undefined;
-    }
-    const primary = hostList[0]!;
-
-    // A present `?dbname=` (even empty) overrides the URL path verbatim — connecting with an
-    // empty database, since there's no `database` default. `database` is also accepted as an
-    // alias for `dbname`; prefer `dbname` when both appear. Only an absent param falls back to
-    // the path → service → PGDATABASE → resolved user.
-    const dbnameQuery = query.get("dbname") ?? query.get("database");
-    const structuralDb = decodeURIComponent(url.pathname.replace(/^\//, ""));
-    const database =
-      dbnameQuery !== null
-        ? dbnameQuery
-        : structuralDb.length > 0
-          ? structuralDb
-          : (svc("database") ?? libpqEnv(env, "PGDATABASE") ?? user);
-
-    // Password precedence: the query is applied last, so `?password=` overrides the userinfo
-    // password. A `:` in the raw userinfo marks a present (possibly empty) userinfo password —
-    // `user:@host` — which WHATWG `url.password` cannot distinguish from an absent one
-    // (`user@host`), so detect it from the raw string. `resolveLibpqPassword` then applies the
-    // PGPASSWORD/`.pgpass` rules.
-    const connStringPassword = query.has("password")
-      ? (query.get("password") ?? "")
-      : userinfoRaw.includes(":")
-        ? decodeURIComponent(url.password)
-        : undefined;
-    // Service password sits below the connection string but above PGPASSWORD/.pgpass.
-    // An explicit (even empty) connection-string password still wins (`?? ""`).
-    const password = resolveLibpqPassword(
-      connStringPassword ?? svc("password"),
-      primary.host,
-      primary.port,
-      database,
-      user,
-      env,
-      passfile,
-    );
-    return {
-      host: primary.host,
-      port: primary.port,
-      user,
-      password,
-      database,
-      ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
-      ...(options !== null && options.length > 0 ? { options } : {}),
-      ...(runtimeParams !== undefined ? { runtimeParams } : {}),
-      ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
-      ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
-      ...clientCert,
-      ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
-    };
-  } catch {
+  // A present `?user=` (even empty) overrides the userinfo; only an absent param
+  // falls back to userinfo → service → OS user.
+  const userQuery = query.get("user");
+  const structuralUser = yield* Effect.try(() => decodeURIComponent(url.username));
+  const user =
+    userQuery !== null
+      ? userQuery
+      : structuralUser.length > 0
+        ? structuralUser
+        : (svc("user") ?? defaultOsUser(env));
+  // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the connection string
+  // omits it, before the TLS-mode default.
+  const sslmode =
+    url.searchParams.get("sslmode") ?? svc("sslmode") ?? libpqEnv(env, "PGSSLMODE") ?? null;
+  if (isInvalidSslmode(sslmode)) {
     return undefined;
   }
-}
+  // libpq `sslrootcert` (query, service, or `PGSSLROOTCERT`) pins the server CA.
+  const sslrootcert =
+    url.searchParams.get("sslrootcert") ??
+    svc("sslrootcert") ??
+    libpqEnv(env, "PGSSLROOTCERT") ??
+    null;
+  // libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD); both or neither,
+  // else this is a parse error.
+  const clientCert = resolveClientCert((key) => url.searchParams.get(key), svc, env);
+  if (clientCert === "invalid") {
+    return undefined;
+  }
+  const options = url.searchParams.get("options") ?? svc("options") ?? null;
+  // Every other query setting (e.g. search_path, statement_timeout) is a startup runtime
+  // param forwarded to the server / pg-delta.
+  const runtimeParams = collectRuntimeParams(query, serviceSettings, env);
+  // A `passfile=` setting (query or service) points `.pgpass` resolution at a non-default
+  // file; a present `passfile=` (even empty) overrides PGPASSFILE/default, and a present-empty
+  // value then resolves to no `.pgpass` → empty password. Only an absent param falls back to
+  // the service value.
+  const passfileQuery = url.searchParams.get("passfile");
+  const passfile = passfileQuery !== null ? passfileQuery : svc("passfile");
+  // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`). A present query value
+  // (even empty) overrides service/env and is parsed (empty → error); only an absent query
+  // param falls back.
+  const connectTimeoutRaw = url.searchParams.has("connect_timeout")
+    ? url.searchParams.get("connect_timeout")
+    : (svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"));
+  const connectTimeout = libpqConnectTimeout(connectTimeoutRaw);
+  if (connectTimeout === CONNECT_TIMEOUT_INVALID) {
+    return undefined;
+  }
+
+  // Structural hosts/ports become comma-joined `host`/`port` settings. WHATWG `URL.hostname`
+  // keeps the brackets around an IPv6 literal (`[::1]`), so strip them before rejoining. For a
+  // multi-host URL the per-segment host/port were already split out by hand.
+  const structuralHosts = useHandSplit
+    ? segments.map((s) => parseHostPortSegment(s).host).filter((h) => h.length > 0)
+    : url.hostname.length > 0
+      ? [unbracketIpv6(url.hostname)]
+      : [];
+  const structuralPorts = useHandSplit
+    ? segments.map((s) => parseHostPortSegment(s).port).filter((p) => p.length > 0)
+    : url.port.length > 0
+      ? [url.port]
+      : [];
+
+  // A present `?host=` (even empty) overrides the structural host verbatim, and an empty
+  // value is a literal empty host — it does not fall back to PGHOST/default. Only an absent
+  // param falls back to structural → service → PGHOST → default.
+  const hostQuery = query.get("host");
+  const hostString =
+    hostQuery !== null
+      ? hostQuery
+      : structuralHosts.length > 0
+        ? structuralHosts.join(",")
+        : (svc("host") ?? libpqEnv(env, "PGHOST") ?? (yield* defaultLibpqHost()));
+  // A `?port=` query value is copied verbatim, and a multi-host URL may carry a
+  // comma-separated port list (`?port=5432,5433`). Reject only an empty `?port=` or a segment
+  // that is not numeric; `buildHostList` then zips and range-checks each. `url.port` is always
+  // digits.
+  const portQuery = query.get("port");
+  if (
+    portQuery !== null &&
+    (portQuery.length === 0 || portQuery.split(",").some((p) => !/^\d+$/.test(p)))
+  ) {
+    return undefined;
+  }
+  let portString: string;
+  if (portQuery !== null) {
+    portString = portQuery;
+  } else if (structuralPorts.length > 0) {
+    portString = structuralPorts.join(",");
+  } else {
+    const envPort = libpqPort(svc("port") ?? libpqEnv(env, "PGPORT"));
+    if (envPort === undefined) return undefined;
+    portString = String(envPort);
+  }
+
+  const hostList = buildHostList(hostString, portString);
+  if (hostList === undefined || hostList.length === 0) {
+    return undefined;
+  }
+  const primary = hostList[0]!;
+
+  // A present `?dbname=` (even empty) overrides the URL path verbatim — connecting with an
+  // empty database, since there's no `database` default. `database` is also accepted as an
+  // alias for `dbname`; prefer `dbname` when both appear. Only an absent param falls back to
+  // the path → service → PGDATABASE → resolved user.
+  const dbnameQuery = query.get("dbname") ?? query.get("database");
+  const structuralDb = yield* Effect.try(() => decodeURIComponent(url.pathname.replace(/^\//, "")));
+  const database =
+    dbnameQuery !== null
+      ? dbnameQuery
+      : structuralDb.length > 0
+        ? structuralDb
+        : (svc("database") ?? libpqEnv(env, "PGDATABASE") ?? user);
+
+  // Password precedence: the query is applied last, so `?password=` overrides the userinfo
+  // password. A `:` in the raw userinfo marks a present (possibly empty) userinfo password —
+  // `user:@host` — which WHATWG `url.password` cannot distinguish from an absent one
+  // (`user@host`), so detect it from the raw string. `resolveLibpqPassword` then applies the
+  // PGPASSWORD/`.pgpass` rules.
+  const connStringPassword = query.has("password")
+    ? (query.get("password") ?? "")
+    : userinfoRaw.includes(":")
+      ? yield* Effect.try(() => decodeURIComponent(url.password))
+      : undefined;
+  // Service password sits below the connection string but above PGPASSWORD/.pgpass.
+  // An explicit (even empty) connection-string password still wins (`?? ""`).
+  const password = yield* resolveLibpqPassword(
+    connStringPassword ?? svc("password"),
+    primary.host,
+    primary.port,
+    database,
+    user,
+    env,
+    passfile,
+  );
+  return {
+    host: primary.host,
+    port: primary.port,
+    user,
+    password,
+    database,
+    ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
+    ...(options !== null && options.length > 0 ? { options } : {}),
+    ...(runtimeParams !== undefined ? { runtimeParams } : {}),
+    ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
+    ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
+    ...clientCert,
+    ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
+  };
+});
 
 /**
  * Parse a libpq keyword/value DSN: whitespace-separated `keyword = value` pairs, with
  * single-quoted values and backslash escapes. Unknown keywords are ignored. Defaults follow
  * libpq: the user falls back to the OS account, the database to the user, and the port to 5432.
  */
-function parseKeywordValueDsn(value: string, env: ParseEnv): PgConnInput | undefined {
+const parseKeywordValueDsn = Effect.fnUntraced(function* (
+  value: string,
+  env: ParseEnv,
+): Effect.fn.Return<
+  PgConnInput | undefined,
+  Cause.UnknownError,
+  FileSystem.FileSystem | Path.Path
+> {
   const params = new Map<string, string>();
   const n = value.length;
   let i = 0;
@@ -707,7 +758,7 @@ function parseKeywordValueDsn(value: string, env: ParseEnv): PgConnInput | undef
   // also accepts comma-separated multi-host failover (`host=h1,h2 port=5432,5433`), zipped by
   // `buildHostList`. Resolve a pgservice (`service=`/`PGSERVICE`); its settings sit above
   // env/defaults but below the explicit DSN keywords.
-  const serviceSettings = resolveServiceSettings(
+  const serviceSettings = yield* resolveServiceSettings(
     params.get("service"),
     params.get("servicefile"),
     env,
@@ -719,7 +770,7 @@ function parseKeywordValueDsn(value: string, env: ParseEnv): PgConnInput | undef
   // the default host, never the address. Don't use `hostaddr` as a host fallback — it would dial
   // a different endpoint than the reference driver.
   const hostString =
-    params.get("host") ?? svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost();
+    params.get("host") ?? svc("host") ?? libpqEnv(env, "PGHOST") ?? (yield* defaultLibpqHost());
   // Explicit empty/non-numeric `port=` is a parse error; an absent `port` falls back to the
   // service, then `PGPORT`, then the libpq default.
   const portParam = params.get("port");
@@ -770,7 +821,7 @@ function parseKeywordValueDsn(value: string, env: ParseEnv): PgConnInput | undef
   if (connectTimeout === CONNECT_TIMEOUT_INVALID) return undefined;
   // Password precedence: a `password=` entry — even empty — overrides the service and
   // PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
-  const password = resolveLibpqPassword(
+  const password = yield* resolveLibpqPassword(
     params.has("password") ? params.get("password")! : svc("password"),
     primary.host,
     primary.port,
@@ -793,7 +844,7 @@ function parseKeywordValueDsn(value: string, env: ParseEnv): PgConnInput | undef
     ...clientCert,
     ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
   };
-}
+});
 
 /**
  * libpq's default user when the connection string omits one: `PGUSER` (an env setting) takes

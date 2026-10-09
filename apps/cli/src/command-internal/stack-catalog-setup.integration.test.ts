@@ -14,7 +14,7 @@ import {
   Result,
   Stream,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { create, StackError, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
@@ -155,7 +155,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     .databaseUrl;
                   if (hostDatabaseUrl === undefined)
                     return yield* Effect.die("host database URL missing");
-                  const host = parseConnectionString(hostDatabaseUrl);
+                  const host = yield* parseConnectionString(hostDatabaseUrl);
                   if (host === undefined) return yield* Effect.die("host database URL unparseable");
                   yield* Effect.scoped(
                     Effect.gen(function* () {
@@ -318,12 +318,11 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
         ).pipe(
           Effect.provide(
             Layer.mergeAll(
-              BunServices.layer,
               FetchHttpClient.layer,
               buildOutput.layer,
               stackCatalogSetupLayer,
               dbConnectionLayer,
-            ),
+            ).pipe(Layer.provideMerge(BunServices.layer)),
           ),
         );
       },

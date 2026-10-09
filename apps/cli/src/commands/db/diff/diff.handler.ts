@@ -1,5 +1,5 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   DebugFlag,
@@ -303,6 +303,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                       message: cause.message,
                       daemonDown: cause.daemonDown,
                       suggestion: cause.suggestion,
+                      cause,
                     }),
                 ),
               );

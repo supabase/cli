@@ -1,8 +1,8 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import { discover, open } from "./effect.ts";
 import { postgres } from "./Commands.ts";
 import * as PromiseStack from "./index.ts";

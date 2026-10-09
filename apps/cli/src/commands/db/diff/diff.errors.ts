@@ -1,6 +1,7 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
@@ -74,14 +75,15 @@ export class DbDiffDbNotRunningError extends Data.TaggedError("DbDiffDbNotRunnin
   readonly message: string;
   readonly daemonDown?: boolean;
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   // Must stay character-identical to `LocalDbRunningError`'s classification
   // (`legacy-db-bootstrap`'s equivalent local-db-not-running check). The two are kept in sync by
   // hand rather than shared, since they serve separate parity targets.
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.daemonDown === true
-      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
-      : actionability.startStack; // same preset `reset-local-database.ts` uses
+    if (this.daemonDown === true)
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    return causeDeclaration(this.cause) ?? actionability.startStack; // same preset `reset-local-database.ts` uses
   }
 }
 

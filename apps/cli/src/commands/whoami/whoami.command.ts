@@ -1,5 +1,5 @@
-import type * as CliCommand from "effect/unstable/cli/Command";
-import { Command } from "effect/unstable/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { Command } from "effect/cli";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";

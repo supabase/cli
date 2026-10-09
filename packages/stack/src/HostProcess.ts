@@ -17,16 +17,17 @@ import {
   Scope,
   Stream,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect ChildProcess cannot hand the owner a log file descriptor or release its lifeline pipe from the event loop.
 import { spawn, type ChildProcess } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the spawner shares its owner log descriptor with the owner and reads the log tail through it.
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
 import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
@@ -86,6 +87,7 @@ export class HostProcessError extends Data.TaggedError("HostProcessError")<{
   readonly message: string;
   readonly cause?: unknown;
   readonly reason?: HostFailureReason;
+  readonly kind?: StackFailureKind;
 }> {}
 type HostFailureReason =
   | "unregistered"
@@ -130,18 +132,28 @@ export const ShutdownFailure = Schema.Struct({
         id: Schema.String,
         succeeded: Schema.Boolean,
         error: Schema.optionalKey(Schema.String),
+        /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+        kind: Schema.optionalKey(Schema.String),
       }),
     ),
   ),
+  /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+  kind: Schema.optionalKey(Schema.String),
 });
 export interface ShutdownFailure extends Schema.Schema.Type<typeof ShutdownFailure> {}
 
-const error = (operation: string, cause: unknown, reason?: HostFailureReason) =>
+const error = (
+  operation: string,
+  cause: unknown,
+  reason?: HostFailureReason,
+  kind?: StackFailureKind,
+) =>
   new HostProcessError({
     operation,
     message: failureMessage(cause),
     cause,
     ...(reason === undefined ? {} : { reason }),
+    ...(kind === undefined ? {} : { kind }),
   });
 /** Matches owner failures by reason. */
 export const hasReason =
@@ -298,6 +310,8 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
         ? error(
             "connect",
             `Stack owner did not become reachable: ${failure.message} (owner log: ${state.ownerLog(stackId)})`,
+            undefined,
+            "owner-startup",
           )
         : failure,
     ),
@@ -359,6 +373,7 @@ const readyLine = Schema.Union([
     type: Schema.Literal("error"),
     message: Schema.String,
     reason: Schema.optionalKey(Schema.Literals(["lease-held", "exists", "runtime-unavailable"])),
+    kind: Schema.optionalKey(Schema.String),
   }),
 ]);
 
@@ -451,12 +466,13 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
     }),
     (descriptor) =>
       Effect.gen(function* () {
-        const failure = (cause: unknown, reason?: HostFailureReason) => {
+        const failure = (cause: unknown, reason?: HostFailureReason, kind?: StackFailureKind) => {
           const tail = logTail(descriptor);
           return error(
             "startup",
             `Stack owner failed to start: ${error("startup", cause).message} (owner log: ${log})${tail.length === 0 ? "" : `\n${tail}`}`,
             reason,
+            kind,
           );
         };
         const spawnFailed = yield* Deferred.make<never, HostProcessError>();
@@ -539,11 +555,17 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                     );
                 }
                 return yield* line.reason === "lease-held" || line.reason === "exists"
-                  ? error("startup", "Stack already exists; use open")
+                  ? error(
+                      "startup",
+                      "Stack already exists; use open",
+                      undefined,
+                      line.reason === "exists" ? "already-exists" : "lease-held",
+                    )
                   : error(
                       "startup",
                       `Stack owner failed to start: ${line.message} (owner log: ${log})`,
                       line.reason,
+                      isStackFailureKind(line.kind) ? line.kind : undefined,
                     );
               }
               if (line.endpoint.stackId !== options.stackId)

@@ -143,7 +143,7 @@ const input = (
 });
 
 const query = Effect.fn("ShadowTest.query")(function* (url: string, sql: string) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const db = yield* DbConnection;
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
@@ -249,7 +249,7 @@ describe("stack shadow databases", () => {
                 const credentials = yield* handle.database.credentials({ from: "host" });
                 if (credentials.databaseUrl === undefined)
                   return yield* Effect.die("missing database credentials");
-                const connection = parseConnectionString(credentials.databaseUrl);
+                const connection = yield* parseConnectionString(credentials.databaseUrl);
                 if (connection === undefined) return yield* Effect.die("invalid database URL");
                 expect(sql.port).toBe(handle.port);
                 expect(connection.port).toBe(sql.port);
@@ -395,7 +395,7 @@ describe("stack shadow databases", () => {
               const credentials = yield* recovered.database.credentials({ from: "host" });
               if (credentials.databaseUrl === undefined)
                 return yield* Effect.die("missing database credentials");
-              const connection = parseConnectionString(credentials.databaseUrl);
+              const connection = yield* parseConnectionString(credentials.databaseUrl);
               if (connection === undefined) return yield* Effect.die("invalid database URL");
               expect(sql.port).toBe(recovered.port);
               expect(connection.port).toBe(sql.port);

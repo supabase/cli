@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { sslEnforcementGetCommand } from "./get/get.command.ts";
 import { sslEnforcementUpdateCommand } from "./update/update.command.ts";
 

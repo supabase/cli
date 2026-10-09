@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -127,7 +127,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             database: "postgres",
           };
           const credentials = yield* handle.database.credentials({ from: "runtime" });
-          const dumpConn = parseConnectionString(credentials.databaseUrl ?? "");
+          const dumpConn = yield* parseConnectionString(credentials.databaseUrl ?? "");
           if (dumpConn === undefined)
             return yield* new MigrationSquashDumpError({
               message: "Shadow database tool URL is unavailable",

@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "@effect/vitest";
 import { Effect, Redacted } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vitest";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";

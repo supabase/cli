@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import {
   Cause,
   Data,
@@ -17,7 +17,7 @@ import {
   Schema,
   Stdio,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";

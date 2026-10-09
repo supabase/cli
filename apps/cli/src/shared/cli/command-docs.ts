@@ -1,4 +1,4 @@
-import type { Command, HelpDoc } from "effect/unstable/cli";
+import type { Command, HelpDoc } from "effect/cli";
 
 // Get HelpDoc from a command (uses internal buildHelpDoc)
 export function getHelpDoc(

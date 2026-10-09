@@ -1,7 +1,7 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";

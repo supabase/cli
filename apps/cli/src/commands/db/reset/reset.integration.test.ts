@@ -14,9 +14,9 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   mockOutput,
@@ -2439,7 +2439,7 @@ describe("db reset", () => {
           yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
         }),
-      );
+      ).pipe((body) => withConfigEnv({ MIGRATIONS_ENABLED: "true" }, body));
     });
 
     it.live("rejects mutually exclusive target flags", () => {

@@ -1,6 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
@@ -23,13 +20,19 @@ const pg15Image = dockerfileServiceImageRaw("pg15");
 const pg15Tag = imageTag(pg15Image) ?? "";
 const pg14Image = dockerfileServiceImageRaw("pg14");
 
-const withTemp = () => mkdtempSync(join(tmpdir(), "db-image-"));
+const withTemp = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.makeTempDirectoryScoped({ prefix: "db-image-" });
+});
 
-const writePin = (workdir: string, pinned: string) => {
-  const dir = join(workdir, "supabase", ".temp");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "postgres-version"), pinned);
-};
+const writePin = (workdir: string, pinned: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(workdir, "supabase", ".temp");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, "postgres-version"), pinned);
+  });
 
 const resolve = (workdir: string, majorVersion: number, orioledbVersion?: string) =>
   Effect.gen(function* () {
@@ -46,9 +49,9 @@ describe("resolveDbImage", () => {
     vi.unstubAllEnvs();
   });
 
-  it.effect("resolves the default Postgres image per major version", () => {
-    const dir = withTemp();
-    return Effect.gen(function* () {
+  it.effect("resolves the default Postgres image per major version", () =>
+    Effect.gen(function* () {
+      const dir = yield* withTemp;
       expect(yield* resolve(dir, 13)).toEqual({
         image: pg15Image,
         configImage: pg15Image,
@@ -65,13 +68,12 @@ describe("resolveDbImage", () => {
         image: dockerfileServiceImage("pg", false),
         configImage: currentPostgres,
       });
-      rmSync(dir, { recursive: true, force: true });
-    });
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("rewrites to the OrioleDB image on a 15/17 project (Go config.Validate)", () => {
-    const dir = withTemp();
-    return Effect.gen(function* () {
+  it.effect("rewrites to the OrioleDB image on a 15/17 project (Go config.Validate)", () =>
+    Effect.gen(function* () {
+      const dir = yield* withTemp;
       // > 15.1.1.13 → `<ver>-orioledb`
       expect(yield* resolve(dir, 17, "16.0.0.1")).toEqual({
         image: "supabase/postgres:16.0.0.1-orioledb",
@@ -86,40 +88,37 @@ describe("resolveDbImage", () => {
         image: "supabase/postgres:orioledb-15.1.0.55",
         configImage: "supabase/postgres:orioledb-15.1.0.55",
       });
-      rmSync(dir, { recursive: true, force: true });
-    });
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("ignores orioledb_version on a non-15/17 project", () => {
-    const dir = withTemp();
-    return Effect.gen(function* () {
+  it.effect("ignores orioledb_version on a non-15/17 project", () =>
+    Effect.gen(function* () {
+      const dir = yield* withTemp;
       expect(yield* resolve(dir, 14, "16.0.0.1")).toEqual({
         image: pg14Image,
         configImage: pg14Image,
       });
-      rmSync(dir, { recursive: true, force: true });
-    });
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   describe("pinned version with the slim-images flag on", () => {
     it.effect("keeps a 14 fallback on docker.io, not the slim registry", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
         expect(yield* resolve(dir, 14)).toEqual({
           image: pg14Image,
           configImage: pg14Image,
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("slims a pinned OrioleDB tag and keeps an unpinned one on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
       const [orioledb = ""] = orioledbVersions();
       const orioledbImage = `supabase/postgres:${orioledb}-orioledb`;
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
         expect(yield* resolve(dir, 17, orioledb)).toEqual({
           image: expectedPinnedImage("pg", orioledbImage),
           configImage: orioledbImage,
@@ -128,16 +127,15 @@ describe("resolveDbImage", () => {
           image: "supabase/postgres:17.0.0.000-orioledb",
           configImage: "supabase/postgres:17.0.0.000-orioledb",
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
       const pinned = expectedPinnedImage("pg", pg15Image);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
         expect(yield* resolve(dir, 15)).toEqual({
           image: pinned,
           configImage: pg15Image,
@@ -146,64 +144,59 @@ describe("resolveDbImage", () => {
           image: pinned,
           configImage: pg15Image,
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("keeps a historical PG15 pin on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
-      writePin(dir, "15.8.1.100");
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
+        yield* writePin(dir, "15.8.1.100");
         expect(yield* resolve(dir, 15)).toEqual({
           image: "supabase/postgres:15.8.1.100",
           configImage: "supabase/postgres:15.8.1.100",
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("rewrites a current PG15 pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
-      writePin(dir, pg15Tag);
       const pinned = expectedPinnedImage("pg", pg15Image);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
+        yield* writePin(dir, pg15Tag);
         expect(yield* resolve(dir, 15)).toEqual({
           image: pinned,
           configImage: pg15Image,
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("keeps a historical default-major pin on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
-      writePin(dir, "17.9.9.999");
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
+        yield* writePin(dir, "17.9.9.999");
         expect(yield* resolve(dir, 17)).toEqual({
           image: "supabase/postgres:17.9.9.999",
           configImage: "supabase/postgres:17.9.9.999",
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
     it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      const dir = withTemp();
-      writePin(dir, currentPostgresTag);
       const pinned = expectedPinnedImage("pg", currentPostgres);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
+        const dir = yield* withTemp;
+        yield* writePin(dir, currentPostgresTag);
         expect(yield* resolve(dir, 17)).toEqual({
           image: pinned,
           configImage: currentPostgres,
         });
-        rmSync(dir, { recursive: true, force: true });
-      });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
   });
 });

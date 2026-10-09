@@ -16,7 +16,7 @@ import {
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the redirect test owns a local native listener.
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { catalogPins, prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
