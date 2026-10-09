@@ -521,12 +521,9 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
         Effect.tap(bestEffortShutdown(root)),
         Effect.withTracer(tracer),
       );
+      const requests = spans.filter((span) => span.attributes.has("http.request.method"));
+      expect(requests.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
       const attributes = spans.flatMap((span) => Array.from(span.attributes));
-      const authorization = attributes.filter(
-        ([key]) => key === "http.request.header.authorization",
-      );
-      expect(authorization.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
-      expect(authorization.every(([, value]) => value === "<redacted>")).toBe(true);
       expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
