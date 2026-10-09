@@ -34,6 +34,7 @@ import {
   credentialsFor,
   endpointNames,
   endpointPort,
+  freshWrites,
   joinRoutes,
   outputsFor,
   publicUrl,
@@ -524,6 +525,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
               ),
             ),
           enabled,
+          ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
         };
