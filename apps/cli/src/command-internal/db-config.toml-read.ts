@@ -689,7 +689,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const activeSms = smsProviders.find((provider) => provider.enabled);
     if (activeSms !== undefined) {
       for (const field of activeSms.fields) {
-        if (nonEmpty(asRecord(activeSms.record)?.[field] as string | undefined) === undefined) {
+        if (Option.isNone(nonEmptyString(asRecord(activeSms.record)?.[field]))) {
           return yield* fail(
             `Missing required field in config: auth.sms.${activeSms.name}.${field}`,
           );

@@ -220,21 +220,23 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
   }
 };
 
+type PassthroughLoadFailureTag =
+  | "ProjectRefReadError"
+  | "CliConfigValueError"
+  | "CliConfigFlagConflictError";
+
+const isPassthroughLoadFailure = <E extends { readonly _tag: string }>(
+  error: E,
+): error is Extract<E, { readonly _tag: PassthroughLoadFailureTag }> =>
+  error._tag === "ProjectRefReadError" ||
+  error._tag === "CliConfigValueError" ||
+  error._tag === "CliConfigFlagConflictError";
+
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
 ) =>
-  error._tag === "ProjectRefReadError" ||
-  error._tag === "CliConfigValueError" ||
-  error._tag === "CliConfigFlagConflictError"
-    ? (error as Extract<
-        E,
-        {
-          readonly _tag:
-            | "ProjectRefReadError"
-            | "CliConfigValueError"
-            | "CliConfigFlagConflictError";
-        }
-      >)
+  isPassthroughLoadFailure(error)
+    ? error
     : new Errors.DbConfigLoadError({ message: error.message });
 
 /**

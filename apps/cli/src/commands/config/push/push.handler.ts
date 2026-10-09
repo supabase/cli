@@ -177,6 +177,8 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   const loaded = resolvedConfig.loaded;
   yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
   const projectYes = resolvedConfig.projectEnvValues["SUPABASE_YES"];
+  const projectEnv: Record<string, string> =
+    projectYes === undefined ? {} : { SUPABASE_YES: projectYes };
   const referenced = yield* resolvedConfig.envValues(
     envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
   );
@@ -184,10 +186,7 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
     loaded,
     lookup: (name: string) => referenced[name],
     dotenvPrivateKeys: resolvedConfig.dotenvPrivateKeys,
-    projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
-      string,
-      string
-    >,
+    projectEnv,
     originFor: configEnvOriginLookup(resolvedConfig.origins, (file) =>
       relativeConfigPath(projectRoot, file),
     ),

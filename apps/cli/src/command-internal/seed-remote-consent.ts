@@ -1,4 +1,4 @@
-import { Effect, Option, Path } from "effect";
+import { Effect, Option, Path, Predicate } from "effect";
 
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { describeCliConfigOrigin } from "../config/cli-config-key.ts";
@@ -33,9 +33,12 @@ const SEED_CONSENT_SUGGESTIONS: Record<SeedConsentCommand, string> = {
 
 const remoteDeclaresSeedEnabled = (resolvedConfig: ResolvedCliConfig, remote: string): boolean => {
   const block = resolvedConfig.loaded.interpolatedRemotes?.[remote];
-  if (typeof block !== "object" || block === null) return false;
-  const seed = (block as { db?: { seed?: { enabled?: unknown } } }).db?.seed;
-  const declared = seed?.enabled;
+  const declared =
+    Predicate.hasProperty(block, "db") &&
+    Predicate.hasProperty(block.db, "seed") &&
+    Predicate.hasProperty(block.db.seed, "enabled")
+      ? block.db.seed.enabled
+      : undefined;
   return typeof declared === "string" ? parseBoolLiteral(declared) === true : declared === true;
 };
 
