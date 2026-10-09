@@ -72,6 +72,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0028 | [Release Branches and Maintenance Lines](0028-release-branches-and-maintenance-lines.md)                       | accepted   |
 | 0029 | [Native Postgres Privilege Step-Down](0029-native-postgres-privilege-step-down.md)                             | proposed   |
 | 0030 | [Go CLI Removal](0030-go-cli-removal.md)                                                                       | accepted   |
+| 0030 | [Hotfix Releases](0030-hotfix-releases.md)                                                                     | accepted   |
 
 ## Template
 

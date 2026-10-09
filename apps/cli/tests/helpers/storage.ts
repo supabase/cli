@@ -3,8 +3,8 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted, Stream } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type {
   DatabaseInstance,
   Observation,

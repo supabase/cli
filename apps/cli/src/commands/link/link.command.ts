@@ -1,6 +1,6 @@
 import { Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -9,24 +9,24 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { link } from "./link.handler.ts";
 
 const config = {
-  refOrBranch: Argument.string("ref-or-branch").pipe(
+  refOrBranch: Argument.String("ref-or-branch").pipe(
     Argument.withDescription(
       "Project ref, or the name (or UUID) of a branch of the currently linked project. Values that are exactly 20 lowercase letters are always treated as project refs.",
     ),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name of one of its branches.",
     ),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
   ),
-  skipPooler: Flag.boolean("skip-pooler").pipe(
+  skipPooler: Flag.Boolean("skip-pooler").pipe(
     Flag.withDescription("Use direct connection instead of pooler."),
     Flag.withDefault(false),
   ),

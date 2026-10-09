@@ -14,8 +14,9 @@ import {
   usesSlimImageRuntime,
 } from "./slim-images.ts";
 
-// Only `auth` is pinned, so every other alias falls through to its upstream image. `vi.mock`
-// factories are hoisted above top-level statements, so the fixture is inlined.
+// Only `auth` and one OrioleDB postgres build are pinned, so every other alias falls through to
+// its upstream image. `vi.mock` factories are hoisted above top-level statements, so the fixture
+// is inlined.
 vi.mock("@supabase/stack/internal/artifacts", () => {
   const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
   const nativePin = { archive: digest, manifest: digest };
@@ -35,12 +36,28 @@ vi.mock("@supabase/stack/internal/artifacts", () => {
           },
         },
       },
+      {
+        service: "database",
+        sourceService: "postgres",
+        pin: {
+          upstreamVersion: "17.11.0.002-orioledb",
+          revision: 0,
+          image: `ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:${digest}`,
+          natives: {
+            "darwin-arm64": nativePin,
+            "linux-amd64": nativePin,
+            "linux-arm64": nativePin,
+          },
+        },
+      },
     ],
   };
 });
 
 const AUTH_FIXTURE_PIN_IMAGE =
   "ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
+const ORIOLEDB_FIXTURE_PIN_IMAGE =
+  "ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -108,11 +125,6 @@ describe("slimCatalogPin", () => {
     });
   });
 
-  it("excludes OrioleDB tags", () => {
-    expect(slimCatalogPin("pg", "supabase/postgres:16.0.0.1-orioledb")).toBeUndefined();
-    expect(slimCatalogPin("pg", "supabase/postgres:orioledb-15.1.0.55")).toBeUndefined();
-  });
-
   it("strips vector's docker.io -alpine variant suffix", () => {
     expect(slimCatalogPin("vector", "timberio/vector:0.53.0-alpine")).toEqual({
       service: "vector",
@@ -147,12 +159,20 @@ describe("toSlimImage", () => {
 
   it("returns undefined, keeping the upstream image, when the tag isn't in the catalog", () => {
     expect(toSlimImage("gotrue", "supabase/gotrue:v2.100.0")).toBeUndefined();
-    // `pg` has no entry at all in this fixture catalog.
+    // `pg` has only an OrioleDB entry in this fixture catalog.
     expect(toSlimImage("pg", "supabase/postgres:17.6.1.164")).toBeUndefined();
   });
 
-  it("returns undefined for aliases and tags slimCatalogPin already excludes", () => {
+  it("maps a pinned OrioleDB tag to its catalog image and keeps unpinned ones upstream", () => {
+    expect(toSlimImage("pg", "supabase/postgres:17.11.0.002-orioledb")).toBe(
+      ORIOLEDB_FIXTURE_PIN_IMAGE,
+    );
+    expect(toSlimImage("pg", "supabase/postgres:17.11.0.002")).toBeUndefined();
     expect(toSlimImage("pg", "supabase/postgres:16.0.0.1-orioledb")).toBeUndefined();
+    expect(toSlimImage("pg", "supabase/postgres:orioledb-15.1.0.55")).toBeUndefined();
+  });
+
+  it("returns undefined for aliases and tags slimCatalogPin already excludes", () => {
     expect(toSlimImage("kong", dockerfileServiceImageRaw("kong"))).toBeUndefined();
     expect(toSlimImage("pg", "supabase/postgres")).toBeUndefined();
   });

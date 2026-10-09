@@ -2,7 +2,7 @@ import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { loadCliConfig, type CliConfigLoadOptions } from "./cli-config-load.ts";
 import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../shared/output/output.service.ts";

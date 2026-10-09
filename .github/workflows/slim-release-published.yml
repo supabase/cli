@@ -136,7 +136,8 @@ jobs:
           # Reads records on fd 3, not stdin, so commands the loop runs (`bun`, `gh`, `git`) never
           # consume bytes meant for `read`.
           while IFS=$'\x1f' read -r -u 3 kind branch title release from; do
-            if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || [ -z "$from" ]; then
+            # `from` is empty only for `add`, which pins a line's first release.
+            if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || { [ -z "$from" ] && [ "$kind" != "add" ]; }; then
               echo "::error ::Malformed plan-updates line: kind='${kind}' branch='${branch}' title='${title}' release='${release}' from='${from}'."
               exit 1
             fi
@@ -214,10 +215,15 @@ jobs:
             else
               action="pins"
             fi
+            if [ "$kind" = "add" ]; then
+              change="adds ${SERVICE} ${release} as a new release line"
+            else
+              change="${action} ${SERVICE} from ${from} to ${release}"
+            fi
             # Names the release this PR actually pins, not necessarily RELEASE_VERSION: postgres
             # can plan a hotfix on one line and an unrelated upgrade on another in one dispatch.
-            body="$(printf 'This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
-              "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
+            body="$(printf 'This %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
+              "$change" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
 
             # `--head` matches by branch name only and ignores the owner, so a fork PR with the
             # same head branch name would otherwise match too; `isCrossRepository` excludes it.

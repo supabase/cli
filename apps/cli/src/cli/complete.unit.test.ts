@@ -511,7 +511,7 @@ describe("respondToComplete", () => {
       { path: ["db", "reset"], flag: "last" },
     ])("rejects a negative value for $path --$flag", ({ path, flag }) => {
       // These flags are validated as unsigned integers, which reject a leading sign,
-      // unlike this tree's plain signed Flag.integer regex.
+      // unlike this tree's plain signed Flag.Int regex.
       const result = respondToComplete(rootCommand, ["__complete", ...path, `--${flag}`, "-1", ""]);
       expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });
     });
@@ -593,7 +593,7 @@ describe("respondToComplete", () => {
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {
       // Validated against the signed int64 range, which is narrower than the uint64
-      // bound `Flag.integer` alone would suggest.
+      // bound `Flag.Int` alone would suggest.
       const overflow = respondToComplete(rootCommand, [
         "__complete",
         "backups",

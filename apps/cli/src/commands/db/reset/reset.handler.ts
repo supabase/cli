@@ -86,7 +86,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
       });
     }
-    // `--last` is an unsigned flag, so a negative value should be rejected; `Flag.integer` here
+    // `--last` is an unsigned flag, so a negative value should be rejected; `Flag.Int` here
     // accepts it, so reject it explicitly rather than silently resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
       return yield* new DbResetLastFlagError({

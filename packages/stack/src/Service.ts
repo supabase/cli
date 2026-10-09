@@ -11,6 +11,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import type { Stream } from "effect";
+import type { StackFailureKind } from "./FailureKind.ts";
 import { LifecycleEvent } from "./Lifecycle.ts";
 
 /** The execution step a service is performing right now, for status reporting. */
@@ -32,6 +33,8 @@ export class ServiceError extends Data.TaggedError("ServiceError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  /** Set where the failure site knows a cause its message alone describes. */
+  readonly kind?: StackFailureKind;
 }> {}
 
 /** The exact runtime resources owned by one service launch. */

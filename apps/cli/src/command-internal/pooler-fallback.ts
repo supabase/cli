@@ -8,12 +8,12 @@ export function isDirectDbHost(host: string, projectHost: string): boolean {
   return host.startsWith("db.") && host.endsWith(`.${projectHost}`);
 }
 
-export interface PoolerFallbackOptions<A, E, R, R2, RF> {
+export interface PoolerFallbackOptions<A, E, R, R2, RF, EF> {
   readonly run: Effect.Effect<A, E, R>;
   readonly retry: (pooler: PgConnInput) => Effect.Effect<A, E, R2>;
   readonly directHost: string;
   readonly eligible: boolean;
-  readonly resolveFallback: Effect.Effect<Option.Option<PgConnInput>, unknown, RF>;
+  readonly resolveFallback: Effect.Effect<Option.Option<PgConnInput>, EF, RF>;
   readonly classifyError?: (error: E) => boolean;
   readonly classifyResult?: (result: A) => boolean;
 }
@@ -30,8 +30,8 @@ export const emitPoolerFallbackWarning = (host: string): Effect.Effect<void, nev
     );
   });
 
-export function runWithPoolerFallback<A, E, R, R2, RF>(
-  options: PoolerFallbackOptions<A, E, R, R2, RF>,
+export function runWithPoolerFallback<A, E, R, R2, RF, EF>(
+  options: PoolerFallbackOptions<A, E, R, R2, RF, EF>,
 ): Effect.Effect<A, E, R | R2 | RF | Output> {
   const resolveFallback = options.resolveFallback.pipe(
     Effect.orElseSucceed(() => Option.none<PgConnInput>()),

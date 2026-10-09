@@ -13,8 +13,8 @@ import {
   Path,
   Schema,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -186,7 +186,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         const stdout = opts.edgeStdout ?? "";
         if (stdout.trim().length === 0) {
-          return Config.option(Config.string("PGDELTA_DEBUG")).pipe(
+          return Config.option(Config.String("PGDELTA_DEBUG")).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({ preserveEmptyStrings: true }),

@@ -1,6 +1,6 @@
 import { languages, type OptionSpec, type OptionValue, type OptionValues } from "@supabase/typegen";
 import { Option } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 /** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
 export interface LanguageFlagSpec {
@@ -58,14 +58,14 @@ const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagVal
     spec.default === undefined ? spec.help : `${spec.help} (default ${String(spec.default)})`;
   switch (spec.kind) {
     case "boolean":
-      return Flag.boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.Boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
     case "choice":
-      return Flag.choice(spec.name, spec.choices ?? []).pipe(
+      return Flag.Literals(spec.name, spec.choices ?? []).pipe(
         Flag.withDescription(help),
         Flag.optional,
       );
     case "string":
-      return Flag.string(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.String(spec.name).pipe(Flag.withDescription(help), Flag.optional);
   }
 };
 

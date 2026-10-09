@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { Console, Crypto, Effect, FileSystem, Layer, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 

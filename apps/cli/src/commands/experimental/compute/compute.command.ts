@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { computeDeleteCommand } from "./delete/delete.command.ts";
 import { computeListCommand } from "./list/list.command.ts";
 import { computeLogsCommand } from "./logs/logs.command.ts";

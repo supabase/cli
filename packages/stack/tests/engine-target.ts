@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { Effect } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { resolveEngineTarget, type EngineTarget } from "../src/runtime/Container.ts";
 import { testEngine } from "./test-engine.ts";
 

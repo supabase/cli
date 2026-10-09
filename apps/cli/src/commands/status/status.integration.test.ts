@@ -18,9 +18,9 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
+import { ChildProcessSpawner } from "effect/process";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import { vi } from "vitest";
 
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";

@@ -18,7 +18,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../db-connection.errors.ts";

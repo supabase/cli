@@ -1,6 +1,6 @@
 import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
 import {

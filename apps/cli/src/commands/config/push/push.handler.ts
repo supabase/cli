@@ -14,9 +14,9 @@ import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
   assertDecryptableSecrets,
-  configEnvOption,
-  envRefName,
+  envRefNames,
   loadProjectEnv,
+  resolveShellEnv,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
@@ -134,25 +134,11 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
-function envRefNames(node: unknown): ReadonlyArray<string> {
-  if (typeof node === "string") {
-    const name = envRefName(node);
-    return name === undefined ? [] : [name];
-  }
-  return typeof node === "object" && node !== null ? Object.values(node).flatMap(envRefNames) : [];
-}
-
 /** `assertDecryptableSecrets` takes a synchronous lookup, so every referenced name resolves up front. */
-const resolveShellEnvRefs = Effect.fnUntraced(function* (nodes: ReadonlyArray<unknown>) {
-  const resolved = new Map<string, string>();
-  for (const name of new Set(nodes.flatMap(envRefNames))) {
-    const value = yield* configEnvOption(name).pipe(
-      Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
-    );
-    if (Option.isSome(value)) resolved.set(name, value.value);
-  }
-  return resolved;
-});
+const resolveShellEnvRefs = (nodes: ReadonlyArray<unknown>) =>
+  resolveShellEnv(nodes.flatMap(envRefNames)).pipe(
+    Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
+  );
 
 const mapPushBranchResolveError = mapHttpError({
   networkError: ConfigPushBranchResolveNetworkError,

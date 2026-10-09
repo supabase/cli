@@ -194,7 +194,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedProject =
       backend.kind === "stack" && connType === "local"
         ? yield* stackOpenReadyProject.pipe(
-            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
             Effect.map(Option.getOrUndefined),
           )
         : undefined;
@@ -286,9 +286,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedDumpConn =
       managedProject === undefined
         ? undefined
-        : parseConnectionString(
+        : yield* parseConnectionString(
             yield* managedProject.database.credentials({ from: "runtime" }).pipe(
-              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
               Effect.map((credentials) => credentials.databaseUrl ?? ""),
             ),
           );
@@ -339,8 +339,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       runtimeInfo.platform === "win32" &&
       tty.stdoutIsPipe &&
       Option.isNone(resolvedFile) &&
-      Option.getOrElse(yield* Config.option(Config.string("MSYSTEM")), () => "") === "" &&
-      Option.getOrUndefined(yield* Config.option(Config.string("TERM_PROGRAM"))) !== "mintty";
+      Option.getOrElse(yield* Config.option(Config.String("MSYSTEM")), () => "") === "" &&
+      Option.getOrUndefined(yield* Config.option(Config.String("TERM_PROGRAM"))) !== "mintty";
     let sawNonAscii = false;
 
     // Open (create + truncate) the output file up front so an unwritable

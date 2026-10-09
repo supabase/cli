@@ -1,6 +1,6 @@
 import { expect } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Option, Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import { fileURLToPath } from "node:url";
 import { discover, type StackLocations } from "../src/effect.ts";
 import {

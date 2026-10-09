@@ -1,4 +1,4 @@
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 import { removedCommand } from "../../../command-internal/removed-command.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -11,7 +11,7 @@ const REMOVED_SUGGESTION =
 /** A tombstoned `db branch` leaf taking an optional `<branch name>` positional. */
 function removedBranchLeaf(name: string, argDescription: string) {
   return Command.make(name, {
-    branchName: Argument.string("branch name").pipe(
+    branchName: Argument.String("branch name").pipe(
       Argument.withDescription(argDescription),
       Argument.optional,
     ),

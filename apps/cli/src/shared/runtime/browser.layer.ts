@@ -1,5 +1,5 @@
 import { Config, Effect, FileSystem, Layer } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { RuntimeInfo } from "./runtime-info.service.ts";
 import { Browser } from "./browser.service.ts";
@@ -20,7 +20,7 @@ const makeBrowser = Effect.gen(function* () {
           command = "open";
           args = [url];
         } else if (runtimeInfo.platform === "win32") {
-          const systemRoot = yield* Config.string("SYSTEMROOT").pipe(
+          const systemRoot = yield* Config.String("SYSTEMROOT").pipe(
             Config.withDefault("C:\\Windows"),
           );
           command = `${systemRoot}\\System32\\rundll32.exe`;

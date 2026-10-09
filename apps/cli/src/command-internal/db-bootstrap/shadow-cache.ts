@@ -18,7 +18,7 @@ import {
   Semaphore,
   type FileSystem,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { supabaseEnvBoolWithProjectFallback } from "../supabase-env.ts";
 import { Output } from "../../shared/output/output.service.ts";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
+import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import {
   Cause,
   Data,
@@ -17,7 +17,7 @@ import {
   Schema,
   Stdio,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";
@@ -396,6 +396,30 @@ describe("services", () => {
           local: catalogUpstreamVersion("postgres", { additional: true }),
         }),
       );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the pinned OrioleDB build selected by SUPABASE_DB_ORIOLEDB_VERSION", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const [orioledb = ""] = orioledbVersions();
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", ".env"),
+        `SUPABASE_DB_ORIOLEDB_VERSION=${orioledb}\n`,
+      );
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toContainEqual(
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: `${orioledb}-orioledb`,
+        }),
+      );
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

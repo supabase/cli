@@ -1,5 +1,5 @@
 import { Config, Effect, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { isBitbucketPipeline } from "../../../command-internal/bitbucket-pipeline.ts";
 import {
@@ -101,7 +101,7 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-const isSslDebugEnabled = Config.string("SUPABASE_SSL_DEBUG").pipe(
+const isSslDebugEnabled = Config.String("SUPABASE_SSL_DEBUG").pipe(
   Config.withDefault(""),
   Effect.map((value) => value.toLowerCase() === "true"),
   Effect.orElseSucceed(() => false),
@@ -166,7 +166,7 @@ const loadTargetUserSchemas = Effect.fn("Migra.loadTargetUserSchemas")(function*
   connectOptions: DbConnectOptions,
 ) {
   const connection = yield* DbConnection;
-  const input = parseConnectionString(target);
+  const input = yield* parseConnectionString(target);
   if (input === undefined) {
     return yield* new MigraSchemaLoadError({
       message: "failed to list schemas: invalid target connection string",

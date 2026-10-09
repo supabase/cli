@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
@@ -367,7 +367,7 @@ describe("build guards fail loudly", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([
         Command.make("db").pipe(
-          Command.withSubcommands([Command.make("query", { output: Flag.string("output") })]),
+          Command.withSubcommands([Command.make("query", { output: Flag.String("output") })]),
         ),
       ]),
       Command.withGlobalFlags([ExperimentalFlag]),

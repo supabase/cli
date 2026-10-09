@@ -13,8 +13,8 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- holds a raw TCP connection open across the owner stop.
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "./StackNamespace.ts";

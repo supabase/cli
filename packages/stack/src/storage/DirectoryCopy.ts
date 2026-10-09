@@ -1,7 +1,7 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no lstat or typed directory listing.
 import { lstat, readdir } from "node:fs/promises";
 import { Cause, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export class DirectoryCopyError extends Schema.TaggedError<DirectoryCopyError>()(
   "DirectoryCopyError",

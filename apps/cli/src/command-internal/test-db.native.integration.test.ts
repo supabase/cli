@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
@@ -87,7 +87,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
           const hostCredentials = yield* database.credentials({ from: "host" });
           const databaseUrl = hostCredentials.databaseUrl;
           if (databaseUrl === undefined) return yield* Effect.die("host database URL missing");
-          const hostConnection = parseConnectionString(databaseUrl);
+          const hostConnection = yield* parseConnectionString(databaseUrl);
           if (hostConnection === undefined) return yield* Effect.die("invalid host database URL");
           const connection = { ...hostConnection, user: "postgres" };
 

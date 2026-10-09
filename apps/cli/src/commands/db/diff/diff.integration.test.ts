@@ -13,8 +13,8 @@ import {
   Option,
   Path,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -2307,7 +2307,7 @@ describe("db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
         });
         const ambientRegistry = () =>
-          Config.option(Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
+          Config.option(Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({ preserveEmptyStrings: true }),

@@ -1,11 +1,13 @@
 import { Cause, Exit, Option, Predicate, Schema } from "effect";
-import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Rpc, RpcGroup } from "effect/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
 import { StackKeysInput } from "./StackNamespace.ts";
+import { failureKind } from "./FailureKind.ts";
 import { failureMessage } from "./internal/failure-message.ts";
+import { rejectExcessKeys } from "./internal/reject-excess-keys.ts";
 import type { PortConflict } from "./Ports.ts";
 import { LogPosition, LogRecord } from "./host/LogRecord.ts";
 
@@ -13,6 +15,8 @@ const Outcome = Schema.Struct({
   id: Schema.String,
   succeeded: Schema.Boolean,
   error: Schema.optionalKey(Schema.String),
+  /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+  kind: Schema.optionalKey(Schema.String),
 });
 
 const ConflictHolder = Schema.Union([
@@ -38,9 +42,16 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   reason: Schema.optionalKey(
     Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
   ),
+  /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+  kind: Schema.optionalKey(Schema.String),
   /** The contested public port, when the failure is a port reservation conflict. */
   conflict: Schema.optionalKey(Conflict),
 }) {}
+
+const kindOf = (cause: unknown) => {
+  const kind = failureKind(cause);
+  return kind === undefined ? {} : { kind };
+};
 
 const isHolder = (
   value: unknown,
@@ -92,8 +103,11 @@ export const stackError = (operation: string, cause: unknown): StackError => {
       outcomes: cause.outcomes.map(({ id, result }) => ({
         id,
         succeeded: Exit.isSuccess(result),
-        ...(Exit.isFailure(result) ? { error: causeMessage(result.cause) } : {}),
+        ...(Exit.isFailure(result)
+          ? { error: causeMessage(result.cause), ...kindOf(result.cause) }
+          : {}),
       })),
+      ...kindOf(cause),
       ...(conflict === undefined ? {} : { conflict }),
     });
   }
@@ -101,6 +115,7 @@ export const stackError = (operation: string, cause: unknown): StackError => {
   return new StackError({
     operation,
     message: failureMessage(cause),
+    ...kindOf(cause),
     ...(conflict === undefined ? {} : { conflict }),
   });
 };
@@ -146,10 +161,12 @@ export const CommandEvent = Schema.TaggedUnion({
   Stderr: { bytes: Schema.Uint8ArrayFromBase64 },
   Completed: { jobId: Schema.String, exitCode: Schema.Int },
 });
-export const RunCommandPayload = Schema.Struct({
-  attachmentId: Schema.String,
-  command: CommandInvocation,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export const RunCommandPayload = rejectExcessKeys(
+  Schema.Struct({
+    attachmentId: Schema.String,
+    command: CommandInvocation,
+  }),
+);
 export type RunCommandPayload = Schema.Schema.Type<typeof RunCommandPayload>;
 
 /** Instance and composition operations served by the owner. */

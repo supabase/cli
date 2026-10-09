@@ -1,21 +1,14 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandRestartError extends Data.TaggedError("ExperimentalStackRestartError")<{
-  readonly reason:
-    | "flags"
-    | "not-found"
-    | "invalid-config"
-    | "port"
-    | "lifecycle"
-    | "runtime"
-    | "registry"
-    | "artifact"
-    | "unknown";
+  readonly reason: "flags" | "not-found" | "invalid-config" | "lifecycle" | "stack";
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -24,19 +17,15 @@ export class StackCommandRestartError extends Data.TaggedError("ExperimentalStac
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "flags":
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "not-found":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "not_found" };
       case "invalid-config":
-      case "port":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "lifecycle":
-        return actionability.invalidConfig;
-      case "runtime":
-        return actionability.dockerNotRunning;
-      case "registry":
-      case "artifact":
-        return actionability.externalNetwork;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }

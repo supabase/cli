@@ -15,7 +15,8 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Effect, Encoding, Option, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
   resolveRemoteJwks,
@@ -669,9 +670,11 @@ function readSigningKeysFile(workdir: string, signingKeysPath: string): Readonly
   }
 
   try {
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+    const parsed: unknown = JSON.parse(contents);
     // `Jwk.key_ops` is mutable (required for Node's `createPrivateKey`/`JsonWebKey` input), so
     // it's copied into a fresh array rather than widening the schema's readonly output type.
-    return decodeJwks(JSON.parse(contents)).map((jwk) => ({
+    return decodeJwks(parsed).map((jwk) => ({
       ...jwk,
       key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
     }));
@@ -3104,7 +3107,7 @@ export const resolveLocalJwks = Effect.fnUntraced(function* (
   }
   keys.push(...signingKeys.map(toPublicJwk));
   if (signingKeysPath === undefined || signingKeysPath.length === 0) {
-    keys.push({ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) });
+    keys.push({ kty: "oct", k: Base64Url.encode(jwtSecret) });
   }
   return yield* Schema.encodeEffect(
     Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
