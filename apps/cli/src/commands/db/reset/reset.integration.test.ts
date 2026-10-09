@@ -2887,6 +2887,31 @@ describe("db reset", () => {
     );
 
     it.live(
+      "warns before the prompt that schema_paths is ignored on an experimental remote reset with migrations disabled",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nenabled = false\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+          const warning = out.stderrText.indexOf(
+            "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+          );
+          expect(warning).toBeGreaterThanOrEqual(0);
+          expect(warning).toBeLessThan(out.stderrText.indexOf("Resetting remote database"));
+        });
+      },
+    );
+
+    it.live(
       "replays migrations instead of schema files on an experimental remote reset with a resolved version",
       () => {
         const { layer, conn } = setup(tmp.current, {

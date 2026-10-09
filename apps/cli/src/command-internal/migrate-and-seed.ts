@@ -47,7 +47,7 @@ const migrationApplyError = (
 
 /** Warns a versionless `--experimental` rebuild that `schema_paths` is ignored while pg-delta is on. */
 export const experimentalSchemaPathsIgnoredWarning =
-  "WARNING: [db.migrations].schema_paths is not applied while pg-delta is enabled (the default); local migrations are replayed instead. Set [experimental.pgdelta] enabled = false to apply schema_paths files.\n";
+  "WARNING: [db.migrations].schema_paths is not applied while pg-delta is enabled (the default). Set [experimental.pgdelta] enabled = false to apply schema_paths files.\n";
 
 /** Whether {@link experimentalSchemaPathsIgnoredWarning} applies to this rebuild. */
 export const ignoresExperimentalSchemaPaths = (inputs: {
@@ -80,6 +80,9 @@ export const migrateAndSeed = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
+    if (ignoresExperimentalSchemaPaths({ ...config, version })) {
+      yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
+    }
     if (config.experimental && version.length === 0 && !config.pgDeltaEnabled) {
       yield* applySchemaFiles(
         session,
@@ -90,9 +93,6 @@ export const migrateAndSeed = (
         (message, suggestion) => new MigrationApplyError({ message, suggestion }),
       );
     } else if (config.migrationsEnabled) {
-      if (ignoresExperimentalSchemaPaths({ ...config, version })) {
-        yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
-      }
       const migrationsDir = path.join(workdir, "supabase", "migrations");
       const pending = yield* loadPartialMigrations(fs, path, migrationsDir, version).pipe(
         Effect.mapError((cause) => new MigrationApplyError({ message: cause.message })),

@@ -229,7 +229,6 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     }
     const vaultSecrets = toml.vault;
     if (
-      toml.migrationsEnabled &&
       ignoresExperimentalSchemaPaths({
         experimental,
         version: resolvedVersion,
