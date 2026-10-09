@@ -4,7 +4,7 @@ import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../../config/project-ref.service.ts";
-import { readProjectRefFile } from "../../command-internal/temp-paths.ts";
+import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 
 // Mirrors `ProjectRefResolver` (`project-ref.layer.ts`) source by source:
 //

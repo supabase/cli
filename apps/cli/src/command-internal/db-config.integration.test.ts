@@ -33,6 +33,8 @@ import {
   mockTty,
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { pinnedConfigProvider } from "../../tests/helpers/config-env-pins.ts";
+import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-values-layer.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,
@@ -41,7 +43,10 @@ import {
   ProfileFlag,
   WorkdirFlag,
 } from "./global-flags.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
@@ -63,6 +68,15 @@ const mockDbConnection = Layer.succeed(DbConnection, {
   connect: () => Effect.die("unexpected connect() in --local/--db-url resolver test"),
 });
 
+const explicitEnv = (
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(env ?? {}).flatMap(([name, value]): Array<[string, string]> =>
+      value === undefined ? [] : [[name, value]],
+    ),
+  );
+
 function buildResolver(
   workdir: string,
   opts: {
@@ -71,9 +85,18 @@ function buildResolver(
     readonly dbConnection?: Layer.Layer<DbConnection>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
+    readonly flagPassword?: string;
   } = {},
 ) {
   const deps = Layer.mergeAll(
+    Layer.succeed(
+      CliConfigFlagInputs,
+      makeCliConfigFlagInputs(
+        opts.flagPassword === undefined
+          ? []
+          : [flagInput("linkedDb.password", "password", opts.flagPassword)],
+      ),
+    ),
     mockCommandSettings({
       workdir,
       projectHost: opts.projectHost ?? "supabase.co",
@@ -100,16 +123,18 @@ function buildResolver(
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
-    ConfigProvider.layer(
-      ConfigProvider.fromEnvRecord(
-        opts.configEnv ?? Object.fromEntries(Object.entries(process.env)),
-        { preserveEmptyStrings: true },
-      ),
-    ),
+    Layer.effect(ConfigProvider.ConfigProvider, pinnedConfigProvider(explicitEnv(opts.configEnv))),
   );
+  const hermeticValues = Layer.effect(
+    CliConfigValues,
+    Effect.map(Effect.service(CliConfigValues), (real) =>
+      withHermeticShellTier(real, explicitEnv(opts.configEnv)),
+    ),
+  ).pipe(Layer.provide(cliConfigValuesLayer.pipe(Layer.provide(deps))));
+  const depsWithValues = Layer.merge(deps, hermeticValues);
   return opts.stackApi === undefined
-    ? dbConfigLayer.pipe(Layer.provide(deps))
-    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(deps, opts.stackApi)));
+    ? dbConfigLayer.pipe(Layer.provide(depsWithValues))
+    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(depsWithValues, opts.stackApi)));
 }
 
 function withWorkdir(toml?: string) {
@@ -131,9 +156,9 @@ const resolve = (
     return yield* resolver.resolve(flags);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
-    Effect.provideService(
+    Effect.provideServiceEffect(
       ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(opts?.configEnv ?? process.env, { preserveEmptyStrings: true }),
+      pinnedConfigProvider(explicitEnv(opts?.configEnv)),
     ),
   );
 
@@ -147,47 +172,11 @@ const resolvePoolerFallback = (
     return yield* resolver.resolvePoolerFallback(flags);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
-    Effect.provideService(
+    Effect.provideServiceEffect(
       ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+      pinnedConfigProvider(explicitEnv(opts?.configEnv)),
     ),
   );
-
-let savedResolverConfigEnv:
-  | {
-      readonly projectId: string | undefined;
-      readonly profile: string | undefined;
-      readonly home: string | undefined;
-      readonly workdir: string | undefined;
-    }
-  | undefined;
-
-beforeEach(() => {
-  savedResolverConfigEnv = {
-    projectId: process.env["SUPABASE_PROJECT_ID"],
-    profile: process.env["SUPABASE_PROFILE"],
-    home: process.env["SUPABASE_HOME"],
-    workdir: process.env["SUPABASE_WORKDIR"],
-  };
-  delete process.env["SUPABASE_PROJECT_ID"];
-  delete process.env["SUPABASE_PROFILE"];
-  delete process.env["SUPABASE_HOME"];
-  delete process.env["SUPABASE_WORKDIR"];
-});
-
-afterEach(() => {
-  const saved = savedResolverConfigEnv;
-  if (saved === undefined) return;
-  if (saved.projectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
-  else process.env["SUPABASE_PROJECT_ID"] = saved.projectId;
-  if (saved.profile === undefined) delete process.env["SUPABASE_PROFILE"];
-  else process.env["SUPABASE_PROFILE"] = saved.profile;
-  if (saved.home === undefined) delete process.env["SUPABASE_HOME"];
-  else process.env["SUPABASE_HOME"] = saved.home;
-  if (saved.workdir === undefined) delete process.env["SUPABASE_WORKDIR"];
-  else process.env["SUPABASE_WORKDIR"] = saved.workdir;
-  savedResolverConfigEnv = undefined;
-});
 
 const localFlags: DbConfigFlags = {
   dbUrl: Option.none(),
@@ -418,6 +407,39 @@ describe("dbConfigResolver (local + db-url)", () => {
       );
     },
   );
+});
+
+describe("dbConfigResolver --password rejection", () => {
+  const failureTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
+    Exit.isFailure(exit) ? JSON.stringify(exit.cause) : "";
+
+  const targets: ReadonlyArray<readonly [string, DbConfigFlags]> = [
+    ["--db-url", dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres")],
+    ["--local", localFlags],
+    ["the default local target", { ...localFlags, connType: undefined }],
+  ];
+  for (const [label, flags] of targets) {
+    it.effect(`rejects --password with ${label}`, () => {
+      const dir = withWorkdir();
+      return resolve(dir, { ...flags, password: Option.some("pw") }).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(failureTag(exit)).toContain("DbPasswordFlagsError");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+  }
+
+  it.effect("accepts an absent --password with --db-url", () => {
+    const dir = withWorkdir();
+    return resolve(dir, {
+      ...dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres"),
+      password: Option.none(),
+    }).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
 });
 
 describe("dbConfigResolver (db-url under the stack backend)", () => {
@@ -680,8 +702,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
     );
 
-    const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-    const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
     const previousFetch = globalThis.fetch;
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     const connections: Array<{
@@ -754,8 +774,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       { preconnect: previousFetch.preconnect },
     );
 
-    process.env["SUPABASE_ACCESS_TOKEN"] = VALID_TOKEN;
-    process.env["SUPABASE_DB_PASSWORD"] = "ambient-linked-password";
     globalThis.fetch = fetchMock;
 
     return resolve(
@@ -765,7 +783,14 @@ describe("dbConfigResolver (linked config ordering)", () => {
         linkedProjectRef: Option.some(adHocRef),
         adHocProjectRef: true,
       },
-      { projectHost: "invalid", dbConnection },
+      {
+        projectHost: "invalid",
+        dbConnection,
+        configEnv: {
+          SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+          SUPABASE_DB_PASSWORD: "ambient-linked-password",
+        },
+      },
     ).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -809,10 +834,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       Effect.ensuring(
         Effect.sync(() => {
           globalThis.fetch = previousFetch;
-          if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
-          else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
-          if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -834,8 +855,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
         `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
       );
 
-      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
       const previousFetch = globalThis.fetch;
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const connections: Array<{
@@ -910,8 +929,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
         { preconnect: previousFetch.preconnect },
       );
 
-      process.env["SUPABASE_ACCESS_TOKEN"] = VALID_TOKEN;
-      process.env["SUPABASE_DB_PASSWORD"] = "ambient-linked-password";
       globalThis.fetch = fetchMock;
 
       return resolvePoolerFallback(
@@ -921,7 +938,13 @@ describe("dbConfigResolver (linked config ordering)", () => {
           linkedProjectRef: Option.some(adHocRef),
           adHocProjectRef: true,
         },
-        { dbConnection },
+        {
+          dbConnection,
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-linked-password",
+          },
+        },
       ).pipe(
         Effect.tap((connOpt) =>
           Effect.sync(() => {
@@ -967,10 +990,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.fetch = previousFetch;
-            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
-            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
-            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -990,8 +1009,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       "postgres://postgres.qrstabcdefghijklmnop:saved-workdir-password@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
     );
 
-    const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-    const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
     const previousFetch = globalThis.fetch;
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     const connections: Array<{
@@ -1053,8 +1070,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       { preconnect: previousFetch.preconnect },
     );
 
-    process.env["SUPABASE_ACCESS_TOKEN"] = VALID_TOKEN;
-    process.env["SUPABASE_DB_PASSWORD"] = "linked-password";
     globalThis.fetch = fetchMock;
 
     return resolvePoolerFallback(
@@ -1063,7 +1078,11 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ...linkedFlags,
         linkedProjectRef: Option.some(linkedRef),
       },
-      { projectHost: "supabase.co", dbConnection },
+      {
+        projectHost: "supabase.co",
+        dbConnection,
+        configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, SUPABASE_DB_PASSWORD: "linked-password" },
+      },
     ).pipe(
       Effect.tap((connOpt) =>
         Effect.sync(() => {
@@ -1093,10 +1112,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
       Effect.ensuring(
         Effect.sync(() => {
           globalThis.fetch = previousFetch;
-          if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
-          else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
-          if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1117,13 +1132,11 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
       // so there is no `.temp/project-ref` and no `.temp/pooler-url` to reuse.
       const dir = withWorkdir();
 
-      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
       const previousFetch = globalThis.fetch;
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const dbConnection = Layer.succeed(DbConnection, {
         connect: () =>
-          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+          Effect.die("unexpected connect() — the explicit password path never verify-connects"),
       });
       const fetchMock = Object.assign(
         async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -1163,8 +1176,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         { preconnect: previousFetch.preconnect },
       );
 
-      process.env["SUPABASE_ACCESS_TOKEN"] = VALID_TOKEN;
-      process.env["SUPABASE_DB_PASSWORD"] = "ambient-password";
       globalThis.fetch = fetchMock;
 
       return resolve(
@@ -1173,7 +1184,14 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
           ...linkedFlags,
           linkedProjectRef: Option.some(ref),
         },
-        { projectHost: "invalid", dbConnection },
+        {
+          projectHost: "invalid",
+          dbConnection,
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+          },
+        },
       ).pipe(
         Effect.tap((r) =>
           Effect.sync(() => {
@@ -1197,10 +1215,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.fetch = previousFetch;
-            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
-            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
-            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -1223,8 +1237,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
       );
 
-      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
-      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
       const previousFetch = globalThis.fetch;
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const dbConnection = Layer.succeed(DbConnection, {
@@ -1272,8 +1284,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         { preconnect: previousFetch.preconnect },
       );
 
-      process.env["SUPABASE_ACCESS_TOKEN"] = VALID_TOKEN;
-      process.env["SUPABASE_DB_PASSWORD"] = "ambient-password";
       globalThis.fetch = fetchMock;
 
       return resolve(
@@ -1282,7 +1292,15 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
           ...linkedFlags,
           linkedProjectRef: Option.some(targetRef),
         },
-        { projectHost: "invalid", dbConnection },
+        {
+          projectHost: "invalid",
+          dbConnection,
+          flagPassword: "flag-password",
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+          },
+        },
       ).pipe(
         Effect.tap((r) =>
           Effect.sync(() => {
@@ -1290,7 +1308,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               host: "aws-0-us-east-1.pooler.supabase.com",
               port: 5432,
               user: `postgres.${targetRef}`,
-              password: "ambient-password",
+              password: "flag-password",
               database: "postgres",
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
@@ -1306,10 +1324,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.fetch = previousFetch;
-            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
-            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
-            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

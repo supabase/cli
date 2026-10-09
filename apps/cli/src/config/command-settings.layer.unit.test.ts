@@ -158,13 +158,9 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ env: {}, cwd: tempRoot }))),
   );
 
-  it.effect("captures SUPABASE_DB_PASSWORD and GITHUB_TOKEN as redacted options", () =>
+  it.effect("captures GITHUB_TOKEN as a redacted option", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
-      expect(Option.isSome(config.dbPassword)).toBe(true);
-      if (Option.isSome(config.dbPassword)) {
-        expect(Redacted.value(config.dbPassword.value)).toBe("db-pw");
-      }
       expect(Option.isSome(config.githubToken)).toBe(true);
       if (Option.isSome(config.githubToken)) {
         expect(Redacted.value(config.githubToken.value)).toBe("gh-tok");
@@ -179,16 +175,11 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  it.effect("captures empty SUPABASE_DB_PASSWORD and GITHUB_TOKEN as none", () =>
+  it.effect("captures an empty GITHUB_TOKEN as none", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
-      expect(Option.isNone(config.dbPassword)).toBe(true);
       expect(Option.isNone(config.githubToken)).toBe(true);
-    }).pipe(
-      Effect.provide(
-        makeLayer({ env: { SUPABASE_DB_PASSWORD: "", GITHUB_TOKEN: "" }, cwd: tempRoot }),
-      ),
-    ),
+    }).pipe(Effect.provide(makeLayer({ env: { GITHUB_TOKEN: "" }, cwd: tempRoot }))),
   );
 
   it.effect("preserves an empty SUPABASE_PROFILE without selecting a profile", () =>
@@ -504,7 +495,7 @@ describe("commandSettingsLayer", () => {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe("/flag/workdir");
       // An explicit --workdir is used verbatim, letting `shouldSearchAncestors` skip the
-      // second ancestor climb inside `loadCliConfig`.
+      // second ancestor climb inside the config load.
       expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(

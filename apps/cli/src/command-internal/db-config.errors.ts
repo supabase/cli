@@ -16,6 +16,15 @@ export class DbConfigParseUrlError extends Data.TaggedError("DbConfigParseUrlErr
   }
 }
 
+/** `--password` combined with `--db-url` or `--local`, where it can never apply. */
+export class DbPasswordFlagsError extends Data.TaggedError("DbPasswordFlagsError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /**
  * `supabase/config.toml` exists but could not be read or parsed: the read/decode
  * error aborts the load, rather than silently running against the default local database.
@@ -29,6 +38,19 @@ export class DbConfigLoadError extends Data.TaggedError("DbConfigLoadError")<{
     return actionability.invalidConfig;
   }
 }
+
+type PassthroughLoadFailureTag =
+  | "ProjectRefReadError"
+  | "CliConfigValueError"
+  | "CliConfigFlagConflictError";
+
+/** Config-load failures that keep their own tag instead of becoming {@link DbConfigLoadError}. */
+export const isPassthroughLoadFailure = <E extends { readonly _tag: string }>(
+  error: E,
+): error is Extract<E, { readonly _tag: PassthroughLoadFailureTag }> =>
+  error._tag === "ProjectRefReadError" ||
+  error._tag === "CliConfigValueError" ||
+  error._tag === "CliConfigFlagConflictError";
 
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class DbConfigLoginRoleNetworkError extends Data.TaggedError(

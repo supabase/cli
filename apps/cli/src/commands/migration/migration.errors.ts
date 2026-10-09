@@ -20,18 +20,6 @@ export class MigrationTargetFlagsError extends Data.TaggedError("MigrationTarget
 }
 
 /**
- * `--db-url` combined with `--password`/`-p`. Matches the established
- * mutually-exclusive-flags error text for `db-url`/`password` (list / repair / squash).
- */
-export class MigrationPasswordFlagsError extends Data.TaggedError("MigrationPasswordFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * A positional version argument is not a valid integer. Matches the established
  * `failed to parse <v>: invalid version number` text.
  */

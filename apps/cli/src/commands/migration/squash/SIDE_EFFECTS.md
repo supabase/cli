@@ -84,7 +84,7 @@ live shadow available.
 
 ## Environment Variables
 
-`SUPABASE_YES`, `DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
+`SUPABASE_YES`, `SUPABASE_DB_PASSWORD` (`--linked` only), `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
 `DOCKER_HOST`/`DOCKER_CONTEXT`/`DOCKER_CONFIG`, `SUPABASE_NETWORK_ID`,
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
 `SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
@@ -96,6 +96,7 @@ live shadow available.
 | `0`   | success — **including** the single-migration no-op **and** a declined remote-baseline prompt                                                                                                                                                                  |
 | `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure; flag-group conflicts |
 | `1`   | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                                                                                                                      |
+| `1`   | `--password` with `--db-url` or `--local`                                                                                                                                                                                                                     |
 | `130` | SIGINT                                                                                                                                                                                                                                                        |
 
 ## Output
@@ -142,8 +143,12 @@ code or the rest of the payload.
 
 ## Notes
 
-- `--local` defaults **true**; `[db-url linked local]` and
-  `[db-url password]` are the two mutually-exclusive flag groups.
+- `--local` defaults **true**; `[db-url linked local]` is the mutually-exclusive target group.
+- **`--password`** is rejected with `--db-url` (`--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`), with `--local` (`--password can't be used with --local. The local database uses [db].password from supabase/config.toml.`), and when the target defaulted to local (`migration squash targets the local database unless you pass --linked, and --password only applies to a linked project. Pass --linked, or drop --password.`),
+  exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
+  `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
+  (stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`), and a
+  temporary login role is minted instead (ADR 0031).
 - **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
@@ -161,14 +166,14 @@ code or the rest of the payload.
   answer) is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
-- **Atomicity note:** the baseline `DELETE`/`INSERT` run inside an explicit `BEGIN`/`COMMIT`
-  with `ROLLBACK` on error (like `migration repair`), so a partial failure cannot leave the
-  DELETE applied without the INSERT.
-- **Diff-writing edge cases:** (a) `lineByLineDiff`'s output is never truncated, even when a
-  single dumped line exceeds 64 KiB (`squash.diff.ts`); (b) the separator comment and the
-  auth/storage diff are combined into one write, so a hypothetical failure isolated to just the
-  separator bytes surfaces as `failed to write line: …`; not realistically triggerable on a real
-  filesystem for a single already-open file descriptor.
+- **Atomicity note:** the baseline `DELETE`/`INSERT` run in an explicit `BEGIN`/`COMMIT` with
+  `ROLLBACK` on error, so a partial failure cannot leave the DELETE applied without the INSERT
+  (as in `migration repair`).
+- **Diff output handling:** (a) a dumped line longer than 64 KiB is written in full, not
+  truncated (`squash.diff.ts`); (b) the separator comment and the auth/storage diff are
+  combined into one write, so a failure isolated to just the separator bytes surfaces as
+  `failed to write line: …`; this is not realistically triggerable on a real filesystem for a
+  single already-open file descriptor.
 - `Initialising schema...` is printed by the shared setup prelude just before
   `setupDatabase` runs rather than from inside it — inherited from CLI-1956, shared with
   `db diff`/`db pull`'s identical shadow-provisioning prelude.

@@ -17,6 +17,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   mockAnalytics,
   mockContextualAnalytics,
@@ -43,6 +44,7 @@ import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
+import { configDiff } from "../diff/diff.handler.ts";
 import { configPush } from "./push.handler.ts";
 import { configPushHandler } from "./push.command.ts";
 
@@ -400,6 +402,7 @@ function setup(opts: {
     Layer.succeed(YesFlag, opts.yes ?? false),
     workdirFilesLayer(opts.toml, opts.seed),
     cliConfigProviderLayer,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -464,6 +467,7 @@ describe("config push integration", () => {
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       yield* writeWorkdirFile(["supabase", "config.json"], "{not valid json");
@@ -508,6 +512,204 @@ schemas = ["public", "remote_schema"]
       expect(update).toBeDefined();
       expect(update?.body).toMatchObject({ db_schema: "public,remote_schema" });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("pushes the SUPABASE_API_SCHEMAS env override instead of the config.toml value", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"
+[api]
+enabled = true
+schemas = ["public"]
+`,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            api: { ...(a["api"] as Record<string, unknown>), db_schema: "public" },
+          }),
+        }),
+      },
+    });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public,env_schema",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
+        );
+        expect(update?.body).toMatchObject({ db_schema: "public,env_schema" });
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  const schemasToml = `project_id = "test"
+[api]
+enabled = true
+schemas = ["public"]
+`;
+  const remoteSchemas = {
+    status: 200,
+    body: v2Response({
+      attributes: (a) => ({
+        ...a,
+        api: { ...(a["api"] as Record<string, unknown>), db_schema: "public" },
+      }),
+    }),
+  };
+
+  it.live("names a value the shell environment supplied in a stderr line, even with --yes", () => {
+    const { layer, out } = setup({ toml: schemasToml, yes: true, v2: remoteSchemas });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public,env_schema",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Pushing 1 value set by environment variables: api.schemas (SUPABASE_API_SCHEMAS)\n",
+        );
+        expect(out.stderrText).toContain("(from SUPABASE_API_SCHEMAS)");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.live("names the project .env file that supplied a pushed value", () => {
+    const { layer, out } = setup({ toml: schemasToml, yes: true, v2: remoteSchemas });
+    return Effect.gen(function* () {
+      yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_API_SCHEMAS=public,env_schema\n");
+      yield* configPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(
+        "Pushing 1 value set by environment variables: api.schemas (SUPABASE_API_SCHEMAS, supabase/.env)\n",
+      );
+      expect(out.stderrText).toContain("(from SUPABASE_API_SCHEMAS in supabase/.env)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints no environment line when the config file supplies every pushed value", () => {
+    const { layer, out } = setup({
+      toml: schemasToml.replace('["public"]', '["public", "file_schema"]'),
+      yes: true,
+      v2: remoteSchemas,
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(out.stderrText).not.toContain("set by environment variables");
+      expect(out.stderrText).not.toContain("(from SUPABASE_");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints no environment line when the env value already matches the project", () => {
+    const { layer, out } = setup({ toml: schemasToml, yes: true, v2: remoteSchemas });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).not.toContain("set by environment variables");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.live("lists env-sourced paths in the machine payload", () => {
+    const { layer, out } = setup({
+      toml: schemasToml,
+      yes: true,
+      format: "json",
+      v2: remoteSchemas,
+    });
+    return withEnvVar(
+      "SUPABASE_API_SCHEMAS",
+      "public,env_schema",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        const success = out.messages.find((message) => message.type === "success");
+        expect(((success?.data ?? {}) as Record<string, unknown>)["env_sourced"]).toEqual([
+          {
+            path: ["api", "schemas"],
+            origin: { source: "shell", env_variable: "SUPABASE_API_SCHEMAS" },
+          },
+        ]);
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "config diff shows the value config push sends when an env value overrides a matched remote",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `${schemasToml}
+[remotes.staging]
+project_id = "${REF}"
+[remotes.staging.api]
+schemas = ["public", "remote_schema"]
+`,
+        yes: true,
+        format: "json",
+        v2: remoteSchemas,
+      });
+      return withEnvVar(
+        "SUPABASE_API_SCHEMAS",
+        "public,env_schema",
+        Effect.gen(function* () {
+          yield* configDiff({ projectRef: Option.none(), exitCode: false });
+          yield* configPush({ projectRef: Option.none() });
+
+          const diff = out.messages.find(
+            (message) => (message.data as Record<string, unknown> | undefined)?.["changes"],
+          );
+          const changes = ((diff?.data ?? {}) as Record<string, unknown>)[
+            "changes"
+          ] as ReadonlyArray<Record<string, unknown>>;
+          const diffLocal = changes.find(
+            (change) => (change["path"] as Array<string>).join(".") === "api.schemas",
+          )?.["local"];
+          const update = api.requests.find(
+            (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
+          );
+          expect(diffLocal).toEqual(["public", "env_schema"]);
+          expect(update?.body).toMatchObject({ db_schema: (diffLocal as Array<string>).join(",") });
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () => {
+    const { layer, out, api } = setup({
+      toml: `project_id = "test"
+[api]
+enabled = true
+schemas = ["public"]
+
+[remotes.staging]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
+[remotes.staging.api]
+schemas = ["public", "remote_schema"]
+`,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            api: { ...(a["api"] as Record<string, unknown>), db_schema: "public" },
+          }),
+        }),
+      },
+    });
+    return withEnvVar(
+      "SUPABASE_REMOTES_STAGING_PROJECT_ID",
+      REF,
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
+        );
+        expect(update?.body).toMatchObject({ db_schema: "public,remote_schema" });
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.live("aborts when two [remotes.*] blocks share the target project_id", () => {
@@ -857,6 +1059,7 @@ max_rows = 1000
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -990,6 +1193,7 @@ max_rows = 1000
       }),
       mockStdin(true),
       Layer.succeed(YesFlag, true),
+      cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -1444,6 +1648,7 @@ function setupService(opts: {
     Layer.succeed(YesFlag, opts.yes ?? false),
     workdirFilesLayer(opts.toml),
     cliConfigProviderLayer,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, apiMock };
 }
@@ -1606,7 +1811,7 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
           );
           expect(message).toBe("failed to parse config: missing private key");
           expect(api.requests).toHaveLength(0);
@@ -1630,7 +1835,7 @@ openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
           );
           expect(message).toBe("failed to parse config: missing private key");
           expect(api.requests).toHaveLength(0);
@@ -1656,7 +1861,7 @@ secret = "env(CAPTCHA_SECRET_FROM_ROOT_ENV)"
           `CAPTCHA_SECRET_FROM_ROOT_ENV="${DOTENVX_ENCRYPTED_VALUE}"\n`,
         );
         const message = yield* configPush({ projectRef: Option.none() }).pipe(
-          Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+          Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe("failed to parse config: missing private key");
         expect(api.requests).toHaveLength(0);
@@ -1696,7 +1901,7 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
           );
           expect(message).toBe("failed to parse config: missing private key");
           expect(api.requests).toHaveLength(0);

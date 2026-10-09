@@ -1,0 +1,697 @@
+{
+  "creations": [
+    {
+      "config": {
+        "healthTimeoutMs": 120000,
+        "jwtExpiry": 3600,
+        "settings": {},
+        "version": "17"
+      },
+      "endpoints": {
+        "sql": {
+          "port": 55322
+        }
+      },
+      "service": "database"
+    },
+    {
+      "config": {
+        "apiKey": "api-key",
+        "backend": "postgres"
+      },
+      "endpoints": {
+        "http": {
+          "port": "auto"
+        }
+      },
+      "service": "analytics"
+    },
+    {
+      "config": {},
+      "endpoints": {
+        "http": {
+          "port": "auto"
+        }
+      },
+      "service": "pgmeta"
+    },
+    {
+      "config": {
+        "extraSearchPath": "public,extensions",
+        "maxRows": 1000,
+        "schemas": "public,remote_api"
+      },
+      "endpoints": {
+        "http": {
+          "port": 55321
+        }
+      },
+      "service": "rest"
+    },
+    {
+      "config": {
+        "disableSignup": true,
+        "jwtExpiry": 3600,
+        "settings": {
+          "additionalRedirectUrls": "https://127.0.0.1:3000",
+          "captcha": {
+            "enabled": false
+          },
+          "email": {
+            "double_confirm_changes": true,
+            "enable_confirmations": false,
+            "enable_signup": true,
+            "max_frequency": "1s",
+            "notification": {},
+            "otp_expiry": 3600,
+            "otp_length": 6,
+            "secure_password_change": false,
+            "template": {}
+          },
+          "enableAnonymousSignIns": false,
+          "enableManualLinking": false,
+          "enableRefreshTokenRotation": true,
+          "external": {
+            "apple": {
+              "client_id": "",
+              "email_optional": false,
+              "enabled": false,
+              "redirect_uri": "",
+              "skip_nonce_check": false,
+              "url": ""
+            }
+          },
+          "hooks": {
+            "before_user_created": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            },
+            "custom_access_token": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            },
+            "mfa_verification_attempt": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            },
+            "password_verification_attempt": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            },
+            "send_email": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            },
+            "send_sms": {
+              "enabled": false,
+              "secrets": "",
+              "uri": ""
+            }
+          },
+          "mfa": {
+            "max_enrolled_factors": 10,
+            "phone": {
+              "enroll_enabled": false,
+              "max_frequency": "5s",
+              "otp_length": 6,
+              "template": "Your code is {{ .Code }}",
+              "verify_enabled": false
+            },
+            "totp": {
+              "enroll_enabled": false,
+              "verify_enabled": false
+            },
+            "web_authn": {
+              "enroll_enabled": false,
+              "verify_enabled": false
+            }
+          },
+          "minimumPasswordLength": 6,
+          "oauthServer": {
+            "allow_dynamic_registration": false,
+            "authorization_url_path": "/oauth/consent",
+            "enabled": false
+          },
+          "passwordRequirements": "",
+          "rateLimit": {
+            "anonymous_users": 30,
+            "email_sent": 2,
+            "sign_in_sign_ups": 30,
+            "sms_sent": 30,
+            "token_refresh": 150,
+            "token_verifications": 30,
+            "web3": 30
+          },
+          "refreshTokenReuseInterval": 10,
+          "sessions": {},
+          "sms": {
+            "enable_confirmations": false,
+            "enable_signup": false,
+            "max_frequency": "5s",
+            "messagebird": {
+              "enabled": false
+            },
+            "otp_expiry": 60,
+            "otp_length": 6,
+            "template": "Your code is {{ .Code }}",
+            "textlocal": {
+              "enabled": false
+            },
+            "twilio": {
+              "account_sid": "",
+              "enabled": false,
+              "message_service_sid": ""
+            },
+            "twilio_verify": {
+              "enabled": false
+            },
+            "vonage": {
+              "enabled": false
+            }
+          },
+          "web3": {
+            "ethereum": {
+              "enabled": false
+            },
+            "solana": {
+              "enabled": false
+            }
+          }
+        },
+        "siteUrl": "http://remote.example.com",
+        "smtpAdminEmail": "admin@email.com",
+        "smtpSenderName": "Admin"
+      },
+      "endpoints": {
+        "http": {
+          "port": 55321
+        }
+      },
+      "service": "auth"
+    },
+    {
+      "config": {
+        "filePath": "<WORKDIR>/supabase/.temp/stack-uploads/golden-stack",
+        "fileSizeLimit": "52428800",
+        "s3AccessKeyId": "625729a08b95bf1b7ff351a663f3a23c",
+        "s3ProtocolEnabled": true,
+        "s3Region": "local",
+        "s3SecretAccessKey": "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+        "vectorEnabled": true,
+        "vectorMaxBuckets": 10,
+        "vectorMaxIndexes": 5
+      },
+      "endpoints": {
+        "http": {
+          "port": 55321
+        }
+      },
+      "service": "storage"
+    },
+    {
+      "config": {
+        "env": {},
+        "filesRoot": "<WORKDIR>",
+        "functions": {},
+        "functionsRoot": "<WORKDIR>/supabase/functions",
+        "policy": "per_worker",
+        "verifyJwt": true
+      },
+      "endpoints": {
+        "http": {
+          "port": 55321
+        },
+        "inspector": {
+          "port": "auto"
+        }
+      },
+      "service": "functions"
+    },
+    {
+      "config": {
+        "apiExtraSearchPath": "public,extensions",
+        "apiMaxRows": 1000,
+        "apiSchemas": "public,remote_api",
+        "cliVersion": "0.0.0-dev",
+        "snippetsRoot": "<WORKDIR>/supabase/snippets"
+      },
+      "endpoints": {
+        "http": {
+          "port": 55323
+        }
+      },
+      "service": "studio"
+    },
+    {
+      "config": {},
+      "endpoints": {
+        "http": {
+          "port": "auto"
+        },
+        "pop3": {
+          "port": "auto"
+        },
+        "smtp": {
+          "port": "auto"
+        }
+      },
+      "service": "mail"
+    }
+  ],
+  "keys": {
+    "anonKeyIsOverride": false,
+    "serviceRoleKeyIsOverride": false
+  },
+  "projectEnvValues": {},
+  "source": {
+    "analytics": {
+      "backend": "postgres",
+      "enabled": true,
+      "port": 54327
+    },
+    "api": {
+      "enabled": true,
+      "extra_search_path": [
+        "public",
+        "extensions"
+      ],
+      "max_rows": 1000,
+      "port": 55321,
+      "schemas": [
+        "public",
+        "remote_api"
+      ],
+      "tls": {
+        "enabled": false
+      }
+    },
+    "auth": {
+      "additional_redirect_urls": [
+        "https://127.0.0.1:3000"
+      ],
+      "captcha": {
+        "enabled": false
+      },
+      "email": {
+        "double_confirm_changes": true,
+        "enable_confirmations": false,
+        "enable_signup": true,
+        "max_frequency": "1s",
+        "notification": {},
+        "otp_expiry": 3600,
+        "otp_length": 6,
+        "secure_password_change": false,
+        "smtp": {
+          "enabled": false
+        },
+        "template": {}
+      },
+      "enable_anonymous_sign_ins": false,
+      "enable_manual_linking": false,
+      "enable_refresh_token_rotation": true,
+      "enable_signup": false,
+      "enabled": true,
+      "external": {
+        "apple": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "azure": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "bitbucket": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "discord": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "facebook": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "figma": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "github": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "gitlab": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": "https://gitlab.com"
+        },
+        "google": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "kakao": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "keycloak": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "linkedin_oidc": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "notion": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "slack_oidc": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "spotify": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "twitch": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "twitter": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "workos": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "x": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        },
+        "zoom": {
+          "client_id": "",
+          "email_optional": false,
+          "enabled": false,
+          "redirect_uri": "",
+          "skip_nonce_check": false,
+          "url": ""
+        }
+      },
+      "hook": {
+        "before_user_created": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        },
+        "custom_access_token": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        },
+        "mfa_verification_attempt": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        },
+        "password_verification_attempt": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        },
+        "send_email": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        },
+        "send_sms": {
+          "enabled": false,
+          "secrets": "",
+          "uri": ""
+        }
+      },
+      "jwt_expiry": 3600,
+      "mfa": {
+        "max_enrolled_factors": 10,
+        "phone": {
+          "enroll_enabled": false,
+          "max_frequency": "5s",
+          "otp_length": 6,
+          "template": "Your code is {{ .Code }}",
+          "verify_enabled": false
+        },
+        "totp": {
+          "enroll_enabled": false,
+          "verify_enabled": false
+        },
+        "web_authn": {
+          "enroll_enabled": false,
+          "verify_enabled": false
+        }
+      },
+      "minimum_password_length": 6,
+      "oauth_server": {
+        "allow_dynamic_registration": false,
+        "authorization_url_path": "/oauth/consent",
+        "enabled": false
+      },
+      "password_requirements": "",
+      "rate_limit": {
+        "anonymous_users": 30,
+        "email_sent": 2,
+        "sign_in_sign_ups": 30,
+        "sms_sent": 30,
+        "token_refresh": 150,
+        "token_verifications": 30,
+        "web3": 30
+      },
+      "refresh_token_reuse_interval": 10,
+      "sessions": {},
+      "site_url": "http://remote.example.com",
+      "sms": {
+        "enable_confirmations": false,
+        "enable_signup": false,
+        "max_frequency": "5s",
+        "messagebird": {
+          "enabled": false
+        },
+        "otp_expiry": 60,
+        "otp_length": 6,
+        "template": "Your code is {{ .Code }}",
+        "textlocal": {
+          "enabled": false
+        },
+        "twilio": {
+          "account_sid": "",
+          "enabled": false,
+          "message_service_sid": ""
+        },
+        "twilio_verify": {
+          "enabled": false
+        },
+        "vonage": {
+          "enabled": false
+        }
+      },
+      "third_party": {
+        "auth0": {
+          "enabled": false
+        },
+        "aws_cognito": {
+          "enabled": false
+        },
+        "clerk": {
+          "enabled": false
+        },
+        "firebase": {
+          "enabled": false
+        },
+        "workos": {
+          "enabled": false
+        }
+      },
+      "web3": {
+        "ethereum": {
+          "enabled": false
+        },
+        "solana": {
+          "enabled": false
+        }
+      }
+    },
+    "compute": {},
+    "db": {
+      "health_timeout": "2m",
+      "major_version": 17,
+      "migrations": {
+        "enabled": true,
+        "schema_paths": []
+      },
+      "network_restrictions": {
+        "allowed_cidrs": [
+          "0.0.0.0/0"
+        ],
+        "allowed_cidrs_v6": [
+          "::/0"
+        ],
+        "enabled": false
+      },
+      "pooler": {
+        "default_pool_size": 20,
+        "enabled": false,
+        "max_client_conn": 100,
+        "pool_mode": "transaction",
+        "port": 54329
+      },
+      "port": 55322,
+      "seed": {
+        "enabled": false,
+        "sql_paths": [
+          "supabase/seed.sql"
+        ]
+      },
+      "settings": {},
+      "shadow_port": 54320,
+      "ssl_enforcement": {
+        "enabled": false
+      }
+    },
+    "edge_runtime": {
+      "deno_version": 2,
+      "enabled": true,
+      "inspector_port": 8083,
+      "policy": "per_worker"
+    },
+    "experimental": {
+      "inspect": {
+        "rules": []
+      },
+      "pgdelta": {
+        "enabled": true
+      },
+      "webhooks": {
+        "enabled": false
+      }
+    },
+    "functions": {},
+    "local_smtp": {
+      "enabled": true,
+      "port": 54324
+    },
+    "project_id": "abcdefghijklmnopqrst",
+    "realtime": {
+      "enabled": false,
+      "ip_version": "IPv4",
+      "max_header_length": 4096
+    },
+    "remotes": {},
+    "storage": {
+      "analytics": {
+        "buckets": {},
+        "enabled": false,
+        "max_catalogs": 2,
+        "max_namespaces": 5,
+        "max_tables": 10
+      },
+      "enabled": true,
+      "file_size_limit": "50MiB",
+      "image_transformation": {
+        "enabled": false
+      },
+      "s3_protocol": {
+        "enabled": true
+      },
+      "vector": {
+        "buckets": {},
+        "enabled": true,
+        "max_buckets": 10,
+        "max_indexes": 5
+      }
+    },
+    "studio": {
+      "api_url": "http://127.0.0.1",
+      "enabled": true,
+      "port": 55323
+    }
+  }
+}

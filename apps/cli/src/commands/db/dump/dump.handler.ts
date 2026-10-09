@@ -6,8 +6,11 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  type DbConnType,
+} from "../../../command-internal/db-target-flags.ts";
+import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -95,7 +98,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -151,6 +154,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       : useLocal
         ? "local"
         : "linked";
+    yield* rejectPasswordWithDirectTarget(connType, flags.password);
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* new DbDumpMutuallyExclusiveFlagsError({
@@ -209,7 +213,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnv,
+    );
     const dumpUsesHostNetwork =
       backend.kind === "stack"
         ? toolContainerUsesHostNetwork(networkId)

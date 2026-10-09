@@ -1,6 +1,7 @@
 import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 const LOCAL_HOST = "127.0.0.1";
 const LOOPBACK_NO_PROXY = `localhost,${LOCAL_HOST},[::1]`;
@@ -160,7 +161,7 @@ export const getHostname = (
   });
 
 /** Keeps Bun from proxying the CLI's loopback HTTP requests. */
-export function configureLoopbackProxyBypass(env: NodeJS.ProcessEnv = process.env): void {
+export function configureLoopbackProxyBypass(env: NodeJS.ProcessEnv = ambientEnvironment()): void {
   const key = (env["no_proxy"]?.length ?? 0) > 0 ? "no_proxy" : "NO_PROXY";
   const current = env[key];
   env[key] = current ? `${current},${LOOPBACK_NO_PROXY}` : LOOPBACK_NO_PROXY;

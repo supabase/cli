@@ -6,7 +6,6 @@ import type {
   LocalServiceVersionOverrides,
 } from "../../shared/services/services.shared.ts";
 import { resolvePinnedImage } from "../../command-internal/db-bootstrap/pinned-image.ts";
-import { envOverrideBool } from "../../command-internal/local-config-values.ts";
 import { START_SERVICES } from "./start.services.ts";
 
 /**
@@ -38,16 +37,8 @@ export interface StartGates {
 
 export interface StartGateInputs {
   readonly config: CliConfig;
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** `partitionStartExcludeFlags(flags.exclude).valid`, as a `Set` for O(1) lookup. */
   readonly excludedKeys: ReadonlySet<string>;
-  readonly document: Readonly<Record<string, unknown>> | undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 /**
@@ -55,95 +46,26 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * separately by the caller (see this module's header).
  */
 export function resolveStartGates(inputs: StartGateInputs): StartGates {
-  const { config, projectEnvValues, excludedKeys, document } = inputs;
+  const { config, excludedKeys } = inputs;
   const isExcluded = (key: string) => excludedKeys.has(key);
 
-  const analyticsEnabled = envOverrideBool(
-    "SUPABASE_ANALYTICS_ENABLED",
-    config.analytics.enabled,
-    "analytics.enabled",
-    projectEnvValues,
-  );
-  const apiEnabled = envOverrideBool(
-    "SUPABASE_API_ENABLED",
-    config.api.enabled,
-    "api.enabled",
-    projectEnvValues,
-  );
-  const authEnabled = envOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
-  const inbucketEnabled = envOverrideBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    config.local_smtp.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
-  const realtimeEnabled = envOverrideBool(
-    "SUPABASE_REALTIME_ENABLED",
-    config.realtime.enabled,
-    "realtime.enabled",
-    projectEnvValues,
-  );
-  const storageEnabled = envOverrideBool(
-    "SUPABASE_STORAGE_ENABLED",
-    config.storage.enabled,
-    "storage.enabled",
-    projectEnvValues,
-  );
-  // The section must be present in the raw document before the env override can flip it on:
-  // `@supabase/config` always decodes `storage.image_transformation` to a defaulted
-  // `{enabled: false}`, never `undefined`, so presence can't be read off the typed config.
-  const imageTransformationSectionPresent =
-    asRecord(asRecord(document?.["storage"])?.["image_transformation"]) !== undefined;
-  const configuredImageTransformationEnabled =
-    config.storage.image_transformation?.enabled ?? false;
-  const imageTransformationEnabled = imageTransformationSectionPresent
-    ? envOverrideBool(
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-        configuredImageTransformationEnabled,
-        "storage.image_transformation.enabled",
-        projectEnvValues,
-      )
-    : configuredImageTransformationEnabled;
-  const studioEnabled = envOverrideBool(
-    "SUPABASE_STUDIO_ENABLED",
-    config.studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
-  const poolerEnabled = envOverrideBool(
-    "SUPABASE_DB_POOLER_ENABLED",
-    config.db.pooler.enabled,
-    "db.pooler.enabled",
-    projectEnvValues,
-  );
-  const edgeRuntimeEnabled = envOverrideBool(
-    "SUPABASE_EDGE_RUNTIME_ENABLED",
-    config.edge_runtime.enabled,
-    "edge_runtime.enabled",
-    projectEnvValues,
-  );
-
-  const storage = storageEnabled && !isExcluded("storage-api");
+  const storage = config.storage.enabled && !isExcluded("storage-api");
+  const imageTransformationEnabled = config.storage.image_transformation?.enabled ?? false;
 
   return {
     kong: !isExcluded("kong"),
-    gotrue: authEnabled && !isExcluded("gotrue"),
-    mailpit: inbucketEnabled && !isExcluded("mailpit"),
-    realtime: realtimeEnabled && !isExcluded("realtime"),
-    postgrest: apiEnabled && !isExcluded("postgrest"),
+    gotrue: config.auth.enabled && !isExcluded("gotrue"),
+    mailpit: config.local_smtp.enabled && !isExcluded("mailpit"),
+    realtime: config.realtime.enabled && !isExcluded("realtime"),
+    postgrest: config.api.enabled && !isExcluded("postgrest"),
     storage,
     imgproxy: storage && imageTransformationEnabled && !isExcluded("imgproxy"),
-    logflare: analyticsEnabled && !isExcluded("logflare"),
-    vector: analyticsEnabled && !isExcluded("vector"),
-    pgMeta: studioEnabled && !isExcluded("postgres-meta"),
-    studio: studioEnabled && !isExcluded("studio"),
-    supavisor: poolerEnabled && !isExcluded("supavisor"),
-    edgeRuntime: edgeRuntimeEnabled && !isExcluded("edge-runtime"),
+    logflare: config.analytics.enabled && !isExcluded("logflare"),
+    vector: config.analytics.enabled && !isExcluded("vector"),
+    pgMeta: config.studio.enabled && !isExcluded("postgres-meta"),
+    studio: config.studio.enabled && !isExcluded("studio"),
+    supavisor: config.db.pooler.enabled && !isExcluded("supavisor"),
+    edgeRuntime: config.edge_runtime.enabled && !isExcluded("edge-runtime"),
   };
 }
 

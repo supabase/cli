@@ -19,7 +19,7 @@ import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
-import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { init } from "./init.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-init-");
@@ -311,21 +311,21 @@ describe("init", () => {
   it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
     const tempDir = tempRoot.current;
 
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
-      Effect.gen(function* () {
-        const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
+    return Effect.gen(function* () {
+      const { layer, out } = setup(tempDir, {
+        interactive: true,
+        stdinIsTty: true,
+        env: { SUPABASE_YES: "1" },
+      });
 
-        yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
-        expect(out.promptConfirmCalls).toHaveLength(0);
-        expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-        expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
-          '"deno.enablePaths"',
-        );
-      }),
-    );
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
   });
 
   it.live("init -i --yes writes VS Code settings even when stdout is piped", () => {
@@ -374,7 +374,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not a boolean", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -387,10 +387,12 @@ describe("init", () => {
 
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
-      expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+      expect(error["message"]).toBe(
+        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+      );
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
-        "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
+        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.\n',
         "Try rerunning the command with --debug to troubleshoot the error.\n",
       ]);
     });

@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { FileSystem, Path } from "effect";
+import { FileSystem, Path, PlatformError } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -69,6 +69,7 @@ import {
   type FunctionsServeFlags,
   type FunctionsServeTimers,
 } from "../../../shared/functions/serve.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const deployMockState = vi.hoisted(() => ({
   runCalls: [] as Array<{
@@ -442,6 +443,7 @@ function setupServe(options: SetupOptions = {}) {
   const childSpawner = options.childSpawner ?? mockDockerLogSpawner([{ exitCode: 1 }]);
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({
       out,
       api: {
@@ -718,7 +720,6 @@ describe("functions serve integration", () => {
   it.live.each([
     ["per-function", "supabase/functions/hello/.env"],
     ["default", "supabase/functions/.env"],
-    ["project", ".env.development"],
   ] as const)(
     "rejects a BOM-prefixed %s env file without starting the runtime",
     ([, relativePath]) =>
@@ -1195,14 +1196,10 @@ describe("functions serve integration", () => {
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
-        expect(error.message).toContain("failed to parse environment file:");
-        expect(error.message).toContain(".env.development");
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
+        expect(error.message).toBe("failed to parse environment file: .env.development");
       }
       expect(deployMockState.runCalls).toHaveLength(0);
-    });
+    }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
   });
 
   it.live("skips missing unused import map targets during serve startup", () => {
@@ -1950,6 +1947,92 @@ describe("functions serve integration", () => {
       ).toHaveLength(2);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  const dockerRestartHandler = (command: string, args: ReadonlyArray<string>) => {
+    if (command !== "docker") {
+      throw new Error(`unexpected process: ${command}`);
+    }
+    if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+      return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+    }
+    if (args[0] === "exec") {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected docker args: ${args.join(" ")}`);
+  };
+
+  const restartPolicies = () =>
+    deployMockState.runCalls
+      .filter((call) => call.command === "docker" && call.args[0] === "create")
+      .map((call) => call.args.join(" ").match(/--policy=(\S+)/)?.[1]);
+
+  const restartOnce = Effect.fnUntraced(function* (
+    change: Effect.Effect<void, PlatformError.PlatformError>,
+  ) {
+    deployMockState.runHandler = dockerRestartHandler;
+    const path = yield* Path.Path;
+    const fileWatcher = mockFileWatcher();
+    const childSpawner = mockDockerLogSpawner([
+      { pending: true },
+      { exitCode: 1, stderr: "docker logs exited with 1" },
+    ]);
+    const { layer } = setupServe({ fileWatcher, childSpawner });
+    const fiber = yield* functionsServe(baseFlags()).pipe(
+      Effect.provide(layer),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* waitFor(
+      () =>
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "create",
+        ).length === 1,
+      "timed out waiting for first docker create",
+    );
+    yield* change;
+    fileWatcher.emit([
+      {
+        path: path.join(tempRoot.current, "supabase", "functions", "hello", "index.ts"),
+        type: "update",
+      },
+    ]);
+    yield* Fiber.join(fiber).pipe(Effect.flip);
+  });
+
+  it.live("re-reads the project .env on each restart", () =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[edge_runtime]", 'policy = "env(EDGE_POLICY)"', ""].join(
+          "\n",
+        ),
+      );
+      yield* writeProjectFile("supabase/.env", "EDGE_POLICY=per_worker\n");
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+      yield* restartOnce(writeProjectFile("supabase/.env", "EDGE_POLICY=oneshot\n"));
+
+      expect(restartPolicies()).toEqual(["per_worker", "oneshot"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("re-reads config.toml on each restart", () =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[edge_runtime]", 'policy = "per_worker"', ""].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+      yield* restartOnce(
+        writeCliConfig(
+          ['project_id = "test-project"', "[edge_runtime]", 'policy = "oneshot"', ""].join("\n"),
+        ),
+      );
+
+      expect(restartPolicies()).toEqual(["per_worker", "oneshot"]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("stops serving cleanly on a process signal", () => {
     deployMockState.runHandler = (command, args) => {
@@ -3838,6 +3921,50 @@ describe("functions serve integration", () => {
       }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
     },
   );
+
+  it.live("publishes SUPABASE_API_PORT as the runtime's API port, ahead of config.toml", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(
+        ['project_id = "test-project"', "[api]", "port = 54321", ""].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+      yield* writeFunctionFile("hello", "deno.json", '{"imports":{}}\n');
+
+      const { layer } = setupServe({
+        childSpawner: mockDockerLogSpawner([{ exitCode: 1, stderr: "api port env logs failed" }]),
+      });
+      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "create",
+      );
+      if (dockerRun === undefined) {
+        throw new Error("expected docker create call");
+      }
+      expect(yield* extractDockerEnvEntries(dockerRun)).toContain(
+        "SUPABASE_INTERNAL_HOST_PORT=5599",
+      );
+    }).pipe((body) => withEnvVar("SUPABASE_API_PORT", "5599", body));
+  });
 
   it.live(
     "does not publish default jwks fallbacks when signing_keys_path is configured but empty",

@@ -1,8 +1,9 @@
 /**
  * Resets the local database in-process — shared by `db reset`'s handler and the `db schema
  * declarative`/`sync` local-reset paths, so neither needs to shell out to a separate process.
- * `db reset`'s own handler is the only caller that ever passes a non-empty
- * `version`/`seedFlags` override; the declarative callers always want the plain full reset.
+ * `db reset`'s own handler is the only caller that ever passes a non-empty `version`; the
+ * declarative callers always want the plain full reset. Seeding follows the resolved config:
+ * `--no-seed`, `--sql-paths` and `SUPABASE_DB_SEED_ENABLED` all arrive through it.
  *
  * Always prints its own two stderr lines via `output.raw`, regardless of `output.format`, but
  * never the JSON `output.success(...)` envelope — that belongs to a top-level `db reset`
@@ -28,11 +29,10 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnvValues, readDbToml } from "../db-config.toml-read.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
-import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
@@ -78,14 +78,9 @@ const toLogMessage = (version: string): string =>
 export interface ResetLocalDatabaseInput {
   /** The resolved reset migration version (`""` for every pending migration, `db reset`'s default). */
   readonly version: string;
-  /** `db reset`'s `--no-seed`/`--sql-paths` — see `resolveResetSeedConfig`. */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
 }
 
-const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
-  version: "",
-  seedFlags: { noSeed: false, sqlPaths: [] },
-};
+const PLAIN_FULL_RESET: ResetLocalDatabaseInput = { version: "" };
 
 const notRunning = () =>
   new ResetLocalDbNotRunningError({
@@ -112,7 +107,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const workdir = cliSettings.workdir;
   // Load the project env first so a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is
   // honored by the experimental gate below.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
@@ -180,7 +175,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       overlay: projectCatalogOverlay(toml, workdir),
       migrations: {
         workdir,
-        toml: { ...toml, seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path) },
+        toml,
         experimental,
         version: input.version,
       },
@@ -236,7 +231,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         interactive: false,
         yes,
         credentials,
-        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        resolvedConfig: {
+          config: context.config,
+          document: context.resolvedConfig.loaded.document,
+        },
         projectEnvValues: projectEnv,
         workdir,
       });
@@ -259,13 +257,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const debug = yield* DebugFlag;
 
   // Error if the local db container is down.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
+  const running = yield* isLocalDbRunning(spawner, fs, path, workdir);
   if (!running) {
     return yield* notRunning();
   }
@@ -282,7 +274,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     debug,
   );
   const {
-    context: { projectId, hostname, config, loaded },
+    context: { projectId, hostname, config, resolvedConfig },
     values,
     bootstrapConfig,
     networkId,
@@ -309,7 +301,6 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     version: input.version,
-    seedFlags: input.seedFlags,
     // `db reset` resolves `--experimental` earlier than this prelude does, via the nested-env
     // walk above; override the prelude's own `setup.experimental` with that value so the two
     // stay consistent.
@@ -338,7 +329,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       // `SUPABASE_YES` set in `supabase/.env` auto-confirms the bucket overwrite/prune
       // prompts.
       yes,
-      resolvedConfig: { config, document: loaded?.document },
+      resolvedConfig: { config, document: resolvedConfig.loaded.document },
       // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
     }).pipe(

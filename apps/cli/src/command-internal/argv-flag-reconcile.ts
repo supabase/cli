@@ -10,6 +10,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { profileFilePath } from "../config/profile-file.ts";
+import { envValue } from "../shared/config/env-option.ts";
 import { loadProfile, type LoadedProfile } from "./profile-load.ts";
 import { parseStringSliceFlag } from "./string-slice-flag.ts";
 import { validateWorkdirIsDirectory } from "./workdir-validation.ts";
@@ -135,7 +136,7 @@ export const validateArgvWorkdir = Effect.fnUntraced(function* (
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).
   const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(WorkdirFlag));
-  const workdir = argvWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
+  const workdir = argvWorkdirValue(scan, parsedWorkdir, yield* envValue("SUPABASE_WORKDIR"));
   if (Option.isNone(workdir)) {
     return;
   }
@@ -213,7 +214,7 @@ export const resolveArgvProfile = Effect.fnUntraced(function* (
 ) {
   const parsedRaw = yield* Effect.serviceOption(ProfileFlag);
   const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");
-  const env = process.env["SUPABASE_PROFILE"];
+  const env = yield* envValue("SUPABASE_PROFILE");
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
   // The explicit token the raw-argv scan resolves, vs. the one the config layer's own
@@ -253,7 +254,7 @@ export const resolveArgvProfile = Effect.fnUntraced(function* (
   // while the config layer trims and maps empty to the default — a divergence the token
   // comparison below surfaces (e.g. a trailing newline fails to load as a profile).
   const fileRaw = yield* fs.value
-    .readFileString(profileFilePath(path.value, runtimeInfo.value.homeDir))
+    .readFileString(yield* profileFilePath(path.value, runtimeInfo.value.homeDir))
     .pipe(Effect.option);
 
   const argvToken = Option.isSome(argvExplicit)

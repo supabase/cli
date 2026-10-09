@@ -32,10 +32,13 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { sanitizeProjectId } from "../../../shared/config/project-id.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
 import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
@@ -129,6 +132,11 @@ function mockDockerRunSpawnFailure() {
 
 const tempRoot = useTempWorkdir("supabase-functions-download-legacy-");
 
+const workdirProjectId = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return sanitizeProjectId(path.basename(tempRoot.current));
+});
+
 // `withCommandTelemetry` threads `flags`/`command` through
 // `CurrentAnalyticsContext`, not `capture()`'s own args, so this merges it manually.
 function mockContextualAnalytics() {
@@ -198,6 +206,7 @@ describe("functions download", () => {
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -245,6 +254,7 @@ describe("functions download", () => {
     ],
   ) {
     return Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: mockOutput({ format: "text" }),
         api: mockCommandPlatformApi({ handler }),
@@ -364,7 +374,11 @@ describe("functions download", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
-      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+      // A dangling `.temp` link reads as unlinked yet cannot be created.
+      yield* fs.symlink(
+        path.join(tempRoot.current, "missing-target"),
+        path.join(tempRoot.current, "supabase", ".temp"),
+      );
 
       const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
@@ -435,6 +449,7 @@ describe("functions download", () => {
           : Effect.void,
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({
@@ -474,6 +489,7 @@ describe("functions download", () => {
       runStderr: ["unbundle: warning about deno.json"],
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -520,6 +536,7 @@ describe("functions download", () => {
             : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -560,6 +577,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -601,6 +619,7 @@ describe("functions download", () => {
       // routes it to stderr, keeping stdout payload-only.
       const child = mockDockerUnbundle({ runStdout: ["unbundle: wrote index.ts"] });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -652,6 +671,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -709,6 +729,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -735,7 +756,7 @@ describe("functions download", () => {
       // own Docker-bundling path.
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
         command: "docker",
-        args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+        args: ["network", "inspect", `supabase_network_${yield* workdirProjectId}`],
       });
       expect(child.spawned.find((spawned) => spawned.args[0] === "volume")).toEqual({
         command: "docker",
@@ -743,10 +764,10 @@ describe("functions download", () => {
           "volume",
           "create",
           "--label",
-          `com.supabase.cli.project=${PROJECT_ID}`,
+          `com.supabase.cli.project=${yield* workdirProjectId}`,
           "--label",
-          `com.docker.compose.project=${PROJECT_ID}`,
-          `supabase_edge_runtime_${PROJECT_ID}`,
+          `com.docker.compose.project=${yield* workdirProjectId}`,
+          `supabase_edge_runtime_${yield* workdirProjectId}`,
         ],
       });
 
@@ -759,14 +780,14 @@ describe("functions download", () => {
       );
       const functionsDir = path.resolve(tempRoot.current, "supabase", "functions");
       expect(runCommand?.args).toContain(
-        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
+        `supabase_edge_runtime_${yield* workdirProjectId}:/root/.cache/deno:rw`,
       );
       expect(runCommand?.args).toContain(
         `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
       );
       expect(runCommand?.args).toContain(`${functionsDir}:/home/deno:rw`);
       expect(runCommand?.args).toContain("--network");
-      expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+      expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
       // The unbundle tail is always the last 6 args regardless of whether
       // `--add-host` (Linux-only) was inserted before it.
       expect(runCommand?.args.slice(-6)).toEqual([
@@ -789,6 +810,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -807,31 +829,28 @@ describe("functions download", () => {
       }),
     );
 
-    return Effect.gen(function* () {
-      const path = yield* Path.Path;
-      yield* functionsDownload({ ...baseFlags, useDocker: true });
+    return withConfigEnv(
+      { BITBUCKET_CLONE_DIR: "" },
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      expect(runCommand?.args).not.toContain(
-        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
-      );
-      const hostEszipPath = path.resolve(
-        tempRoot.current,
-        "supabase",
-        ".temp",
-        "output_hello-world.eszip",
-      );
-      expect(runCommand?.args).toContain(
-        `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
-      );
-      expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnvRecord({ BITBUCKET_CLONE_DIR: "" }, { preserveEmptyStrings: true }),
-      ),
-    );
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).not.toContain(
+          `supabase_edge_runtime_${yield* workdirProjectId}:/root/.cache/deno:rw`,
+        );
+        const hostEszipPath = path.resolve(
+          tempRoot.current,
+          "supabase",
+          ".temp",
+          "output_hello-world.eszip",
+        );
+        expect(runCommand?.args).toContain(
+          `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
+        );
+        expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
@@ -842,6 +861,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -873,6 +893,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -905,7 +926,7 @@ describe("functions download", () => {
       });
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).toContain("custom-network");
-      expect(runCommand?.args).not.toContain(`supabase_network_${PROJECT_ID}`);
+      expect(runCommand?.args).not.toContain(`supabase_network_${yield* workdirProjectId}`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -916,6 +937,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -940,10 +962,10 @@ describe("functions download", () => {
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
-          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+          args: ["network", "inspect", `supabase_network_${yield* workdirProjectId}`],
         });
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -953,6 +975,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -991,6 +1014,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1016,7 +1040,7 @@ describe("functions download", () => {
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
         expect(runCommand?.args).not.toContain("custom-network");
       }).pipe(Effect.provide(layer));
     },
@@ -1025,14 +1049,14 @@ describe("functions download", () => {
   it.live(
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
-      // No ancestor climb: `resolveEdgeRuntimeImage` uses `search: false`, so
-      // a nested workdir without its own config.toml falls back to
-      // `--project-ref` rather than an ancestor's `project_id`.
+      // A nested workdir without its own config.toml is named after the workdir,
+      // not an ancestor's `project_id` and not `--project-ref`.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const nestedWorkdir = `${tempRoot.current}/nested`;
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1065,22 +1089,21 @@ describe("functions download", () => {
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
-          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+          args: ["network", "inspect", "supabase_network_nested"],
         });
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain("supabase_network_nested");
         expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("prefers config.toml over a stray config.json for the Docker download path", () => {
-    // Uses `resolveEdgeRuntimeImage`'s `tomlOnly: true`, so a workdir with
-    // both files resolves `project_id` from config.toml, not config.json.
+  it.live("prefers config.json over config.toml for the Docker download path", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1115,8 +1138,8 @@ describe("functions download", () => {
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      expect(runCommand?.args).toContain("supabase_network_toml-project");
-      expect(runCommand?.args).not.toContain("supabase_network_json-project");
+      expect(runCommand?.args).toContain("supabase_network_json-project");
+      expect(runCommand?.args).not.toContain("supabase_network_toml-project");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1128,6 +1151,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1165,6 +1189,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1206,6 +1231,7 @@ describe("functions download", () => {
     const api = mockCommandPlatformApi();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1245,6 +1271,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1287,6 +1314,7 @@ describe("functions download", () => {
       // modeling Docker not running.
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1330,6 +1358,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["boom"] });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1371,6 +1400,7 @@ describe("functions download", () => {
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1419,6 +1449,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["permission denied"] });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1472,6 +1503,7 @@ describe("functions download", () => {
     };
     const child = mockChildProcessSpawner(spawnerOpts);
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1497,7 +1529,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe(
-        `failed to create docker network: supabase_network_${PROJECT_ID}`,
+        `failed to create docker network: supabase_network_${yield* workdirProjectId}`,
       );
       expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(false);
@@ -1519,6 +1551,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockDockerRunSpawnFailure();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1575,6 +1608,7 @@ describe("functions download", () => {
     // not spawn a real `docker` process.
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1620,6 +1654,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1662,6 +1697,7 @@ describe("functions download", () => {
     });
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1714,6 +1750,7 @@ describe("functions download", () => {
                 : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1752,6 +1789,7 @@ describe("functions download", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1789,6 +1827,7 @@ describe("functions download", () => {
     });
     const analytics = mockContextualAnalytics();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1822,6 +1861,7 @@ describe("functions download", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1857,6 +1897,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1902,6 +1943,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1949,6 +1991,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1987,6 +2030,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2025,6 +2069,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2067,6 +2112,7 @@ describe("functions download", () => {
         const api = mockCommandPlatformApi();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2147,6 +2193,7 @@ describe("functions download", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2180,11 +2227,12 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("labels the unbundle container with the resolved project id", () => {
+    it.live("labels the unbundle container with the project id derived from the workdir", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2210,9 +2258,9 @@ describe("functions download", () => {
         expect(runCommand?.args).toEqual(
           expect.arrayContaining([
             "--label",
-            `com.supabase.cli.project=${PROJECT_ID}`,
+            `com.supabase.cli.project=${yield* workdirProjectId}`,
             "--label",
-            `com.docker.compose.project=${PROJECT_ID}`,
+            `com.docker.compose.project=${yield* workdirProjectId}`,
           ]),
         );
       }).pipe(Effect.provide(layer));
@@ -2232,6 +2280,7 @@ describe("functions download", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,

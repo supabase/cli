@@ -162,7 +162,7 @@ unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
-Other values are rejected. The override is applied before reading the project configuration.
+Non-boolean values are rejected. The override is applied before reading the project configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including

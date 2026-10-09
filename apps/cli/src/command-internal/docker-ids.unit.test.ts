@@ -1,37 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { Effect } from "effect";
+import { describe, expect, it } from "vitest";
+
+import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 
 import {
   CLI_PROJECT_LABEL,
   cliProjectFilterValue,
-  resolveLocalProjectId,
-  sanitizeProjectId,
   serviceContainerIds,
-  localDbContainerId,
   localNetworkId,
 } from "./docker-ids.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
 import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
-
-describe("resolveLocalProjectId", () => {
-  it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
-    expect(resolveLocalProjectId("env-id", "toml-id", "/work/proj")).toBe("env-id");
-  });
-
-  it("falls back to config.toml project_id when the env var is unset/empty", () => {
-    expect(resolveLocalProjectId(undefined, "toml-id", "/work/proj")).toBe("toml-id");
-    expect(resolveLocalProjectId("", "toml-id", "/work/proj")).toBe("toml-id");
-  });
-
-  it("falls back to the workdir basename when both env and config.toml are absent", () => {
-    expect(resolveLocalProjectId(undefined, undefined, "/work/my-app")).toBe("my-app");
-    expect(resolveLocalProjectId(undefined, "", "/work/my-app")).toBe("my-app");
-  });
-
-  it("feeds the resolved id into the local db container name", () => {
-    const id = resolveLocalProjectId("env-id", undefined, "/work/proj");
-    expect(localDbContainerId(id)).toBe("supabase_db_env-id");
-  });
-});
 
 describe("serviceContainerIds", () => {
   it("returns the 13 service container ids in order", () => {
@@ -77,52 +57,48 @@ describe("cliProjectFilterValue", () => {
 describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFallback (start/db start call shape)", () => {
   const KEY = "SUPABASE_NETWORK_ID";
 
-  afterEach(() => {
-    delete process.env[KEY];
-  });
-
-  function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
-    return resolveDockerNetworkMode({
-      explicit: flagValue,
-      envOverride: supabaseEnvStringWithProjectFallback(KEY, projectEnv),
-      projectId: "my-app",
-    });
+  function resolve(
+    flagValue: string | undefined,
+    projectEnv: Record<string, string>,
+    shell?: string,
+  ) {
+    return Effect.runSync(
+      withConfigEnv(
+        shell === undefined ? {} : { [KEY]: shell },
+        Effect.map(supabaseEnvStringWithProjectFallback(KEY, projectEnv), (envNetworkId) =>
+          resolveDockerNetworkMode({ explicit: flagValue, envNetworkId, projectId: "my-app" }),
+        ),
+      ),
+    );
   }
 
   it("prefers an explicit --network-id flag over everything else", () => {
-    process.env[KEY] = "env-network";
-    expect(resolve("flag-network", { [KEY]: "toml-network" })).toBe("flag-network");
+    expect(resolve("flag-network", { [KEY]: "toml-network" }, "env-network")).toBe("flag-network");
   });
 
   it("falls back to SUPABASE_NETWORK_ID (shell) when the flag is absent", () => {
-    process.env[KEY] = "shell-network";
-    expect(resolve(undefined, {})).toBe("shell-network");
+    expect(resolve(undefined, {}, "shell-network")).toBe("shell-network");
   });
 
   it("falls back to SUPABASE_NETWORK_ID (project .env) when both the flag and shell are absent", () => {
-    delete process.env[KEY];
     expect(resolve(undefined, { [KEY]: "project-network" })).toBe("project-network");
   });
 
-  it("prefers the shell value over the project .env value (presence wins)", () => {
-    process.env[KEY] = "shell-network";
-    expect(resolve(undefined, { [KEY]: "project-network" })).toBe("shell-network");
+  it("prefers the shell value over the project .env value", () => {
+    expect(resolve(undefined, { [KEY]: "project-network" }, "shell-network")).toBe("shell-network");
   });
 
   it("falls back to the generated network name when the flag and env are all absent/empty", () => {
-    delete process.env[KEY];
     expect(resolve(undefined, {})).toBe(localNetworkId("my-app"));
     expect(resolve("", {})).toBe(localNetworkId("my-app"));
   });
 
-  it("an explicit-but-empty --network-id= skips the env var entirely (an explicit flag beats the env var)", () => {
-    process.env[KEY] = "env-network";
-    expect(resolve("", { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
+  it("an explicit-but-empty --network-id= skips the env var entirely", () => {
+    expect(resolve("", { [KEY]: "project-network" }, "env-network")).toBe(localNetworkId("my-app"));
   });
 
   it("treats an empty shell value as present (blocks the project value) and falls to generated", () => {
-    process.env[KEY] = "";
-    expect(resolve(undefined, { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
+    expect(resolve(undefined, { [KEY]: "project-network" }, "")).toBe(localNetworkId("my-app"));
   });
 });
 

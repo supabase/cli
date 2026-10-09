@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -21,6 +22,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -149,6 +151,7 @@ function setup(opts: SetupOpts = {}) {
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     projectFiles,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl };
 }
@@ -331,6 +334,84 @@ describe("config diff integration", () => {
       yield* configDiff(noFlags);
       expect(out.stdoutText).toContain("api.max_rows [update]");
       expect(out.stdoutText).toContain("local:  500 (from env PGRST_MAX_ROWS)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("marks a value a project .env file overrides with the variable and file", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("marks a value the shell environment overrides with the variable alone", () => {
+    const { layer, out } = setup({ toml: 'project_id = "test"\n[api]\nmax_rows = 500\n' });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "700",
+      Effect.gen(function* () {
+        yield* configDiff(noFlags);
+        expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS)");
+        expect(out.stdoutText).not.toContain("SUPABASE_API_MAX_ROWS in");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.live("carries an origin on an env-sourced change in the machine payload only", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n[auth]\nsite_url = "https://local.example.com"\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      const success = out.messages.find((message) => message.type === "success");
+      const changes = ((success?.data ?? {}) as Record<string, unknown>)[
+        "changes"
+      ] as ReadonlyArray<Record<string, unknown>>;
+      expect(changes.find((change) => (change["path"] as Array<string>)[0] === "api")).toEqual({
+        path: ["api", "max_rows"],
+        class: "update",
+        declared: true,
+        local: 700,
+        remote: 1000,
+        origin: {
+          source: "project_env",
+          env_variable: "SUPABASE_API_MAX_ROWS",
+          file: "supabase/.env",
+        },
+      });
+      expect(
+        changes.find((change) => (change["path"] as Array<string>)[0] === "auth"),
+      ).not.toHaveProperty("origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an env override beats the matched [remotes.*] value as the local operand", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        "[api]",
+        "max_rows = 500",
+        "[remotes.staging]",
+        `project_id = "${VALID_REF}"`,
+        "[remotes.staging.api]",
+        "max_rows = 1000",
+        "",
+      ].join("\n"),
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stderrText).toContain(
+        `Comparing against project ${VALID_REF} using [remotes.staging]`,
+      );
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+      expect(out.stdoutText).toContain("remote: 1000");
     }).pipe(Effect.provide(layer));
   });
 
@@ -583,7 +664,7 @@ describe("config diff integration", () => {
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("ConfigDiffLoadConfigError");
-        // loadCliConfig probes both config.toml and config.json, so the message names both.
+        // The config load probes both config.toml and config.json, so the message names both.
         expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
         expect(causeText).toContain("supabase init");
       }

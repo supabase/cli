@@ -1,11 +1,14 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
 import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
 import { dbRemoteCommit } from "./commit.handler.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -25,11 +28,12 @@ const config = {
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -55,4 +59,6 @@ export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
     ),
   ),
   Command.provide(dbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

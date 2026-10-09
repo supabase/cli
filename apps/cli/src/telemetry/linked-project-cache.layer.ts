@@ -7,7 +7,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../shared/telemetry/event-catalog.ts";
-import { readProjectRefFile, tempPaths } from "../command-internal/temp-paths.ts";
+import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 
 function readString(obj: unknown, key: string): string {

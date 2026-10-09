@@ -9,7 +9,7 @@ import {
   requireCliSuccess,
   runSupabaseEffect,
 } from "../../../tests/helpers/cli.ts";
-import { sanitizeProjectId } from "../../command-internal/docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 
 const CLI_COMMAND_TIMEOUT_MS = 60_000;
 const STACK_START_TIMEOUT_MS = 280_000;

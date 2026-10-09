@@ -221,13 +221,13 @@ function streamContainerLogsOnce(
         [
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               stdoutScanner.scan(chunk);
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
-              globalThis.process.stderr.write(chunk);
+              process.stderr.write(chunk);
               stderrScanner.scan(chunk);
             }),
           ),
@@ -256,7 +256,7 @@ function dumpContainerLogs(
 ): Effect.Effect<ExecFormatScanResult> {
   return Effect.gen(function* () {
     yield* Effect.sync(() => {
-      globalThis.process.stderr.write(`${containerId} container logs:\n`);
+      process.stderr.write(`${containerId} container logs:\n`);
     });
     return yield* streamContainerLogsOnce(spawner, containerId);
   });

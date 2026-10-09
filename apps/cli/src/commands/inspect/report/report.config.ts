@@ -1,141 +1,37 @@
-import { Effect, type FileSystem, Match, Option, type Path } from "effect";
-import * as SmolToml from "smol-toml";
+import { Effect, Option } from "effect";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
-import {
-  configEnvOption,
-  envRefName,
-  envRefValue,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { getDocumentValue, isDocumentRecord } from "../../../config/cli-config-document.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import type { InspectRule } from "./report.rules.ts";
 
-type RawDoc = { readonly [key: string]: unknown };
-
-function asRecord(value: unknown): RawDoc | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as RawDoc)
-    : undefined;
-}
+const RULE_FIELDS: ReadonlyArray<string> = ["query", "name", "pass", "fail"];
 
 /**
- * Coerces a rule field to a string: numbers/bigints become their decimal string, booleans
- * become `"1"`/`"0"`, a missing field is `""`, and anything else (a nested table, array, or
- * datetime) returns `undefined` so the caller can fail with `DbConfigLoadError`.
+ * Reads `[experimental.inspect.rules]` from the resolved config; when non-empty, these rules
+ * replace the embedded defaults. A missing field is the empty string, and an unknown key aborts
+ * the load so a misspelled field is not silently dropped.
  */
-function coerceRuleField(value: unknown): string | undefined {
-  if (value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "boolean") return value ? "1" : "0";
-  return undefined;
-}
+export const readInspectRules = Effect.fn("inspect.report.readRules")(function* (workdir: string) {
+  const configValues = yield* CliConfigValues;
+  const resolvedConfig = yield* configValues.load({ workdir, projectRef: Option.none() });
+  const rules = resolvedConfig.materialized.config.experimental.inspect?.rules ?? [];
+  const rawRules = getDocumentValue(resolvedConfig.loaded.document, "experimental.inspect.rules");
 
-/**
- * Reads `[experimental.inspect.rules]` from `<workdir>/supabase/config.toml`; when present and
- * non-empty, these rules replace the embedded defaults. A missing file yields `[]`; a malformed
- * file fails with `DbConfigLoadError`. Each field goes through `env(VAR)` expansion against the
- * shell environment, then the project `.env` files.
- */
-export const readInspectRules = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-) {
-  const configPath = path.join(workdir, "supabase", "config.toml");
-
-  const content = yield* fs.readFileString(configPath).pipe(
-    Effect.map((text): string | undefined => text),
-    Effect.catchTag("PlatformError", (error) =>
-      Match.value(error.reason).pipe(
-        Match.tag("NotFound", () => Effect.void),
-        Match.orElse(() =>
-          Effect.fail(
-            new DbConfigLoadError({
-              message: `failed to read file config: ${error.message}`,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
-
-  if (content === undefined) return [] as ReadonlyArray<InspectRule>;
-
-  const doc = yield* Effect.try({
-    try: () => asRecord(SmolToml.parse(content)),
-    catch: (cause) =>
-      new DbConfigLoadError({
-        message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
-
-  const inspect = asRecord(asRecord(doc?.["experimental"])?.["inspect"]);
-  const rawRules = inspect?.["rules"];
-
-  // A single table wraps into one rule entry; an empty table yields no rules. A scalar also
-  // wraps into an entry, which fails the table check below.
-  let entries: ReadonlyArray<unknown>;
-  if (rawRules === undefined) {
-    return [] as ReadonlyArray<InspectRule>;
-  } else if (Array.isArray(rawRules)) {
-    entries = rawRules;
-  } else {
-    const asMap = asRecord(rawRules);
-    if (asMap !== undefined && Object.keys(asMap).length === 0) {
-      return [] as ReadonlyArray<InspectRule>;
-    }
-    entries = [rawRules];
-  }
-  if (entries.length === 0) return [] as ReadonlyArray<InspectRule>;
-
-  const RULE_FIELDS = ["query", "name", "pass", "fail"] as const;
-
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const expandEnv = Effect.fnUntraced(function* (value: string) {
-    const name = envRefName(value);
-    if (name === undefined) return value;
-    const fromEnv = yield* configEnvOption(name);
-    return envRefValue(
-      value,
-      Option.getOrElse(fromEnv, () => projectEnv[name]),
-    );
-  });
-
-  const rules: Array<InspectRule> = [];
-  for (let index = 0; index < entries.length; index++) {
-    const record = asRecord(entries[index]);
-    // Rejects a non-table entry (e.g. `rules = ["foo"]`) instead of silently skipping it.
-    if (record === undefined) {
-      return yield* new DbConfigLoadError({
-        message: `failed to load config: experimental.inspect.rules[${index}] expected a table`,
-      });
-    }
-    // An unknown or misspelled key aborts the whole load instead of being ignored.
-    const unknownKeys = Object.keys(record).filter(
-      (key) => !(RULE_FIELDS as ReadonlyArray<string>).includes(key),
-    );
+  for (const [index, raw] of (Array.isArray(rawRules) ? rawRules : []).entries()) {
+    const unknownKeys = isDocumentRecord(raw)
+      ? Object.keys(raw).filter((key) => !RULE_FIELDS.includes(key))
+      : [];
     if (unknownKeys.length > 0) {
       return yield* new DbConfigLoadError({
         message: `failed to load config: experimental.inspect.rules[${index}] has unknown keys: ${unknownKeys.join(", ")}`,
       });
     }
-    const fields: Record<string, string> = {};
-    for (const field of RULE_FIELDS) {
-      const coerced = coerceRuleField(record[field]);
-      if (coerced === undefined) {
-        return yield* new DbConfigLoadError({
-          message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
-        });
-      }
-      fields[field] = yield* expandEnv(coerced);
-    }
-    rules.push({
-      query: fields["query"]!,
-      name: fields["name"]!,
-      pass: fields["pass"]!,
-      fail: fields["fail"]!,
-    });
   }
-  return rules as ReadonlyArray<InspectRule>;
+
+  return rules.map((rule): InspectRule => ({
+    query: rule.query ?? "",
+    name: rule.name ?? "",
+    pass: rule.pass ?? "",
+    fail: rule.fail ?? "",
+  }));
 });

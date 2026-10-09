@@ -1,7 +1,6 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
-import { loadCliConfig, type CliConfigLoadOptions } from "./cli-config-load.ts";
 import { BunPath } from "@effect/platform-bun";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -9,8 +8,9 @@ import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
-import { shouldSearchAncestors } from "./workdir-search.ts";
+import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
+import { isConfigValueFailure } from "./config-value-passthrough.ts";
+import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
   resolveStorageCredentials,
@@ -123,7 +123,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadCliConfig` reload in favor of a config the caller already
+   * Skips this function's own resolved config load in favor of a config the caller already
    * resolved through its own nested-env walk, so a fresh reload here can't drop an override
    * that exists only in the shell/dotenv, not in `config.toml`.
    */
@@ -159,23 +159,21 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-  const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
-  // `--yes` OR `SUPABASE_YES`.
-  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
   const promptless = opts.promptless ?? false;
 
-  // Loads config.toml, merging `[remotes.*]` overrides for `--linked`; skipped when the
-  // caller already supplied `resolvedConfig`.
-  // An explicit `opts.workdir` is the exact project root; only the caller's own workdir
-  // (`cliSettings.workdir`) may still search ancestors for `config.toml`.
-  const search = opts.workdir === undefined && shouldSearchAncestors(cliSettings);
-  const loadOptions: CliConfigLoadOptions = projectRef !== "" ? { projectRef, search } : { search };
-  const loaded =
+  // Skipped when the caller already supplied `resolvedConfig`. A missing config file behaves as
+  // the embedded defaults, not an early exit: local + no-config falls into the no-op
+  // short-circuit below, while `--linked` + no-config still falls through to the remote path so
+  // auth/project/API failures surface.
+  const context =
     opts.resolvedConfig !== undefined
-      ? null
-      : yield* loadCliConfig(workdir, loadOptions).pipe(
+      ? undefined
+      : yield* loadResolvedConfigContext(
+          workdir,
+          projectRef === "" ? Option.none() : Option.some(projectRef),
+        ).pipe(
           Effect.catchTag(
             "CliConfigParseError",
             (cause) =>
@@ -183,17 +181,30 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
                 message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
               }),
           ),
+          Effect.mapError((cause) =>
+            cause instanceof SeedConfigLoadError || isConfigValueFailure(cause)
+              ? cause
+              : new SeedConfigLoadError({ message: describeConfigLoadFailure(cause) }),
+          ),
         );
-  // A missing config file behaves as embedded defaults, not an early exit: local + no-config
-  // falls into the no-op short-circuit below, while `--linked` + no-config still falls
-  // through to the remote path so auth/project/API failures surface.
-  const config =
-    opts.resolvedConfig?.config ?? (loaded === null ? decodeDefaultCliConfig({}) : loaded.config);
-  const document = opts.resolvedConfig?.document ?? (loaded === null ? undefined : loaded.document);
+  const projectEnvValues =
+    opts.projectEnvValues ??
+    context?.projectEnvValues ??
+    (yield* loadCliProjectEnvFiles(workdir).pipe(
+      Effect.map((loaded) => loaded.values),
+      Effect.mapError((cause) => new SeedConfigLoadError({ message: cause.message })),
+    ));
+  // `--yes` OR `SUPABASE_YES`.
+  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
+  const config = opts.resolvedConfig?.config ?? context?.config ?? decodeDefaultCliConfig({});
+  const document = opts.resolvedConfig?.document ?? context?.document;
 
   // Printed whenever a `[remotes.*]` block matched the linked ref; stderr in all output modes.
-  if (loaded !== null && loaded.appliedRemote !== undefined) {
-    yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+  const appliedRemote = Option.getOrUndefined(
+    context?.resolvedConfig.appliedRemote ?? Option.none(),
+  );
+  if (appliedRemote !== undefined) {
+    yield* output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
   }
   const bucketsConfig = config.storage.buckets ?? {};
   const bucketNames = Object.keys(bucketsConfig);
@@ -227,7 +238,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     // consults these legacy-only inputs, so it skips this validation entirely.
     const backend = yield* currentStackBackend;
     if (backend.kind !== "stack") {
-      yield* validateLocalStorageConfig(config, projectEnvValues);
+      yield* validateLocalStorageConfig();
     }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
@@ -236,13 +247,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials =
-    opts.credentials ??
-    (yield* resolveStorageCredentials({
-      projectRef,
-      config,
-      projectEnvValues,
-    }));
+  const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
 
   // Gateway operations use an explicit non-DoH fetch (CA-trusting for local + https, plain
   // `globalThis.fetch` otherwise); the api-keys lookup in `resolveStorageCredentials` runs

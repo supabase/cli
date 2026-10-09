@@ -25,6 +25,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -429,6 +430,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     resolver.layer,
     projectRef.layer,
@@ -572,6 +574,34 @@ describe("db dump integration", () => {
       expect(failMessage(exit)).toBe(
         "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --password combined with --db-url", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres",
+      );
+      expect(resolver.calls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --password combined with --local", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ local: Option.some(true), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
+      );
+      expect(resolver.calls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

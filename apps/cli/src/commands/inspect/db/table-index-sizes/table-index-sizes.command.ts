@@ -2,6 +2,8 @@ import { Command } from "effect/unstable/cli";
 import { inspectDbTableIndexSizes } from "./table-index-sizes.handler.ts";
 import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbTableIndexSizesCommand = Command.make(
   "table-index-sizes",
@@ -13,4 +15,6 @@ export const inspectDbTableIndexSizesCommand = Command.make(
   Command.withShortDescription("Show table index sizes (deprecated)"),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableIndexSizes)),
   Command.provide(inspectDbRuntimeLayer("table-index-sizes")),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(INSPECT_DB_FLAGS),
 );

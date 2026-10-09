@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -10,7 +11,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { secretsSet } from "./set.handler.ts";
 
@@ -80,6 +81,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
+    cliConfigValuesTestLayer,
     debugLogger.layer,
   );
   return { layer, out, api, debugLogger };
@@ -560,7 +562,7 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
-      // `loadCliConfig` resolves `env(VAR)` references against `.env`/`.env.local` before
+      // The resolved config load resolves `env(VAR)` references against `.env`/`.env.local` before
       // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
       // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
       // read once a config.toml/.json is found, so one must exist here too.
@@ -723,6 +725,37 @@ FROM_CONFIG = "base-value"
 
 [remotes.staging]
 project_id = "${VALID_REF}"
+
+[remotes.staging.edge_runtime.secrets]
+FROM_CONFIG = "remote-value"
+`,
+        );
+        yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "remote-value" },
+        ]);
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID and uses its secrets",
+    () => {
+      const { layer, out, api } = setup({
+        env: { SUPABASE_REMOTES_STAGING_PROJECT_ID: VALID_REF },
+      });
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "base-value"
+
+[remotes.staging]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
 
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"

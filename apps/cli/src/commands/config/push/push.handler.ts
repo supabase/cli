@@ -1,9 +1,11 @@
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
-import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
+import { diffProjectConfig, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
-import { DateTime, Effect, FileSystem, Option, Path } from "effect";
+import { DateTime, Effect, FileSystem, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { envReferenceNames } from "../../../config/cli-config-document.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -12,12 +14,7 @@ import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import {
-  assertDecryptableSecrets,
-  configEnvOption,
-  envRefName,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
@@ -30,13 +27,20 @@ import {
   configTargetErrorsFor,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
-import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import {
+  missingProjectConfigMessageEffect,
+  relativeConfigPath,
+  requireExplicitWorkdirProject,
+} from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decrypt.ts";
-import { configApiScope, configScopeLine } from "../config.format.ts";
-import { loadLocalConfig } from "../config.load.ts";
+import { mapConfigLoadError, resolveConfigProjectRoot } from "../config.load.ts";
+import {
+  configApiScope,
+  configEnvOriginLookup,
+  configScopeLine,
+  type ConfigEnvOriginLookup,
+} from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import { loadAuthEmailContent } from "./push.auth-email-content.ts";
@@ -83,12 +87,14 @@ import {
   configPushBranchPromptLabel,
   configPushPayloadFields,
   configPushTargetLines,
+  pushEnvSourcedLine,
   pushNotes,
   pushNotPushableLine,
   pushPayload,
   pushSummaryMessage,
   pushUpdatingLine,
   pushUpToDateLine,
+  type PushEnvSourced,
   type PushForced,
   type PushUnencodable,
 } from "./push.format.ts";
@@ -128,30 +134,63 @@ function pushSentSecretPaths(encoded: PushEncoded<unknown>): ReadonlyArray<Reado
   return encoded.secretsEncoded ?? [];
 }
 
+/** The distinct paths an env variable supplied, each with that variable. */
+function envSourcedPaths(
+  paths: ReadonlyArray<ReadonlyArray<string>>,
+  originFor: ConfigEnvOriginLookup,
+): ReadonlyArray<PushEnvSourced> {
+  const seen = new Set<string>();
+  return paths.flatMap((path): ReadonlyArray<PushEnvSourced> => {
+    const origin = originFor(path);
+    const key = path.join(".");
+    if (origin === undefined || seen.has(key)) return [];
+    seen.add(key);
+    return [{ path, origin }];
+  });
+}
+
 /** `push.format.ts` must never see a secret's plaintext. */
 function toSecretReport(decision: PushSecretDecision) {
   const { plaintext: _plaintext, ...report } = decision;
   return report;
 }
 
-function envRefNames(node: unknown): ReadonlyArray<string> {
-  if (typeof node === "string") {
-    const name = envRefName(node);
-    return name === undefined ? [] : [name];
+/** Loads the resolved config once per push, so the load-time deprecation warnings print once. */
+const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+  projectRoot: string,
+  ref: string,
+) {
+  const configValues = yield* CliConfigValues;
+  const resolvedConfig = yield* configValues
+    .load({
+      workdir: projectRoot,
+      projectRef: Option.some(ref),
+      tolerateUnreadableLinkedRef: true,
+    })
+    .pipe(mapConfigLoadError(cliSettings, (message) => new ConfigPushLoadConfigError({ message })));
+  if (!resolvedConfig.hasConfigFile) {
+    return yield* new ConfigPushLoadConfigError({
+      message: yield* missingProjectConfigMessageEffect(cliSettings),
+    });
   }
-  return typeof node === "object" && node !== null ? Object.values(node).flatMap(envRefNames) : [];
-}
-
-/** `assertDecryptableSecrets` takes a synchronous lookup, so every referenced name resolves up front. */
-const resolveShellEnvRefs = Effect.fnUntraced(function* (nodes: ReadonlyArray<unknown>) {
-  const resolved = new Map<string, string>();
-  for (const name of new Set(nodes.flatMap(envRefNames))) {
-    const value = yield* configEnvOption(name).pipe(
-      Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
-    );
-    if (Option.isSome(value)) resolved.set(name, value.value);
-  }
-  return resolved;
+  const loaded = resolvedConfig.loaded;
+  yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
+  const projectYes = resolvedConfig.projectEnvValues["SUPABASE_YES"];
+  const projectEnv: Record<string, string> =
+    projectYes === undefined ? {} : { SUPABASE_YES: projectYes };
+  const referenced = yield* resolvedConfig.envValues(
+    envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
+  );
+  return {
+    loaded,
+    lookup: (name: string) => referenced[name],
+    dotenvPrivateKeys: resolvedConfig.dotenvPrivateKeys,
+    projectEnv,
+    originFor: configEnvOriginLookup(resolvedConfig.origins, (file) =>
+      relativeConfigPath(projectRoot, file),
+    ),
+  };
 });
 
 const mapPushBranchResolveError = mapHttpError({
@@ -177,7 +216,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
   // `--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked
   // project. An empty value is treated as absent, mirroring the resolver's own rule.
@@ -189,25 +227,16 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
   yield* Effect.gen(function* () {
     // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a directory before
-    // anything else touches it: a workdir naming a regular file makes `loadProjectEnv` throw
-    // ENOTDIR with a confusing "failed to read environment file" error instead of this one.
+    // anything else touches it: a workdir naming a regular file makes the project env load fail
+    // with a confusing "failed to read environment file" error instead of this one.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
     );
 
-    // `--yes`/`SUPABASE_YES` resolves against the project env (not just the flag + shell env), so
-    // a `SUPABASE_YES` set only in `supabase/.env` auto-confirms. The project root climbs to find
-    // it only when `--workdir` was defaulted; an explicit `--workdir ../other` pushes that
-    // directory's own config.toml without climbing to another root's linked project.
-    const projectRoot =
-      (yield* findCliProjectRoot(cliSettings.workdir, {
-        search: shouldSearchAncestors(cliSettings),
-      })) ?? cliSettings.workdir;
-    const projectEnv = yield* loadProjectEnv(fs, path, projectRoot);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
-    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project env;
-    // `process.env` wins over `supabase/.env`, matching `db-config.toml-read.ts`.
-    const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+    // The project root climbs only when `--workdir` was defaulted; an explicit
+    // `--workdir ../other` pushes that directory's own config.toml without climbing to another
+    // root's linked project.
+    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
 
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
@@ -221,7 +250,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // resolver still flushes telemetry and, once a ref is known, writes the linked-project cache.
     //
     // Runs before the config load below: a `[remotes.<name>]` overlay is merged inside
-    // `loadCliConfig` before its one schema decode, so a base document that's invalid without its
+    // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
     const { ref, branch } = yield* resolveConfigTarget(
@@ -236,16 +265,17 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     });
 
     // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network
-    // call); a matching `[remotes.<name>]` overlay merges before decode in the same call.
+    // call); the matching `[remotes.<name>]` overlay merges before decode in the same call.
     //
-    // Uses `loadLocalConfig` (needs the fully decoded config) rather than the tolerant
-    // `db-config.toml-read.ts` subtree reader, converting its parse/duplicate-remote/missing-file
-    // failures into this family's own tagged error.
-    const loaded = yield* loadLocalConfig(
+    // Needs the fully decoded document and value origins, which the tolerant
+    // `db-config.toml-read.ts` subtree reader does not produce.
+    const { loaded, lookup, dotenvPrivateKeys, projectEnv, originFor } = yield* loadPushConfig(
       cliSettings,
+      projectRoot,
       ref,
-      (message) => new ConfigPushLoadConfigError({ message }),
     );
+    // `SUPABASE_YES` set only in `supabase/.env` auto-confirms, not just the flag and shell env.
+    const yes = yield* resolveYesWithProjectEnv(projectEnv);
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
@@ -254,14 +284,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       );
     }
     const config = loaded.config;
-    const shellEnv = yield* resolveShellEnvRefs([
-      loaded.document,
-      loaded.removedDeprecatedExternalProviders,
-    ]);
-    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
-    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
-    const secretEnvLookup = (name: string): string | undefined =>
-      shellEnv.get(name) ?? projectEnv[name];
 
     // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
     // push` never itself pushes — this must run before the cost matrix or any service is touched.
@@ -271,10 +293,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // one of them would skip the check.
     const secretError = yield* Effect.sync(
       () =>
-        assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+        assertDecryptableSecrets(loaded.document, lookup, dotenvPrivateKeys) ??
         assertDecryptableSecrets(
           { auth: { external: loaded.removedDeprecatedExternalProviders } },
-          secretEnvLookup,
+          lookup,
           dotenvPrivateKeys,
         ),
     ).pipe(Effect.withSpan("config.push.verifyDecryptable"));
@@ -282,14 +304,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       return yield* new ConfigPushLoadConfigError({ message: secretError });
     }
 
-    // Config lives at <projectRoot>/supabase/config.{toml,json}.
-    const configProjectRoot = path.dirname(path.dirname(loaded.path));
-
     // 4. Email content validation runs during config load, before any network call, and is
     // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
     // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
     // silently push empty content over a real hosted customization.
-    const authEmailContent = yield* loadAuthEmailContent(configProjectRoot, config.auth.email);
+    const authEmailContent = yield* loadAuthEmailContent(projectRoot, config.auth.email);
 
     // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
     // confirmation before any further network call. A target resolved from an explicit
@@ -451,6 +470,46 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       storage: pushResourceEnabled("storage", config, local),
     };
 
+    // Announced before any prompt so a `--yes` run still shows what the environment supplied;
+    // only paths an encoder will actually send are counted, so an up-to-date resource adds none.
+    const plannedEncodings: ReadonlyArray<PushEncoded<unknown>> = PUSH_RESOURCES.filter(
+      (resource) =>
+        resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
+    ).map((resource) => {
+      const changes = plan.changesByResource[resource];
+      switch (resource) {
+        case "api":
+          return encodeApiBody({ changes, local, remote });
+        case "db.settings":
+          return encodeDbSettingsBody({ changes, local, remote });
+        case "db.network_restrictions":
+          return encodeNetworkRestrictionsBody({ changes, local, remote });
+        case "db.ssl_enforcement":
+          return encodeSslEnforcementBody({ changes, local, remote });
+        case "auth":
+          return encodeAuthBody({
+            changes,
+            local,
+            remote,
+            secrets,
+            emailContent: authEmailContent,
+            remoteAuthAttributes,
+            now,
+          });
+        case "storage":
+          return encodeStorageBody({ changes, local, remote, config });
+      }
+    });
+    const envSourced = envSourcedPaths(
+      plannedEncodings
+        .filter((encoded) => encoded.body !== undefined)
+        .flatMap((encoded) => pushServiceChanges(encoded, pushSentSecretPaths(encoded))),
+      originFor,
+    );
+    if (envSourced.length > 0) {
+      yield* output.raw(pushEnvSourcedLine(envSourced), "stderr");
+    }
+
     const services: Array<ConfigPushServiceResult> = [];
     const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
     const unencodable: Array<PushUnencodable> = [];
@@ -488,6 +547,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             secretsEncoded: encoded.secretsEncoded ?? [],
             extras: encoded.extras,
             forced: encoded.forced,
+            originFor,
           }),
           "stderr",
         );
@@ -750,6 +810,12 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         declinedAddons,
         remoteOnly: plan.remoteOnly,
         scope,
+        envSourced: envSourcedPaths(
+          services
+            .filter((service) => service.status === "updated")
+            .flatMap((service) => service.changes),
+          originFor,
+        ),
       };
       yield* output.success(pushSummaryMessage(payloadInput), {
         ...pushPayload(payloadInput),

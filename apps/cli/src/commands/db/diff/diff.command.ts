@@ -1,11 +1,14 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
@@ -25,10 +28,10 @@ const config = {
     Flag.optional,
     Flag.withHidden,
   ),
-  usePgDelta: Flag.boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to generate schema diff."),
-    Flag.optional,
-  ),
+  usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
+    name: "use-pg-delta",
+    description: "Use pg-delta to generate schema diff.",
+  }),
   strictCoverage: Flag.boolean("strict-coverage").pipe(
     Flag.withDescription(
       "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
@@ -125,4 +128,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     ),
   ),
   Command.provide(dbDiffRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

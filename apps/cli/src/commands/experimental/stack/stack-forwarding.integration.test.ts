@@ -11,8 +11,9 @@ import { makeSpec as studioSpec } from "../../../../../../packages/stack/src/ser
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
-const layer = Layer.merge(BunServices.layer, runtimeInfoLayer);
+const layer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer);
 
 describe("stack service configuration", () => {
   it.live("carries editable TOML settings into native and container service environments", () =>
@@ -177,6 +178,40 @@ jwt_secret = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61
       expect(services.find((service) => service.service === "auth")?.config.jwtSecret).toBe(
         plaintext,
       );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("decrypts edge runtime secrets before forwarding them to the functions service", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(
+        `project_id = "encrypted-functions-env"
+[edge_runtime.secrets]
+SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
+PLAIN = "plain-value"
+`,
+        {
+          rootEnv:
+            "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
+        },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("encrypted-functions-env");
+      expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
+        SHARED: "test-jwt-secret-with-more-than-32-characters",
+        PLAIN: "plain-value",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("fails the stack config when an edge runtime secret cannot be decrypted", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(`project_id = "undecryptable-functions-env"
+[edge_runtime.secrets]
+SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
+`);
+      const error = yield* loadStackConfig(root).pipe(Effect.flip);
+      expect(error._tag).toBe("StackConfigError");
+      expect(error.message).toBe("failed to parse config: missing private key");
     }).pipe(Effect.provide(layer)),
   );
 

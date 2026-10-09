@@ -22,6 +22,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -86,6 +87,7 @@ function ambientStubs() {
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }

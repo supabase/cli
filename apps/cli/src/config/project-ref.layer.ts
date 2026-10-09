@@ -3,7 +3,7 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
-import { readProjectRefFile } from "../command-internal/temp-paths.ts";
+import { readProjectRefFile } from "../shared/config/temp-paths.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import {
   InvalidProjectRefError,

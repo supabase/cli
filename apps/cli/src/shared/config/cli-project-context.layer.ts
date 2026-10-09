@@ -1,6 +1,7 @@
-import { loadCliProjectEnvironment } from "@supabase/config/effect";
+import { findCliProjectPaths } from "@supabase/config/effect";
 import { Effect, Layer, Option } from "effect";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import { loadCliProjectEnvFiles, readShellEnvironment } from "./cli-config-env.ts";
 import { CliProjectContext } from "./cli-project-context.service.ts";
 
 const emptyCliProjectContext = CliProjectContext.of({
@@ -10,18 +11,18 @@ const emptyCliProjectContext = CliProjectContext.of({
 
 const makeCliProjectContext = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
-  const projectEnv = yield* loadCliProjectEnvironment({
-    cwd: runtimeInfo.cwd,
-    baseEnv: process.env,
-  });
+  const paths = yield* findCliProjectPaths(runtimeInfo.cwd);
 
-  if (projectEnv === null) {
+  if (paths === null) {
     return emptyCliProjectContext;
   }
 
+  const shell = yield* readShellEnvironment();
+  const files = yield* loadCliProjectEnvFiles(paths.projectRoot, { shell });
+
   return CliProjectContext.of({
-    paths: Option.some(projectEnv.paths),
-    projectEnv: Option.some(projectEnv),
+    paths: Option.some(paths),
+    projectEnv: Option.some({ values: files.values }),
   });
 });
 

@@ -1,0 +1,50 @@
+{
+  "ok": {
+    "apiSchemas": [
+      "public",
+      "dotenv_api"
+    ],
+    "appliedRemote": null,
+    "baseline": {
+      "apiAutoExposeNewTables": null,
+      "authEnabled": true,
+      "realtimeEnabled": true,
+      "storageEnabled": true,
+      "vaultNames": []
+    },
+    "denoVersion": 2,
+    "majorVersion": 17,
+    "migrationsEnabled": false,
+    "orioledbVersion": null,
+    "password": "postgres",
+    "pgDelta": {
+      "declarativeSchemaPath": "supabase/base-declarative",
+      "enabled": false,
+      "formatOptions": null
+    },
+    "poolerConnectionString": null,
+    "port": 57001,
+    "projectEnv": {
+      "SUPABASE_API_SCHEMAS": "public,dotenv_api",
+      "SUPABASE_DB_MIGRATIONS_ENABLED": "false",
+      "SUPABASE_DB_PORT": "57001",
+      "SUPABASE_DB_SEED_ENABLED": "false"
+    },
+    "projectId": "golden-base",
+    "schemaPathPatterns": [
+      "./schemas/*.sql"
+    ],
+    "schemaPaths": [
+      "supabase/schemas/*.sql"
+    ],
+    "seed": {
+      "enabled": false,
+      "sqlPaths": [
+        "supabase/seeds/*.sql"
+      ]
+    },
+    "shadowPort": 55002,
+    "vault": [],
+    "webhooksEnabled": false
+  }
+}

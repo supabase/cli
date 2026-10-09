@@ -16,9 +16,9 @@ import { bold } from "../../../command-internal/colors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
   resolveDeclarativeDir,
-  resolveSeedSqlPath,
   type PgDeltaTomlConfig,
 } from "../../../command-internal/db-config.toml-read.ts";
+import { resolveSeedSqlPath } from "../../../shared/config/seed-path.ts";
 import {
   resolveUnderWorkdir,
   globPattern,

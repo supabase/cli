@@ -8,8 +8,9 @@ import {
   type LoadedProfile,
   type ProfileLoadError,
 } from "../command-internal/profile-load.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { CliEnvNames } from "./cli-config-keys.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
 
@@ -144,11 +145,6 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
-        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
-        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
-          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
-        );
-
         const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
         const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
@@ -159,7 +155,7 @@ export const commandSettingsLayer = Layer.unwrap(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
         );
 
-        const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
+        const rawProjectId = yield* read(Config.option(Config.string(CliEnvNames.projectId.name)));
         const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
         const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
@@ -187,7 +183,6 @@ export const commandSettingsLayer = Layer.unwrap(
           poolerHost,
           dashboardUrl,
           accessToken,
-          dbPassword,
           githubToken,
           projectId,
           workdir,

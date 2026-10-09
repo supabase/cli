@@ -33,14 +33,17 @@ import {
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  resolveDbTargetFlags,
+} from "../../../command-internal/db-target-flags.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
@@ -62,7 +65,6 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   MigrationFileNotFoundError,
   MigrationInvalidVersionError,
-  MigrationPasswordFlagsError,
   MigrationTargetFlagsError,
 } from "../migration.errors.ts";
 import { migrationConfirm } from "../migration.prompt.ts";
@@ -478,11 +480,11 @@ const runSquash = Effect.fnUntraced(function* (
         message: mutuallyExclusiveFlagsMessage(["db-url", "linked", "local"], target.setFlags),
       });
     }
-    if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* new MigrationPasswordFlagsError({
-        message: mutuallyExclusiveFlagsMessage(["db-url", "password"], ["db-url", "password"]),
-      });
-    }
+    yield* rejectPasswordWithDirectTarget(
+      target.connType ?? "local",
+      flags.password,
+      target.connType === undefined ? { localByDefaultFor: "migration squash" } : {},
+    );
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const connType = target.connType ?? "local";
@@ -519,7 +521,6 @@ const runSquash = Effect.fnUntraced(function* (
       runtimeInfo.platform,
       debug,
       connType === "linked" ? linkedRef : undefined,
-      toml.remoteOverrideKeys,
     );
 
     // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for
@@ -540,7 +541,7 @@ const runSquash = Effect.fnUntraced(function* (
     // Loads after the flag-group check above, so a flag conflict surfaces before any
     // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
     // remote-baseline prompt.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
     // Runs after DB-config resolution, so an invalid target surfaces first.

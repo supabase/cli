@@ -45,23 +45,6 @@ export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Accepted boolean string forms (`1`/`t`/`T`/`TRUE`/`true`/`True`, `0`/`f`/`F`/`FALSE`/`false`/`False`,
-// and the empty string as false); any other value is a parse error.
-const BOOL_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const BOOL_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
-
-/**
- * Parses a config bool value: accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and
- * `0`/`f`/`F`/`FALSE`/`false`/`False` (and the empty string as false), returns
- * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
- * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
- */
-export function parseBoolLiteral(value: string): boolean | undefined {
-  if (BOOL_TRUE_LITERALS.has(value)) return true;
-  if (BOOL_FALSE_LITERALS.has(value)) return false;
-  return undefined;
-}
-
 /**
  * Thrown by {@link validateResolvedConfig}. Does not override `.name` — it stays the inherited
  * `"Error"` — so `instanceof Error` and `.name` checks can't distinguish it from a plain

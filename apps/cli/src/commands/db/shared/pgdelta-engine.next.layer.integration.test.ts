@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngine } from "./pgdelta-engine.service.ts";
@@ -31,7 +31,7 @@ const toml: DbTomlValues = {
   shadowPort: 54320,
   password: "postgres",
   poolerConnectionString: Option.none(),
-  projectId: Option.none(),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -54,7 +54,6 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set(),
 };
 
 function setup() {

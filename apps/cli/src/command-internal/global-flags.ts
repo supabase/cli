@@ -228,7 +228,7 @@ export const resolveYes = Effect.gen(function* () {
   if (yesFlagExplicitlyFalse(cliArgs.args)) {
     return false;
   }
-  return flag || supabaseEnvBool("SUPABASE_YES");
+  return flag || (yield* supabaseEnvBool("SUPABASE_YES"));
 });
 
 /**
@@ -236,7 +236,7 @@ export const resolveYes = Effect.gen(function* () {
  * project env before prompting (`migration down`, `migration repair --all`). Shell env
  * *presence* (any value) suppresses the file value entirely (see
  * {@link supabaseEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
- * the loaded map from `loadProjectEnv`.
+ * the loaded map from `loadProjectEnvValues`.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -245,7 +245,7 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     if (yesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
+    return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
 
 /**
@@ -279,7 +279,7 @@ export const resolveExperimental = Effect.gen(function* () {
   if (explicit !== undefined) {
     return explicit;
   }
-  return flag || supabaseEnvBool("SUPABASE_EXPERIMENTAL");
+  return flag || (yield* supabaseEnvBool("SUPABASE_EXPERIMENTAL"));
 });
 
 /**
@@ -294,7 +294,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     if (explicit !== undefined) {
       return explicit;
     }
-    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+    return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv));
   });
 
 /**
@@ -318,7 +318,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
 
 /**
  * `--debug` resolved with an env fallback, and the project `.env` consulted too, for debug-gated
- * behavior downstream of a command that already loaded the nested project env. `loadProjectEnv`
+ * behavior downstream of a command that already loaded the nested project env. `loadProjectEnvValues`
  * is pure, so callers pass the loaded map through explicitly — same shape as
  * {@link resolveYesWithProjectEnv}. Shell env *presence* suppresses the file value; an explicit
  * `--debug` wins over both.
@@ -330,5 +330,5 @@ export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =
     if (debugFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || supabaseEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+    return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv));
   });

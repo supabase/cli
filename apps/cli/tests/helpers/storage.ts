@@ -25,6 +25,7 @@ import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
+import { cliConfigValuesTestLayer } from "./config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import { unusedStackServices } from "./unused-stack.ts";
 import {
@@ -425,6 +426,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     linkedCache.layer,
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    cliConfigValuesTestLayer,
     projectRefLayer,
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),

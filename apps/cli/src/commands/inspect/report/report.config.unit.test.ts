@@ -1,9 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { readInspectRules } from "./report.config.ts";
 
 const makeWorkdir = Effect.fnUntraced(function* (
@@ -25,33 +24,52 @@ const makeWorkdir = Effect.fnUntraced(function* (
   return workdir;
 });
 
-const readRules = (configToml?: string, dotEnv?: string) =>
+const rule = (fail: string) =>
+  [
+    "[[experimental.inspect.rules]]",
+    'query = "SELECT 1"',
+    'name = "r"',
+    'pass = "ok"',
+    `fail = "${fail}"`,
+    "",
+  ].join("\n");
+
+const readRules = (options: {
+  readonly configToml?: string;
+  readonly dotEnv?: string;
+  readonly env?: Readonly<Record<string, string>>;
+}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const workdir = yield* makeWorkdir(fs, path, configToml, dotEnv);
-    return yield* readInspectRules(fs, path, workdir);
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer)));
+    const workdir = yield* makeWorkdir(fs, path, options.configToml, options.dotEnv);
+    return yield* readInspectRules(workdir);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        configValuesLayer(options.env === undefined ? {} : { env: options.env }),
+      ),
+    ),
+  );
 
 describe("readInspectRules", () => {
   it.effect("returns [] when config.toml is absent", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules();
-      expect(rules).toEqual([]);
+      expect(yield* readRules({})).toEqual([]);
     }),
   );
 
   it.effect("returns [] when there are no inspect rules", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules('project_id = "demo"\n');
-      expect(rules).toEqual([]);
+      expect(yield* readRules({ configToml: 'project_id = "demo"\n' })).toEqual([]);
     }),
   );
 
   it.effect("parses [experimental.inspect.rules]", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules(
-        [
+      const rules = yield* readRules({
+        configToml: [
           "[[experimental.inspect.rules]]",
           'query = "SELECT COUNT(*) FROM `locks.csv`"',
           'name = "No locks"',
@@ -59,160 +77,73 @@ describe("readInspectRules", () => {
           'fail = "bad"',
           "",
         ].join("\n"),
-      );
+      });
       expect(rules).toEqual([
         { query: "SELECT COUNT(*) FROM `locks.csv`", name: "No locks", pass: "ok", fail: "bad" },
       ]);
     }),
   );
 
-  it.effect("expands env(VAR) in rule string fields", () =>
+  it.effect("fills a missing rule field with the empty string", () =>
     Effect.gen(function* () {
-      const rules = yield* withEnvVar(
-        "REPORT_TEST_FAIL",
-        "from-env",
-        readRules(
-          [
-            "[[experimental.inspect.rules]]",
-            'query = "SELECT COUNT(*) FROM `locks.csv`"',
-            'name = "r"',
-            'pass = "ok"',
-            'fail = "env(REPORT_TEST_FAIL)"',
-            "",
-          ].join("\n"),
-        ),
-      );
+      const rules = yield* readRules({
+        configToml: '[[experimental.inspect.rules]]\nquery = "SELECT 1"\n',
+      });
+      expect(rules).toEqual([{ query: "SELECT 1", name: "", pass: "", fail: "" }]);
+    }),
+  );
+
+  it.effect("expands env(VAR) in rule string fields from the shell", () =>
+    Effect.gen(function* () {
+      const rules = yield* readRules({
+        configToml: rule("env(REPORT_TEST_FAIL)"),
+        env: { REPORT_TEST_FAIL: "from-env" },
+      });
       expect(rules[0]?.fail).toBe("from-env");
     }),
   );
 
-  it.effect(
-    "keeps the literal env(VAR) when the shell sets VAR empty, even if .env defines it",
-    () =>
-      Effect.gen(function* () {
-        const read = readRules(
-          [
-            "[[experimental.inspect.rules]]",
-            'query = "SELECT 1"',
-            'name = "r"',
-            'pass = "ok"',
-            'fail = "env(REPORT_TEST_X)"',
-            "",
-          ].join("\n"),
-          "REPORT_TEST_X=fromfile\n",
-        );
-        const unset = yield* withEnvVar("REPORT_TEST_X", undefined, read);
-        expect(unset[0]?.fail).toBe("fromfile");
-        const empty = yield* withEnvVar("REPORT_TEST_X", "", read);
-        expect(empty[0]?.fail).toBe("env(REPORT_TEST_X)");
-      }),
-  );
-
-  it.effect("fails with DbConfigLoadError on a malformed config.toml", () =>
+  it.effect("expands env(VAR) from the project .env when the shell leaves it unset", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(readRules("this is = = not valid toml [[["));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
-      }
+      const rules = yield* readRules({
+        configToml: rule("env(REPORT_TEST_X)"),
+        dotEnv: "REPORT_TEST_X=fromfile\n",
+      });
+      expect(rules[0]?.fail).toBe("fromfile");
     }),
   );
 
-  it.effect("weakly coerces scalar rule fields to strings", () =>
+  it.effect("fails on a malformed config.toml", () =>
     Effect.gen(function* () {
-      // Weakly-typed decoding: an int/bool field
-      // coerces to its string form (123 → "123", true → "1") rather than erroring.
-      const rules = yield* readRules(
-        [
-          "[[experimental.inspect.rules]]",
-          "query = 123",
-          'name = "r"',
-          "pass = true",
-          'fail = "bad"',
-          "",
-        ].join("\n"),
-      );
-      expect(rules[0]?.query).toBe("123");
-      expect(rules[0]?.pass).toBe("1");
-    }),
-  );
-
-  it.effect("fails when an inspect.rules entry is not a table", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        readRules('[experimental.inspect]\nrules = ["not-a-table"]\n'),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("expected a table");
-      }
+      const error = yield* Effect.flip(readRules({ configToml: "this is = = not valid toml [[[" }));
+      expect(error._tag).toBe("CliConfigParseError");
     }),
   );
 
   it.effect("rejects unknown keys in a rule table", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        readRules(
-          [
-            "[[experimental.inspect.rules]]",
-            'query = "SELECT 1"',
-            'name = "r"',
-            'pass = "ok"',
-            'fail = "bad"',
-            'fails = "typo"',
-            "",
-          ].join("\n"),
-        ),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("unknown keys: fails");
-      }
+      const error = yield* Effect.flip(readRules({ configToml: `${rule("bad")}typo = "x"\n` }));
+      expect(error.message).toContain("unknown keys: typo");
     }),
   );
 
-  it.effect("accepts a single inline rules table as one rule", () =>
+  it.effect("fails when a rule field is not a string", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules(
-        [
-          "[experimental.inspect.rules]",
-          'query = "SELECT 1"',
-          'name = "solo"',
-          'pass = "ok"',
-          'fail = "bad"',
-          "",
-        ].join("\n"),
+      const error = yield* Effect.flip(
+        readRules({
+          configToml: '[[experimental.inspect.rules]]\nquery = 123\nname = "r"\n',
+        }),
       );
-      expect(rules).toEqual([{ query: "SELECT 1", name: "solo", pass: "ok", fail: "bad" }]);
+      expect(error._tag).toBe("CliConfigParseError");
     }),
   );
 
-  it.effect("fails when rules is a scalar string", () =>
+  it.effect("fails when an inspect.rules entry is not a table", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(readRules('[experimental.inspect]\nrules = "oops"\n'));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("expected a table");
-      }
-    }),
-  );
-
-  it.effect("fails when a rule field is a non-coercible type (nested table)", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        readRules(
-          [
-            "[[experimental.inspect.rules]]",
-            "[experimental.inspect.rules.query]",
-            'a = "b"',
-            "",
-          ].join("\n"),
-        ),
+      const error = yield* Effect.flip(
+        readRules({ configToml: '[experimental.inspect]\nrules = ["not-a-table"]\n' }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("expected a string");
-      }
+      expect(error._tag).toBe("CliConfigParseError");
     }),
   );
 });

@@ -7,14 +7,14 @@ image), to stdout or `--file`.
 
 ## Files Read
 
-| Path                              | Format     | When                                                                                                                                         |
-| --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)                                                                                          |
-| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present                                                                                    |
-| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
-| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
-| `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
-| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
+| Path                                    | Format      | When                                                                                                                                         |
+| --------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.json` or `config.toml` | JSON / TOML | always, `config.json` preferred (db port/password/major_version, project_id)                                                                 |
+| `supabase/.temp/postgres-version`       | plain text  | always (best-effort) — pins the pg image tag when present                                                                                    |
+| `supabase/.temp/pooler-url`             | plain text  | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
+| `~/.supabase/access-token`              | plain text  | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
+| `supabase/.temp/project-ref`            | plain text  | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
+| `supabase/.env*`                        | dotenv      | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`; shell values win)                                                                 |
 
 ## Files Written
 
@@ -35,7 +35,7 @@ image), to stdout or `--file`.
 
 | Variable                                             | Purpose                                                                                                                                                                                                                            |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
+| `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password; ignored for a target other than the linked project (see Notes)                                                                                                                                                 |
 | `SUPABASE_ACCESS_TOKEN`                              | `--linked` auth                                                                                                                                                                                                                    |
 | `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
@@ -50,6 +50,7 @@ image), to stdout or `--file`.
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                              |
+| `1`  | `--password` with `--db-url` or `--local`                                                                                                                             |
 
 ## Output
 
@@ -81,6 +82,11 @@ shell inherits the suppressing variables and is missed.
 
 ## Notes
 
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+  (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
+  `--linked`) > default. The linked-database password env is withheld when the target differs
+  from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with
+  `--db-url` or `--local`, which carry their own credentials.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
@@ -89,7 +95,8 @@ shell inherits the suppressing variables and is missed.
   `project_id` > `.temp/project-ref`) — it does not affect any local container
   id. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (stricter than `SUPABASE_PROJECT_ID`, which is simply left unused on a non-linked target).
+  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
+  unused on a non-linked target).
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is

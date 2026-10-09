@@ -89,7 +89,7 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
                       stderrChunks.push(chunk);
                       // Tee container stderr to the parent terminal in real time only when the
                       // caller opts in; otherwise it's buffered and surfaced only on failure.
-                      if (teeStderr) globalThis.process.stderr.write(chunk);
+                      if (teeStderr) process.stderr.write(chunk);
                     }),
                   ),
                 ],
@@ -138,7 +138,7 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
                       // Retained only for the returned string — skipped when the caller
                       // opts out, so a tee-only consumer stays at constant memory.
                       if (captureStderr) stderrChunks.push(chunk);
-                      if (teeStderr) globalThis.process.stderr.write(chunk);
+                      if (teeStderr) process.stderr.write(chunk);
                     }),
                   ).pipe(Effect.mapError(spawnError)),
                 ],

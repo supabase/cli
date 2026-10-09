@@ -5,6 +5,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { dbLint } from "./lint.handler.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -71,4 +73,6 @@ export const dbLintCommand = Command.make("lint", config).pipe(
     ),
   ),
   Command.provide(dbLintRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

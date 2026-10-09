@@ -6,8 +6,9 @@ configuration may change incompatibly while experimental. The family is opt in. 
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` or by setting `compute = true` under
 `[experimental]` in `supabase/config.toml`.
 
-The environment variable accepts `1` to enable and `0` to disable. When it is
-unset or empty, the config file is used; any other non-empty value reports an
+The environment variable accepts a boolean (`1`/`0`, `true`/`false`, `t`/`f`, any case)
+to enable or disable the family. When it is unset or empty, the config file is used; any
+non-boolean value reports an
 invalid feature-flag value on Compute paths (including their completion), root
 help, or root-level completion before a subcommand is chosen.
 Unrelated commands do not resolve the Compute flag. Unreadable or malformed

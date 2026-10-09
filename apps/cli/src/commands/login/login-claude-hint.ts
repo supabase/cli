@@ -1,10 +1,12 @@
+import { ambientEnvironment } from "../../shared/config/cli-config-provider.layer.ts";
+
 /**
  * Returns the Claude Code plugin-install hint only when the CLI is running inside Claude Code
  * (`CLAUDECODE`/`CLAUDE_CODE` env) and stdout is an interactive terminal; otherwise returns `""`.
  */
 const CLAUDE_CODE_HINT = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`;
 
-export function isClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isClaudeCode(env: NodeJS.ProcessEnv = ambientEnvironment()): boolean {
   return (env["CLAUDECODE"] ?? "") !== "" || (env["CLAUDE_CODE"] ?? "") !== "";
 }
 

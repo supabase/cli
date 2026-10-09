@@ -1,4 +1,3 @@
-import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
 import { defaultPublishableKey } from "../../../shared/stack-constants.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -12,8 +11,8 @@ import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsNewFlags } from "./new.command.ts";
@@ -92,15 +91,26 @@ const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(f
 });
 
 const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(function* (
-  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+  cliSettings: { readonly workdir: string },
   slug: string,
 ) {
-  const loaded = yield* loadCliConfig(cliSettings.workdir, {
-    search: shouldSearchAncestors(cliSettings),
-  }).pipe(Effect.orElseSucceed(() => null));
-  yield* Effect.annotateCurrentSpan("config.found", loaded !== null);
-  const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
-  const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
+  const configValues = yield* CliConfigValues;
+  const resolvedConfig = yield* configValues
+    .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
+    .pipe(Effect.option);
+  yield* Effect.annotateCurrentSpan(
+    "config.found",
+    Option.exists(resolvedConfig, (s) => s.hasConfigFile),
+  );
+  const config = Option.map(resolvedConfig, (loaded) => loaded.materialized.config);
+  const port = Option.match(config, {
+    onNone: () => DEFAULT_LOCAL_API_PORT,
+    onSome: (value) => value.api.port,
+  });
+  const publishableKey = Option.getOrElse(
+    Option.flatMapNullishOr(config, (value) => value.auth.publishable_key),
+    () => defaultPublishableKey,
+  );
   return {
     url: `http://127.0.0.1:${port}/functions/v1/${slug}`,
     publishableKey,

@@ -28,6 +28,7 @@ const passThrough =
     section;
 
 interface ResolvedAuthOptions {
+  readonly smtpEnabled: boolean;
   readonly authExternalUrl?: string;
   readonly apiExternalUrl?: string;
   readonly passkeyEnabled?: boolean;
@@ -115,7 +116,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
         web3: passThrough<AuthSettings["web3"]>()(auth.web3),
         oauthServer: passThrough<AuthSettings["oauthServer"]>()(auth.oauth_server),
       },
-      ...(auth.email.smtp?.enabled !== true
+      ...(options.smtpEnabled !== true || auth.email.smtp === undefined
         ? localSmtp.enabled
           ? {
               smtpAdminEmail: localSmtp.admin_email ?? "admin@email.com",

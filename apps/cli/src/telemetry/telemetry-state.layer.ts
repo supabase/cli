@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
-import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
+import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
 
 interface State {
@@ -25,9 +25,9 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  return pathSvc.join(resolveSupabaseHome(pathSvc, env, homedir()), "telemetry.json");
-}
+const telemetryPath = Effect.fnUntraced(function* (pathSvc: Path.Path) {
+  return pathSvc.join(yield* readSupabaseHome(pathSvc, homedir()), "telemetry.json");
+});
 
 /**
  * Serializes the state, splicing a carried exact `schema_version` token back in verbatim via
@@ -392,7 +392,7 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
 ) {
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   const exists = yield* fs.exists(filePath);
   const existing = exists ? yield* fs.readFileString(filePath) : undefined;
   const prior = existing !== undefined ? readExistingState(existing) : undefined;
@@ -438,7 +438,7 @@ export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const nextState: State = { ...state, enabled };
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
   return nextState;
@@ -458,7 +458,7 @@ const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State =
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
 });
@@ -469,7 +469,7 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
   const pathSvc = yield* Path.Path;
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State = { ...rest, device_id: crypto.randomUUID() };
-  const filePath = telemetryPath(process.env, pathSvc);
+  const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
 });

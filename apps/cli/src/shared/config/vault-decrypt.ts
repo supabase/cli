@@ -1,16 +1,8 @@
 import { Buffer } from "node:buffer";
 import { decrypt, PrivateKey } from "eciesjs";
 
-/**
- * dotenvx vault-secret decryption: ECIES over secp256k1 (uncompressed
- * ephemeral key, HKDF-SHA256 with no salt/info, AES-256-GCM with a 16-byte
- * nonce) — the same wire format the JS `eciesjs` library produces, so this
- * decrypts with `eciesjs` directly.
- *
- * An `encrypted:` value that cannot be decrypted aborts the whole command
- * with `failed to parse config: <error>`; the caller maps a non-`ok` result
- * into that error.
- */
+// dotenvx secrets use the `eciesjs` wire format. Callers turn a failed decrypt into
+// `failed to parse config: <error>`.
 
 const ENCRYPTED_PREFIX = "encrypted:";
 const PRIVATE_KEY_ENV_PREFIX = "DOTENV_PRIVATE_KEY";
@@ -20,12 +12,7 @@ const STD_BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/u;
 /** Whether a `[db.vault]` value is a dotenvx ciphertext. */
 export const isEncryptedSecret = (value: string): boolean => value.startsWith(ENCRYPTED_PREFIX);
 
-/**
- * Collects dotenvx private keys from the environment: every
- * `DOTENV_PRIVATE_KEY` or `DOTENV_PRIVATE_KEY_*` variable, comma-split with
- * empties dropped. Enumeration order only matters when more than one
- * distinct key could decrypt the same ciphertext (not a real scenario).
- */
+/** Every `DOTENV_PRIVATE_KEY` or `DOTENV_PRIVATE_KEY_*` value, comma-split with empties dropped. */
 export function collectDotenvPrivateKeys(
   env: Record<string, string | undefined>,
 ): ReadonlyArray<string> {
@@ -68,7 +55,6 @@ function decryptWithKey(keyHex: string, encryptedValue: string): DecryptedSecret
     return { ok: false, error: "failed to base64 decode secret: invalid base64 data" };
   }
   try {
-    // eciesjs returns a Uint8Array; wrap in Buffer before decoding the plaintext.
     const plaintext = Buffer.from(decrypt(privateKeyHex, Buffer.from(encoded, "base64")));
     return { ok: true, value: plaintext.toString("utf8") };
   } catch (cause) {
@@ -93,4 +79,24 @@ export function decryptSecret(
     lastError = attempt.error;
   }
   return { ok: false, error: lastError };
+}
+
+/** Decrypts every `encrypted:` value in a name-to-secret map, leaving plain values as-is; the first failure wins. */
+export function decryptSecretMap(
+  secrets: Readonly<Record<string, string>>,
+  keys: ReadonlyArray<string>,
+):
+  | { readonly ok: true; readonly value: Record<string, string> }
+  | Extract<DecryptedSecret, { readonly ok: false }> {
+  const decryptedSecrets: Record<string, string> = {};
+  for (const [name, value] of Object.entries(secrets)) {
+    if (!isEncryptedSecret(value)) {
+      decryptedSecrets[name] = value;
+      continue;
+    }
+    const decrypted = decryptSecret(value, keys);
+    if (!decrypted.ok) return decrypted;
+    decryptedSecrets[name] = decrypted.value;
+  }
+  return { ok: true, value: decryptedSecrets };
 }

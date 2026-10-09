@@ -23,6 +23,7 @@ import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
   statusCodeFailure,
@@ -365,6 +366,7 @@ function setup(opts: SetupOpts = {}) {
       : mockCommandPlatformApiFactoryDirect(opts.apiFactory);
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     out.layer,
@@ -443,6 +445,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   const outputLayer = opts.format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     outputLayer.pipe(Layer.provide(stdio.layer)),
@@ -551,6 +554,23 @@ describe("status integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StatusConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails naming the source when a config value is invalid", () => {
+    const { layer, child } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const exit = yield* Effect.exit(status(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StatusConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -1035,6 +1055,25 @@ content_path = "./supabase/templates/password_changed_notification.html"
       expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
       expect(out.stdoutText).not.toContain("REST_URL=");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("omits REST_URL with -o env when SUPABASE_API_ENABLED turns the api section off", () => {
+    const { layer, out } = setup({
+      outputFlag: Option.some("env"),
+      route: defaultRoute({
+        runningNames: ALL_RUNNING_NAMES.filter((name) => !name.includes("_rest_")),
+      }),
+    });
+    return withEnvVar(
+      "SUPABASE_API_ENABLED",
+      "false",
+      Effect.gen(function* () {
+        yield* writeConfig('project_id = "demo"\n[api]\nenabled = true\n');
+        yield* status(flags());
+        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+        expect(out.stdoutText).not.toContain("REST_URL=");
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("outputs a json object with -o json", () => {

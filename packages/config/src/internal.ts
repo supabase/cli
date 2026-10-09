@@ -25,7 +25,14 @@ export { type ProjectConfigApiAttributes } from "./project-config/api-attributes
 export { type InternalLoadCliConfigOptions } from "./config-document.ts";
 export { resolveCliConfigValue, resolveCliConfigSubtree } from "./project.ts";
 export {
+  decodeMergedCliConfig,
+  type DecodeMergedCliConfigOptions,
   loadCliConfig,
+  mergeParsedCliConfig,
+  type MergedCliConfigDocument,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   writeCliConfigDocumentText,

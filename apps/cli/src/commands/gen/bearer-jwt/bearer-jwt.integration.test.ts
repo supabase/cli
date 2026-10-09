@@ -12,6 +12,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -25,7 +26,7 @@ import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { genBearerJwtCommand, type GenBearerJwtFlags } from "./bearer-jwt.command.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 
@@ -81,6 +82,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(CliArgs, { args: [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),

@@ -23,11 +23,8 @@ import {
   runSupabaseEffect,
   runDockerEffect,
 } from "../../../tests/helpers/cli.ts";
-import {
-  sanitizeProjectId,
-  serviceContainerName,
-  localDbContainerId,
-} from "../../command-internal/docker-ids.ts";
+import { serviceContainerName, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 
 class StartE2eSetupError extends Data.TaggedError("StartE2eSetupError")<{
   readonly message: string;

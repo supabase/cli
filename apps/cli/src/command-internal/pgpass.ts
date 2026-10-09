@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /**
  * libpq `.pgpass` password lookup: when a connection string omits the password, this reads
@@ -74,9 +75,9 @@ export function findPgpassPassword(
   return "";
 }
 
-/** Environment lookup for `PGPASSFILE`/`APPDATA`; defaults to `process.env`. */
+/** Environment lookup for `PGPASSFILE`/`APPDATA`; defaults to the ambient environment. */
 type PassfileEnv = (name: string) => string | undefined;
-const processEnv: PassfileEnv = (name) => process.env[name];
+const processEnv: PassfileEnv = (name) => ambientEnvironment()[name];
 
 /**
  * Resolves the passfile path with libpq precedence: an explicit `passfile=`
@@ -110,7 +111,7 @@ function pgpassFilePath(env: PassfileEnv, passfile: string | undefined): string 
  * file is absent/unreadable or has no matching entry. A unix-socket host (a path) matches
  * `localhost`.
  *
- * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to `process.env`); `passfile` is an
+ * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to the ambient environment); `passfile` is an
  * explicit connection-string `passfile=` setting that takes precedence.
  */
 export function pgpassPassword(

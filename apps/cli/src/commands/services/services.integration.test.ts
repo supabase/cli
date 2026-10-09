@@ -40,6 +40,7 @@ import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { servicesCommand } from "./services.command.ts";
 import { services } from "./services.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
 
@@ -100,6 +101,7 @@ function setup(
     telemetry,
     cachedRefs,
     layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       FetchHttpClient.layer,
       mockRuntimeInfo({
@@ -112,7 +114,6 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          dbPassword: Option.none(),
           githubToken: Option.none(),
           workdirEnvValue: Option.none(),
           profile: "supabase",
@@ -264,6 +265,7 @@ describe("services", () => {
       const analytics = mockAnalytics();
       const args = ["services"];
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         BunServices.layer,
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
@@ -447,11 +449,11 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores config.json and reads legacy config.toml for local image selection", () =>
+  it.live("reads config.json over config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
-        toml: "[db]\nmajor_version = 15\n",
-        json: '{"db":{"major_version":14}}',
+        toml: "[db]\nmajor_version = 17\n",
+        json: '{"db":{"major_version":15}}',
       });
       const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
@@ -670,6 +672,38 @@ major_version = 15
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([
+    ["legacy", undefined],
+    ["stack", "stack"],
+  ] as const)(
+    "fails naming the source when a config value is invalid (%s backend)",
+    ([, backend]) =>
+      Effect.gen(function* () {
+        const workdir = yield* makeProjectWithConfig('project_id = "demo"\n');
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", ".env"),
+          "SUPABASE_API_PORT=notaport\n",
+        );
+        const { layer } = setup({ workdir });
+
+        const exit = yield* services({}).pipe(
+          Effect.provide(
+            backend === undefined ? layer : Layer.mergeAll(layer, stackBackendLayer(backend)),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("CliConfigValueError");
+          expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        }
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live("prints config load errors and falls back to the default matrix", () =>

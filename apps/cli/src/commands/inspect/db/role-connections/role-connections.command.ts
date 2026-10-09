@@ -2,6 +2,8 @@ import { Command } from "effect/unstable/cli";
 import { inspectDbRoleConnections } from "./role-connections.handler.ts";
 import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbRoleConnectionsCommand = Command.make(
   "role-connections",
@@ -13,4 +15,6 @@ export const inspectDbRoleConnectionsCommand = Command.make(
   Command.withShortDescription("Show role connections (deprecated)"),
   Command.withHandler(inspectDbCommandHandler(inspectDbRoleConnections)),
   Command.provide(inspectDbRuntimeLayer("role-connections")),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(INSPECT_DB_FLAGS),
 );

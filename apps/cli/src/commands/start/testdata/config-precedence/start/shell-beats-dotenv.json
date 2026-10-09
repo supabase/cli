@@ -1,0 +1,220 @@
+{
+  "containerOrder": [
+    "supabase_db_golden-start",
+    "supabase_analytics_golden-start",
+    "supabase_vector_golden-start",
+    "supabase_kong_golden-start",
+    "supabase_auth_golden-start",
+    "supabase_inbucket_golden-start",
+    "supabase_rest_golden-start",
+    "supabase_storage_golden-start",
+    "supabase_edge_runtime_golden-start"
+  ],
+  "containers": {
+    "supabase_analytics_golden-start": {
+      "env": {
+        "DB_DATABASE": "_supabase",
+        "DB_HOSTNAME": "supabase_db_golden-start",
+        "DB_PASSWORD": "postgres",
+        "DB_PORT": "5432",
+        "DB_SCHEMA": "_analytics",
+        "DB_USERNAME": "supabase_admin",
+        "LOGFLARE_FEATURE_FLAG_OVERRIDE": "'multibackend=true'",
+        "LOGFLARE_LOG_LEVEL": "warn",
+        "LOGFLARE_MIN_CLUSTER_SIZE": "1",
+        "LOGFLARE_NODE_HOST": "127.0.0.1",
+        "LOGFLARE_PRIVATE_ACCESS_TOKEN": "api-key",
+        "LOGFLARE_SINGLE_TENANT": "true",
+        "LOGFLARE_SUPABASE_MODE": "true",
+        "POSTGRES_BACKEND_SCHEMA": "_analytics",
+        "POSTGRES_BACKEND_URL": "postgresql://postgres:postgres@supabase_db_golden-start:5432/_supabase",
+        "RELEASE_COOKIE": "cookie"
+      },
+      "inlineEnv": {},
+      "publish": [
+        "54327:4000"
+      ]
+    },
+    "supabase_auth_golden-start": {
+      "env": {
+        "API_EXTERNAL_URL": "http://127.0.0.1:57321/auth/v1",
+        "GOTRUE_API_HOST": "0.0.0.0",
+        "GOTRUE_API_PORT": "9999",
+        "GOTRUE_DB_DATABASE_URL": "postgresql://supabase_auth_admin:postgres@supabase_db_golden-start:5432/postgres",
+        "GOTRUE_DB_DRIVER": "postgres",
+        "GOTRUE_DISABLE_SIGNUP": "true",
+        "GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED": "false",
+        "GOTRUE_EXTERNAL_APPLE_CLIENT_ID": "",
+        "GOTRUE_EXTERNAL_APPLE_EMAIL_OPTIONAL": "false",
+        "GOTRUE_EXTERNAL_APPLE_ENABLED": "false",
+        "GOTRUE_EXTERNAL_APPLE_REDIRECT_URI": "http://127.0.0.1:57321/auth/v1/callback",
+        "GOTRUE_EXTERNAL_APPLE_SECRET": "",
+        "GOTRUE_EXTERNAL_APPLE_SKIP_NONCE_CHECK": "false",
+        "GOTRUE_EXTERNAL_EMAIL_ENABLED": "true",
+        "GOTRUE_EXTERNAL_PHONE_ENABLED": "false",
+        "GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED": "false",
+        "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED": "false",
+        "GOTRUE_JWT_ADMIN_ROLES": "service_role",
+        "GOTRUE_JWT_AUD": "authenticated",
+        "GOTRUE_JWT_DEFAULT_GROUP_NAME": "authenticated",
+        "GOTRUE_JWT_EXP": "3600",
+        "GOTRUE_JWT_ISSUER": "http://127.0.0.1:57321/auth/v1",
+        "GOTRUE_JWT_KEYS": "[{\"kty\":\"EC\",\"kid\":\"b81269f1-21d8-4f2e-b719-c2240a840d90\",\"use\":\"sig\",\"key_ops\":[\"sign\",\"verify\"],\"alg\":\"ES256\",\"ext\":true,\"d\":\"dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU\",\"crv\":\"P-256\",\"x\":\"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4\",\"y\":\"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ\"}]",
+        "GOTRUE_JWT_SECRET": "super-secret-jwt-token-with-at-least-32-characters-long",
+        "GOTRUE_JWT_VALIDMETHODS": "HS256,RS256,ES256",
+        "GOTRUE_JWT_VALID_METHODS": "HS256,RS256,ES256",
+        "GOTRUE_MAILER_AUTOCONFIRM": "true",
+        "GOTRUE_MAILER_OTP_EXP": "3600",
+        "GOTRUE_MAILER_OTP_LENGTH": "6",
+        "GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED": "true",
+        "GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED": "true",
+        "GOTRUE_MAILER_URLPATHS_CONFIRMATION": "http://127.0.0.1:57321/auth/v1/verify",
+        "GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE": "http://127.0.0.1:57321/auth/v1/verify",
+        "GOTRUE_MAILER_URLPATHS_INVITE": "http://127.0.0.1:57321/auth/v1/verify",
+        "GOTRUE_MAILER_URLPATHS_RECOVERY": "http://127.0.0.1:57321/auth/v1/verify",
+        "GOTRUE_MFA_MAX_ENROLLED_FACTORS": "10",
+        "GOTRUE_MFA_PHONE_ENROLL_ENABLED": "false",
+        "GOTRUE_MFA_PHONE_VERIFY_ENABLED": "false",
+        "GOTRUE_MFA_TOTP_ENROLL_ENABLED": "false",
+        "GOTRUE_MFA_TOTP_VERIFY_ENABLED": "false",
+        "GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED": "false",
+        "GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED": "false",
+        "GOTRUE_PASSWORD_MIN_LENGTH": "6",
+        "GOTRUE_PASSWORD_REQUIRED_CHARACTERS": "",
+        "GOTRUE_RATE_LIMIT_ANONYMOUS_USERS": "30",
+        "GOTRUE_RATE_LIMIT_EMAIL_SENT": "360000",
+        "GOTRUE_RATE_LIMIT_OTP": "30",
+        "GOTRUE_RATE_LIMIT_SMS_SENT": "30",
+        "GOTRUE_RATE_LIMIT_TOKEN_REFRESH": "150",
+        "GOTRUE_RATE_LIMIT_VERIFY": "30",
+        "GOTRUE_RATE_LIMIT_WEB3": "30",
+        "GOTRUE_SECURITY_CAPTCHA_ENABLED": "false",
+        "GOTRUE_SECURITY_CAPTCHA_PROVIDER": "",
+        "GOTRUE_SECURITY_CAPTCHA_SECRET": "",
+        "GOTRUE_SECURITY_MANUAL_LINKING_ENABLED": "false",
+        "GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL": "10",
+        "GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED": "true",
+        "GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION": "false",
+        "GOTRUE_SITE_URL": "http://shell.example.com",
+        "GOTRUE_SMS_AUTOCONFIRM": "true",
+        "GOTRUE_SMS_MAX_FREQUENCY": "5s",
+        "GOTRUE_SMS_OTP_EXP": "6000",
+        "GOTRUE_SMS_OTP_LENGTH": "6",
+        "GOTRUE_SMS_TEMPLATE": "Your code is {{ .Code }}",
+        "GOTRUE_SMS_TEST_OTP": "",
+        "GOTRUE_SMTP_ADMIN_EMAIL": "admin@email.com",
+        "GOTRUE_SMTP_HOST": "supabase_inbucket_golden-start",
+        "GOTRUE_SMTP_MAX_FREQUENCY": "1s",
+        "GOTRUE_SMTP_PORT": "1025",
+        "GOTRUE_SMTP_SENDER_NAME": "Admin",
+        "GOTRUE_URI_ALLOW_LIST": "https://127.0.0.1:3000"
+      },
+      "inlineEnv": {},
+      "publish": []
+    },
+    "supabase_db_golden-start": {
+      "env": {
+        "JWT_EXP": "3600",
+        "JWT_SECRET": "super-secret-jwt-token-with-at-least-32-characters-long",
+        "POSTGRES_HOST": "/var/run/postgresql",
+        "POSTGRES_PASSWORD": "postgres"
+      },
+      "inlineEnv": {},
+      "publish": [
+        "57322:5432"
+      ]
+    },
+    "supabase_edge_runtime_golden-start": {
+      "env": {},
+      "inlineEnv": {},
+      "publish": []
+    },
+    "supabase_inbucket_golden-start": {
+      "env": {
+        "MP_SMTP_DISABLE_RDNS": "true"
+      },
+      "inlineEnv": {},
+      "publish": [
+        "54324:8025"
+      ]
+    },
+    "supabase_kong_golden-start": {
+      "env": {
+        "KONG_DATABASE": "off",
+        "KONG_DECLARATIVE_CONFIG": "/home/kong/kong.yml",
+        "KONG_DNS_NOT_FOUND_TTL": "1",
+        "KONG_DNS_ORDER": "LAST,A,CNAME",
+        "KONG_DNS_VALID_TTL": "5",
+        "KONG_NGINX_PROXY_PROXY_BUFFERS": "64 160k",
+        "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE": "160k",
+        "KONG_NGINX_WORKER_PROCESSES": "1",
+        "KONG_PLUGINS": "request-transformer,cors",
+        "KONG_PORT_MAPS": "57321:8000",
+        "KONG_SSL_CERT": "/home/kong/localhost.crt",
+        "KONG_SSL_CERT_KEY": "/home/kong/localhost.key"
+      },
+      "inlineEnv": {},
+      "publish": [
+        "57321:8000"
+      ]
+    },
+    "supabase_rest_golden-start": {
+      "env": {
+        "PGRST_ADMIN_SERVER_PORT": "3001",
+        "PGRST_DB_ANON_ROLE": "anon",
+        "PGRST_DB_EXTRA_SEARCH_PATH": "public,extensions",
+        "PGRST_DB_MAX_ROWS": "1000",
+        "PGRST_DB_SCHEMAS": "public,shell_api",
+        "PGRST_DB_URI": "postgresql://authenticator:postgres@supabase_db_golden-start:5432/postgres",
+        "PGRST_JWT_SECRET": "{\"keys\":[{\"kty\":\"EC\",\"kid\":\"b81269f1-21d8-4f2e-b719-c2240a840d90\",\"use\":\"sig\",\"key_ops\":[\"verify\"],\"alg\":\"ES256\",\"ext\":true,\"crv\":\"P-256\",\"x\":\"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4\",\"y\":\"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ\"},{\"kty\":\"oct\",\"k\":\"c3VwZXItc2VjcmV0LWp3dC10b2tlbi13aXRoLWF0LWxlYXN0LTMyLWNoYXJhY3RlcnMtbG9uZw\"}]}"
+      },
+      "inlineEnv": {},
+      "publish": []
+    },
+    "supabase_storage_golden-start": {
+      "env": {
+        "ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
+        "AUTH_JWT_SECRET": "super-secret-jwt-token-with-at-least-32-characters-long",
+        "DATABASE_URL": "postgresql://supabase_storage_admin:postgres@supabase_db_golden-start:5432/postgres",
+        "DB_MIGRATIONS_FREEZE_AT": "",
+        "ENABLE_IMAGE_TRANSFORMATION": "false",
+        "FILE_SIZE_LIMIT": "52428800",
+        "FILE_STORAGE_BACKEND_PATH": "/mnt",
+        "GLOBAL_S3_BUCKET": "stub",
+        "IMAGE_TRANSFORMATION_ENABLED": "false",
+        "IMGPROXY_URL": "http://supabase_imgproxy_golden-start:5001",
+        "JWT_JWKS": "{\"keys\":[{\"kty\":\"EC\",\"kid\":\"b81269f1-21d8-4f2e-b719-c2240a840d90\",\"use\":\"sig\",\"key_ops\":[\"verify\"],\"alg\":\"ES256\",\"ext\":true,\"crv\":\"P-256\",\"x\":\"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4\",\"y\":\"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ\"},{\"kty\":\"oct\",\"k\":\"c3VwZXItc2VjcmV0LWp3dC10b2tlbi13aXRoLWF0LWxlYXN0LTMyLWNoYXJhY3RlcnMtbG9uZw\"}]}",
+        "S3_PROTOCOL_ACCESS_KEY_ID": "625729a08b95bf1b7ff351a663f3a23c",
+        "S3_PROTOCOL_ACCESS_KEY_SECRET": "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+        "S3_PROTOCOL_ENABLED": "true",
+        "S3_PROTOCOL_PREFIX": "/storage/v1",
+        "SERVICE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+        "SIGNED_UPLOAD_URL_EXPIRATION_TIME": "7200",
+        "STORAGE_BACKEND": "file",
+        "STORAGE_S3_REGION": "local",
+        "TENANT_ID": "stub",
+        "TUS_URL_PATH": "/storage/v1/upload/resumable",
+        "UPLOAD_FILE_SIZE_LIMIT": "52428800000",
+        "UPLOAD_FILE_SIZE_LIMIT_STANDARD": "5242880000",
+        "VECTOR_BUCKET_PROVIDER": "pgvector",
+        "VECTOR_DATABASE_URL": "postgresql://postgres:postgres@supabase_db_golden-start:5432/postgres",
+        "VECTOR_ENABLED": "true",
+        "VECTOR_STORE_MIGRATIONS_ENABLED": "true"
+      },
+      "inlineEnv": {},
+      "publish": []
+    },
+    "supabase_vector_golden-start": {
+      "env": {},
+      "inlineEnv": {},
+      "publish": []
+    }
+  },
+  "copiedFiles": {
+    "supabase_db_golden-start:/etc/postgresql-custom/pgsodium_root.key": "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+    "supabase_kong_golden-start:/home/kong/kong.yml": "_format_version: \"1.1\"\nservices:\n  # Tenant project endpoints\n  - name: auth-v1-open\n    _comment: \"GoTrue external /auth/v1/verify* -> internal root /verify*\"\n    url: http://supabase_auth_golden-start:9999/verify\n    routes:\n      - name: auth-v1-open\n        strip_path: true\n        paths:\n          - /auth/v1/verify\n    plugins:\n      - name: cors\n  - name: auth-v1-open-callback\n    _comment: \"GoTrue external /auth/v1/callback* -> internal root /callback*\"\n    url: http://supabase_auth_golden-start:9999/callback\n    routes:\n      - name: auth-v1-open-callback\n        strip_path: true\n        paths:\n          - /auth/v1/callback\n    plugins:\n      - name: cors\n  - name: auth-v1-open-authorize\n    _comment: \"GoTrue external /auth/v1/authorize* -> internal root /authorize*\"\n    url: http://supabase_auth_golden-start:9999/authorize\n    routes:\n      - name: auth-v1-open-authorize\n        strip_path: true\n        paths:\n          - /auth/v1/authorize\n    plugins:\n      - name: cors\n  - name: auth-v1\n    _comment: \"GoTrue external /auth/v1/* -> internal root /*\"\n    url: http://supabase_auth_golden-start:9999/\n    routes:\n      - name: auth-v1-all\n        strip_path: true\n        paths:\n          - /auth/v1/\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  - name: rest-v1\n    _comment: \"PostgREST: /rest/v1/* -> http://rest:3000/*\"\n    url: http://supabase_rest_golden-start:3000/\n    routes:\n      - name: rest-v1-all\n        strip_path: true\n        paths:\n          - /rest/v1/\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  - name: rest-admin-v1\n    _comment: \"PostgREST: /rest-admin/v1/* -> http://rest:3001/*\"\n    url: http://supabase_rest_golden-start:3001/\n    routes:\n      - name: rest-admin-v1-all\n        strip_path: true\n        paths:\n          - /rest-admin/v1/\n    plugins:\n      - name: cors\n      # TODO: validate apikey\n  - name: graphql-v1\n    _comment: \"PostgREST: /graphql/v1 -> http://rest:3000/rpc/graphql\"\n    url: http://supabase_rest_golden-start:3000/rpc/graphql\n    routes:\n      - name: graphql-v1-all\n        strip_path: true\n        paths:\n          - /graphql/v1\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"Content-Profile: graphql_public\"\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  - name: realtime-v1-ws\n    _comment: \"Realtime: /realtime/v1/* -> ws://realtime:4000/socket/websocket\"\n    url: http://realtime-dev:4000/socket\n    protocol: ws\n    routes:\n      - name: realtime-v1-ws\n        strip_path: true\n        paths:\n          - /realtime/v1/\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          replace:\n            querystring:\n              - \"apikey:$((query_params.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (query_params.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or query_params.apikey)\"\n  - name: realtime-v1-rest\n    _comment: \"Realtime: /realtime/v1/* -> http://realtime:4000/api/*\"\n    url: http://realtime-dev:4000/api\n    protocol: http\n    routes:\n      - name: realtime-v1-rest\n        strip_path: true\n        paths:\n          - /realtime/v1/api\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  # S3-compatible storage endpoint (no Authorization header transformation)\n  - name: storage-v1-s3\n    _comment: \"Storage S3: /storage/v1/s3/* -> http://storage-api:5000/s3/*\"\n    url: http://supabase_storage_golden-start:5000/s3\n    routes:\n      - name: storage-v1-s3-all\n        strip_path: true\n        paths:\n          - /storage/v1/s3/\n    plugins:\n      - name: cors\n      # Note: No request-transformer plugin for Authorization header\n      # S3 presigned URLs require the original AWS signature in the Authorization header\n      # Adding/replacing with Bearer token would break S3 signature validation\n  # Regular storage API endpoint (with Authorization header transformation)\n  - name: storage-v1\n    _comment: \"Storage API: /storage/v1/* -> http://storage-api:5000/*\"\n    url: http://supabase_storage_golden-start:5000/\n    routes:\n      - name: storage-v1-all\n        strip_path: true\n        paths:\n          - /storage/v1/\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"Authorization: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  - name: functions-v1\n    _comment: \"Functions: /functions/v1/* -> http://edge-runtime:8081/*\"\n    url: http://supabase_edge_runtime_golden-start:8081/\n    # Set request idle timeout to 150s to match hosted project\n    # Ref: https://supabase.com/docs/guides/functions/limits\n    read_timeout: 150000\n    routes:\n      - name: functions-v1-all\n        strip_path: true\n        paths:\n          - /functions/v1/\n    plugins:\n      - name: cors\n      - name: request-transformer\n        config:\n          add:\n            headers:\n              - \"sb-api-key: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n          replace:\n            headers:\n              - \"sb-api-key: $((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == 'sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU') or (headers.apikey == 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' and 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0') or headers.apikey)\"\n  # Management API endpoints\n  - name: well-known-oauth\n    _comment: \"GoTrue: /.well-known/oauth-authorization-server -> http://auth:9999/.well-known/oauth-authorization-server\"\n    url: http://supabase_auth_golden-start:9999/.well-known/oauth-authorization-server\n    routes:\n      - name: well-known-oauth\n        strip_path: true\n        paths:\n          - /.well-known/oauth-authorization-server\n    plugins:\n      - name: cors\n  - name: pg-meta\n    _comment: \"pg-meta: /pg/* -> http://pg-meta:8080/*\"\n    url: http://supabase_pg_meta_golden-start:8080/\n    routes:\n      - name: pg-meta-all\n        strip_path: true\n        paths:\n          - /pg/\n    plugins:\n      - name: cors\n  - name: analytics-v1\n    _comment: \"Analytics: /analytics/v1/* -> http://logflare:4000/*\"\n    url: http://supabase_analytics_golden-start:4000/\n    routes:\n      - name: analytics-v1-all\n        strip_path: true\n        paths:\n          - /analytics/v1/\n    plugins:\n      - name: cors\n  - name: pooler-v2-ws\n    _comment: \"Pooler: /pooler/v2/* -> ws://pooler:4000/v2/*\"\n    url: http://supabase_pooler_golden-start:4000/v2\n    protocol: ws\n    routes:\n      - name: pooler-v2-ws\n        strip_path: true\n        paths:\n          - /pooler/v2/\n    plugins:\n      - name: cors\n  - name: mcp\n    _comment: \"MCP: /mcp -> http://studio:3000/api/mcp\"\n    url: http://supabase_studio_golden-start:3000/api/mcp\n    routes:\n      - name: mcp\n        strip_path: true\n        paths:\n          - /mcp\n    plugins:\n      - name: cors\n"
+  },
+  "stagedEnvFiles": {
+    "supabase_edge_runtime_golden-start/env/docker.env": "SUPABASE_URL=http://kong:8000\nSUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0\nSUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU\nSUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_golden-start:5432/postgres\nSUPABASE_INTERNAL_PUBLISHABLE_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH\nSUPABASE_INTERNAL_SECRET_KEY=sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz\nSUPABASE_INTERNAL_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long\nSUPABASE_JWKS={\"keys\":[{\"kty\":\"EC\",\"kid\":\"b81269f1-21d8-4f2e-b719-c2240a840d90\",\"use\":\"sig\",\"key_ops\":[\"verify\"],\"alg\":\"ES256\",\"ext\":true,\"crv\":\"P-256\",\"x\":\"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4\",\"y\":\"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ\"},{\"kty\":\"oct\",\"k\":\"c3VwZXItc2VjcmV0LWp3dC10b2tlbi13aXRoLWF0LWxlYXN0LTMyLWNoYXJhY3RlcnMtbG9uZw\"}]}\nSUPABASE_INTERNAL_HOST_PORT=57321\nSUPABASE_INTERNAL_FUNCTIONS_CONFIG={}"
+  }
+}

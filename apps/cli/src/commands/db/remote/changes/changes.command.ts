@@ -1,5 +1,7 @@
 import { Command, Flag } from "effect/unstable/cli";
 import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -19,11 +21,12 @@ const config = {
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
@@ -37,4 +40,5 @@ export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
   ),
   Command.provide(commandRuntimeLayer(["db", "remote", "changes"])),
   Command.provide(telemetryStateLayer),
+  withCliConfigFlags(config),
 );

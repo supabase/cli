@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
 
 export type ParentRefResolution =
   | { readonly kind: "resolved"; readonly ref: string }

@@ -1,6 +1,13 @@
 import { Effect, FileSystem, Path } from "effect";
 
 import { promptYesNo } from "./prompt-yes-no.ts";
+import {
+  SEED_CANCELLED_MESSAGE,
+  type DbSeedInput,
+  confirmSeedIntoMatchedRemote,
+  seedCancelledSuggestion,
+  seedConsentDryRunNote,
+} from "./seed-remote-consent.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../shared/output/errors.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { listLocalMigrations } from "./migration-list.ts";
@@ -71,6 +78,7 @@ export interface DbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  readonly seed: DbSeedInput;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */
@@ -105,6 +113,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
     toml,
     yes,
     emitStructuredResult,
+    seed,
   } = input;
 
   const vaultSecrets = toml.vault;
@@ -161,13 +170,13 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
 
       let seeds: ReadonlyArray<SeedFile> = [];
       if (includeSeed) {
-        if (!toml.seed.enabled) {
+        if (!seed.enabled) {
           yield* output.raw(
             `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
             "stderr",
           );
         } else {
-          seeds = yield* getPendingSeeds(session, fs, path, toml.seed.sqlPaths, workdir);
+          seeds = yield* getPendingSeeds(session, fs, path, seed.sqlPaths, workdir);
         }
       }
 
@@ -218,8 +227,27 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
         if (seeds.length > 0) {
           yield* output.raw("Would seed these files:\n", "stderr");
           yield* output.raw(confirmSeedAll(seeds), "stderr");
+          if (seed.consent !== undefined) yield* seedConsentDryRunNote(seed.consent, yes);
         }
       } else {
+        const seedConsented = seeds.length > 0 && seed.consent !== undefined;
+        if (seeds.length > 0 && seed.consent !== undefined) {
+          const consented = yield* confirmSeedIntoMatchedRemote({
+            command: "push",
+            target: seed.consent,
+            files: seeds.map((s) => s.path),
+            yes,
+          });
+          if (!consented) {
+            return yield* Effect.fail(
+              new DbPushCancelledError({
+                message: SEED_CANCELLED_MESSAGE,
+                suggestion: seedCancelledSuggestion("push"),
+              }),
+            );
+          }
+        }
+
         if (globals.length > 0) {
           const ok = yield* promptYesNo(
             output,
@@ -262,12 +290,14 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
         }
 
         if (seeds.length > 0) {
-          const ok = yield* promptYesNo(
-            output,
-            yes,
-            `Do you want to seed the ${databaseName} with these files?\n${confirmSeedAll(seeds)}`,
-            true,
-          );
+          const ok =
+            seedConsented ||
+            (yield* promptYesNo(
+              output,
+              yes,
+              `Do you want to seed the ${databaseName} with these files?\n${confirmSeedAll(seeds)}`,
+              true,
+            ));
           if (!ok) {
             return yield* Effect.fail(
               new DbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),

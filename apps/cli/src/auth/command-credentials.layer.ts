@@ -14,7 +14,7 @@ import type { PlatformError } from "effect/PlatformError";
 
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../shared/auth/keyring-token.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ACCESS_TOKEN_PATTERN, validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";

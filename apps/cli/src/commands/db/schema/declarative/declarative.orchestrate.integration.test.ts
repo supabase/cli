@@ -41,7 +41,7 @@ const toml: DbTomlValues = {
   shadowPort: 54320,
   password: "postgres",
   poolerConnectionString: Option.none(),
-  projectId: Option.none(),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -64,7 +64,6 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set(),
 };
 
 function jsonParseErrorMessage(raw: string): string {

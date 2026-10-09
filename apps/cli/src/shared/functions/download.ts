@@ -978,7 +978,10 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   // — see that function's own doc comment.
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-    envOverride: supabaseEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+    envNetworkId: yield* supabaseEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnvValues,
+    ),
     projectId,
   });
 

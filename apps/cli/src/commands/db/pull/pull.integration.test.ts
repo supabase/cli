@@ -34,6 +34,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -94,6 +95,8 @@ const pgDeltaDiffEnvelope = (
   });
 
 interface SetupOpts {
+  readonly usePgDelta?: boolean;
+  readonly env?: Readonly<Record<string, string>>;
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
   readonly remoteVersions?: ReadonlyArray<string>;
@@ -125,8 +128,7 @@ interface SetupOpts {
   readonly networkId?: string;
   readonly platform?: NodeJS.Platform;
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
-  // `Option.none()` to exercise the config.toml/workdir-basename fallback
-  // (`resolveLocalProjectId`).
+  // `Option.none()` to exercise the config.toml/workdir-basename fallback.
   readonly projectId?: Option.Option<string>;
   // Simulates an unlinked workdir: `loadProjectRef` fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
@@ -446,6 +448,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
+    configValuesLayer({
+      output: out.layer,
+      flags:
+        opts.usePgDelta === undefined
+          ? []
+          : [flagInput("experimental.pgdelta.enabled", "use-pg-delta", opts.usePgDelta)],
+      env: opts.env,
+    }),
     telemetry.layer,
     cache.layer,
     pgDeltaEngine,
@@ -832,12 +842,31 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false selects migra for a migration-style pull",
+    () => {
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        env: { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" },
+      });
+      return Effect.gen(function* () {
+        yield* dbPull(flags());
+        expect(s.engineCalls).toHaveLength(0);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("creates the labeled Deno-cache volume before the migra run mounts it", () => {
     const s = setup(tmp.current, {
       migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       yes: true,
+      env: { SUPABASE_PROJECT_ID: "test" },
     });
     return Effect.gen(function* () {
       yield* dbPull(flags({ diffEngine: Option.some("migra") }));
@@ -1020,7 +1049,7 @@ describe("db pull", () => {
   it.effect(
     "deprecated --use-pg-delta prints the deprecation line and behaves like --declarative",
     () => {
-      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+      const s = setup(tmp.current, { usePgDelta: true, edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags({ usePgDelta: Option.some(true) }));
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
@@ -1049,9 +1078,8 @@ describe("db pull", () => {
   it.effect(
     "a linked [remotes.<ref>]'s project_id outranks a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // `readDbToml` gates `toml.projectId` behind `remoteOverrideKeys` for the matched
-      // remote, but `resolveLocalProjectId` tries the raw ambient env first — an ambient
-      // `SUPABASE_PROJECT_ID` for an unrelated project must not win back over it.
+      // An ambient `SUPABASE_PROJECT_ID` for an unrelated project must not replace the linked
+      // remote's ref as the engine's project id.
       const s = setup(tmp.current, {
         files: {
           "supabase/config.toml": [
@@ -1077,6 +1105,7 @@ describe("db pull", () => {
       // Both flags bind to one variable, so the last occurrence wins — ORing the two
       // parsed flags would wrongly take the declarative path instead.
       const s = setup(tmp.current, {
+        usePgDelta: false,
         migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
@@ -1092,25 +1121,30 @@ describe("db pull", () => {
   );
 
   it.effect(
-    "--use-pg-delta --declarative=false stays in migration mode (last occurrence wins)",
+    "--use-pg-delta --declarative=false stays in migration mode and diffs with pg-delta",
     () => {
       const s = setup(tmp.current, {
+        usePgDelta: true,
         migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
-        edgeStdout: "create table remote ();\n",
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
         yes: true,
         args: ["db", "pull", "--use-pg-delta", "--declarative=false"],
       });
       return Effect.gen(function* () {
         yield* dbPull(flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }));
         expect(s.historyUpserts.length).toBe(1);
+        expect(s.engineCalls[0]?.operation).toBe("diff");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("--declarative --use-pg-delta (both true) takes the declarative export path", () => {
     const s = setup(tmp.current, {
+      usePgDelta: true,
       edgeStdout: EXPORT_JSON,
       args: ["db", "pull", "--declarative", "--use-pg-delta"],
     });
@@ -1789,6 +1823,7 @@ describe("db pull", () => {
 
   it.effect("--experimental still exports when the last --declarative alias is false", () => {
     const s = setup(tmp.current, {
+      usePgDelta: false,
       experimental: true,
       edgeStdout: EXPORT_JSON,
       args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
@@ -1966,6 +2001,24 @@ describe("db pull", () => {
       expect(s.edgeCalls).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false in supabase/.env selects migra for a migration-style pull",
+    () => {
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        files: { "supabase/.env": "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false\n" },
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbPull(flags());
+        expect(s.engineCalls).toHaveLength(0);
+        expect(s.edgeCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--diff-engine pg-delta overrides enabled = false", () => {
     const s = setup(tmp.current, {

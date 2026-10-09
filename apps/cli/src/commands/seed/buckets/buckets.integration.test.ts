@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
+import { loadCliConfig } from "@supabase/config/internal";
 import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -42,6 +42,7 @@ import {
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -218,6 +219,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    cliConfigValuesTestLayer,
     runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
@@ -294,9 +296,7 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          'Invalid config for api.port: "not-a-port" is not a valid port',
-        );
+        expect(Cause.pretty(exit.cause)).toContain("(sets api.port): expected a port (0-65535).");
       }
       expect(requests).toHaveLength(0);
     }).pipe(seedScenario),
@@ -1299,9 +1299,7 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          'Invalid config for api.port: "not-a-port" is not a valid port',
-        );
+        expect(causeText).toContain("(sets api.port): expected a port (0-65535).");
         expect(causeText).toContain("not-a-port");
       }
       expect(requests).toHaveLength(0);
@@ -1440,9 +1438,7 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          'Invalid config for api.tls.enabled: "notabool" is not a valid boolean',
-        );
+        expect(causeText).toContain("(sets api.tls.enabled): expected true or false.");
         expect(causeText).toContain("notabool");
       }
       expect(requests).toHaveLength(0);
@@ -2814,6 +2810,7 @@ describe("seed buckets", () => {
           ],
         });
         const loaded = yield* loadCliConfig(tmp.current, {
+          cliCompat: true,
           search: false,
         }).pipe(Effect.provide(BunServices.layer));
         if (loaded === null) {
@@ -2864,38 +2861,23 @@ describe("stack backend", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
-    "short-circuits with the empty summary despite a malformed SUPABASE_API_PORT, since the stack backend never reads it",
-    () =>
-      Effect.gen(function* () {
-        const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
+  it.live("a malformed SUPABASE_API_PORT fails the config load under either backend", () =>
+    Effect.gen(function* () {
+      for (const stackBackend of [true, false]) {
+        const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
           toml: 'project_id = "test"\n',
           files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
-          stackBackend: true,
-          format: "json",
+          stackBackend,
         });
         const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("CliConfigValueError");
+          expect(causeText).toContain("(sets api.port): expected a port (0-65535).");
+        }
         expect(requests).toHaveLength(0);
-        const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data?.["buckets_created"]).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("the same malformed SUPABASE_API_PORT still hard-fails under the legacy backend", () =>
-    Effect.gen(function* () {
-      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
-      });
-      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("StorageConfigError");
-        expect(causeText).toContain('Invalid config for api.port: "notaport" is not a valid port');
       }
-      expect(requests).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 
 import { DebugFlag } from "./global-flags.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 

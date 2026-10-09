@@ -70,6 +70,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
+import { ambientEnvironment } from "../config/cli-config-provider.layer.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DEPLOY_RATE_LIMIT_MAX_RETRIES = 8;
@@ -379,7 +380,7 @@ export function pruneRedundantDockerBinds(
   return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
 }
 
-function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
+function dockerNpmEnv(env: NodeJS.ProcessEnv = ambientEnvironment()): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];
     return value === undefined || value === "" ? [] : [name];
@@ -2518,7 +2519,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
   // (same rule as `download.ts`'s own `--debug` read).
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
-  const deployConfig = context.loaded?.config;
+  const deployConfig = context.loaded.config;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,
     dependencies.edgeRuntimeVersion,
@@ -2526,13 +2527,11 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const configFunctions = yield* inferFunctionsManifest({
     cwd: dependencies.projectRoot,
     config: deployConfig,
-    // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
-    // past `dependencies.projectRoot` for either load, so they can never resolve two
-    // different projects.
+    // The resolved config never searches ancestors, so manifest inference must not either.
     search: false,
   });
-  const configDeclaredFunctions = deployConfig?.functions ?? {};
-  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+  const configDeclaredFunctions = deployConfig.functions;
+  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded.document);
   yield* validateConfigFunctionSlugs(configDeclaredFunctions);
   const slugs =
     flags.functionNames.length > 0
@@ -2595,10 +2594,9 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
 
         // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
         // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
-        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only.
         const networkMode = resolveDockerNetworkMode({
           explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride: supabaseEnvStringWithProjectFallback(
+          envNetworkId: yield* supabaseEnvStringWithProjectFallback(
             "SUPABASE_NETWORK_ID",
             context.projectEnvValues,
           ),

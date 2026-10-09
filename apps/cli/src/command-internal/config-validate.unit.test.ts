@@ -21,10 +21,10 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
-  parseBoolLiteral,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 
 describe("parseBoolLiteral", () => {
   it("accepts the true forms", () => {

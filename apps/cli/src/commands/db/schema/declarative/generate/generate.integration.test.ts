@@ -30,6 +30,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../../../../tests/helpers/config-values-layer.ts";
 import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -314,6 +315,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const layer = Layer.mergeAll(
     out.layer,
+    configValuesLayer({
+      output: out.layer,
+      env: Option.match(opts.projectId ?? Option.some("test"), {
+        onNone: () => ({}),
+        onSome: (projectId) => ({ SUPABASE_PROJECT_ID: projectId }),
+      }),
+    }),
     telemetry.layer,
     cache.layer,
     seam,
@@ -655,6 +663,23 @@ describe("db schema declarative generate integration", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  for (const [label, target] of [
+    ["--local", { local: Option.some(true) }],
+    ["--db-url", { dbUrl: Option.some("postgresql://x") }],
+  ] as const) {
+    it.effect(`rejects --password combined with ${label}`, () => {
+      const s = setup(tmp.current, { experimental: true });
+      return Effect.gen(function* () {
+        const exit = yield* dbSchemaDeclarativeGenerate(
+          flags({ ...target, password: Option.some("pw") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({ _tag: "DbPasswordFlagsError" });
+        expect(s.localPostgresImageChecks).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
+  }
 
   it.effect("--output-dir protects a non-empty destination without --overwrite", () => {
     const s = setup(tmp.current, {

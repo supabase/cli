@@ -28,6 +28,7 @@ import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError } from "./prepare.errors.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const id = "a".repeat(64);
 const flags = (overrides: Partial<StackPrepareFlags> = {}): StackPrepareFlags => ({
@@ -162,6 +163,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     options.runtimeInfo ?? runtimeInfoLayer,
     engines.layer,

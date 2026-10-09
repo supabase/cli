@@ -35,6 +35,40 @@
       }
     },
     {
+      // Ambient env reads go through `CliConfigValues` (registry names) or the shared env-option
+      // helpers, so a stray `process.env` can't bypass the flag > shell > .env > config order.
+      "files": ["apps/cli/src/**"],
+      "excludeFiles": [
+        "apps/cli/src/**/*.test.ts",
+        "apps/cli/src/shared/config/cli-config-provider.layer.ts",
+        "apps/cli/src/shared/config/cli-config-env.ts",
+        // Standalone node shim built with `bun build --target node`; it cannot import effect.
+        "apps/cli/src/shared/cli/bin.ts",
+        // Templates that run inside the user's deployed container, not in the CLI process.
+        "apps/cli/src/shared/compute/stacks/**"
+      ],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "env",
+            "message": "Read env through CliConfigValues or the shared env helpers, not process.env."
+          },
+          {
+            "object": "Bun",
+            "property": "env",
+            "message": "Read env through CliConfigValues or the shared env helpers, not Bun.env."
+          },
+          {
+            "object": "globalThis",
+            "property": "process",
+            "message": "Use the bare `process` global; reading env through globalThis.process bypasses CliConfigValues."
+          }
+        ]
+      }
+    },
+    {
       // `.github/scripts` is the only `bun:test` consumer; `@types/bun`'s shared `Matchers<T>`
       // types `.rejects.toThrow(...)` as returning `void`, even though it must be awaited at
       // runtime. Removing the `await` would make the assertion racy.
@@ -55,6 +89,108 @@
         "no-restricted-imports": [
           "error",
           {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Env must not be imported past `CliConfigValues`: not `env` from node:process/bun, and
+      // `ambientEnvironment` only in the audited files of the next override. This rule replaces the
+      // repo-wide one for these files, so the namespace pattern is repeated; keep the two in sync.
+      "files": ["apps/cli/src/**"],
+      "excludeFiles": [
+        "apps/cli/src/**/*.test.ts",
+        "apps/cli/src/shared/config/cli-config-provider.layer.ts",
+        "apps/cli/src/shared/config/cli-config-env.ts",
+        "apps/cli/src/shared/cli/bin.ts",
+        "apps/cli/src/shared/compute/stacks/**",
+        "apps/cli/src/cli/complete.ts",
+        "apps/cli/src/command-internal/colors.ts",
+        "apps/cli/src/command-internal/db-config.parse.ts",
+        "apps/cli/src/command-internal/hostname.ts",
+        "apps/cli/src/command-internal/pgpass.ts",
+        "apps/cli/src/commands/login/login-claude-hint.ts",
+        "apps/cli/src/commands/start/lib/env-or-default.ts",
+        "apps/cli/src/commands/start/services/vector.service.ts",
+        "apps/cli/src/shared/functions/deploy.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:process",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not node:process env."
+              },
+              {
+                "name": "process",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not process env."
+              },
+              {
+                "name": "bun",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not Bun's env export."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["**/cli-config-provider.layer.ts"],
+                "importNames": ["ambientEnvironment"],
+                "message": "Read env through CliConfigValues; only the audited non-registry readers may import ambientEnvironment."
+              },
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // These read terminal, libpq, docker and proxy variables, never a config registry name, so
+      // they may import `ambientEnvironment`; the rest of the override above still applies.
+      "files": [
+        "apps/cli/src/cli/complete.ts",
+        "apps/cli/src/command-internal/colors.ts",
+        "apps/cli/src/command-internal/db-config.parse.ts",
+        "apps/cli/src/command-internal/hostname.ts",
+        "apps/cli/src/command-internal/pgpass.ts",
+        "apps/cli/src/commands/login/login-claude-hint.ts",
+        "apps/cli/src/commands/start/lib/env-or-default.ts",
+        "apps/cli/src/commands/start/services/vector.service.ts",
+        "apps/cli/src/shared/functions/deploy.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:process",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not node:process env."
+              },
+              {
+                "name": "process",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not process env."
+              },
+              {
+                "name": "bun",
+                "importNames": ["env"],
+                "message": "Read env through CliConfigValues or the shared env helpers, not Bun's env export."
+              }
+            ],
             "patterns": [
               {
                 "group": ["**/namespace/**"],

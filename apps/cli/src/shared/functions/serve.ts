@@ -1,10 +1,7 @@
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import {
-  CliConfigSchema,
-  findCliProjectPaths,
   inferFunctionsManifest,
   type CliConfig,
-  type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
@@ -43,14 +40,9 @@ import {
   isContainerNotFoundMessage,
   spawnContainerCli,
 } from "../../command-internal/container-cli.ts";
-import {
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
-} from "../../command-internal/cli-config-load.ts";
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
-import { parseDotEnv } from "../../command-internal/dotenv.ts";
+import { parseDotEnv } from "../config/dotenv.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   resolveRemoteJwks,
@@ -81,7 +73,6 @@ import {
   localDockerId,
   nativeFailure,
   nativePlatformFailure,
-  normalizeProjectId,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -98,8 +89,9 @@ import {
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "./serve.errors.ts";
-const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-const defaultCliConfig = decodeCliConfig({});
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -142,7 +134,6 @@ const externalTerminationExitCodes = new Set([
 // Consecutive re-attaches to `docker logs -f` without forwarding a new line before giving up on
 // the stream and failing loudly instead of flooding replayed history forever.
 const containerLogReattachCap = 5;
-const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedFunctionsServeMainTemplate: string | undefined;
@@ -709,94 +700,46 @@ const resolveServeConfig = Effect.fn("functions.serve.resolveConfig")(function* 
   projectIdOverride: Option.Option<string>,
   localConfigLoader: FunctionsLocalConfigLoader,
 ) {
-  const path = yield* Path.Path;
-  // Keeps `.env` discovery, config load, and functions-manifest inference
-  // from resolving three different roots: `search: false` must match
-  // `loadFunctionsCliConfig`'s own options exactly (see below).
-  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
-  const projectRef = Option.match(projectIdOverride, {
-    onNone: () => undefined,
-    onSome: (value) => {
-      const normalized = value.trim();
-      return normalized.length > 0 ? normalized : undefined;
-    },
-  });
-  // We resolve the project environment ourselves (layering
-  // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass
-  // it in, so `loadCliConfig`'s `env()` interpolation neither re-reads those
-  // files nor mutates `process.env`.
-  //
-  // `search`/`tomlOnly` here must match `loadFunctionsCliConfig`'s own
-  // options below exactly, or the two loads can resolve two different files,
-  // silently mixing fields from two different projects.
-  const loadedConfig = yield* loadCliConfig(projectRoot, {
-    ...(projectRef === undefined ? {} : { projectRef }),
-    ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
-    search: false,
-    tomlOnly: true,
-  });
-  const baseConfig = loadedConfig?.config ?? defaultCliConfig;
+  const projectRef = Option.getOrUndefined(
+    Option.filter(
+      Option.map(projectIdOverride, (value) => value.trim()),
+      (value) => value.length > 0,
+    ),
+  );
+  yield* (yield* CliConfigValues).invalidate;
+  const context = yield* loadFunctionsCliConfig({ projectRoot, projectRef, localConfigLoader });
+  const { resolvedConfig } = context;
+  const baseConfig = context.loaded.config;
 
-  const auth =
-    projectEnv === null
-      ? toPlainAuthConfig(baseConfig.auth)
-      : toPlainAuthConfig(yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth"));
-  const edgeRuntime =
-    projectEnv === null
-      ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
-      : toPlainEdgeRuntimeConfig(
-          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime"),
-        );
-  const apiPort =
-    projectEnv === null
-      ? baseConfig.api.port
-      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api")).port;
-  const configDeclaredFunctions =
-    projectEnv === null
-      ? toPlainFunctionRecord(baseConfig.functions)
-      : toPlainFunctionRecord(
-          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions"),
-        );
-  const configForManifest: CliConfig = {
-    ...baseConfig,
-    functions: configDeclaredFunctions,
-  };
+  const auth = toPlainAuthConfig(
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.auth, "auth"),
+  );
+  const edgeRuntime = toPlainEdgeRuntimeConfig(
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.edge_runtime, "edge_runtime"),
+  );
+  const apiPort = (yield* resolvedConfig.get(CliConfigKeys.api.port)).value;
+  const configDeclaredFunctions = toPlainFunctionRecord(
+    yield* resolveConfigSubtree(resolvedConfig, baseConfig.functions, "functions"),
+  );
   const configFunctions = yield* inferFunctionsManifest({
     cwd: projectRoot,
-    config: configForManifest,
+    config: { ...baseConfig, functions: configDeclaredFunctions },
     search: false,
-  });
-  const configProjectId =
-    projectEnv === null
-      ? (baseConfig.project_id ?? "")
-      : (reveal(
-          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id"),
-        ) ?? "");
-  const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
-  const fallbackProjectId = path.basename(path.resolve(projectRoot));
-
-  // A second, independent config/dotenv load, run before any Docker check so
-  // an invalid config fails here too; its `search`/`tomlOnly` must match the
-  // `loadedConfig` call above or the two loads can pick different files.
-  // Known gap: `projectId` only sees ambient-shell `SUPABASE_PROJECT_ID`, not
-  // project dotenv, so a project setting it only in `.env` gets a different
-  // Docker network than `deploy`/`download`/`start` — a silently broken `serve`.
-  const functionsCliConfig = yield* loadFunctionsCliConfig({
-    projectRoot,
-    projectRef,
-    localConfigLoader,
   });
 
   return {
-    projectId: normalizeProjectId(rawProjectId.length > 0 ? rawProjectId : fallbackProjectId),
+    projectId: context.projectId,
     apiPort,
     auth,
-    edgeRuntime: { ...edgeRuntime, deno_version: functionsCliConfig.denoVersion },
+    edgeRuntime:
+      context.denoVersion === undefined
+        ? edgeRuntime
+        : { ...edgeRuntime, deno_version: context.denoVersion },
     configDeclaredFunctions,
     configFunctions,
-    rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
-    configPath: loadedConfig?.path,
-    projectEnvValues: functionsCliConfig.projectEnvValues,
+    rawConfigFunctions: rawFunctionConfigRecord(context.loaded.document),
+    configPath: context.configPath,
+    projectEnvValues: context.projectEnvValues,
   } satisfies ServeResolvedConfig;
 });
 
@@ -1051,10 +994,6 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
   }
 }
 
-function loadDefaultEnvFilenames(env: string) {
-  return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
-}
-
 function sanitizeDotEnvParseError(path: string, cause: unknown) {
   if (!(cause instanceof Error)) {
     return new Error(`failed to parse environment file: ${path}`);
@@ -1085,62 +1024,6 @@ function sanitizeDotEnvParseError(path: string, cause: unknown) {
   }
   return new Error(`failed to load ${path}: ${message}`);
 }
-
-function ambientProjectEnv() {
-  return Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) =>
-      value === undefined ? [] : [[key, value]],
-    ),
-  );
-}
-
-const loadServeCliProjectEnvironment = Effect.fn("functions.serve.loadProjectEnvironment")(
-  function* (projectRoot: string) {
-    const path = yield* Path.Path;
-    const fs = yield* FileSystem.FileSystem;
-    const paths = yield* findCliProjectPaths(projectRoot, { search: false });
-    if (paths === null) {
-      return null;
-    }
-
-    const values: Record<string, string> = ambientProjectEnv();
-    const sources: Record<string, "ambient" | ".env" | ".env.local"> = Object.fromEntries(
-      Object.keys(values).map((key) => [key, "ambient"]),
-    );
-    const loadedPaths: string[] = [];
-    const env = values["SUPABASE_ENV"] || defaultSupabaseEnv;
-
-    for (const dir of [paths.supabaseDir, paths.projectRoot]) {
-      for (const filename of loadDefaultEnvFilenames(env)) {
-        const envPath = path.join(dir, filename);
-        const contents = yield* readFileUtf8(fs, envPath).pipe(
-          Effect.catch((error) =>
-            Predicate.isTagged(error.reason, "NotFound")
-              ? Effect.void
-              : nativePlatformFailure(error, envPath),
-          ),
-        );
-        if (contents === undefined) {
-          continue;
-        }
-        loadedPaths.push(envPath);
-        const parsed = yield* Effect.try({
-          try: () => parseDotEnv(contents),
-          catch: (cause) => nativeFailure(sanitizeDotEnvParseError(envPath, cause)),
-        });
-        for (const [key, value] of Object.entries(parsed)) {
-          if (values[key] !== undefined) {
-            continue;
-          }
-          values[key] = value;
-          sources[key] = filename.includes(".local") ? ".env.local" : ".env";
-        }
-      }
-    }
-
-    return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
-  },
-);
 
 /**
  * Whether any bind mounts something at `containerPath` or below it, i.e. whether
@@ -1990,7 +1873,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
   return yield* Effect.gen(function* () {
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
-      envOverride: supabaseEnvStringWithProjectFallback(
+      envNetworkId: yield* supabaseEnvStringWithProjectFallback(
         "SUPABASE_NETWORK_ID",
         resolved.projectEnvValues,
       ),

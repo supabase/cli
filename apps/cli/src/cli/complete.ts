@@ -26,6 +26,7 @@ import { ttyLayer } from "../shared/runtime/tty.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
+import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
 
 /**
  * Implements the shell completion protocol that the generated scripts (`supabase
@@ -1178,7 +1179,7 @@ export function defaultCompleteDeps(
     root,
     routingFailure,
     argv: process.argv.slice(2),
-    env: process.env,
+    env: ambientEnvironment(),
     stdoutWrite: (message) => {
       process.stdout.write(message);
     },

@@ -29,7 +29,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 | Path                                                                                                      | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                          | TOML                                                                                  | always (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/config.json` or `config.toml`                                                         | JSON / TOML                                                                           | always, `config.json` preferred (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                 | dotenv                                                                                | shadow provisioning (all native targets, including the explicit `--from/--to migrations` shadow)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                    | PEM                                                                                   | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute)        | text (existence/readability only — bytes discarded, used only to validate the config) | only when `auth.enabled`, for every configured template and every notification with `enabled = true` — via the same `readDbToml`/`checkDbToml` `Config.Validate` pipeline shared by every `db`/`migration` subcommand that loads config (`db dump`/`pull`/`reset`/`push`/`schema declarative generate`/`sync`, `migration up`/`down`/`squash` — documented once here rather than duplicated per file, CLI-2339); the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
@@ -105,13 +105,14 @@ of this command's own target resolve, ahead of the differ container.
 | Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                 | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                                                                         | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked); ignored for a target other than the linked project (see Notes)                                                                                                                         | no        |
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                              | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)               | no        |
+| `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                               | overrides `[experimental.pgdelta].enabled` (default true; `false` selects migra); a value that is not a boolean fails the command                                                                                   | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                      | no        |
@@ -120,8 +121,9 @@ of this command's own target resolve, ahead of the differ container.
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
 through the same primitives.
 
-The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is **not read**: pg-delta is the
-default engine, and an explicit `[experimental.pgdelta] enabled = false` rollback is
+`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` has no effect on the pgadmin path: `--use-pgadmin`
+always selects the pgadmin engine. The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is
+**not read**: pg-delta is the default engine, and an explicit `enabled = false` rollback is
 authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
@@ -206,8 +208,19 @@ transaction metadata.
 
 ## Notes / Delegation
 
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+  (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
+  invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
+  block. The linked-database password env is withheld when the target differs from
+  `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
+  temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
+- **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
+  so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
+  stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
+  `--use-migra` or `--use-pgadmin` (a true value) always wins; `--use-migra=false` keeps pg-delta; the stack backend always uses pg-delta.
 - `--use-migra`, `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine group
-  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`); `--db-url` / `--linked` / `--local` are a mutually-exclusive target group (default
+  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`); `--db-url` /
+  `--linked` / `--local` are a mutually-exclusive target group (default
   `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
   Notes below), so it is never a live member of the group.
 - **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
@@ -223,7 +236,8 @@ transaction metadata.
   `--linked` was explicitly set either. It still fires for e.g. `--from local
 --to migrations --project-ref X` (explicit mode, `--linked` unchanged, and
   neither side `linked`), where the flag would otherwise go silently unused
-  (stricter than `SUPABASE_PROJECT_ID`, which is simply left unused on a non-linked target). `--use-pgadmin --linked`
+  (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply unused
+  on a non-linked target). `--use-pgadmin --linked`
   honors the flag like every other native engine (CLI-1968 — same target
   resolve); `--use-pg-schema` is removed and rejects before any target
   resolution happens (see Notes below), so this guard never runs for it.
@@ -242,7 +256,7 @@ publishes only when the roles file is unchanged, and retention keeps three entri
 A falsy `SUPABASE_SHADOW_CACHE` bypasses this cache. A failed warm restore recreates the database;
 a failed cache export warns and continues with the live shadow.
 
-On by default; setting `SUPABASE_SHADOW_CACHE` to anything not boolean-true (`false`/`0`/empty/garbage,
+On by default; setting `SUPABASE_SHADOW_CACHE` to anything that does not parse as true (`false`/`0`/empty/garbage,
 honored from the ambient env AND the project's dotenv, e.g. `supabase/.env`) turns it off,
 restoring the documented uncached lifecycle. A warm hit
 skips the platform baseline, so the `Initialising schema...` progress line does not print —

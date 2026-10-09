@@ -7,6 +7,8 @@ import {
   testDbConfig,
 } from "../../../command-internal/test-db.command-handler.ts";
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 /**
  * `db test` is a hidden alias for `test db`, registered hidden by the parent
@@ -23,4 +25,6 @@ export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   // entry point even though the handler is identical — see
   // `testDbRuntimeLayer`'s doc comment.
   Command.provide(testDbRuntimeLayer(["db", "test"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(testDbConfig),
 );

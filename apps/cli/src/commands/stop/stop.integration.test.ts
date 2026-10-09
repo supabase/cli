@@ -16,6 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -212,6 +213,7 @@ const setup = (opts: SetupOpts = {}) =>
     });
 
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       runtimeInfoLayer,
       out.layer,
       cliSettings,
@@ -737,6 +739,22 @@ describe("stop integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails naming the source when a config value is invalid", () =>
+    Effect.gen(function* () {
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const { layer, child } = yield* setup({ route: defaultRoute() });
+      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),

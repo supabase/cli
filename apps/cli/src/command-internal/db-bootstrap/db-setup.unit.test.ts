@@ -20,6 +20,7 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
@@ -202,7 +203,6 @@ function baseInput(
     projectEnvValues: undefined,
     debug: false,
     version: "",
-    seedFlags: { noSeed: false, sqlPaths: [] },
     ...overrides,
   };
 }
@@ -227,6 +227,7 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
+        cliConfigValuesTestLayer,
       ),
     ),
   );

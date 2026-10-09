@@ -8,8 +8,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
-import { DebugLogger } from "../debug-logger.service.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import {
   LocalDockerEngine,
@@ -395,16 +397,64 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
 });
 
 describe("isLocalDbRunning", () => {
-  const probe = (spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
+  const probe = (
+    spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
+    options: { readonly toml?: string; readonly env?: Readonly<Record<string, string>> } = {
+      toml: 'project_id = "engine-probe"\n',
+    },
+  ) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workdir = mkdtempSync(join(tmpdir(), "ldbrun-"));
-      return yield* isLocalDbRunning(spawner, fs, path, workdir, "engine-probe").pipe(
+      if (options.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), options.toml);
+      }
+      return yield* isLocalDbRunning(spawner, fs, path, workdir).pipe(
         Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
       );
-    }).pipe(Effect.provide(spawnerLayer), Effect.provide(BunServices.layer));
+    }).pipe(
+      Effect.provide(configValuesLayer({ output: mockOutput().layer, env: options.env })),
+      Effect.provide(spawnerLayer),
+      Effect.provide(BunServices.layer),
+    );
+
+  it.live("probes the container named by config.toml's project_id", () => {
+    const asked: Array<string> = [];
+    const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
+    return probe(mock.layer, { toml: 'project_id = "tomlproj"\n' }).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        containerExists: (containerId) =>
+          Effect.sync(() => {
+            asked.push(containerId);
+          }).pipe(Effect.as(Option.some(true))),
+      }),
+      Effect.map(() => {
+        expect(asked).toEqual(["supabase_db_tomlproj"]);
+      }),
+    );
+  });
+
+  it.live("probes the container named by SUPABASE_PROJECT_ID over config.toml's project_id", () => {
+    const asked: Array<string> = [];
+    const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
+    return probe(mock.layer, {
+      toml: 'project_id = "tomlproj"\n',
+      env: { SUPABASE_PROJECT_ID: "envproj" },
+    }).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        containerExists: (containerId) =>
+          Effect.sync(() => {
+            asked.push(containerId);
+          }).pipe(Effect.as(Option.some(true))),
+      }),
+      Effect.map(() => {
+        expect(asked).toEqual(["supabase_db_envproj"]);
+      }),
+    );
+  });
 
   it.live("trusts a definitive Engine answer without spawning the container CLI", () => {
     const asked: Array<string> = [];

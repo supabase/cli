@@ -1,6 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPush } from "./push.handler.ts";
@@ -15,10 +18,10 @@ const config = {
     Flag.withDescription("Include custom roles from supabase/roles.sql."),
     Flag.withDefault(false),
   ),
-  includeSeed: Flag.boolean("include-seed").pipe(
-    Flag.withDescription("Include seed data from your config."),
-    Flag.withDefault(false),
-  ),
+  includeSeed: CliConfigKeys.db.seed.enabled.flag({
+    name: "include-seed",
+    description: "Include seed data from your config.",
+  }),
   skipVault: Flag.boolean("skip-vault").pipe(
     Flag.withDescription("Skip updating vault secrets from config.toml."),
     Flag.withDefault(false),
@@ -52,11 +55,12 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 export type DbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -89,4 +93,6 @@ export const dbPushCommand = Command.make("push", config).pipe(
     ),
   ),
   Command.provide(dbPushRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

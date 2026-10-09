@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -18,32 +18,9 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { checkDbToml } from "../db-config.toml-read.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import {
-  envOverride,
-  envOverrideApiMaxRows,
-  envOverrideAuthPasswordRequirements,
-  envOverrideBool,
-  envOverrideDefaultPoolSize,
-  envOverrideEdgeRuntimePolicy,
-  envOverrideMaxClientConn,
-  envOverridePoolMode,
-  envOverridePort,
-  envOverrideRealtimeIpVersion,
-  envOverrideRealtimeMaxHeaderLength,
-  envOverrideUint,
-  resolveAuthEmail,
-  resolveAuthEmailSmtp,
   resolveAuthExternalProviders,
-  resolveAuthHooks,
-  resolveAuthMfa,
-  resolveAuthSms,
-  resolveDbSettingsEnvOverrides,
-  resolveGotrueOAuthServer,
   resolveGotruePasskeyWebauthn,
-  resolveGotrueRateLimit,
-  resolveGotrueSessions,
-  resolveGotrueWeb3,
   resolveLocalConfigValues,
-  resolveThirdPartyProviders,
 } from "../local-config-values.ts";
 import { parseDuration, resolveHealthTimeoutSeconds } from "../duration.ts";
 import { ramInBytes } from "../size-units.ts";
@@ -124,430 +101,69 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     (message) => new DbConfigLoadError({ message }),
   );
   // This same `context` is passed into `buildLocalDbContainerInputs` below as
-  // `preloadedContext`, since a second `loadCliConfig` call would double-print
-  // deprecated-config-section warnings; that function returns the same context back verbatim.
+  // `preloadedContext`; that function returns the same context back verbatim.
   // `hostnameForValidation` here still feeds the discarded `resolveLocalConfigValues` call below.
-  const { config, projectEnvValues, loaded, hostname: hostnameForValidation } = context;
+  const { config, resolvedConfig, hostname: hostnameForValidation } = context;
+  const document = resolvedConfig.loaded.document ?? {};
 
   // Every duration config field is decoded in this same unconditional pass, before Docker is
   // touched or the already-running check runs. The parsed values are discarded; only the
   // fail-fast behavior matters.
-  const authDocForValidation = asRecord(loaded?.document?.["auth"]);
-  const resolvedEmailForValidation = yield* wrapDbConfigOverride("auth.email", () =>
-    resolveAuthEmail(config.auth.email, authDocForValidation, projectEnvValues),
-  );
   yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
-    parseDuration(resolvedEmailForValidation.max_frequency),
-  );
-  yield* wrapDbConfigOverride("auth.email.smtp", () =>
-    resolveAuthEmailSmtp(authDocForValidation, projectEnvValues),
-  );
-  const smsForValidation = yield* wrapDbConfigOverride("auth.sms", () =>
-    resolveAuthSms(authDocForValidation, config.auth.sms, projectEnvValues),
+    parseDuration(config.auth.email.max_frequency),
   );
   yield* wrapDbConfigOverride("auth.sms.max_frequency", () =>
-    parseDuration(smsForValidation.max_frequency),
-  );
-  const authEnabledForValidation = envOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
+    parseDuration(config.auth.sms.max_frequency),
   );
   if (
-    authEnabledForValidation &&
-    !smsForValidation.twilio.enabled &&
-    !smsForValidation.twilio_verify.enabled &&
-    !smsForValidation.messagebird.enabled &&
-    !smsForValidation.textlocal.enabled &&
-    !smsForValidation.vonage.enabled &&
-    envOverrideBool(
-      "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
-      config.auth.sms.enable_signup,
-      "auth.sms.enable_signup",
-      projectEnvValues,
-    )
+    config.auth.enabled &&
+    !config.auth.sms.twilio.enabled &&
+    !config.auth.sms.twilio_verify.enabled &&
+    !config.auth.sms.messagebird.enabled &&
+    !config.auth.sms.textlocal.enabled &&
+    !config.auth.sms.vonage.enabled &&
+    config.auth.sms.enable_signup
   ) {
     yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
   }
-  const gotrueSessionsForValidation = resolveGotrueSessions(config.auth.sessions, projectEnvValues);
-  if (gotrueSessionsForValidation?.timebox !== undefined) {
-    yield* wrapDbConfigOverride("auth.sessions.timebox", () =>
-      parseDuration(gotrueSessionsForValidation.timebox!),
-    );
+  const { timebox, inactivity_timeout: inactivityTimeout } = config.auth.sessions ?? {};
+  if (timebox !== undefined) {
+    yield* wrapDbConfigOverride("auth.sessions.timebox", () => parseDuration(timebox));
   }
-  if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
+  if (inactivityTimeout !== undefined) {
     yield* wrapDbConfigOverride("auth.sessions.inactivity_timeout", () =>
-      parseDuration(gotrueSessionsForValidation.inactivity_timeout!),
+      parseDuration(inactivityTimeout),
     );
   }
   yield* wrapDbConfigOverride("auth.mfa.phone.max_frequency", () =>
-    parseDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+    parseDuration(config.auth.mfa.phone.max_frequency),
   );
-  yield* wrapDbConfigOverride("auth.rate_limit", () =>
-    resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("auth.jwt_expiry", () =>
-    envOverrideUint(
-      "SUPABASE_AUTH_JWT_EXPIRY",
-      "auth.jwt_expiry",
-      config.auth.jwt_expiry,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.enable_signup", () =>
-    envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_SIGNUP",
-      config.auth.enable_signup,
-      "auth.enable_signup",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.enable_anonymous_sign_ins", () =>
-    envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
-      config.auth.enable_anonymous_sign_ins,
-      "auth.enable_anonymous_sign_ins",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.enable_refresh_token_rotation", () =>
-    envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
-      config.auth.enable_refresh_token_rotation,
-      "auth.enable_refresh_token_rotation",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.refresh_token_reuse_interval", () =>
-    envOverrideUint(
-      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
-      "auth.refresh_token_reuse_interval",
-      config.auth.refresh_token_reuse_interval,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.enable_manual_linking", () =>
-    envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
-      config.auth.enable_manual_linking,
-      "auth.enable_manual_linking",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.minimum_password_length", () =>
-    envOverrideUint(
-      "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
-      "auth.minimum_password_length",
-      config.auth.minimum_password_length,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("auth.password_requirements", () =>
-    envOverrideAuthPasswordRequirements(config.auth.password_requirements, projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("auth.web3", () =>
-    resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("auth.oauth_server", () =>
-    resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("auth.passkey", () =>
-    resolveGotruePasskeyWebauthn(loaded?.document, projectEnvValues),
-  );
+  yield* wrapDbConfigOverride("auth.passkey", () => resolveGotruePasskeyWebauthn(document));
   yield* wrapDbConfigOverride("auth.external", () =>
-    resolveAuthExternalProviders(authDocForValidation, config.auth.external, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("auth.third_party", () =>
-    resolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("auth.hook", () =>
-    resolveAuthHooks(authDocForValidation, config.auth.hook, projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("api.enabled", () =>
-    envOverrideBool("SUPABASE_API_ENABLED", config.api.enabled, "api.enabled", projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("api.tls.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_API_TLS_ENABLED",
-      config.api.tls.enabled,
-      "api.tls.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("api.max_rows", () =>
-    envOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("api.port", () =>
-    envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("storage.vector.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_STORAGE_VECTOR_ENABLED",
-      config.storage.vector.enabled,
-      "storage.vector.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.s3_protocol.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-      config.storage.s3_protocol.enabled,
-      "storage.s3_protocol.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.analytics.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_STORAGE_ANALYTICS_ENABLED",
-      config.storage.analytics.enabled,
-      "storage.analytics.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.analytics.max_namespaces", () =>
-    envOverrideUint(
-      "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
-      "storage.analytics.max_namespaces",
-      config.storage.analytics.max_namespaces,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.analytics.max_tables", () =>
-    envOverrideUint(
-      "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
-      "storage.analytics.max_tables",
-      config.storage.analytics.max_tables,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.analytics.max_catalogs", () =>
-    envOverrideUint(
-      "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
-      "storage.analytics.max_catalogs",
-      config.storage.analytics.max_catalogs,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.vector.max_buckets", () =>
-    envOverrideUint(
-      "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
-      "storage.vector.max_buckets",
-      config.storage.vector.max_buckets,
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.vector.max_indexes", () =>
-    envOverrideUint(
-      "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
-      "storage.vector.max_indexes",
-      config.storage.vector.max_indexes,
-      projectEnvValues,
-    ),
-  );
-  const imageTransformationSectionPresent =
-    asRecord(asRecord(loaded?.document?.["storage"])?.["image_transformation"]) !== undefined;
-  if (imageTransformationSectionPresent) {
-    yield* wrapDbConfigOverride("storage.image_transformation.enabled", () =>
-      envOverrideBool(
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-        config.storage.image_transformation?.enabled ?? false,
-        "storage.image_transformation.enabled",
-        projectEnvValues,
-      ),
-    );
-  }
-
-  const localSmtpPortForValidation = yield* wrapDbConfigOverride("local_smtp.port", () =>
-    envOverridePort(
-      "SUPABASE_LOCAL_SMTP_PORT",
-      config.local_smtp.port,
-      "local_smtp.port",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("local_smtp.smtp_port", () =>
-    envOverridePort(
-      "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-      config.local_smtp.smtp_port ?? 0,
-      "local_smtp.smtp_port",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("local_smtp.pop3_port", () =>
-    envOverridePort(
-      "SUPABASE_LOCAL_SMTP_POP3_PORT",
-      config.local_smtp.pop3_port ?? 0,
-      "local_smtp.pop3_port",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("analytics.port", () =>
-    envOverridePort(
-      "SUPABASE_ANALYTICS_PORT",
-      config.analytics.port,
-      "analytics.port",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("analytics.vector_port", () =>
-    envOverridePort(
-      "SUPABASE_ANALYTICS_VECTOR_PORT",
-      config.analytics.vector_port ?? 0,
-      "analytics.vector_port",
-      projectEnvValues,
-    ),
-  );
-
-  yield* wrapDbConfigOverride("db.pooler.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_DB_POOLER_ENABLED",
-      config.db.pooler.enabled,
-      "db.pooler.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("db.pooler.port", () =>
-    envOverridePort(
-      "SUPABASE_DB_POOLER_PORT",
-      config.db.pooler.port,
-      "db.pooler.port",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("db.pooler.pool_mode", () =>
-    envOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("db.pooler.default_pool_size", () =>
-    envOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("db.pooler.max_client_conn", () =>
-    envOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("edge_runtime.policy", () =>
-    envOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("edge_runtime.inspector_port", () =>
-    envOverridePort(
-      "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-      config.edge_runtime.inspector_port,
-      "edge_runtime.inspector_port",
-      projectEnvValues,
-    ),
-  );
-
-  yield* wrapDbConfigOverride("realtime.ip_version", () =>
-    envOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues),
-  );
-  yield* wrapDbConfigOverride("realtime.max_header_length", () =>
-    envOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("db.settings", () =>
-    resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
-  );
-
-  yield* wrapDbConfigOverride("realtime.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_REALTIME_ENABLED",
-      config.realtime.enabled,
-      "realtime.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("storage.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_STORAGE_ENABLED",
-      config.storage.enabled,
-      "storage.enabled",
-      projectEnvValues,
-    ),
+    resolveAuthExternalProviders(asRecord(document["auth"]), config.auth.external),
   );
   yield* wrapDbConfigOverride("storage.file_size_limit", () =>
-    ramInBytes(
-      envOverride(
-        "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
-        config.storage.file_size_limit,
-        projectEnvValues,
-      ) ?? config.storage.file_size_limit,
-    ),
+    ramInBytes(config.storage.file_size_limit),
   );
   yield* wrapDbConfigOverride("db.health_timeout", () =>
-    resolveHealthTimeoutSeconds(
-      envOverride("SUPABASE_DB_HEALTH_TIMEOUT", config.db.health_timeout, projectEnvValues) ??
-        config.db.health_timeout,
-    ),
+    resolveHealthTimeoutSeconds(config.db.health_timeout),
   );
 
-  yield* wrapDbConfigOverride("edge_runtime.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_EDGE_RUNTIME_ENABLED",
-      config.edge_runtime.enabled,
-      "edge_runtime.enabled",
-      projectEnvValues,
-    ),
-  );
-  yield* wrapDbConfigOverride("db.network_restrictions.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED",
-      config.db.network_restrictions.enabled,
-      "db.network_restrictions.enabled",
-      projectEnvValues,
-    ),
-  );
-  const sslEnforcementSectionPresent =
-    asRecord(asRecord(loaded?.document?.["db"])?.["ssl_enforcement"]) !== undefined;
-  if (sslEnforcementSectionPresent) {
-    yield* wrapDbConfigOverride("db.ssl_enforcement.enabled", () =>
-      envOverrideBool(
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED",
-        config.db.ssl_enforcement?.enabled ?? false,
-        "db.ssl_enforcement.enabled",
-        projectEnvValues,
-      ),
-    );
-  }
-  const studioEnabledForValidation = yield* wrapDbConfigOverride("studio.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_STUDIO_ENABLED",
-      config.studio.enabled,
-      "studio.enabled",
-      projectEnvValues,
-    ),
-  );
-  const studioPortForValidation = yield* wrapDbConfigOverride("studio.port", () =>
-    envOverridePort("SUPABASE_STUDIO_PORT", config.studio.port, "studio.port", projectEnvValues),
-  );
-  if (studioEnabledForValidation && studioPortForValidation === 0) {
+  if (config.studio.enabled && config.studio.port === 0) {
     yield* Effect.fail(
       new DbConfigLoadError({ message: "Missing required field in config: studio.port" }),
     );
   }
-  const studioApiUrlForValidation =
-    envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
-    config.studio.api_url;
-  if (studioEnabledForValidation) {
+  if (config.studio.enabled) {
     yield* Effect.try({
-      try: () => parseUrl(studioApiUrlForValidation),
+      try: () => parseUrl(config.studio.api_url),
       catch: (cause) =>
         new DbConfigLoadError({
           message: `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
     });
   }
-  const localSmtpEnabledForValidation = yield* wrapDbConfigOverride("local_smtp.enabled", () =>
-    envOverrideBool(
-      "SUPABASE_LOCAL_SMTP_ENABLED",
-      config.local_smtp.enabled,
-      "local_smtp.enabled",
-      projectEnvValues,
-    ),
-  );
-  if (localSmtpEnabledForValidation && localSmtpPortForValidation === 0) {
+  if (config.local_smtp.enabled && config.local_smtp.port === 0) {
     yield* Effect.fail(
       new DbConfigLoadError({ message: "Missing required field in config: local_smtp.port" }),
     );
@@ -561,13 +177,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // re-resolves the real values.
   yield* Effect.try({
     try: () =>
-      resolveLocalConfigValues(
-        config,
-        hostnameForValidation,
-        cliSettings.workdir,
-        projectEnvValues,
-        loaded?.document,
-      ),
+      resolveLocalConfigValues(config, hostnameForValidation, cliSettings.workdir, document),
     catch: (cause) =>
       new DbConfigLoadError({
         message: cause instanceof Error ? cause.message : String(cause),
@@ -576,13 +186,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // If the db container is already up, tell the caller and stop here. Runs after the config
   // load/validation above.
-  const running = yield* isLocalDbRunning(
-    spawner,
-    fs,
-    path,
-    cliSettings.workdir,
-    Option.getOrUndefined(cliSettings.projectId),
-  );
+  const running = yield* isLocalDbRunning(spawner, fs, path, cliSettings.workdir);
   yield* Effect.annotateCurrentSpan("db.already_running", running);
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
@@ -608,7 +212,6 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     networkIdFlag,
     runtimeInfo.platform,
     debug,
-    undefined,
     undefined,
     context,
   );

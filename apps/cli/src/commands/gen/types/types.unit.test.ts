@@ -8,18 +8,9 @@ import {
   defaultSchemas,
   rootCaBundle,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseQueryTimeoutMillis,
 } from "./types.shared.ts";
-
-const resolvePassword = (env: Record<string, string>) =>
-  localDbPassword().pipe(
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
-    ),
-  );
 
 describe("parseQueryTimeoutMillis", () => {
   it.effect("parses compound durations", () =>
@@ -99,12 +90,10 @@ describe("schema and id helpers", () => {
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
 
-  it.effect("reads the services hostname and db password from the environment", () =>
+  it.effect("reads the services hostname from the environment", () =>
     Effect.gen(function* () {
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
-      expect(yield* resolvePassword({})).toBe("postgres");
-      expect(yield* resolvePassword({ SUPABASE_DB_PASSWORD: "secret" })).toBe("secret");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

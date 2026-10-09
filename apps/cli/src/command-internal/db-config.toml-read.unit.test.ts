@@ -1,21 +1,40 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
+import { beforeEach, describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref } from "effect";
 
 import {
   checkDbToml,
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
-  resolveSeedSqlPath,
+  type DbTomlValues,
 } from "./db-config.toml-read.ts";
+import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
+import type { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { processEnvPinsLayer } from "../../tests/helpers/config-env-pins.ts";
+import { useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
 } from "../telemetry/command-telemetry-attributes.ts";
+
+// The default ConfigProvider snapshots process.env once, but these tests mutate it per case.
+const servicesLive = Layer.mergeAll(
+  BunServices.layer,
+  Layer.unwrap(
+    Effect.sync(() => ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))),
+  ),
+  cliConfigValuesTestLayer,
+  processEnvPinsLayer,
+);
+
+const scrubAmbientEnv = useShellEnvPin();
+beforeEach(() => scrubAmbientEnv({}));
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
   const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
@@ -35,20 +54,20 @@ const read = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(servicesLive));
 
 const readRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readDbToml(fs, path, workdir, ref);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(servicesLive));
 
 const loadEnv = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* loadProjectEnv(fs, path, workdir);
+    return yield* loadProjectEnvValues(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
 
 const loadEnvWithConfig = (workdir: string, values: Readonly<Record<string, string>>) =>
@@ -64,13 +83,13 @@ const loadEnvWithConfig = (workdir: string, values: Readonly<Record<string, stri
 describe("read (lenient) vs check (throws) split", () => {
   const withServices = <A, E>(
     dir: string,
-    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, never>,
+    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, CliConfigValues>,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       return yield* run(fs, path);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(servicesLive));
 
   it.effect("checkDbToml throws on an undecryptable secret", () => {
     const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
@@ -84,6 +103,21 @@ describe("read (lenient) vs check (throws) split", () => {
               "failed to parse config: missing private key",
             );
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("checkDbToml surfaces an invalid env value as CliConfigValueError", () => {
+    const dir = withConfig("[db]\nport = 5432\n");
+    writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PORT=notaport\n");
+    return withServices(dir, (fs, path) => checkDbToml(fs, path, dir)).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error._tag).toBe("CliConfigValueError");
+          expect(error.message).toContain('Invalid SUPABASE_DB_PORT="notaport"');
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -137,7 +171,7 @@ describe("read (lenient) vs check (throws) split", () => {
     ).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.projectId).toEqual(Option.some("lenientproj"));
+          expect(v.projectId).toBe("lenientproj");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -155,7 +189,7 @@ describe("readDbToml", () => {
           expect(v.shadowPort).toBe(54320);
           expect(v.password).toBe("postgres");
           expect(Option.isNone(v.poolerConnectionString)).toBe(true);
-          expect(Option.isNone(v.projectId)).toBe(true);
+          expect(v.projectId).toBe(sanitizeProjectId(basename(dir)));
           expect(v.denoVersion).toBe(2);
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -316,18 +350,6 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("weakly coerces non-string db.seed.sql_paths array elements", () => {
-    const dir = withConfig(["[db.seed]", 'sql_paths = [42, true, "seed.sql"]', ""].join("\n"));
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.seed.sqlPaths).toEqual(["supabase/42", "supabase/1", "supabase/seed.sql"]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
   it.effect(
     "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
     () => {
@@ -391,74 +413,69 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect("weakly coerces non-string db.migrations.schema_paths array elements", () => {
-    // A bool coerces to "1"/"0" and a number to its decimal string rather than erroring or
-    // dropping the element: `schema_paths = [42, true, "schemas/*.sql"]` resolves to
-    // `supabase/{42,1,schemas/*.sql}`, not a filtered two-element list.
-    const dir = withConfig(
-      ["[db.migrations]", 'schema_paths = [42, true, "schemas/*.sql"]', ""].join("\n"),
-    );
+  it.effect.each([
+    {
+      name: "seed array with number and bool",
+      table: "db.seed",
+      field: "sql_paths",
+      value: '[42, true, "seed.sql"]',
+      expected: ["supabase/42", "supabase/1", "supabase/seed.sql"],
+    },
+    {
+      name: "schema array with number and bool",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: '[42, true, "schemas/*.sql"]',
+      expected: ["supabase/42", "supabase/1", "supabase/schemas/*.sql"],
+    },
+    {
+      name: "large number as fixed decimal",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "[1e21]",
+      expected: ["supabase/1000000000000000000000"],
+    },
+    {
+      name: "special floats",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "[inf, -inf, nan]",
+      expected: ["supabase/+Inf", "supabase/-Inf", "supabase/NaN"],
+    },
+    {
+      name: "scalar number schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "42",
+      expected: ["supabase/42"],
+    },
+    {
+      name: "scalar bool schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "true",
+      expected: ["supabase/1"],
+    },
+    {
+      name: "empty table schema_paths",
+      table: "db.migrations",
+      field: "schema_paths",
+      value: "{}",
+      expected: [],
+    },
+    {
+      name: "scalar number sql_paths",
+      table: "db.seed",
+      field: "sql_paths",
+      value: "42",
+      expected: ["supabase/42"],
+    },
+  ])("weakly coerces a glob list: $name", ({ table, field, value, expected }) => {
+    const dir = withConfig([`[${table}]`, `${field} = ${value}`, ""].join("\n"));
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.schemaPaths).toEqual(["supabase/42", "supabase/1", "supabase/schemas/*.sql"]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect(
-    "formats a large numeric db.migrations.schema_paths entry as fixed decimal, not scientific notation",
-    () => {
-      const dir = withConfig(["[db.migrations]", "schema_paths = [1e21]", ""].join("\n"));
-      return read(dir).pipe(
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(v.schemaPaths).toEqual(["supabase/1000000000000000000000"]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect(
-    "formats TOML special-float db.migrations.schema_paths entries as +Inf/-Inf/NaN, not JS's toString",
-    () => {
-      const dir = withConfig(["[db.migrations]", "schema_paths = [inf, -inf, nan]", ""].join("\n"));
-      return read(dir).pipe(
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(v.schemaPaths).toEqual(["supabase/+Inf", "supabase/-Inf", "supabase/NaN"]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect("weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths", () => {
-    const dirNumber = withConfig(["[db.migrations]", "schema_paths = 42", ""].join("\n"));
-    const dirBool = withConfig(["[db.migrations]", "schema_paths = true", ""].join("\n"));
-    return Effect.all([read(dirNumber), read(dirBool)]).pipe(
-      Effect.tap(([numberResult, boolResult]) =>
-        Effect.sync(() => {
-          expect(numberResult.schemaPaths).toEqual(["supabase/42"]);
-          expect(boolResult.schemaPaths).toEqual(["supabase/1"]);
-          rmSync(dirNumber, { recursive: true, force: true });
-          rmSync(dirBool, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("treats a TOP-LEVEL empty-table db.migrations.schema_paths as no patterns", () => {
-    const dir = withConfig(["[db.migrations]", "schema_paths = {}", ""].join("\n"));
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.schemaPaths).toEqual([]);
+          expect(table === "db.seed" ? v.seed.sqlPaths : v.schemaPaths).toEqual(expected);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -471,14 +488,8 @@ describe("readDbToml", () => {
     { name: "local date", literal: "1979-05-27", typeName: "local date" },
     { name: "local time", literal: "07:32:00", typeName: "local time" },
   ])(
-    "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty",
+    "rejects a bare $name db.migrations.schema_paths instead of treating it as empty",
     ({ literal, typeName }) => {
-      // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date` subclass)
-      // that stores its value internally, not as an enumerable own property, so
-      // `Object.keys(tomlDate).length === 0` — same as a genuine empty inline table
-      // (`schema_paths = {}`, tested above). `TomlDate` must be excluded from that
-      // zero-length-map special case, or this would silently resolve to `[]` instead of
-      // aborting.
       const dir = withConfig(["[db.migrations]", `schema_paths = ${literal}`, ""].join("\n"));
       return read(dir).pipe(
         Effect.exit,
@@ -497,111 +508,171 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect(
-    "aborts the whole config load on a bare datetime db.migrations.schema_paths ARRAY element",
-    () => {
-      // Same `TomlDate`-vs-generic-object collision as the top-level scalar case above, but
-      // reached through the real-array branch instead of the scalar fallback: the valid glob
-      // entry must never mask the datetime's failure.
-      const dir = withConfig(
-        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""].join(
-          "\n",
-        ),
-      );
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "db.migrations.schema_paths[1]: expected a string, got offset date-time",
-              );
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+  it.effect.each([
+    {
+      name: "a datetime schema_paths array element",
+      toml: ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""],
+      issue: "db.migrations.schema_paths[1]: expected a string, got offset date-time",
     },
-  );
-
-  it.effect(
-    "aborts the whole config load on a TOP-LEVEL bare datetime db.seed.sql_paths (same UnmarshalExact call as schema_paths, review CLI-1958)",
-    () => {
-      const dir = withConfig(["[db.seed]", "sql_paths = 1979-05-27T07:32:00Z", ""].join("\n"));
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "db.seed.sql_paths[0]: expected a string, got offset date-time",
-              );
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+    {
+      name: "a bare datetime sql_paths",
+      toml: ["[db.seed]", "sql_paths = 1979-05-27T07:32:00Z", ""],
+      issue: "db.seed.sql_paths[0]: expected a string, got offset date-time",
     },
-  );
-
-  it.effect(
-    "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (synthetic index 0)",
-    () => {
-      // A non-empty map isn't weakly coercible, so it fails decoding element 0 the same way a
-      // nested-array/table array element does.
-      const dir = withConfig(["[db.migrations.schema_paths]", 'foo = "bar"', ""].join("\n"));
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "db.migrations.schema_paths[0]: expected a string, got table",
-              );
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+    {
+      name: "a table schema_paths",
+      toml: ["[db.migrations.schema_paths]", 'foo = "bar"', ""],
+      issue: "db.migrations.schema_paths[0]: expected a string, got table",
     },
-  );
+    {
+      name: "a nested-list schema_paths element",
+      toml: ["[db.migrations]", "schema_paths = [[]]", ""],
+      issue:
+        "failed to parse config:\\ndb.migrations.schema_paths[0]: expected a string, got array",
+    },
+    {
+      name: "a table schema_paths element",
+      toml: ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""],
+      issue: "db.migrations.schema_paths[1]: expected a string, got table",
+    },
+    {
+      name: "a nested-list sql_paths element",
+      toml: ["[db.seed]", "sql_paths = [[]]", ""],
+      issue: "db.seed.sql_paths[0]: expected a string, got array",
+    },
+  ])("rejects $name", ({ toml, issue }) => {
+    const dir = withConfig(toml.join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(issue);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
-  it.effect(
-    "weakly coerces a TOP-LEVEL scalar db.seed.sql_paths instead of falling back to the ['seed.sql'] default",
-    () => {
-      // The absent-key default (`["seed.sql"]`) only applies when the key is missing entirely;
-      // a present scalar still goes through the weak-decode wrap, same as schema_paths above.
-      const dir = withConfig(["[db.seed]", "enabled = true", "sql_paths = 42", ""].join("\n"));
+  it.effect("reports invalid entries of both glob lists in one error, schema_paths first", () => {
+    const dir = withConfig(
+      ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
+        "\n",
+      ),
+    );
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const message = JSON.stringify(exit.cause);
+            const schemaIssue = "db.migrations.schema_paths[0]: expected a string, got array";
+            const seedIssue = "db.seed.sql_paths[0]: expected a string, got array";
+            expect(message).toContain(schemaIssue);
+            expect(message).toContain(seedIssue);
+            expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      name: "numeric db.seed.enabled = 0",
+      table: "db.seed",
+      field: "enabled",
+      value: "0",
+      read: (v: DbTomlValues) => v.seed.enabled,
+      expected: false,
+    },
+    {
+      name: "numeric db.migrations.enabled = 0",
+      table: "db.migrations",
+      field: "enabled",
+      value: "0",
+      read: (v: DbTomlValues) => v.migrationsEnabled,
+      expected: false,
+    },
+    {
+      name: "numeric experimental.pgdelta.enabled = 1",
+      table: "experimental.pgdelta",
+      field: "enabled",
+      value: "1",
+      read: (v: DbTomlValues) => v.pgDelta.enabled,
+      expected: true,
+    },
+    {
+      name: 'string auth.enabled = "0"',
+      table: "auth",
+      field: "enabled",
+      value: '"0"',
+      read: (v: DbTomlValues) => v.baseline.authEnabled,
+      expected: false,
+    },
+    {
+      name: 'upper-case api.auto_expose_new_tables = "TRUE"',
+      table: "api",
+      field: "auto_expose_new_tables",
+      value: '"TRUE"',
+      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+      expected: true,
+    },
+  ])("decodes $name as a bool", ({ table, field, value, read: pick, expected }) => {
+    const dir = withConfig([`[${table}]`, `${field} = ${value}`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(pick(v)).toBe(expected);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      name: "db.seed.enabled",
+      table: "db.seed",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.seed.enabled,
+    },
+    {
+      name: "db.migrations.enabled",
+      table: "db.migrations",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.migrationsEnabled,
+    },
+    {
+      name: "experimental.pgdelta.enabled",
+      table: "experimental.pgdelta",
+      field: "enabled",
+      read: (v: DbTomlValues) => v.pgDelta.enabled,
+    },
+    {
+      name: "api.auto_expose_new_tables",
+      table: "api",
+      field: "auto_expose_new_tables",
+      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+    },
+  ])(
+    "expands an env() reference in $name through the shell and project .env",
+    ({ table, field, read: pick }) => {
+      const previous = process.env["WEAK_FLAG"];
+      process.env["WEAK_FLAG"] = "TRUE";
+      const dir = withConfig([`[${table}]`, `${field} = "env(WEAK_FLAG)"`, ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
-            expect(v.seed.sqlPaths).toEqual(["supabase/42"]);
-            rmSync(dir, { recursive: true, force: true });
+            expect(pick(v)).toBe(true);
           }),
         ),
-      );
-    },
-  );
-
-  it.effect(
-    "aborts the whole config load on a non-scalar db.migrations.schema_paths element",
-    () => {
-      // Unlike a bool/number (weakly coerced above), a nested array/table fails the whole
-      // config load rather than dropping just that element.
-      const dir = withConfig(["[db.migrations]", "schema_paths = [[]]", ""].join("\n"));
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
+        Effect.ensuring(
           Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "failed to parse config:\\ndb.migrations.schema_paths[0]: expected a string, got array",
-              );
-            }
+            if (previous === undefined) delete process.env["WEAK_FLAG"];
+            else process.env["WEAK_FLAG"] = previous;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -609,80 +680,38 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect(
-    "aborts the whole config load on a table db.migrations.schema_paths element, reporting every bad index",
-    () => {
-      const dir = withConfig(
-        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""].join("\n"),
-      );
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "db.migrations.schema_paths[1]: expected a string, got table",
-              );
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("fails on an unresolved env() reference in a bool field", () => {
+    const dir = withConfig(["[db.seed]", 'enabled = "env(WEAK_FLAG_UNSET)"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Invalid db.seed.enabled in supabase/config.toml",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric string db.port", () => {
+    const dir = withConfig(["[db]", 'port = "6002"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(6002);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect(
-    "aborts the whole config load on a non-scalar db.seed.sql_paths element (same UnmarshalExact call as schema_paths)",
-    () => {
-      const dir = withConfig(["[db.seed]", "sql_paths = [[]]", ""].join("\n"));
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
-                "db.seed.sql_paths[0]: expected a string, got array",
-              );
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect(
-    "aggregates non-string-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error",
-    () => {
-      const dir = withConfig(
-        ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
-          "\n",
-        ),
-      );
-      return read(dir).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              const message = JSON.stringify(exit.cause);
-              const schemaIssue = "db.migrations.schema_paths[0]: expected a string, got array";
-              const seedIssue = "db.seed.sql_paths[0]: expected a string, got array";
-              expect(message).toContain(schemaIssue);
-              expect(message).toContain(seedIssue);
-              expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
-            }
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect(
-    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    "SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS beats a matched remote's db.migrations.schema_paths",
     () => {
       const ref = "schmschmschmschmschm";
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
@@ -698,7 +727,7 @@ describe("readDbToml", () => {
       return readRef(dir, ref).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
-            expect(v.schemaPaths).toEqual(["supabase/remote-only.sql"]);
+            expect(v.schemaPaths).toEqual(["supabase/env-only.sql"]);
           }),
         ),
         Effect.ensuring(
@@ -711,42 +740,6 @@ describe("readDbToml", () => {
       );
     },
   );
-
-  it.effect("decodes a numeric db.seed.enabled = 0 as false", () => {
-    const dir = withConfig(["[db.seed]", "enabled = 0", ""].join("\n"));
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.seed.enabled).toBe(false);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("decodes a numeric db.migrations.enabled = 0 as false", () => {
-    const dir = withConfig(["[db.migrations]", "enabled = 0", ""].join("\n"));
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.migrationsEnabled).toBe(false);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("decodes a numeric experimental.pgdelta.enabled = 1 as true", () => {
-    const dir = withConfig(["[experimental.pgdelta]", "enabled = 1", ""].join("\n"));
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
 
   it.effect("rejects an explicit db.port = 0 as a missing required field", () => {
     const dir = withConfig(["[db]", "port = 0", ""].join("\n"));
@@ -766,8 +759,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
-    // A matched remote's keys override the environment, so an explicit remote value wins over the env var.
+  it.effect("SUPABASE_DB_MIGRATIONS_ENABLED beats a matched remote's db.migrations.enabled", () => {
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
@@ -777,7 +769,7 @@ describe("readDbToml", () => {
     return readRef(dir, ref).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.migrationsEnabled).toBe(true);
+          expect(v.migrationsEnabled).toBe(false);
         }),
       ),
       Effect.ensuring(
@@ -869,9 +861,8 @@ describe("readDbToml", () => {
   });
 
   it.effect(
-    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    "SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS beats a matched remote's db.migrations.schema_paths in a [remotes.*.db.migrations] table",
     () => {
-      // Same override-tier precedence as db.migrations.enabled above.
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
       process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
@@ -887,7 +878,7 @@ describe("readDbToml", () => {
       return readRef(dir, ref).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
-            expect(v.schemaPaths).toEqual(["supabase/remote-wins.sql"]);
+            expect(v.schemaPaths).toEqual(["supabase/env-wins.sql"]);
           }),
         ),
         Effect.ensuring(
@@ -901,34 +892,37 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
-    const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
-    const dir = withConfig(
-      [
-        "[remotes.prod]",
-        `project_id = "${ref}"`,
-        "[remotes.prod.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    return readRef(dir, ref).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(true);
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED beats a matched remote's pgdelta.enabled",
+    () => {
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.pgDelta.enabled).toBe(false);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED still wins when the block omits pgdelta", () => {
     const ref = "abcdefghijklmnopqrst";
@@ -951,7 +945,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
+  it.effect("SUPABASE_AUTH_ENABLED beats a matched remote's auth.enabled", () => {
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
     process.env["SUPABASE_AUTH_ENABLED"] = "true";
@@ -967,7 +961,7 @@ describe("readDbToml", () => {
     return readRef(dir, ref).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.baseline.authEnabled).toBe(false);
+          expect(v.baseline.authEnabled).toBe(true);
         }),
       ),
       Effect.ensuring(
@@ -1002,11 +996,8 @@ describe("readDbToml", () => {
   });
 
   it.effect(
-    "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=false beats a matched remote's enabled = true and fails validation",
     () => {
-      // Without this precedence, the suppressed env value would win, and the merged
-      // [experimental.webhooks] section (present via the remote block) would then fail
-      // validation ("Webhooks cannot be deactivated").
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
       process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
@@ -1023,8 +1014,10 @@ describe("readDbToml", () => {
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
-            expect(Exit.isSuccess(exit)).toBe(true);
-            if (Exit.isSuccess(exit)) expect(exit.value.webhooksEnabled).toBe(true);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+            }
             if (previous === undefined)
               delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
             else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
@@ -1141,8 +1134,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
-    // A remote block that omits db.seed.enabled stays unseeded even with the env var set.
+  it.effect("SUPABASE_DB_SEED_ENABLED beats the seed default a matched remote implies", () => {
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
     process.env["SUPABASE_DB_SEED_ENABLED"] = "true";
@@ -1150,7 +1142,7 @@ describe("readDbToml", () => {
     return readRef(dir, ref).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.seed.enabled).toBe(false);
+          expect(v.seed.enabled).toBe(true);
         }),
       ),
       Effect.ensuring(
@@ -1513,19 +1505,6 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("parses [api] auto_expose_new_tables string with bool tokens (TRUE → true)", () => {
-    // `TRUE`/`1`/`t` are also accepted as true, not just lowercase `true`.
-    const dir = withConfig('[api]\nauto_expose_new_tables = "TRUE"\n');
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.getOrNull(v.baseline.apiAutoExposeNewTables)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
   it.effect("decodes empty api schemas while keeping auto_expose_new_tables absent", () => {
     const dir = withConfig('[api]\nschemas = ""\n');
     return read(dir).pipe(
@@ -1548,8 +1527,8 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("DbConfigLoadError");
-            expect(json).toContain("failed to parse config: invalid api.auto_expose_new_tables.");
+            expect(json).toContain("CliConfigValueError");
+            expect(json).toContain("Invalid api.auto_expose_new_tables in supabase/config.toml");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1665,7 +1644,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "failed to parse config: invalid experimental.pgdelta.enabled: maybe.",
+              "Invalid SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
             );
           }
           if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -1676,22 +1655,22 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("parses [auth] enabled string forms via bool parsing and fails on malformed", () => {
-    const ok = withConfig(["[auth]", 'enabled = "0"', ""].join("\n"));
+  it.effect("fails on a malformed [storage] enabled string", () => {
     const bad = withConfig(["[storage]", 'enabled = "nope"', ""].join("\n"));
-    return Effect.gen(function* () {
-      const v = yield* read(ok);
-      expect(v.baseline.authEnabled).toBe(false); // "0" → false
-      const exit = yield* read(bad).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "failed to parse config: invalid storage.enabled.",
-        );
-      }
-      rmSync(ok, { recursive: true, force: true });
-      rmSync(bad, { recursive: true, force: true });
-    });
+    return read(bad).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Invalid storage.enabled in supabase/config.toml",
+            );
+          }
+          rmSync(bad, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 
   it.effect("fails with DbConfigLoadError when config.toml is present but unreadable", () => {
@@ -1745,8 +1724,27 @@ describe("readDbToml", () => {
           expect(v.port).toBe(55555);
           expect(v.shadowPort).toBe(55556);
           expect(v.password).toBe("hunter2");
-          expect(Option.getOrNull(v.projectId)).toBe("my-project");
+          expect(v.projectId).toBe("my-project");
           expect(Option.getOrNull(v.poolerConnectionString)).toContain("postgres.ref");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reads the db subtree and project_id from supabase/config.json", () => {
+    const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
+    mkdirSync(join(dir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(dir, "supabase", "config.json"),
+      JSON.stringify({ project_id: "json-project", db: { port: 55777, shadow_port: 55778 } }),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(55777);
+          expect(v.shadowPort).toBe(55778);
+          expect(v.projectId).toBe("json-project");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1851,7 +1849,7 @@ describe("readDbToml", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("abcdefghijklmnopqrst");
+          expect(v.projectId).toBe("abcdefghijklmnopqrst");
           delete process.env["PROJECT_REF"];
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2030,10 +2028,8 @@ describe("readDbToml", () => {
   );
 
   it.effect(
-    "a matched remote's legacy experimental.orioledb_version still beats a conflicting SUPABASE_DB_ORIOLEDB_VERSION",
+    "SUPABASE_DB_ORIOLEDB_VERSION beats a matched remote's legacy experimental.orioledb_version",
     () => {
-      // Same precedence as any other `ENV_OVERRIDABLE_KEYS` field (e.g. db.major_version):
-      // an explicit remote value beats its matching `SUPABASE_*` env override.
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
       process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = "env-value";
@@ -2052,7 +2048,7 @@ describe("readDbToml", () => {
       return readRef(dir, ref).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
-            expect(Option.getOrNull(v.orioledbVersion)).toBe("B");
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("env-value");
           }),
         ),
         Effect.ensuring(
@@ -2124,7 +2120,7 @@ describe("readDbToml", () => {
         const path = yield* Path.Path;
         return yield* readDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(servicesLive),
         Effect.tap((v) =>
           Effect.sync(() => {
             // Config load still succeeds and still resolves the value; only the
@@ -2165,8 +2161,8 @@ describe("readDbToml", () => {
             Effect.sync(() => {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
-                expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
-                expect(JSON.stringify(exit.cause)).toContain("invalid db.port");
+                expect(JSON.stringify(exit.cause)).toContain("CliConfigValueError");
+                expect(JSON.stringify(exit.cause)).toContain("Invalid db.port");
               }
               rmSync(dir, { recursive: true, force: true });
             }),
@@ -2176,7 +2172,7 @@ describe("readDbToml", () => {
     },
   );
 
-  it.effect("fails when a present shadow_port is not a valid port number", () => {
+  it.effect("fails when a present shadow_port cannot unmarshal into a uint16", () => {
     const dir = withConfig(["[db]", "port = 5000", 'shadow_port = "nope"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -2184,7 +2180,7 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("invalid db.shadow_port");
+            expect(JSON.stringify(exit.cause)).toContain("Invalid db.shadow_port");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2209,7 +2205,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("lets the shell env win over a project .env value (no override)", () => {
+  it.effect("lets the shell env win over a project .env value (godotenv no-override)", () => {
     process.env["DB_FILEVAR"] = "shell-wins";
     const dir = withConfig(["[db]", 'password = "env(DB_FILEVAR)"', ""].join("\n"));
     writeFileSync(join(dir, "supabase", ".env"), "DB_FILEVAR=from-file\n");
@@ -2396,7 +2392,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "Failed reading config: Invalid db.major_version: 17foo.",
+              'Invalid db.major_version in supabase/config.toml: \\"17foo\\" is not a non-negative integer.',
             );
           }
           rmSync(dir, { recursive: true, force: true });
@@ -2460,7 +2456,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "Failed reading config: Invalid edge_runtime.deno_version: 2foo.",
+              'Invalid edge_runtime.deno_version in supabase/config.toml: \\"2foo\\" is not a non-negative integer.',
             );
           }
           rmSync(dir, { recursive: true, force: true });
@@ -2517,24 +2513,27 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("loadProjectEnv surfaces SUPABASE_DB_PASSWORD from .env (linked-path source)", () => {
-    // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
-    // defined only in supabase/.env must be visible.
-    delete process.env["SUPABASE_DB_PASSWORD"];
-    const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
-    mkdirSync(join(dir, "supabase"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
-    return loadEnv(dir).pipe(
-      Effect.tap((env) =>
-        Effect.sync(() => {
-          expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "loadProjectEnvValues surfaces SUPABASE_DB_PASSWORD from .env (linked-path source)",
+    () => {
+      // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
+      // defined only in supabase/.env must be visible.
+      delete process.env["SUPABASE_DB_PASSWORD"];
+      const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
+      return loadEnv(dir).pipe(
+        Effect.tap((env) =>
+          Effect.sync(() => {
+            expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
-  it.effect("loadProjectEnv is pure: returns every key and never touches process.env", () => {
+  it.effect("loadProjectEnvValues is pure: returns every key and never touches process.env", () => {
     // A mere load for SUPABASE_YES has no global side effect.
     const saved: Record<string, string | undefined> = {};
     for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
@@ -2690,7 +2689,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(join("supabase", "schemas"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(servicesLive)),
   );
 
   it.effect("uses the configured declarative_schema_path when set", () =>
@@ -2703,7 +2702,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(join("supabase", "db", "decl"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(servicesLive)),
   );
 });
 
@@ -2848,6 +2847,13 @@ describe("readDbToml auth.Enabled validation", () => {
       "Invalid config for auth.email.template.invite.content: please use content_path instead",
     ),
   );
+  it.effect("rejects an email template whose content comes from the shell environment", () => {
+    scrubAmbientEnv({ SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT: "<h1>hi</h1>" });
+    return failsWith(
+      ["[auth.email.template.invite]", 'subject = "Welcome"'],
+      "Invalid config for auth.email.template.invite.content: please use content_path instead",
+    );
+  });
   it.effect("rejects an email template whose content_path file is missing", () =>
     failsWith(
       ["[auth.email.template.invite]", 'content_path = "./missing.html"'],
@@ -2944,14 +2950,14 @@ describe("readDbToml auth.Enabled validation", () => {
   it.effect("fails on a malformed auth boolean string instead of coercing to false", () =>
     failsWith(
       ["[auth.passkey]", 'enabled = "maybe"'],
-      "failed to parse config: invalid auth.passkey.enabled.",
+      "Invalid auth.passkey.enabled in supabase/config.toml",
     ),
   );
 
   it.effect("rejects an unknown captcha provider, regardless of enabled", () =>
     failsWith(
       ["[auth.captcha]", "enabled = false", 'provider = "cloudflare"'],
-      "auth.captcha.provider: must be one of hcaptcha, turnstile",
+      "Invalid auth.captcha.provider in supabase/config.toml",
     ),
   );
 });
@@ -3049,7 +3055,7 @@ describe("readDbToml non-scalar config booleans", () => {
       const exit = yield* read(dir).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(`failed to parse config: invalid ${field}.`);
+        expect(JSON.stringify(exit.cause)).toContain(`Invalid ${field} in supabase/config.toml`);
       }
       rmSync(dir, { recursive: true, force: true });
     });
@@ -3059,6 +3065,64 @@ describe("readDbToml non-scalar config booleans", () => {
   it.effect("rejects an inline-table value for [db.seed] enabled", () =>
     failsInvalid(["[db.seed]", "enabled = {}"], "db.seed.enabled"),
   );
+});
+
+describe("readDbToml project env scoping", () => {
+  const LINKED = "linkedlinkedlinkedlin";
+  const OTHER = "otherotherotherother";
+
+  const withEnvFile = (config: string, dotEnv: string, linkedRef?: string) => {
+    const dir = withConfig(config);
+    writeFileSync(join(dir, "supabase", ".env"), dotEnv);
+    if (linkedRef !== undefined) {
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+    }
+    return dir;
+  };
+
+  it.effect("omits a linked project's .env credential when targeting another project", () => {
+    const dir = withEnvFile(
+      'project_id = "demo"\n',
+      "SUPABASE_DB_PASSWORD=linked-secret\nUNRELATED=kept\n",
+      LINKED,
+    );
+    return readRef(dir, OTHER).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectEnv).toEqual({ UNRELATED: "kept" });
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the .env credential when targeting the linked project", () => {
+    const dir = withEnvFile(
+      'project_id = "demo"\n',
+      "SUPABASE_DB_PASSWORD=linked-secret\n",
+      LINKED,
+    );
+    return readRef(dir, LINKED).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectEnv).toEqual({ SUPABASE_DB_PASSWORD: "linked-secret" });
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("lets an empty shell value shadow the .env value an env() secret refers to", () => {
+    scrubAmbientEnv({ SHADOWED_ROOT_KEY: "" });
+    const dir = withEnvFile(
+      '[db]\nroot_key = "env(SHADOWED_ROOT_KEY)"\n',
+      "SHADOWED_ROOT_KEY=encrypted:undecryptable\n",
+    );
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
 });
 
 describe("readDbToml empty project_id", () => {
@@ -3113,7 +3177,7 @@ describe("readDbToml [analytics] validation", () => {
   it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
     failsWith(
       ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
-      "analytics.backend: must be one of postgres, bigquery",
+      "Invalid analytics.backend in supabase/config.toml",
     ),
   );
   it.effect("rejects bigquery analytics missing gcp_project_id", () =>
@@ -3190,7 +3254,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(
@@ -3209,7 +3273,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(
@@ -3228,7 +3292,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("toml-project");
+          expect(v.projectId).toBe("toml-project");
         }),
       ),
       Effect.ensuring(
@@ -3240,32 +3304,28 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
     );
   });
 
-  it.effect(
-    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
-    () => {
-      const previous = process.env["SUPABASE_PROJECT_ID"];
-      process.env["SUPABASE_PROJECT_ID"] = "local";
-      const ref = "abcdefghijklmnopqrst";
-      const dir = withConfig(
-        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
-      );
-      return readRef(dir, ref).pipe(
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(v.appliedRemote).toBe("prod");
-            expect(v.remoteOverrideKeys.has("project_id")).toBe(true);
-            expect(Option.getOrNull(v.projectId)).toBe(ref);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-        Effect.ensuring(restore(previous)),
-      );
-    },
-  );
+  it.effect("SUPABASE_PROJECT_ID beats a matched [remotes.<ref>]'s project_id", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "local";
+    const ref = "abcdefghijklmnopqrst";
+    const dir = withConfig(
+      ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.projectId).toBe("local");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
 
   it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
     const previous = process.env["SUPABASE_PROJECT_ID"];
@@ -3276,7 +3336,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.appliedRemote).toBeUndefined();
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(
@@ -3287,110 +3347,6 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
       Effect.ensuring(restore(previous)),
     );
   });
-});
-
-describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.template/notification", () => {
-  const ref = "abcdefghijklmnopqrst";
-
-  it.effect("tracks auth.captcha.provider when a matched remote block supplies it", () => {
-    // `provider` is a plain string leaf, not part of a dynamically-keyed section, so it must be
-    // tracked via `ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
-    const dir = withConfig(
-      [
-        "[auth.captcha]",
-        'provider = "hcaptcha"',
-        "[remotes.prod]",
-        `project_id = "${ref}"`,
-        "[remotes.prod.auth.captcha]",
-        'provider = "turnstile"',
-        "",
-      ].join("\n"),
-    );
-    return readRef(dir, ref).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.appliedRemote).toBe("prod");
-          expect(v.remoteOverrideKeys.has("auth.captcha.provider")).toBe(true);
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("tracks a matched remote block's auth.email.template.<name> leaves dynamically", () => {
-    // `auth.email.template.<name>.*` is an arbitrarily-keyed map, same shape as
-    // `auth.external.<name>.*`, so it must be flattened dynamically instead of relying on a
-    // fixed `ENV_OVERRIDABLE_KEYS` entry.
-    const dir = withConfig(
-      [
-        "[remotes.prod]",
-        `project_id = "${ref}"`,
-        "[remotes.prod.auth.email.template.invite]",
-        'content_path = "remote-invite.html"',
-        "",
-      ].join("\n"),
-    );
-    // Template `content_path` resolves relative to the project root (`workdir`, i.e. `dir`).
-    writeFileSync(join(dir, "remote-invite.html"), "<html></html>");
-    return readRef(dir, ref).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.appliedRemote).toBe("prod");
-          expect(v.remoteOverrideKeys.has("auth.email.template.invite.content_path")).toBe(true);
-          expect(v.remoteOverrideKeys.has("auth.email.template.invite.subject")).toBe(false);
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect(
-    "tracks a matched remote block's auth.email.notification.<name> leaves dynamically",
-    () => {
-      // Sibling case to auth.email.template, including a boolean leaf (`enabled`).
-      const dir = withConfig(
-        [
-          "[remotes.prod]",
-          `project_id = "${ref}"`,
-          "[remotes.prod.auth.email.notification.password_changed]",
-          "enabled = true",
-          'content_path = "remote-pw-changed.html"',
-          "",
-        ].join("\n"),
-      );
-      // Notification `content_path` resolves relative to the project root, like a template.
-      writeFileSync(join(dir, "remote-pw-changed.html"), "<html></html>");
-      return readRef(dir, ref).pipe(
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(v.appliedRemote).toBe("prod");
-            expect(
-              v.remoteOverrideKeys.has("auth.email.notification.password_changed.enabled"),
-            ).toBe(true);
-            expect(
-              v.remoteOverrideKeys.has("auth.email.notification.password_changed.content_path"),
-            ).toBe(true);
-            expect(
-              v.remoteOverrideKeys.has("auth.email.notification.password_changed.subject"),
-            ).toBe(false);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
 });
 
 describe("readDbToml OrioleDB telemetry", () => {

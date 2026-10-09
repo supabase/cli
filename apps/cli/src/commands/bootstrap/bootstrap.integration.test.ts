@@ -9,7 +9,6 @@ import {
   Layer,
   Option,
   Path,
-  Redacted,
   Schedule,
 } from "effect";
 
@@ -43,6 +42,9 @@ import {
   YesFlag,
   OutputFlag,
 } from "../../command-internal/global-flags.ts";
+import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
@@ -102,8 +104,8 @@ interface SetupOpts {
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptPasswordResponses?: ReadonlyArray<string>;
-  /** Seeds `CommandSettings.dbPassword`, the captured `SUPABASE_DB_PASSWORD`. */
-  readonly dbPassword?: string;
+  /** The `--password` flag value the command binds; `null` for no flag, default `"s3cret"`. */
+  readonly password?: string | null;
   /** Raw `SUPABASE_WORKDIR` the settings captured; used verbatim, so no prompt fires. */
   readonly workdirEnvValue?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -181,9 +183,26 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     workdirEnvValue: opts.workdirEnvValue,
     projectHost: "supabase.co",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
-    dbPassword:
-      opts.dbPassword === undefined ? undefined : Option.some(Redacted.make(opts.dbPassword)),
   });
+  const password = opts.password === undefined ? "s3cret" : opts.password;
+  const configProvider = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+  );
+  const configValues = cliConfigValuesLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        out.layer,
+        configProvider,
+        Layer.succeed(
+          CliConfigFlagInputs,
+          makeCliConfigFlagInputs(
+            password === null ? [] : [flagInput("linkedDb.password", "password", password)],
+          ),
+        ),
+      ),
+    ),
+  );
 
   const samples = opts.samples ?? [];
   const downloads: Array<{ url: string; targetDir: string }> = [];
@@ -249,9 +268,8 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
     debugLoggerLayer.pipe(Layer.provide(Layer.succeed(DebugFlag, opts.debug ?? false))),
-    ConfigProvider.layer(
-      ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
-    ),
+    configProvider,
+    configValues,
   );
 
   return {
@@ -336,7 +354,7 @@ describe("bootstrap integration", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ExperimentalFeatureFlagError");
           expect(Cause.pretty(exit.cause)).toContain(
-            "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+            'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
           );
         }
         expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
@@ -364,7 +382,7 @@ describe("bootstrap integration", () => {
       const path = yield* Path.Path;
       const s = setup(path, {
         samples: [NEXTJS_TEMPLATE],
-        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
       });
       yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
@@ -634,7 +652,7 @@ describe("bootstrap integration", () => {
   it.live("pushes with the flag-sourced password (used as the create password too)", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const s = setup(path);
+      const s = setup(path, { password: "pw123" });
       yield* bootstrap(
         flags({ template: Option.some("scratch"), password: Option.some("pw123") }),
         FAST_BACKOFF,
@@ -649,7 +667,7 @@ describe("bootstrap integration", () => {
       // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by the shell)
       // leaves the password empty, so the create step prompts, and the push reuses that same
       // resolved connection.
-      const s = setup(path, { promptPasswordResponses: ["prompted-pw"] });
+      const s = setup(path, { promptPasswordResponses: ["prompted-pw"], password: "" });
       yield* withEnvVar(
         "SUPABASE_DB_PASSWORD",
         undefined,
@@ -662,12 +680,10 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("pushes with the settings-captured SUPABASE_DB_PASSWORD password", () =>
+  it.live("pushes with the SUPABASE_DB_PASSWORD password when no flag is given", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      // The create seed reads the captured password from settings, and the push reuses the
-      // created project's password — no live env read on this path.
-      const s = setup(path, { dbPassword: "env-pw" });
+      const s = setup(path, { password: null, env: { SUPABASE_DB_PASSWORD: "env-pw" } });
       yield* bootstrap(
         flags({ template: Option.some("scratch"), password: Option.none() }),
         FAST_BACKOFF,
@@ -676,10 +692,10 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("seeds the project create request with the settings-captured password", () =>
+  it.live("seeds the project create request with the SUPABASE_DB_PASSWORD password", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const s = setup(path, { dbPassword: "settings-pw" });
+      const s = setup(path, { password: null, env: { SUPABASE_DB_PASSWORD: "settings-pw" } });
       yield* bootstrap(
         flags({ template: Option.some("scratch"), password: Option.none() }),
         FAST_BACKOFF,
