@@ -1,6 +1,7 @@
+import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
@@ -193,6 +194,92 @@ describe("service catalog", () => {
           expect(transformedImage.headers["content-type"]).toContain("image/");
           yield* imgproxy.stop;
           yield* storage.stop;
+          yield* auth.stop;
+          yield* database.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "keeps Auth database connections idle and reuses them across requests",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* makeDockerDatabaseRoot("catalog-auth-pool-");
+          const secret = "catalog-auth-pool-secret-with-at-least-32-chars";
+          const databaseRecipe = yield* makeServiceRecipe(
+            {
+              service: "database",
+              config: {
+                version: "17",
+                databasePassword: Redacted.make("postgres"),
+                jwtSecret: Redacted.make(secret),
+                jwtExpiry: 3600,
+              },
+            },
+            dockerOptions(root),
+          );
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
+            id: "database",
+            config: databaseRecipe.creation,
+          });
+          yield* database.start;
+          yield* database.ready;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
+          const authRecipe = yield* makeServiceRecipe(
+            { service: "auth", config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 } },
+            dockerOptions(root),
+          );
+          const auth = yield* makeStandaloneService(authRecipe.definition, {
+            id: "auth",
+            config: authRecipe.creation,
+          });
+          yield* auth.start;
+          yield* auth.ready;
+          const authEndpoint = yield* authRecipe.endpoint("http");
+          const authUrl = `http://${httpHost(authEndpoint)}:${authEndpoint.port}`;
+          const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
+          const services = yield* Layer.build(
+            PgClient.layer({
+              host: httpHost(databaseEndpoint),
+              port: databaseEndpoint.port,
+              database: "postgres",
+              username: "supabase_admin",
+              password: Redacted.make("postgres"),
+            }),
+          );
+          const pg = Context.get(services, PgClient.PgClient);
+          // Auth is the only client of the database as supabase_admin in this test.
+          const authBackends = pg.unsafe<{ pid: number; state: string }>(
+            "select pid, state from pg_stat_activity where usename = 'supabase_admin' and backend_type = 'client backend' and pid <> pg_backend_pid()",
+          );
+          const signupBatch = (label: string) =>
+            Effect.forEach(
+              Array.from({ length: 5 }, (_, index) => index),
+              (index) =>
+                Effect.gen(function* () {
+                  const request = yield* HttpClientRequest.bodyJson({
+                    email: `${label}-${index}@example.test`,
+                    password: "catalog-password-123",
+                  })(HttpClientRequest.post(`${authUrl}/signup`));
+                  const response = yield* client.execute(request);
+                  expect(response.status).toBe(200);
+                }),
+              { concurrency: "unbounded", discard: true },
+            );
+
+          yield* signupBatch("first");
+          const afterFirst = yield* authBackends;
+          expect(afterFirst.some((backend) => backend.state === "idle")).toBe(true);
+
+          yield* signupBatch("second");
+          const afterSecond = yield* authBackends;
+          const firstPids = new Set(afterFirst.map((backend) => backend.pid));
+          expect(afterSecond.filter((backend) => !firstPids.has(backend.pid))).toEqual([]);
+
           yield* auth.stop;
           yield* database.stop;
         }),

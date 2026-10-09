@@ -351,6 +351,9 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
     GOTRUE_API_PORT: GOTRUE_PORT,
 
     GOTRUE_DB_DRIVER: "postgres",
+    // GoTrue keeps no idle connections unless an idle pool size is set.
+    GOTRUE_DB_MAX_POOL_SIZE: "10",
+    GOTRUE_DB_MAX_IDLE_POOL_SIZE: "10",
     GOTRUE_DB_DATABASE_URL: startInternalDbUrl(GOTRUE_DB_ROLE, input.dbHost, input.dbPassword),
 
     GOTRUE_SITE_URL: input.siteUrl,
