@@ -190,11 +190,11 @@ describe("supabase db reset (stack e2e)", () => {
           const beforeSqlPort = beforeStatus.endpoints.find(({ name }) => name === "sql")?.port;
           if (beforeSqlPort === undefined) return yield* Effect.die("database SQL port is missing");
 
+          yield* query(databaseUrl, "create table public.reset_story_stale (value text)");
+          yield* query(databaseUrl, "insert into public.reset_story_stale values ('before-reset')");
           yield* query(
             databaseUrl,
-            `create table public.reset_story_stale (value text);
-             insert into public.reset_story_stale values ('before-reset');
-             create role reset_story_stale_role login password 'stale-password';`,
+            "create role reset_story_stale_role login password 'stale-password'",
           );
           yield* query(databaseUrl, "create database reset_story_stale_database;");
 
@@ -227,8 +227,8 @@ describe("supabase db reset (stack e2e)", () => {
           const rows = yield* query(
             databaseUrl,
             `select
-               (select count(*) from supabase_migrations.schema_migrations where version = '20260920000000') as migration_count,
-               (select count(*) from public.reset_story_marker where value = 'seeded') as seed_count,
+               (select count(*)::int from supabase_migrations.schema_migrations where version = '20260920000000') as migration_count,
+               (select count(*)::int from public.reset_story_marker where value = 'seeded') as seed_count,
                to_regclass('public.reset_story_stale') as stale_table,
                to_regclass('auth.users') is not null as auth_users,
                exists (select 1 from pg_roles where rolname = 'reset_story_stale_role') as stale_role,
@@ -236,8 +236,8 @@ describe("supabase db reset (stack e2e)", () => {
           );
           expect(rows).toEqual([
             {
-              migration_count: "1",
-              seed_count: "1",
+              migration_count: 1,
+              seed_count: 1,
               stale_table: null,
               auth_users: true,
               stale_role: false,

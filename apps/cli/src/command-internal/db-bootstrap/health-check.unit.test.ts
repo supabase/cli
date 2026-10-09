@@ -682,7 +682,7 @@ describe("waitForHealthyServices", () => {
         yield* Fiber.await(fiber);
 
         const wait = spans.find((span) => span.name === "HealthCheck.waitHealthyServices");
-        expect(spans.map((span) => span.name)).not.toContain("http.client HEAD");
+        expect(spans.map((span) => span.name)).not.toContain("HEAD");
         expect(wait?.attributes.get("retry.attempt_count")).toBe(2);
       }),
     );
