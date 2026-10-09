@@ -15,8 +15,9 @@ import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 export type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
 
 interface GenSigningKeysConfigPaths {
-  /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
+  /** Workdir-relative path of the loaded config file, or `supabase/config.toml` when none exists. */
   readonly configDisplayPath: string;
+  readonly configFormat: "toml" | "json";
   /**
    * `[auth].enabled` from the resolved config (default `true`). The `signing_keys_path` file is
    * only read when this is `true` — see {@link resolveBearerJwtSigningKey} and {@link genSigningKey}.
@@ -311,7 +312,7 @@ export function assertNoMalformedDuplicateJwkField(objectText: string): void {
 }
 
 /**
- * Resolves `supabase/config.toml`'s display path and `[auth].signing_keys_path`'s
+ * Resolves the config file's display path and `[auth].signing_keys_path`'s
  * actual/display path — no file I/O on the keys path itself (see
  * {@link readSigningKeysFile} for that).
  */
@@ -342,11 +343,15 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   const authEnabled = yield* read(CliConfigKeys.auth.enabled);
   const configuredPath = yield* read(CliConfigKeys.auth.signingKeysPath);
 
-  const configDisplayPath = path.join("supabase", "config.toml");
+  const configDisplayPath = resolvedConfig.hasConfigFile
+    ? path.relative(cwd, resolvedConfig.loaded.path)
+    : path.join("supabase", "config.toml");
+  const configFormat = resolvedConfig.hasConfigFile ? resolvedConfig.loaded.format : "toml";
 
   if (Option.isNone(configuredPath) || configuredPath.value.length === 0) {
     return {
       configDisplayPath,
+      configFormat,
       authEnabled,
       signingKeysPath: Option.none(),
     } satisfies GenSigningKeysConfigPaths;
@@ -361,6 +366,7 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
     : path.relative(cwd, resolvedPath);
   return {
     configDisplayPath,
+    configFormat,
     authEnabled,
     signingKeysPath: Option.some({ actualPath: resolvedPath, displayPath }),
   } satisfies GenSigningKeysConfigPaths;

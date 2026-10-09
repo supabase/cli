@@ -298,7 +298,7 @@ describe("gen signing-key integration", () => {
   );
 
   it.live(
-    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+    "names config.json and shows a JSON snippet in the local setup hint when it is the config file",
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
@@ -306,9 +306,28 @@ describe("gen signing-key integration", () => {
         yield* writeJsonConfig("{}\n");
         yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        expect(out.stderrText).toContain(path.join("supabase", "config.toml"));
-        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).toContain(path.join("supabase", "config.json"));
+        expect(out.stderrText).toContain(
+          '{ "auth": { "signing_keys_path": "./signing_keys.json" } }',
+        );
+        expect(out.stderrText).not.toContain("config.toml");
+        expect(out.stderrText).not.toContain("[auth]");
         expect(out.stderrText).not.toContain(tempRoot.current);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "names config.toml and shows a TOML snippet in the local setup hint without a config file",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* genSigningKey({ algorithm: "ES256", append: false });
+
+        expect(out.stderrText).toContain(path.join("supabase", "config.toml"));
+        expect(out.stderrText).toContain('[auth]\nsigning_keys_path = "./signing_keys.json"');
+        expect(out.stderrText).not.toContain("config.json");
       }).pipe(Effect.provide(layer));
     },
   );

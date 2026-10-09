@@ -56,6 +56,7 @@ interface SigningKeyJwk {
 
 interface ResolvedSigningKeysConfig {
   readonly configDisplayPath: string;
+  readonly configFormat: "toml" | "json";
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
@@ -159,6 +160,7 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   if (Option.isNone(paths.signingKeysPath)) {
     return {
       configDisplayPath: paths.configDisplayPath,
+      configFormat: paths.configFormat,
       configured: Option.none(),
     } satisfies ResolvedSigningKeysConfig;
   }
@@ -173,6 +175,7 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
     : [{ ...DEFAULT_SIGNING_KEY }];
   return {
     configDisplayPath: paths.configDisplayPath,
+    configFormat: paths.configFormat,
     configured: Option.some({ actualPath, displayPath, existingKeys }),
   } satisfies ResolvedSigningKeysConfig;
 });
@@ -232,8 +235,12 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
       const keyJson = yield* Schema.encodeEffect(signingKeyJson)(key).pipe(Effect.orDie);
       yield* output.raw(`${keyJson}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
+      const snippet =
+        signingKeysConfig.configFormat === "json"
+          ? '{ "auth": { "signing_keys_path": "./signing_keys.json" } }'
+          : '[auth]\nsigning_keys_path = "./signing_keys.json"';
       yield* emitSuccessTrailer(
-        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
+        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n${snippet}\n\n`,
       );
       return;
     }
