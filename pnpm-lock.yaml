@@ -234,6 +234,7 @@ overrides:
 packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
+  '@effect/platform-node-shared@4.0.2': 90a5d5bd45ffbfc265807a93f30110c9a2fc3393633fe82b92ee628c00a78658
   '@effect/vitest@4.0.2': 9c4eb0354e3ac316883a3575b51bed9a215d49f34f117682c427d5137a5a2146
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
 
@@ -7047,13 +7048,13 @@ snapshots:
 
   '@effect/platform-bun@4.0.2(effect@4.0.2)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.2(effect@4.0.2)
+      '@effect/platform-node-shared': 4.0.2(patch_hash=90a5d5bd45ffbfc265807a93f30110c9a2fc3393633fe82b92ee628c00a78658)(effect@4.0.2)
       effect: 4.0.2
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.2(effect@4.0.2)':
+  '@effect/platform-node-shared@4.0.2(patch_hash=90a5d5bd45ffbfc265807a93f30110c9a2fc3393633fe82b92ee628c00a78658)(effect@4.0.2)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.0.2
@@ -7064,7 +7065,7 @@ snapshots:
 
   '@effect/platform-node@4.0.2(effect@4.0.2)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.2(effect@4.0.2)
+      '@effect/platform-node-shared': 4.0.2(patch_hash=90a5d5bd45ffbfc265807a93f30110c9a2fc3393633fe82b92ee628c00a78658)(effect@4.0.2)
       effect: 4.0.2
       redis: 6.2.1
       undici: 8.11.2

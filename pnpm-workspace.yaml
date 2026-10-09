@@ -134,6 +134,7 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
+  "@effect/platform-node-shared@4.0.2": patches/@effect__platform-node-shared@4.0.2.patch
   "@effect/vitest@4.0.2": patches/@effect__vitest@4.0.2.patch
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
 
