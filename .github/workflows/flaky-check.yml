@@ -1,10 +1,7 @@
 name: Flaky check
 
-# Runs the same commit on many fresh runners, with retries off, and reports every test that
-# both passed and failed. Nightly covers unit + integration on develop, weekly covers e2e, and
-# the `run-flaky-check` PR label covers unit + integration plus a `focused` suite that repeats
-# the tests affected by the PR. The logic lives in .github/scripts/flaky-check; see
-# .github/MAINTAINERS.md for usage.
+# Runs one commit on many fresh runners and reports tests that both passed and failed. The logic
+# lives in .github/scripts/flaky-check; triggers and usage are in .github/MAINTAINERS.md.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -69,10 +66,7 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       base: ${{ steps.plan.outputs.base }}
       filter: ${{ steps.plan.outputs.filter }}
-      tests: ${{ steps.plan.outputs.tests }}
-      e2e: ${{ steps.plan.outputs.e2e }}
-      stack: ${{ steps.plan.outputs.stack }}
-      expected: ${{ steps.plan.outputs.expected }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - name: Checkout flaky-check tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,22 +111,22 @@ jobs:
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/run-flaky-check" >/dev/null \
             || echo "::warning::Unable to remove the run-flaky-check label."
 
-  tests:
+  run:
     needs: plan
-    if: needs.plan.outputs.tests != ''
-    name: ${{ matrix.suite }} run ${{ matrix.run }}
-    runs-on: ${{ matrix.suite == 'unit' && 'blacksmith-4vcpu-ubuntu-2404' || 'blacksmith-8vcpu-ubuntu-2404' }}
-    timeout-minutes: ${{ matrix.suite == 'focused' && 60 || 30 }}
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.tests) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
-          # Focused runs diff against the merge base to find affected tests.
-          fetch-depth: ${{ matrix.suite != 'focused' && 1 || 0 }}
+          fetch-depth: ${{ matrix.fetchDepth }}
           persist-credentials: false
 
       - name: Checkout flaky-check tooling
@@ -146,69 +140,14 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
+          go-cache: ${{ matrix.goCache }}
 
-      - name: Run tests
-        id: run
-        env:
-          SUITE: ${{ matrix.suite }}
-          EXECUTIONS: ${{ matrix.executions }}
-          BASE_REF: ${{ needs.plan.outputs.base }}
-          FILTER: ${{ needs.plan.outputs.filter }}
-        run: bun "$FLAKY_CLI" run
-
-      - name: Collect results
-        id: collect
-        if: always()
-        env:
-          NAME: ${{ matrix.name }}
-          SUITE: ${{ matrix.suite }}
-          RUN: ${{ matrix.run }}
-          EXECUTIONS: ${{ matrix.executions }}
-          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
-          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
-        run: bun "$FLAKY_CLI" collect
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.name }}
-          path: ${{ steps.collect.outputs.dir }}
-          retention-days: 14
-          if-no-files-found: error
-          overwrite: true
-
-  e2e:
-    needs: plan
-    if: needs.plan.outputs.e2e != ''
-    name: e2e ${{ matrix.target }}${{ matrix.shard > 0 && format(' {0}/4', matrix.shard) || '' }} run ${{ matrix.run }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.e2e) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.plan.outputs.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Checkout flaky-check tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: .flaky-tooling
-          sparse-checkout: .github/scripts/flaky-check
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
 
       - name: Cache Go CLI binary
+        if: matrix.suite == 'e2e'
         id: cache-go-binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -217,93 +156,27 @@ jobs:
             'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
 
       - name: Build Go CLI
-        if: steps.cache-go-binary.outputs.cache-hit != 'true'
+        if: matrix.suite == 'e2e' && steps.cache-go-binary.outputs.cache-hit != 'true'
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
       - name: Build CLI
+        if: matrix.suite == 'e2e'
         run: pnpm exec turbo run supabase#build
 
       - name: Run tests
         id: run
         env:
-          SUITE: e2e
-          TARGET: ${{ matrix.target }}
-          SHARD: ${{ matrix.shard }}
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          MATRIX: ${{ toJSON(matrix) }}
+          BASE_REF: ${{ needs.plan.outputs.base }}
+          FILTER: ${{ needs.plan.outputs.filter }}
         run: bun "$FLAKY_CLI" run
 
       - name: Collect results
         id: collect
         if: always()
         env:
-          NAME: ${{ matrix.name }}
-          SUITE: e2e
-          RUN: ${{ matrix.run }}
-          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
-          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
-        run: bun "$FLAKY_CLI" collect
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.name }}
-          path: ${{ steps.collect.outputs.dir }}
-          retention-days: 14
-          if-no-files-found: error
-          overwrite: true
-
-  stack-e2e:
-    needs: plan
-    if: needs.plan.outputs.stack != ''
-    name: stack-e2e ${{ matrix.runtime }} ${{ matrix.scenario }} run ${{ matrix.run }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 45
-    env:
-      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.stack) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.plan.outputs.sha }}
-          persist-credentials: false
-
-      - name: Checkout flaky-check tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: .flaky-tooling
-          sparse-checkout: .github/scripts/flaky-check
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
-
-      - name: Setup Podman
-        if: matrix.runtime == 'podman'
-        uses: ./.github/actions/setup-podman
-
-      - name: Run tests
-        id: run
-        env:
-          SUITE: stack-e2e
-          RUNTIME: ${{ matrix.runtime }}
-          SCENARIO: ${{ matrix.scenario }}
-        run: bun "$FLAKY_CLI" run
-
-      - name: Collect results
-        id: collect
-        if: always()
-        env:
-          NAME: ${{ matrix.name }}
-          SUITE: stack-e2e
-          RUN: ${{ matrix.run }}
+          MATRIX: ${{ toJSON(matrix) }}
           EXIT_CODE: ${{ steps.run.outputs.exit-code }}
           EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
         run: bun "$FLAKY_CLI" collect
@@ -319,7 +192,7 @@ jobs:
           overwrite: true
 
   report:
-    needs: [plan, tests, e2e, stack-e2e]
+    needs: [plan, run]
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
     name: Report flaky tests
     runs-on: ubuntu-latest
@@ -349,14 +222,14 @@ jobs:
           path: results
 
       - name: Build report
-        id: report
         env:
-          EXPECTED: ${{ needs.plan.outputs.expected }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
           SHA: ${{ needs.plan.outputs.sha }}
           FILTER: ${{ needs.plan.outputs.filter }}
         run: bun "$FLAKY_CLI" report results flaky-report
 
       - name: Upload report
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: flaky-check-report
@@ -366,15 +239,10 @@ jobs:
 
       - name: Comment on PR
         if: >-
+          always() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bun "$FLAKY_CLI" comment flaky-report/report.md
-
-      - name: Fail on flaky tests
-        if: steps.report.outputs.clean != 'true'
-        run: |
-          echo "::error ::Flaky, failing, or missing runs found; see the job summary or the flaky-check-report artifact."
-          exit 1

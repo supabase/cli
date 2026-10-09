@@ -22,7 +22,7 @@ export type RunMeta = {
   expectedReports: string[];
 };
 
-export type TestCase = {
+type TestCase = {
   file: string;
   titles: string[];
   failed: boolean;
@@ -50,7 +50,7 @@ type TestVerdict = {
 
 type RunProblem = { name: string; problem: string };
 
-export type Report = {
+type Report = {
   flaky: TestVerdict[];
   failing: TestVerdict[];
   runProblems: RunProblem[];
@@ -217,11 +217,6 @@ export function isClean(report: Report): boolean {
   );
 }
 
-/** Code spans render text literally, so only table pipes and backticks need handling. */
-function codeCell(value: string): string {
-  return `\`${value.replaceAll("`", "'").replaceAll("|", "\\|")}\``;
-}
-
 function cell(value: string): string {
   const flat = value.replace(/\s+/g, " ").trim();
   const short = flat.length > MAX_MESSAGE ? `${flat.slice(0, MAX_MESSAGE)}…` : flat;
@@ -244,7 +239,7 @@ function testTable(title: string, verdicts: TestVerdict[], repeated: Set<string>
     .slice(0, MAX_ROWS)
     .map(
       (v) =>
-        `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedIn.length}/${v.executions} | ${where(v.failedIn, repeated.has(v.suite))} | ${cell(v.message ?? "")} |`,
+        `| ${v.suite} | ${cell(v.name)} | \`${v.file}\` | ${v.failedIn.length}/${v.executions} | ${where(v.failedIn, repeated.has(v.suite))} | ${cell(v.message ?? "")} |`,
     );
   const lines = [
     `### ${title} (${verdicts.length})`,
@@ -259,9 +254,10 @@ function testTable(title: string, verdicts: TestVerdict[], repeated: Set<string>
   return [...lines, ""];
 }
 
-export type RenderContext = { sha: string; runUrl: string };
-
-export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): string {
+export function renderMarkdown(
+  report: Report,
+  { sha, runUrl }: { sha: string; runUrl: string },
+): string {
   const counts = [
     report.flaky.length > 0 ? `${report.flaky.length} flaky` : "",
     report.failing.length > 0 ? `${report.failing.length} failed every time` : "",
@@ -292,7 +288,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
       "",
       "| Run | Problem |",
       "| --- | --- |",
-      ...report.runProblems.map((p) => `| ${codeCell(p.name)} | ${p.problem} |`),
+      ...report.runProblems.map((p) => `| \`${p.name}\` | ${p.problem} |`),
       "",
     );
   }

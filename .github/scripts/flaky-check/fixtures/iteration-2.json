@@ -1,121 +1,60 @@
 {
-  "numTotalTestSuites": 7,
-  "numPassedTestSuites": 0,
-  "numFailedTestSuites": 7,
-  "numPendingTestSuites": 0,
-  "numTotalTests": 6,
-  "numPassedTests": 1,
-  "numFailedTests": 3,
-  "numPendingTests": 2,
-  "numTodoTests": 0,
-  "snapshot": {
-    "added": 0,
-    "failure": false,
-    "filesAdded": 0,
-    "filesRemoved": 0,
-    "filesRemovedList": [],
-    "filesUnmatched": 0,
-    "filesUpdated": 0,
-    "matched": 0,
-    "total": 0,
-    "unchecked": 0,
-    "uncheckedKeysByFile": [],
-    "unmatched": 0,
-    "updated": 0,
-    "didUpdate": false
-  },
-  "startTime": 1791471710083,
-  "success": false,
   "testResults": [
     {
+      "name": "/repo/packages/api/src/hook.unit.test.ts",
+      "status": "failed",
+      "message": "",
       "assertionResults": [
         {
           "ancestorTitles": ["hook"],
-          "fullName": "hook runs after the hook",
-          "status": "skipped",
           "title": "runs after the hook",
-          "failureMessages": [],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
+          "status": "skipped",
+          "failureMessages": []
         }
-      ],
-      "startTime": 1791471710083,
-      "endTime": 1791471710083,
-      "status": "failed",
-      "message": "",
-      "name": "/repo/packages/api/src/hook.unit.test.ts"
+      ]
     },
     {
-      "assertionResults": [],
-      "startTime": 1791471710083,
-      "endTime": 1791471710083,
+      "name": "/repo/packages/api/src/import-error.unit.test.ts",
       "status": "failed",
       "message": "import failure",
-      "name": "/repo/packages/api/src/import-error.unit.test.ts"
+      "assertionResults": []
     },
     {
+      "name": "/repo/packages/api/src/probe.unit.test.ts",
+      "status": "failed",
+      "message": "",
       "assertionResults": [
         {
           "ancestorTitles": ["sometimes"],
-          "fullName": "sometimes fails on the second iteration",
-          "status": "failed",
           "title": "fails on the second iteration",
-          "duration": 5.181332999999995,
-          "failureMessages": ["Error: second iteration"],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
+          "status": "failed",
+          "failureMessages": ["Error: second iteration"]
         },
         {
           "ancestorTitles": ["two errors"],
-          "fullName": "two errors test and afterEach both fail on the second iteration",
-          "status": "failed",
           "title": "test and afterEach both fail on the second iteration",
-          "duration": 2.281166000000013,
-          "failureMessages": ["Error: test body", "Error: afterEach too"],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
-        },
-        {
-          "ancestorTitles": ["@supabase/api"],
-          "fullName": "@supabase/api twin",
-          "status": "passed",
-          "title": "twin",
-          "duration": 0.23887500000000728,
-          "failureMessages": [],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
-        },
-        {
-          "ancestorTitles": ["@supabase/api"],
-          "fullName": "@supabase/api twin",
           "status": "failed",
-          "title": "twin",
-          "duration": 0.12645899999998278,
-          "failureMessages": ["Error: second twin"],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
+          "failureMessages": ["Error: test body", "Error: afterEach too"]
         },
         {
           "ancestorTitles": ["@supabase/api"],
-          "fullName": "@supabase/api skipped",
-          "status": "skipped",
+          "title": "twin",
+          "status": "passed",
+          "failureMessages": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "title": "twin",
+          "status": "failed",
+          "failureMessages": ["Error: second twin"]
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
           "title": "skipped",
-          "failureMessages": [],
-          "meta": {},
-          "tags": [],
-          "benchmarks": []
+          "status": "skipped",
+          "failureMessages": []
         }
-      ],
-      "startTime": 1791471710229,
-      "endTime": 1791471710238.1265,
-      "status": "failed",
-      "message": "",
-      "name": "/repo/packages/api/src/probe.unit.test.ts"
+      ]
     }
   ]
 }

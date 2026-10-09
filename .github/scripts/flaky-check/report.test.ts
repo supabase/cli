@@ -9,7 +9,7 @@ import {
   type RunResult,
 } from "./report.ts";
 
-// Real `--reporter=json` output of the same three probe files run twice. The second iteration
+// Real `--reporter=json` output, trimmed to the fields read, of the same three probe files run twice. The second iteration
 // fails one test, fails another together with its `afterEach`, and fails a file's `beforeAll`;
 // both iterations fail the second of two same-titled tests and a file that throws on import.
 const iteration1: JsonTestResults = await Bun.file(
@@ -54,7 +54,12 @@ function run(
 function summary(results: RunResult[], expected: string[]) {
   const report = aggregate(results, expected);
   const rows = (verdicts: typeof report.flaky) =>
-    verdicts.map((v) => [v.file.split("/").pop(), v.name, `${v.failedIn.length}/${v.executions}`]);
+    verdicts.map((v) => [
+      v.file.split("/").pop(),
+      v.name,
+      `${v.failedIn.length}/${v.executions}`,
+      v.message,
+    ]);
   return {
     flaky: rows(report.flaky),
     failing: rows(report.failing),
@@ -62,60 +67,27 @@ function summary(results: RunResult[], expected: string[]) {
   };
 }
 
-describe("parseVitestJson", () => {
-  test("reads test outcomes and adds a file-level entry for hook and import failures", () => {
-    const cases = parseVitestJson(iteration2, "/repo");
-
-    expect(
-      cases.map((c) => [
-        c.file.split("/").pop(),
-        c.titles.join(" > "),
-        c.failed,
-        c.skipped,
-        c.message,
-      ]),
-    ).toEqual([
-      ["hook.unit.test.ts", "hook > runs after the hook", false, true, undefined],
-      ["hook.unit.test.ts", "(file setup)", true, false, "failed outside any test (hook or setup)"],
-      ["import-error.unit.test.ts", "(file setup)", true, false, "import failure"],
-      [
-        "probe.unit.test.ts",
-        "sometimes > fails on the second iteration",
-        true,
-        false,
-        "Error: second iteration",
-      ],
-      [
-        "probe.unit.test.ts",
-        "two errors > test and afterEach both fail on the second iteration",
-        true,
-        false,
-        "Error: test body",
-      ],
-      ["probe.unit.test.ts", "@supabase/api > twin", false, false, undefined],
-      ["probe.unit.test.ts", "@supabase/api > twin", true, false, "Error: second twin"],
-      ["probe.unit.test.ts", "@supabase/api > skipped", false, true, undefined],
-      ["probe.unit.test.ts", "(file setup)", false, false, undefined],
-    ]);
-    expect(cases[0]?.file).toBe("packages/api/src/hook.unit.test.ts");
-  });
-});
-
 describe("aggregate", () => {
   test("executions classify tests the same whether they are iterations of one run or separate runs", () => {
     const expected = {
       flaky: [
-        ["hook.unit.test.ts", "(file setup)", "1/2"],
-        ["probe.unit.test.ts", "sometimes > fails on the second iteration", "1/2"],
+        ["hook.unit.test.ts", "(file setup)", "1/2", "failed outside any test (hook or setup)"],
+        [
+          "probe.unit.test.ts",
+          "sometimes > fails on the second iteration",
+          "1/2",
+          "Error: second iteration",
+        ],
         [
           "probe.unit.test.ts",
           "two errors > test and afterEach both fail on the second iteration",
           "1/2",
+          "Error: test body",
         ],
       ],
       failing: [
-        ["import-error.unit.test.ts", "(file setup)", "2/2"],
-        ["probe.unit.test.ts", "@supabase/api > twin (#2)", "2/2"],
+        ["import-error.unit.test.ts", "(file setup)", "2/2", "import failure"],
+        ["probe.unit.test.ts", "@supabase/api > twin (#2)", "2/2", "Error: second twin"],
       ],
       runProblems: [],
     };

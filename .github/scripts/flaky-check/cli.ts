@@ -10,13 +10,14 @@ import {
 import { basename, dirname, join } from "node:path";
 import type { JsonTestResults } from "vitest/node";
 import {
+  CheckError,
   collectedName,
   commandsFor,
+  type Entry,
+  plan,
   RESULTS_DIR,
   type ReportSource,
-  type RunSpec,
-} from "./commands.ts";
-import { matrix, plan, PlanError, type PlanInput } from "./plan.ts";
+} from "./plan.ts";
 import {
   aggregate,
   COMMENT_MARKER,
@@ -27,42 +28,21 @@ import {
   type RunResult,
 } from "./report.ts";
 
-class CliError extends Error {}
-
 function env(name: string): string {
   return process.env[name] ?? "";
 }
 
 function setOutputs(values: Record<string, string>): void {
-  const file = env("GITHUB_OUTPUT");
   const lines = Object.entries(values).map(([key, value]) => `${key}=${value}\n`);
-  if (file === "") {
-    process.stdout.write(lines.join(""));
-  } else {
-    appendFileSync(file, lines.join(""));
-  }
-}
-
-function appendSummary(markdown: string): void {
-  if (env("GITHUB_STEP_SUMMARY") !== "") {
-    appendFileSync(env("GITHUB_STEP_SUMMARY"), markdown);
-  }
+  appendFileSync(env("GITHUB_OUTPUT") || "/dev/stdout", lines.join(""));
 }
 
 function capture(argv: string[]): string {
   const result = Bun.spawnSync(argv, { stderr: "inherit" });
   if (result.exitCode !== 0) {
-    throw new CliError(`${argv.join(" ")} exited ${result.exitCode}`);
+    throw new CheckError(`${argv.join(" ")} exited ${result.exitCode}`);
   }
   return result.stdout.toString().trim();
-}
-
-function oneOf<const T extends string>(value: string, allowed: readonly T[], label: string): T {
-  const match = allowed.find((candidate) => candidate === value);
-  if (match === undefined) {
-    throw new CliError(`${label} must be one of ${allowed.join(", ")}, got '${value}'`);
-  }
-  return match;
 }
 
 function words(value: string): string[] {
@@ -70,34 +50,20 @@ function words(value: string): string[] {
 }
 
 function planCommand(): void {
-  const event = env("EVENT_NAME");
-  let input: PlanInput;
-  let ref: string | undefined;
-  switch (event) {
-    case "schedule":
-      input = { event, schedule: env("SCHEDULE") };
-      ref = "develop";
-      break;
-    case "pull_request":
-      input = { event, baseRef: env("PR_BASE_REF") };
-      break;
-    case "workflow_dispatch":
-      input = {
-        event,
-        suites: env("INPUT_SUITES"),
-        runs: env("INPUT_RUNS"),
-        repeats: env("INPUT_REPEATS"),
-        filter: env("INPUT_FILTER"),
-      };
-      ref = env("INPUT_REF") || env("GITHUB_REF_NAME");
-      break;
-    default:
-      throw new PlanError(`unsupported event '${event}'`);
-  }
-  const result = plan(input);
-  // A pull request tests its merge commit, the same commit the Test workflow checks.
+  const { entries, base, filter } = plan({
+    event: env("EVENT_NAME"),
+    schedule: env("SCHEDULE"),
+    baseRef: env("PR_BASE_REF"),
+    suites: env("INPUT_SUITES"),
+    runs: env("INPUT_RUNS"),
+    repeats: env("INPUT_REPEATS"),
+    filter: env("INPUT_FILTER"),
+  });
+  // github.sha is already the commit to test (a PR's merge commit, or the branch head), unless a
+  // dispatch names another ref.
+  const ref = env("INPUT_REF");
   const sha =
-    ref === undefined
+    ref === ""
       ? env("EVENT_SHA")
       : capture([
           "gh",
@@ -106,60 +72,10 @@ function planCommand(): void {
           "--jq",
           ".sha",
         ]);
-
-  setOutputs({
-    sha,
-    base: result.base,
-    filter: result.filter,
-    tests: matrix(result.tests),
-    e2e: matrix(result.e2e),
-    stack: matrix(result.stack),
-    expected: JSON.stringify(result.expected),
-  });
-  appendSummary(
-    `### Flaky check plan\n\nCommit \`${sha}\`, suites \`${result.suites.join(",")}\`, ${result.runs} runs each, focused repeats ${result.repeats}, base \`${result.base}\`.\n`,
-  );
-}
-
-function runSpec(): RunSpec {
-  const suite = env("SUITE");
-  switch (suite) {
-    case "unit":
-    case "integration":
-      return { suite, filters: words(env("FILTER")) };
-    case "focused": {
-      const filters = words(env("FILTER"));
-      if (filters.length > 0) {
-        return { suite, selection: { filters } };
-      }
-      const base = env("BASE_REF");
-      const changedSince = capture(["git", "merge-base", "HEAD", `origin/${base}`]);
-      return { suite, selection: { changedSince } };
-    }
-    case "e2e":
-      return {
-        suite,
-        target: oneOf(env("TARGET"), ["cli", "cli-e2e"], "TARGET"),
-        shard: Number(env("SHARD")),
-      };
-    case "stack-e2e":
-      return {
-        suite,
-        runtime: oneOf(env("RUNTIME"), ["native", "docker", "podman"], "RUNTIME"),
-        scenario: oneOf(env("SCENARIO"), ["lifecycle", "idle-parallel"], "SCENARIO"),
-      };
-    default:
-      throw new CliError(`unknown suite '${suite}'`);
-  }
+  setOutputs({ sha, base, filter, matrix: JSON.stringify({ include: entries }) });
 }
 
 type TurboTask = { task: string; package: string; directory: string; command: string };
-
-function isTurboDryRun(value: unknown): value is { tasks: TurboTask[] } {
-  return (
-    typeof value === "object" && value !== null && "tasks" in value && Array.isArray(value.tasks)
-  );
-}
 
 /** Collected report names an invocation should produce, so a report that never appears is flagged. */
 function expectedReports(source: ReportSource, turboCache: Map<string, TurboTask[]>): string[] {
@@ -169,12 +85,9 @@ function expectedReports(source: ReportSource, turboCache: Map<string, TurboTask
   const key = source.turbo.join(" ");
   let tasks = turboCache.get(key);
   if (tasks === undefined) {
-    const dryRun: unknown = JSON.parse(
+    const dryRun: { tasks: TurboTask[] } = JSON.parse(
       capture(["pnpm", "exec", "turbo", "run", ...source.turbo, "--dry=json"]),
     );
-    if (!isTurboDryRun(dryRun)) {
-      throw new CliError(`turbo run ${key} --dry=json returned no task list`);
-    }
     tasks = dryRun.tasks.filter(
       (task) => task.task === source.turbo[0] && task.command !== "<NONEXISTENT>",
     );
@@ -183,7 +96,7 @@ function expectedReports(source: ReportSource, turboCache: Map<string, TurboTask
   return tasks.map((task) => {
     // Turbo forwards arguments to the last command of a chained script only.
     if (task.command.includes("&&")) {
-      throw new CliError(
+      throw new CheckError(
         `${task.package} chains commands in ${task.task}, so only its last one would write a report`,
       );
     }
@@ -192,92 +105,60 @@ function expectedReports(source: ReportSource, turboCache: Map<string, TurboTask
 }
 
 async function runCommand(): Promise<number> {
+  const entry: Entry = JSON.parse(env("MATRIX"));
+  const filters = words(env("FILTER"));
+  const extra =
+    entry.suite === "focused" && filters.length === 0
+      ? ["--changed", capture(["git", "merge-base", "HEAD", `origin/${env("BASE_REF")}`])]
+      : filters;
+  if (entry.suite === "e2e") {
+    process.env.SUPABASE_GO_BINARY = join(process.cwd(), "apps/cli-go/supabase-go");
+  }
   let exitCode = 0;
   const expected: string[] = [];
-  try {
-    const spec = runSpec();
-    const executions = Number(env("EXECUTIONS") || "1");
-    const turboCache = new Map<string, TurboTask[]>();
-    for (let iteration = 1; iteration <= executions; iteration += 1) {
-      for (const { argv, reports } of commandsFor(spec, iteration)) {
-        expected.push(...expectedReports(reports, turboCache));
-        console.log(`$ ${argv.join(" ")}`);
-        const code = await Bun.spawn(argv, { stdout: "inherit", stderr: "inherit" }).exited;
-        if (code !== 0) {
-          exitCode = code;
-        }
-      }
+  const turboCache = new Map<string, TurboTask[]>();
+  for (let iteration = 1; iteration <= entry.executions; iteration += 1) {
+    for (const { argv, reports } of commandsFor(entry, iteration, extra)) {
+      expected.push(...expectedReports(reports, turboCache));
+      console.log(`$ ${argv.join(" ")}`);
+      const code = await Bun.spawn(argv, { stdout: "inherit", stderr: "inherit" }).exited;
+      exitCode = code === 0 ? exitCode : code;
     }
-  } catch (error) {
-    if (!(error instanceof CliError)) {
-      throw error;
-    }
-    console.log(`::error ::${error.message}`);
-    exitCode = 1;
   }
   setOutputs({ "exit-code": String(exitCode), "expected-reports": JSON.stringify(expected) });
   return exitCode;
 }
 
 function collectCommand(): void {
-  const name = env("NAME");
-  const out = join(env("RUNNER_TEMP"), "flaky-results", name);
+  const entry: Entry = JSON.parse(env("MATRIX"));
+  const out = join(env("RUNNER_TEMP"), "flaky-results", entry.name);
   mkdirSync(out, { recursive: true });
-  const reports = new Bun.Glob(`{apps,packages}/*/${RESULTS_DIR}/*.json`).scanSync({ dot: true });
-  for (const report of reports) {
+  for (const report of new Bun.Glob(`{apps,packages}/*/${RESULTS_DIR}/*.json`).scanSync({
+    dot: true,
+  })) {
     copyFileSync(
       report,
       join(out, collectedName(dirname(dirname(report)), basename(report, ".json"))),
     );
   }
-  const expectedReports: unknown = JSON.parse(env("EXPECTED_REPORTS") || "[]");
   const meta: RunMeta = {
-    name,
-    suite: env("SUITE"),
-    run: Number(env("RUN")),
-    executions: Number(env("EXECUTIONS") || "1"),
+    name: entry.name,
+    suite: entry.suite,
+    run: entry.run,
+    executions: entry.executions,
     exitCode: env("EXIT_CODE") === "" ? null : Number(env("EXIT_CODE")),
     root: process.cwd(),
-    expectedReports: Array.isArray(expectedReports) ? expectedReports.map(String) : [],
+    expectedReports: JSON.parse(env("EXPECTED_REPORTS") || "[]"),
   };
   writeFileSync(join(out, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
   setOutputs({ dir: out });
-  console.log(readdirSync(out).join("\n"));
 }
 
-function isRunMeta(value: unknown): value is RunMeta {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "name" in value &&
-    typeof value.name === "string" &&
-    "suite" in value &&
-    typeof value.suite === "string" &&
-    "run" in value &&
-    typeof value.run === "number" &&
-    "executions" in value &&
-    typeof value.executions === "number" &&
-    "exitCode" in value &&
-    (value.exitCode === null || typeof value.exitCode === "number") &&
-    "root" in value &&
-    typeof value.root === "string" &&
-    "expectedReports" in value &&
-    Array.isArray(value.expectedReports)
-  );
-}
-
-function isVitestJson(value: unknown): value is JsonTestResults {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "testResults" in value &&
-    Array.isArray(value.testResults)
-  );
-}
-
-function readJson(path: string): unknown {
+/** A missing, truncated, or foreign report reads as absent, which the aggregation flags. */
+function readReport(path: string): JsonTestResults | undefined {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const results: JsonTestResults = JSON.parse(readFileSync(path, "utf8"));
+    return Array.isArray(results?.testResults) ? results : undefined;
   } catch {
     return undefined;
   }
@@ -287,33 +168,30 @@ function readResults(dir: string): RunResult[] {
   if (!existsSync(dir)) {
     return [];
   }
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const runDir = join(dir, entry.name);
-    const meta = entry.isDirectory() ? readJson(join(runDir, "meta.json")) : undefined;
-    if (!isRunMeta(meta)) {
-      return [];
-    }
-    const reports = readdirSync(runDir)
-      .filter((file) => file.endsWith(".json") && file !== "meta.json")
-      .flatMap((file) => {
-        // An unreadable report counts as missing, which the aggregation flags.
-        const results = readJson(join(runDir, file));
-        if (!isVitestJson(results)) {
-          return [];
-        }
-        const iteration = Number(/\.(\d+)\.json$/.exec(file)?.[1] ?? "1");
-        return [{ name: file, iteration, cases: parseVitestJson(results, meta.root) }];
-      });
-    return [{ meta, reports }];
-  });
+  return readdirSync(dir)
+    .filter((name) => existsSync(join(dir, name, "meta.json")))
+    .map((name) => {
+      const runDir = join(dir, name);
+      const meta: RunMeta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8"));
+      const reports = readdirSync(runDir)
+        .filter((file) => file.endsWith(".json") && file !== "meta.json")
+        .flatMap((file) => {
+          const results = readReport(join(runDir, file));
+          const iteration = Number(/\.(\d+)\.json$/.exec(file)?.[1] ?? "1");
+          return results === undefined
+            ? []
+            : [{ name: file, iteration, cases: parseVitestJson(results, meta.root) }];
+        });
+      return { meta, reports };
+    });
 }
 
 function reportCommand(): void {
   const [resultsDir = "results", outDir = "flaky-report"] = process.argv.slice(3);
-  const expected: unknown = JSON.parse(env("EXPECTED") || "[]");
+  const matrix: { include: Entry[] } = JSON.parse(env("MATRIX") || '{"include":[]}');
   const report = aggregate(
     readResults(resultsDir),
-    Array.isArray(expected) ? expected.map(String) : [],
+    matrix.include.map((entry) => entry.name),
     env("FILTER") === "" ? ["focused"] : [],
   );
   const markdown = renderMarkdown(report, {
@@ -323,24 +201,13 @@ function reportCommand(): void {
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
   writeFileSync(join(outDir, "report.md"), markdown);
-  appendSummary(markdown);
-  setOutputs({ clean: String(isClean(report)) });
-  console.log(markdown);
-}
-
-function isComment(value: unknown): value is { id: number; body: string; user: { login: string } } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "number" &&
-    "body" in value &&
-    typeof value.body === "string" &&
-    "user" in value &&
-    typeof value.user === "object" &&
-    value.user !== null &&
-    "login" in value.user
-  );
+  appendFileSync(env("GITHUB_STEP_SUMMARY") || "/dev/stdout", markdown);
+  if (!isClean(report)) {
+    console.log(
+      "::error ::Flaky, failing, or missing runs found; see the job summary or the flaky-check-report artifact.",
+    );
+    process.exitCode = 1;
+  }
 }
 
 /** Creates or updates the one PR comment that starts with the report marker. */
@@ -348,37 +215,20 @@ function commentCommand(): void {
   const [reportPath = "flaky-report/report.md"] = process.argv.slice(3);
   const issue = `repos/${env("GITHUB_REPOSITORY")}/issues`;
   try {
-    const pages: unknown = JSON.parse(
+    const pages: { id: number; body: string; user: { login: string } }[][] = JSON.parse(
       capture(["gh", "api", "--paginate", "--slurp", `${issue}/${env("PR_NUMBER")}/comments`]),
     );
-    const existing = (Array.isArray(pages) ? pages.flat() : [])
-      .filter(isComment)
+    const existing = pages
+      .flat()
       .find(
         (comment) =>
           comment.user.login === "github-actions[bot]" && comment.body.startsWith(COMMENT_MARKER),
       );
-    const body = `body=@${reportPath}`;
-    if (existing === undefined) {
-      capture([
-        "gh",
-        "api",
-        "--method",
-        "POST",
-        `${issue}/${env("PR_NUMBER")}/comments`,
-        "--field",
-        body,
-      ]);
-    } else {
-      capture([
-        "gh",
-        "api",
-        "--method",
-        "PATCH",
-        `${issue}/comments/${existing.id}`,
-        "--field",
-        body,
-      ]);
-    }
+    const target =
+      existing === undefined
+        ? ["POST", `${issue}/${env("PR_NUMBER")}/comments`]
+        : ["PATCH", `${issue}/comments/${existing.id}`];
+    capture(["gh", "api", "--method", ...target, "--field", `body=@${reportPath}`]);
   } catch (error) {
     // The report stays in the job summary and artifact, so a comment failure only warns.
     console.log(
@@ -395,7 +245,7 @@ if (import.meta.main) {
         planCommand();
         break;
       case "run":
-        process.exit(await runCommand());
+        process.exitCode = await runCommand();
         break;
       case "collect":
         collectCommand();
@@ -407,13 +257,15 @@ if (import.meta.main) {
         commentCommand();
         break;
       default:
-        throw new CliError(`usage: cli.ts plan|run|collect|report|comment, got '${command ?? ""}'`);
+        throw new CheckError(
+          `usage: cli.ts plan|run|collect|report|comment, got '${command ?? ""}'`,
+        );
     }
   } catch (error) {
-    if (!(error instanceof PlanError || error instanceof CliError)) {
+    if (!(error instanceof CheckError)) {
       throw error;
     }
     console.log(`::error ::${error.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

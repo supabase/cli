@@ -96,21 +96,15 @@ reported as flaky; one that fails in every run is reported separately.
 | `run-flaky-check` label  | PR merge commit | unit, integration ×10, plus `focused`         |
 | Manual dispatch          | any ref         | chosen suites, runs, repeats, and file filter |
 
-`focused` repeats only the tests affected by the PR (`vitest --changed` against
-the merge base), five executions per run across ten runs, each in a fresh Vitest
-process. Use it to show that a flaky-test fix holds: ten clean full-suite runs
-still miss a test that fails one time in twenty. A PR that changes a `package.json` or Vitest config makes
-`--changed` select every test, so `focused` then repeats the whole suite. To
-target specific files instead, dispatch the workflow with `suites=focused` and
-a `filter`.
+`focused` runs the tests affected by the PR (`vitest --changed` against the merge
+base) five times per job, each in a fresh Vitest process, to show a flaky-test fix
+holds; a changed `package.json` or Vitest config selects every test. Dispatch with
+`suites=focused` and a `filter` to target specific files.
 
-The workflow removes the label when it starts, so add it again to re-run. It
-posts or updates one PR comment with the report; the job summary and the
-`flaky-check-report` artifact (`report.md`, `report.json`) hold the same data
-for every trigger. Fork PRs get a read-only token: remove the label by hand
-before re-adding it, and read the report from the summary or artifact. The
-report job fails when it finds flaky tests, tests that failed in every run, or
-runs that produced no results.
+The label is removed when the run starts, so re-add it to run again (by hand on
+fork PRs, which also get no comment). The report goes to the job summary, the
+`flaky-check-report` artifact, and one PR comment, and fails the run when any test
+failed or any run produced no results.
 
 The `run-flaky-check` label must exist as a repository label; create it from
 **Issues → Labels** if it is missing.
