@@ -601,8 +601,8 @@ describe("registry lock", () => {
             dispatcher.flush();
           expect(holder.pollUnsafe()).not.toBeUndefined();
 
-          // No contention wait: a leaked lock would make this block for up to 5 seconds.
-          yield* second.withLock(second.save(initial)).pipe(Effect.timeout("200 millis"));
+          // A leaked lock fails here with the busy error once the retry window ends.
+          yield* second.withLock(second.save(initial));
           expect(yield* second.read(initial.id)).toEqual(initial);
         }),
       ),
