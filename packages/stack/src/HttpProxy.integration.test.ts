@@ -665,14 +665,16 @@ const oneRequestPerConnectionBackend = (answered = Number.POSITIVE_INFINITY) => 
 };
 
 it.live(
-  "succeeds a second POST when a keep-alive backend only answers the first request per connection",
+  "succeeds a second POST on a fresh-writes route when a keep-alive backend only answers the first request per connection",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const backend = oneRequestPerConnectionBackend();
         const address = yield* backend.listen;
         const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-        yield* proxy.setRoutes([{ id: "mcp", prefix: "/", target: Effect.succeed(address) }]);
+        yield* proxy.setRoutes([
+          { id: "mcp", prefix: "/", target: Effect.succeed(address), freshWrites: true },
+        ]);
         const first = yield* request(proxy.port, "/mcp", new TextEncoder().encode("first-body"));
         expect(first.status).toBe(200);
         expect(new TextDecoder().decode(first.body)).toBe("ok");
@@ -693,7 +695,9 @@ it.live(
         const backend = oneRequestPerConnectionBackend();
         const address = yield* backend.listen;
         const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-        yield* proxy.setRoutes([{ id: "studio", prefix: "/", target: Effect.succeed(address) }]);
+        yield* proxy.setRoutes([
+          { id: "studio", prefix: "/", target: Effect.succeed(address), freshWrites: true },
+        ]);
         const first = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
         expect(first.status).toBe(200);
         const second = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
@@ -735,7 +739,7 @@ it.live("returns a gateway error when the fresh retry after a pooled reset also 
   );
 });
 
-it.live("delivers a keyed POST once when the upstream resets after reading its body", () => {
+it.live("delivers a pooled keyed POST once when the upstream resets after reading its body", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
     Effect.gen(function* () {
@@ -775,7 +779,7 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
       });
       expect(post.status).toBe(502);
       expect(bodies).toEqual(["insert"]);
-      expect(connections).toBe(2);
+      expect(connections).toBe(1);
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain("Route rest request failed");
     }),
@@ -785,6 +789,136 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
     ),
   );
 });
+
+it.live("reuses one pooled upstream connection for sequential writes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodies: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        incoming.once("end", () => {
+          bodies.push(body);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", () => {
+        connections += 1;
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      for (const body of ["one", "two", "three"]) {
+        const response = yield* request(
+          proxy.port,
+          "/rest/v1/rpc/f",
+          new TextEncoder().encode(body),
+        );
+        expect(response.status).toBe(200);
+      }
+      expect(bodies).toEqual(["one", "two", "three"]);
+      expect(connections).toBe(1);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("closes a pooled upstream connection whose write the client abandons mid-body", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodyStarted = yield* Deferred.make<void>();
+      const pooledClosed = yield* Deferred.make<void>();
+      const seen: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("error", () => undefined);
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+          if (incoming.url === "/upload") Deferred.doneUnsafe(bodyStarted, Effect.void);
+        });
+        incoming.once("end", () => {
+          seen.push(`${incoming.url} ${body}`);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", (socket) => {
+        connections += 1;
+        if (connections === 1)
+          socket.once("close", () => Deferred.doneUnsafe(pooledClosed, Effect.void));
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const warm = yield* request(proxy.port, "/warm", new TextEncoder().encode("warm"));
+      expect(warm.status).toBe(200);
+      const client = yield* rawClient(
+        proxy.port,
+        "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\npartial",
+      );
+      yield* Deferred.await(bodyStarted);
+      yield* Effect.sync(() => client.resetAndDestroy());
+      yield* Deferred.await(pooledClosed);
+      for (const body of ["alpha", "beta"]) {
+        const response = yield* request(proxy.port, "/next", new TextEncoder().encode(body));
+        expect(response.status).toBe(200);
+      }
+      expect(seen).toEqual(["/warm warm", "/next alpha", "/next beta"]);
+      expect(connections).toBe(2);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("keeps a chunked DELETE body framed on its pooled upstream connection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        incoming.once("end", () => {
+          seen.push(`${incoming.method} ${incoming.url} ${body}`);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", () => {
+        connections += 1;
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const body = '{"id":1}';
+      const deleted = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        const socket = new Socket();
+        let text = "";
+        socket.on("data", (chunk: Buffer) => {
+          text += chunk.toString("latin1");
+        });
+        socket.once("close", () => resume(Effect.succeed(text)));
+        socket.once("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        socket.connect(proxy.port, "127.0.0.1", () =>
+          socket.write(
+            "DELETE /items HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" +
+              `Transfer-Encoding: chunked\r\n\r\n${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`,
+          ),
+        );
+        return Effect.sync(() => socket.destroy());
+      });
+      expect(deleted).toMatch(/^HTTP\/1\.1 200 /u);
+      const next = yield* request(proxy.port, "/next", new Uint8Array(), {}, "GET");
+      expect(next.status).toBe(200);
+      expect(seen).toEqual(['DELETE /items {"id":1}', "GET /next "]);
+      expect(connections).toBe(1);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
 it.live("reuses pooled upstream connections across thousands of concurrent requests", () =>
   Effect.scoped(
