@@ -15,6 +15,7 @@ function viperBool(raw: string | undefined): boolean {
   return raw !== undefined && VIPER_TRUE.has(raw);
 }
 
+/** Env-record providers never fail this read, so a `ConfigError` here is a defect. */
 const shellEnv = (name: string) =>
   Config.option(Config.string(name)).pipe(Effect.map(Option.getOrUndefined), Effect.orDie);
 
