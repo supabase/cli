@@ -4,8 +4,12 @@
     "strictTaskEntrypointSelection": true
   },
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "types:check": {
-      "cache": true
+      "cache": true,
+      "dependsOn": ["transit"]
     },
     "lint:check": {
       "cache": false
@@ -17,6 +21,9 @@
       "cache": false
     },
     "lint:effect:fix": {
+      "cache": false
+    },
+    "lint:actions:check": {
       "cache": false
     },
     "fmt:check": {
@@ -33,6 +40,7 @@
     },
     "@supabase/docs#types:check": {
       "cache": true,
+      "dependsOn": ["transit"],
       "outputs": [".source/**"]
     },
     "test:unit:run": {

@@ -356,7 +356,8 @@ const health = Effect.fn("Database.health")(function* (
     ),
     Effect.timeoutOrElse({
       duration: config.healthTimeoutMs ?? 60_000,
-      orElse: () => Effect.fail(errorFor("health", "Database readiness timed out")),
+      orElse: () =>
+        Effect.fail(errorFor("health", "Database readiness timed out", "health-timeout")),
     }),
     Effect.mapError((cause) => errorFor("health", cause)),
   );
@@ -519,7 +520,9 @@ const nativeProcess = (
             Effect.timeoutOrElse({
               duration: config.healthTimeoutMs ?? 60_000,
               orElse: () =>
-                Effect.fail(errorFor("launch", "PostgreSQL configuration probe timed out")),
+                Effect.fail(
+                  errorFor("launch", "PostgreSQL configuration probe timed out", "timeout"),
+                ),
             }),
           );
     return yield* spawnNativeProcess(

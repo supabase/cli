@@ -52,7 +52,6 @@ const failureMessage = (exit: Exit.Exit<unknown, unknown>): string => {
 
 const testLayer = (root: string) =>
   Layer.mergeAll(
-    BunServices.layer,
     FetchHttpClient.layer,
     liveStackApi,
     mockCommandSettings({ workdir: root, supabaseHome: root }),
@@ -98,7 +97,7 @@ const testLayer = (root: string) =>
     dbConnectionLayer,
     stackCatalogSetupLayer,
     stackBackendLayer("stack"),
-  );
+  ).pipe(Layer.provideMerge(BunServices.layer));
 
 describe("managed migration squash", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {

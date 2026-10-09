@@ -33,11 +33,11 @@ FROM supabase/supavisor:2.9.13 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.142.0 AS realtime
+FROM supabase/realtime:v2.143.3 AS realtime
 
-FROM supabase/storage-api:v1.80.0 AS storage
+FROM supabase/storage-api:v1.80.2 AS storage
 
-FROM supabase/logflare:1.52.0 AS logflare
+FROM supabase/logflare:1.53.0 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias
 # is resolved via dockerfileServiceImage("differ") in commands/db/diff/pgadmin-diff.ts.
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ

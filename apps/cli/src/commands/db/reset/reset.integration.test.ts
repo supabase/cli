@@ -2439,7 +2439,7 @@ describe("db reset", () => {
           yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
         }),
-      );
+      ).pipe((body) => withConfigEnv({ MIGRATIONS_ENABLED: "true" }, body));
     });
 
     it.live("rejects mutually exclusive target flags", () => {

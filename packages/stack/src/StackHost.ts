@@ -111,6 +111,7 @@ const shutdownFailure = (cause: unknown): ShutdownFailure => {
   return {
     message: failure.message,
     ...(failure.outcomes === undefined ? {} : { outcomes: failure.outcomes }),
+    ...(failure.kind === undefined ? {} : { kind: failure.kind }),
   };
 };
 

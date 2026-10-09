@@ -68,7 +68,7 @@ const query = Effect.fn("PgDeltaNextShadowStackTest.query")(function* (
   url: string,
   sql: string,
 ) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
   return yield* session.query(sql);
@@ -116,7 +116,6 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(BunServices.layer),
         );
         const services = Layer.mergeAll(
-          BunServices.layer,
           FetchHttpClient.layer,
           stackBackendLayer("stack"),
           apiLayer,
@@ -129,7 +128,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.succeed(NetworkIdFlag, Option.none()),
           Layer.succeed(CliArgs, { args: [] }),
           shadowLayer,
-        );
+        ).pipe(Layer.provideMerge(BunServices.layer));
 
         const urls = yield* Effect.scoped(
           Effect.gen(function* () {

@@ -34,6 +34,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withConfigEnv,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
@@ -5265,7 +5266,9 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
           }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer), (body) =>
+          withConfigEnv({ PASSKEY_ENABLED: "true" }, body),
+        ),
     );
 
     it.live(

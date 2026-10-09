@@ -102,7 +102,7 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local database did not provide runtime credentials.",
     });
-  const connection = parseConnectionString(databaseUrl);
+  const connection = yield* parseConnectionString(databaseUrl);
   if (connection === undefined)
     return yield* new LocalDbRunningError({
       message: "The local database returned malformed runtime credentials.",
@@ -311,7 +311,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             })
             .pipe(
               Effect.mapError(
-                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+                (cause) =>
+                  new TestDbRunError({ message: `pg_prove run failed: ${cause.message}`, cause }),
               ),
             );
         }

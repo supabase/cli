@@ -123,6 +123,7 @@ it.live("Effect stop reports shutdown-exit when the acknowledged owner remains a
       expect(Schema.is(StackError)(error)).toBe(true);
       if (!Schema.is(StackError)(error)) return yield* Effect.die("unexpected shutdown error");
       expect(error.operation).toBe("shutdown-exit");
+      expect(error.kind).toBe("owner-exit");
       expect(error.message).toContain("shutdown acknowledgement");
     }),
   ).pipe(Effect.provide(layer)),

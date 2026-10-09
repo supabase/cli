@@ -195,7 +195,7 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
   poolerHost: string,
 ) {
   const debug = yield* DebugLogger;
-  const result = poolerConfigFromConnectionString(ref, connectionString, poolerHost);
+  const result = yield* poolerConfigFromConnectionString(ref, connectionString, poolerHost);
   if (result._tag === "ok") return Option.some(result.conn);
   yield* debug.debug(result.reason);
   return Option.none();
@@ -386,12 +386,10 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     resolveVaultSecrets,
   );
   if (Option.isNone(poolerConn)) {
-    return yield* Effect.fail(
-      new Errors.DbConfigIpv6Error({
-        message: "IPv6 is not supported on your current network",
-        suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
-      }),
-    );
+    return yield* new Errors.DbConfigIpv6Error({
+      message: "IPv6 is not supported on your current network",
+      suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+    });
   }
   return poolerConn.value;
 });
@@ -478,6 +476,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const stackDatabaseConn = stackLocalDatabaseConn.pipe(
       Effect.provideService(CommandSettings, cliSettings),
       Effect.provideService(StackApi, stackApi),
+      Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
 
@@ -507,15 +506,19 @@ export const dbConfigResolverLayer = Layer.effect(
           // read. Layer the project env under the shell env (`loadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
           const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-          const conn = parseConnectionString(flags.dbUrl.value, layeredParseEnv(projectEnv));
+          const conn = yield* parseConnectionString(
+            flags.dbUrl.value,
+            yield* layeredParseEnv(projectEnv),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
           if (conn === undefined) {
-            return yield* Effect.fail(
-              new Errors.DbConfigParseUrlError({
-                // Redact the password component before echoing the URL back
-                // (CWE-209): a malformed `--db-url` often still carries a secret.
-                message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
-              }),
-            );
+            return yield* new Errors.DbConfigParseUrlError({
+              // Redact the password component before echoing the URL back
+              // (CWE-209): a malformed `--db-url` often still carries a secret.
+              message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
+            });
           }
           // A multi-host URL stays remote: local disables TLS for every fallback host as well.
           const singleHost = conn.fallbacks === undefined;

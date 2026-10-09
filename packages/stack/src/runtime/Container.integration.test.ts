@@ -34,6 +34,7 @@ import {
   type ContainerProcess,
   type EngineTarget,
 } from "./Container.ts";
+import { failureKind } from "../FailureKind.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import * as Owner from "../Owner.ts";
 import * as StackNamespace from "../StackNamespace.ts";
@@ -90,6 +91,34 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  for (const [engine, stderr] of [
+    [
+      "Podman socket",
+      "Error: unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: connection refused",
+    ],
+    [
+      "Docker TCP daemon",
+      'error during connect: Head "http://127.0.0.1:2375/_ping": dial tcp 127.0.0.1:2375: connect: connection refused',
+    ],
+  ] as const)
+    it.live(
+      `classifies a pull through a refused ${engine} connection as an unreachable engine`,
+      () =>
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const token = yield* (yield* Crypto.Crypto).randomUUIDv4;
+          const spawner = makePullFailureSpawner(delegate, yield* Ref.make(false), stderr);
+          const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
+            Effect.flatMap((runtime) =>
+              runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
+          expect(failureKind(result.cause)).toBe("engine-unavailable");
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
   it.live("keeps missing image pull failures observable", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -108,7 +137,10 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       );
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(pullAttempted)).toBe(true);
-      if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("pull rejected");
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain("pull rejected");
+        expect(failureKind(result.cause)).toBe("image-pull");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -785,6 +817,48 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         const id = failure.value.process.id;
         yield* failure.value.process.remove;
         expect(yield* exists(id)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("classifies a container start the engine could not publish as port allocation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
+        yield* runtime.prepare(image);
+        const result = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        }).pipe(
+          Effect.flatMap((rejecting) =>
+            rejecting.launch({
+              image,
+              stackId: "c".repeat(64),
+              instanceId: "port-allocated",
+              env: {},
+              args: ["-e", "process.exit(0)"],
+              ports: [8080],
+            }),
+          ),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makePortAllocatedStartSpawner(delegate),
+          ),
+          Effect.exit,
+        );
+        const failure = Exit.isFailure(result)
+          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+          : undefined;
+        if (!(failure instanceof ContainerLaunchError))
+          return yield* Effect.die("publish failure did not retain cleanup authority");
+        yield* failure.process.remove;
+        expect(failureKind(failure)).toBe("port-allocation");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1658,9 +1732,13 @@ const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: strin
     return digest;
   });
 
+const registryRefusedStderr =
+  "pull rejected by cached-image regression: dial tcp 127.0.0.1:9: connect: connection refused";
+
 const makePullFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   pullAttempted: Ref.Ref<boolean>,
+  stderr = registryRefusedStderr,
 ) =>
   ChildProcessSpawner.make((command) => {
     if (
@@ -1673,13 +1751,34 @@ const makePullFailureSpawner = (
         return yield* delegate.spawn(
           ChildProcess.make(
             process.execPath,
-            ["-e", "console.error('pull rejected by cached-image regression'); process.exit(73)"],
-            { stdin: "ignore" },
+            ["-e", "console.error(process.env.PULL_STDERR); process.exit(73)"],
+            { stdin: "ignore", env: { ...process.env, PULL_STDERR: stderr } },
           ),
         );
       });
     return delegate.spawn(command);
   });
+
+/** Fails the engine's `start` the way Docker reports a published host port another listener holds. */
+const makePortAllocatedStartSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
+  ChildProcessSpawner.make((command) =>
+    ChildProcess.isStandardCommand(command) &&
+    command.command === testEngine &&
+    command.args[0] === "start"
+      ? delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [
+              "-e",
+              `console.error(${JSON.stringify(
+                "Error response from daemon: driver failed programming external connectivity on endpoint port-allocated: Bind for 127.0.0.1:54321 failed: port is already allocated",
+              )}); process.exit(1)`,
+            ],
+            { stdin: "ignore" },
+          ),
+        )
+      : delegate.spawn(command),
+  );
 
 const hostGatewayRejectionScript = `console.error(${JSON.stringify(
   'Error response from daemon: invalid IP address in add-host: "host-gateway"',

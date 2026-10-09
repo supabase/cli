@@ -85,10 +85,7 @@ const acquireBranchLookupApi = Effect.fnUntraced(function* () {
   const factoryOption = yield* Effect.serviceOption(CommandPlatformApiFactory);
   if (Option.isNone(factoryOption)) return Option.none<ApiClient>();
 
-  return yield* factoryOption.value.make.pipe(
-    Effect.map(Option.some),
-    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
-  );
+  return yield* factoryOption.value.make.pipe(Effect.option);
 });
 
 /**
@@ -132,7 +129,7 @@ export const findBranchName = Effect.fn("BranchTarget.findName")(function* (
     Effect.timeout(BRANCH_LOOKUP_TIMEOUT),
     // Any failure or the timeout above degrades to `None`; this helper never fails on a
     // flaky or slow lookup.
-    Effect.catch(() => Effect.succeed(Option.none<BranchLookupBranches>())),
+    Effect.orElseSucceed(() => Option.none<BranchLookupBranches>()),
   );
 
   const name = Option.isSome(branchesOption)
