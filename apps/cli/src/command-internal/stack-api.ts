@@ -1,6 +1,6 @@
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Scope } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import {
   create,
   discover,

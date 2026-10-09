@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";

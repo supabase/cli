@@ -15,7 +15,7 @@ const envOption = (
   const projectValue = Option.fromNullishOr(projectEnvValues?.[name]);
   return Option.isSome(projectValue)
     ? Effect.succeed(projectValue)
-    : Config.option(Config.string(name));
+    : Config.option(Config.String(name));
 };
 
 const dockerConfigDir = (

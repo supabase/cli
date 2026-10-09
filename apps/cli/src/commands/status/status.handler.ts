@@ -1,4 +1,4 @@
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Option } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";

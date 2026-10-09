@@ -1,7 +1,7 @@
 import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import { resolveEngineTarget, type ContainerEngine } from "@supabase/stack/internal/engine";
 import { Data, Effect } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   actionability,

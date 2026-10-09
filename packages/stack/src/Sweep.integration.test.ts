@@ -13,7 +13,7 @@ import {
   Queue,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";

@@ -1,5 +1,5 @@
 import { Cause, Data } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@supabase/api/effect";
 import { BootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";

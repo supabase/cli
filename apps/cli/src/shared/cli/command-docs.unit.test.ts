@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { collectCommands, findCommand } from "./command-docs.ts";
 
 function makeTree() {

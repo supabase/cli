@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { FileSystem, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigParseError } from "@supabase/config";
@@ -21,7 +21,7 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { beforeEach, vi } from "vitest";
 
 import {
@@ -542,7 +542,6 @@ const decodeFunctionsContainerConfig = Schema.decodeEffect(
       }),
     ),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 const decodeJwks = Schema.decodeEffect(
@@ -553,7 +552,6 @@ const decodeJwks = Schema.decodeEffect(
       ),
     }),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 beforeEach(() => {

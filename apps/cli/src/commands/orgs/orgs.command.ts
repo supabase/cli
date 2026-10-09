@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { orgsCreateCommand } from "./create/create.command.ts";
 import { orgsListCommand } from "./list/list.command.ts";
 

@@ -10,8 +10,8 @@ import {
   PlatformError,
   Stream,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   ArtifactError,
   postgresVersion,
@@ -135,7 +135,7 @@ const nativeRun = Effect.fn("BundledPostgresClient.nativeRun")(function* <E>(
   const tool = ["pg_dump", "pg_dumpall", "pg_prove", "psql"].includes(command)
     ? path.join(artifactRoot, "bin", command)
     : command;
-  const inheritedPath = yield* Config.option(Config.string("PATH")).pipe(
+  const inheritedPath = yield* Config.option(Config.String("PATH")).pipe(
     Effect.mapError(mapSpawnError),
   );
   const env = {

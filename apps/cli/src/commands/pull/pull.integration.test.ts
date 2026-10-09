@@ -14,8 +14,8 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
 import {

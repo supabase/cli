@@ -12,8 +12,8 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { CliError } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliError } from "effect/cli";
+import { ChildProcessSpawner } from "effect/process";
 import process from "node:process";
 import { formatCliError, normalizeCause, normalizeCliError } from "../output/normalize-error.ts";
 import { FileWatcherError } from "../runtime/file-watcher.service.ts";

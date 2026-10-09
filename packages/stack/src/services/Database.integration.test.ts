@@ -17,6 +17,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { postgresVersion } from "../Artifacts.ts";
 import { createHash } from "node:crypto";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
@@ -104,7 +105,12 @@ describe("database component", { timeout: 180_000 }, () => {
             yield* query(
               endpoint,
               defaults.databasePassword,
-              "CREATE EXTENSION IF NOT EXISTS pgsodium; CREATE EXTENSION IF NOT EXISTS supabase_vault",
+              "CREATE EXTENSION IF NOT EXISTS pgsodium",
+            );
+            yield* query(
+              endpoint,
+              defaults.databasePassword,
+              "CREATE EXTENSION IF NOT EXISTS supabase_vault",
             );
             const derivation = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
             const originalKey = yield* query(endpoint, defaults.databasePassword, derivation);
@@ -164,6 +170,99 @@ describe("database component", { timeout: 180_000 }, () => {
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
+  it.live("refuses unmarked or stock data for OrioleDB before preparing an artifact", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-line-" });
+        const recipe = yield* makeDatabase({
+          stackId: "database-line-test",
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const prepare = recipe.definition.prepare;
+        if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
+        const instanceRoot = path.join(root, "database");
+        const orioledb: DatabaseConfig = { ...config, version: "17.11.0.002-orioledb" };
+        const recreate =
+          "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
+        yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+          `Unmarked PostgreSQL data cannot be verified as OrioleDB data; ${recreate}`,
+        );
+
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-ready.json"),
+          '{"version":"17.11.0.002","runtime":"native","profile":"supabase"}',
+        );
+        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+          `Initialized database data is 17.11.0.002 on the native runtime, but 17.11.0.002-orioledb on the native runtime was requested; ${recreate}`,
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("resumes an interrupted stock native first start and refuses it for OrioleDB", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-resume-" });
+        const recipe = yield* makeDatabase({
+          stackId: "database-resume-test",
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const prepare = recipe.definition.prepare;
+        if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "database",
+          config: { ...config, healthTimeoutMs: 120_000 },
+        });
+        yield* service.start;
+        yield* service.ready;
+        yield* service.stop;
+        // A restart can pass prepare before the first start writes readiness; launch checks again.
+        const prepared = yield* makeStandaloneService(
+          { ...recipe.definition, prepare: () => Effect.void },
+          { id: "database", config: { ...config, version: "17.11.0.002-orioledb" } },
+        );
+        expect(
+          (yield* Effect.flip(prepared.start.pipe(Effect.andThen(prepared.ready)))).message,
+        ).toContain("17.11.0.002-orioledb on the native runtime was requested");
+        expect(yield* fs.readFileString(path.join(root, "database", "data", "PG_VERSION"))).toBe(
+          "17\n",
+        );
+        // The line is recorded before initdb writes any data, so an interrupted first start has it.
+        const recorded = yield* fs.stat(
+          path.join(root, "database", ".supabase-database-line.json"),
+        );
+        const initialized = yield* fs.stat(path.join(root, "database", "data", "PG_VERSION"));
+        expect(Option.getOrThrow(recorded.mtime).getTime()).toBeLessThanOrEqual(
+          Option.getOrThrow(initialized.mtime).getTime(),
+        );
+        // Initialized data without its readiness marker is what an interrupted first start leaves.
+        yield* fs.remove(path.join(root, "database", ".supabase-database-ready.json"));
+
+        expect(
+          (yield* Effect.flip(prepare({ ...config, version: "17.11.0.002-orioledb" }))).message,
+        ).toContain("belongs to release line 17, but 17.11.0.002-orioledb was requested");
+        yield* service.start;
+        yield* service.ready;
+        expect(yield* fs.exists(path.join(root, "database", ".supabase-database-ready.json"))).toBe(
+          true,
+        );
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
   it.live("requires passwords from non-superusers on the native socket", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -198,10 +297,11 @@ describe("database component", { timeout: 180_000 }, () => {
           "postgres",
         ).pipe(Effect.flip);
         expect(Predicate.isTagged(rejected.reason, "AuthenticationError")).toBe(true);
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION dblink");
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION dblink; CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
+          "CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
         );
         const connected = yield* query(
           endpoint,
@@ -274,8 +374,9 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION http WITH SCHEMA extensions; CREATE EXTENSION pg_net",
+          "CREATE EXTENSION http WITH SCHEMA extensions",
         );
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION pg_net");
         expect(
           yield* query(
             endpoint,
@@ -289,7 +390,7 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/') AS id`,
+            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/')::text AS id`,
           ),
         );
         expect(
@@ -347,7 +448,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             endpoint,
             config.databasePassword,
-            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+            "CREATE TABLE server_env (file text, dir text)",
+          );
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
           );
           const [serverEnv] = yield* Schema.decodeUnknownEffect(
             Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
@@ -394,10 +500,14 @@ describe("database component", { timeout: 180_000 }, () => {
               PERFORM pg_notify('cron_runs', (SELECT jobname FROM cron.job WHERE jobid = NEW.jobid)
                 || ': ' || NEW.status || ': ' || coalesce(NEW.return_message, ''));
               RETURN NEW;
-            END $$;
-            CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
+            END $$`,
+          );
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
               FOR EACH ROW WHEN (NEW.status IN ('succeeded', 'failed'))
-              EXECUTE FUNCTION report_cron_run();`,
+              EXECUTE FUNCTION report_cron_run()`,
           );
           const sql = Context.get(
             yield* Layer.build(
@@ -415,7 +525,13 @@ describe("database component", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               /* Jobs repeat every second, so a run reported before LISTEN is ready is not lost. */
               const run = yield* sql.listen("cron_runs").pipe(
-                Stream.filter((message) => message.startsWith(`${name}: `)),
+                Effect.map((notifications) =>
+                  Stream.fromQueue(notifications).pipe(
+                    Stream.map((notification) => notification.payload),
+                    Stream.filter((message) => message.startsWith(`${name}: `)),
+                  ),
+                ),
+                Stream.unwrap,
                 Stream.runHead,
                 Effect.forkScoped({ startImmediately: true }),
               );
@@ -573,7 +689,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             firstEndpoint,
             config.databasePassword,
-            "ALTER ROLE supabase_admin SET log_statement = 'all'; ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
+            "ALTER ROLE supabase_admin SET log_statement = 'all'",
+          );
+          yield* query(
+            firstEndpoint,
+            config.databasePassword,
+            "ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
           );
           yield* service.restart(loggedConfig);
           yield* service.ready;
@@ -600,12 +721,16 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* service.restart({ ...config, version: "unsupported" }).pipe(Effect.flip);
           expect((yield* service.get).lifecycle).toBe("running");
           const mismatch = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
-          expect(mismatch.message).toContain("does not match");
+          expect(mismatch.message).toContain(
+            `Initialized database data is ${postgresVersion("17")} on the native runtime, but ${postgresVersion("15")} on the native runtime was requested`,
+          );
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           yield* fs.remove(path.join(root, "first", ".supabase-database-ready.json"));
           const incomplete = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
-          expect(incomplete.message).toContain("major does not match");
+          expect(incomplete.message).toContain(
+            "PostgreSQL data from an unfinished first start is major 17, but major 15 was requested",
+          );
 
           const reopened = yield* makeDatabase({
             stackId: "stack-integration",

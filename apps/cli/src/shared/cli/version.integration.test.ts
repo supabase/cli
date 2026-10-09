@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Layer, Schema, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { CliOutput, Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import { rootCommand } from "../../cli/root.ts";
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";

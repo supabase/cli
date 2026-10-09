@@ -5,7 +5,7 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, type Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { Output } from "../output/output.service.ts";
 import {
   DeleteFunctionNetworkError,

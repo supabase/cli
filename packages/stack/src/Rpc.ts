@@ -1,5 +1,5 @@
 import { Cause, Exit, Option, Predicate, Schema } from "effect";
-import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Rpc, RpcGroup } from "effect/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
@@ -7,6 +7,7 @@ import { CommandInvocation } from "./Commands.ts";
 import { StackKeysInput } from "./StackNamespace.ts";
 import { failureKind } from "./FailureKind.ts";
 import { failureMessage } from "./internal/failure-message.ts";
+import { rejectExcessKeys } from "./internal/reject-excess-keys.ts";
 import type { PortConflict } from "./Ports.ts";
 import { LogPosition, LogRecord } from "./host/LogRecord.ts";
 
@@ -160,10 +161,12 @@ export const CommandEvent = Schema.TaggedUnion({
   Stderr: { bytes: Schema.Uint8ArrayFromBase64 },
   Completed: { jobId: Schema.String, exitCode: Schema.Int },
 });
-export const RunCommandPayload = Schema.Struct({
-  attachmentId: Schema.String,
-  command: CommandInvocation,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export const RunCommandPayload = rejectExcessKeys(
+  Schema.Struct({
+    attachmentId: Schema.String,
+    command: CommandInvocation,
+  }),
+);
 export type RunCommandPayload = Schema.Schema.Type<typeof RunCommandPayload>;
 
 /** Instance and composition operations served by the owner. */
