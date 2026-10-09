@@ -336,13 +336,31 @@ Only these two pairs exist. A sync PR is accepted only from the release App bot,
 
 A clean merge is pushed straight to the target with the release GitHub App token. If the target branch does not exist (for example `next` before it is created), the run skips cleanly.
 
-On a conflict the workflow opens a **sync PR**:
+On a `main-into-develop` conflict the workflow opens a **sync PR**:
 
 - Branch `sync/<source>-into-<target>`, pointing at the **source** tip, so the PR has commits and GitHub reports it as conflicting.
 - PR into `<target>` titled `chore(repo): sync <source> into <target>`, labelled `do not merge`, listing the conflicting files and the resolution commands.
 - While that PR is open, further syncs for the pair skip.
 
-Resolve by merging the target into the sync branch and pushing:
+#### Agent-resolved `develop-into-next`
+
+A `develop-into-next` conflict is resolved by Claude (`claude-opus-5-5`) instead, in two extra jobs of the same run:
+
+1. **`Resolve conflicts with Claude`** replays the merge and runs Claude Code on each conflicting merge. The agent runs in a container that sees only the worktree (with `.git` read-only), the context files, and `ANTHROPIC_API_KEY`; it has file read and edit tools and no shell. Its context is the history each side brought to every conflicted file, how earlier sync PRs resolved the same files (`git show --remerge-diff`), and those PRs' resolution records, maintainer reviews, comments, and fix commits. Remarks from accounts without write-level association are dropped, since anyone can comment. Conflicted files are resolved in groups of up to eight neighbouring paths, one agent call each, so a large merge stays within each call's turn and spending caps; the run as a whole stops once its budget is spent or after 70 minutes, and hands the merge to a person. The agent delegates broad searches to a read-only explorer subagent on a cheaper model. A group whose result is rejected or that hits a cap is resumed once in the same session, with the reason.
+   After the merge commit, the job runs the repository formatter and `types:check` on the merged tree in a container with no credentials, and keeps the formatter's changes. A merge can type-check badly even without textual conflicts, when one side still uses something the other renamed or removed. On failure, one more agent call fixes the reported errors, amended into the merge commit, and the check runs again. Errors that remain are listed in the PR comment.
+2. **`Publish the sync pull request`** checks that the result is exactly the planned merges and that no path under `.github/` changed except to resolve its own conflict, then pushes `sync/develop-into-next` with a lease and opens or updates the single sync PR. Each update adds a resolution comment; the PR body shows the latest one.
+
+The agent records a **decision** only where `develop` and `next` change the same behavior incompatibly and no earlier sync PR settles it. It still picks an option, and the publish job requests review from `@supabase/cli`. Every conflicted file under `.github/` is also listed as a decision, whatever the agent reported, because the sync branch runs those workflows with repository secrets. Every agent-resolved PR, with or without decisions, lands only through approval (see below), after the required checks pass.
+
+The agent's edits, including resolved workflow files and package scripts, run in the sync PR's CI with repository secrets before anyone reviews them. This is an accepted risk: the agent reads only code already reviewed into `develop` or `next`, which has run in CI with the same secrets, and remarks from accounts with write access; it has no shell or network tools, and its container holds no credential other than the Anthropic key.
+
+Only one sync PR exists at a time. While it is open, every push to `develop` merges `next` and `develop` into the sync branch: a clean merge is pushed to the branch, a conflict goes back to the agent. The run never pushes to `next` while the PR is open.
+
+A person takes over when the agent cannot resolve the merge. With no PR open, the run opens the `main-into-develop` style PR above. With a PR open, it comments with the commands and converts the PR to a draft. Syncs skip a draft PR, and a PR whose head is still a `develop` commit, until a maintainer pushes the merge and marks it ready.
+
+To reverse a resolution, push the change to `sync/develop-into-next` and reply on the PR with the decision. Later syncs read both and follow them, so the same question is not asked twice. Closing the PR without landing tells later syncs that its resolutions were not accepted.
+
+Resolve a sync PR by hand by merging the target into the sync branch and pushing:
 
 ```sh
 git fetch origin

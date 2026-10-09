@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+
 import {
   type GitRunner,
   MAX_PUSH_ATTEMPTS,
@@ -14,12 +16,31 @@ export interface SyncPair {
   target: string;
 }
 
+/** Merges an agent must finish: replayed onto `base` in order, then published to the sync branch. */
+export interface ResolutionPlan {
+  source: string;
+  target: string;
+  /** The target tip, or the head of the open sync pull request. */
+  base: string;
+  merges: { ref: string; sha: string }[];
+  /** Sync branch tip the publish push leases against; null when the branch must not exist. */
+  expectedSyncHead: string | null;
+  pullRequest: number | null;
+}
+
 export type SyncOutcome =
   | { status: "skipped-missing-branch"; branch: string }
   | { status: "skipped-open-pr"; pullRequest: number }
   | { status: "up-to-date" }
   | { status: "merged" }
-  | { status: "conflict-pr-opened"; pullRequest: number; files: string[] };
+  | { status: "conflict-pr-opened"; pullRequest: number; files: string[] }
+  | { status: "pr-updated"; pullRequest: number }
+  | { status: "needs-resolution"; plan: ResolutionPlan };
+
+export interface OpenPullRequest {
+  number: number;
+  draft: boolean;
+}
 
 export interface PullRequestDraft {
   base: string;
@@ -31,7 +52,7 @@ export interface PullRequestDraft {
 
 export interface SyncIo {
   git: GitRunner;
-  findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
+  findOpenPullRequest(base: string, head: string): Promise<OpenPullRequest | undefined>;
   createPullRequest(draft: PullRequestDraft): Promise<number>;
 }
 
@@ -51,11 +72,64 @@ export function syncBranchName({ source, target }: SyncPair): string {
   return `sync/${source}-into-${target}`;
 }
 
+/** Pairs whose conflicts an agent resolves; the others open a conflict pull request for a person. */
+export function resolvesWithAgent({ source, target }: SyncPair): boolean {
+  return source === "develop" && target === "next";
+}
+
+/**
+ * Paths the sync branch runs with repository secrets. An agent may change one only to resolve its conflict, and
+ * every such resolution needs a maintainer's decision.
+ */
+export const PROTECTED_PATH_PREFIX = ".github/";
+
+export function isProtectedPath(path: string): boolean {
+  return path.startsWith(PROTECTED_PATH_PREFIX);
+}
+
+/**
+ * Compares a merge commit's protected paths with git's own merge of its two parents: `conflicted` paths are the
+ * ones the resolution had to decide, `strayEdits` the ones it changed without a conflict.
+ */
+export function protectedPathChanges(
+  git: GitRunner,
+  mergeCommit: string,
+): { conflicted: string[]; strayEdits: string[] } {
+  const mergeTree = git([
+    "-c",
+    "core.quotePath=false",
+    "merge-tree",
+    "--write-tree",
+    "--name-only",
+    "--no-messages",
+    `${mergeCommit}^1`,
+    `${mergeCommit}^2`,
+  ]);
+  const [tree = "", ...conflictedPaths] = mergeTree.stdout.split("\n");
+  if (mergeTree.status > 1 || !/^[0-9a-f]{40,64}$/.test(tree)) {
+    throw new Error(`git merge-tree failed for ${mergeCommit}: ${mergeTree.stderr}`);
+  }
+  const conflicted = [...new Set(conflictedPaths.filter(isProtectedPath))];
+  const changed = gitOrThrow(git, [
+    "diff",
+    "-z",
+    "--name-only",
+    tree,
+    mergeCommit,
+    "--",
+    PROTECTED_PATH_PREFIX,
+  ])
+    .split("\0")
+    .filter(Boolean);
+  return { conflicted, strayEdits: changed.filter((path) => !conflicted.includes(path)) };
+}
+
 export function renderConflictPr(
   pair: SyncPair,
   files: string[],
   sourceSha: string,
   targetSha: string,
+  reason?: string,
 ): { title: string; body: string } {
   const branch = syncBranchName(pair);
   const marker = `<!-- sync-branches source=${pair.source} target=${pair.target} source-sha=${sourceSha} target-sha=${targetSha} -->`;
@@ -64,6 +138,7 @@ export function renderConflictPr(
     "",
     `Merging \`${pair.source}\` into \`${pair.target}\` conflicts. This branch starts at the tip of \`${pair.source}\` (\`${sourceSha.slice(0, 7)}\`); \`${pair.target}\` is at \`${targetSha.slice(0, 7)}\`.`,
     "",
+    ...(reason ? [reason, ""] : []),
     "Conflicting files:",
     "",
     ...files.map((file) => `- \`${file}\``),
@@ -95,14 +170,72 @@ function remoteBranchExists(git: GitRunner, branch: string): boolean {
   throw new Error(`git ls-remote failed: ${result.stderr}`);
 }
 
-function fetchBranches(git: GitRunner, pair: SyncPair): void {
+function remoteBranchSha(git: GitRunner, branch: string): string | null {
+  const line = gitOrThrow(git, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+  return line.split("\t")[0] || null;
+}
+
+function fetchBranches(git: GitRunner, branches: string[]): void {
   gitOrThrow(git, [
     "fetch",
     "--no-tags",
     "origin",
-    `+refs/heads/${pair.source}:refs/remotes/origin/${pair.source}`,
-    `+refs/heads/${pair.target}:refs/remotes/origin/${pair.target}`,
+    ...branches.map((branch) => `+refs/heads/${branch}:refs/remotes/origin/${branch}`),
   ]);
+}
+
+function isAncestor(git: GitRunner, ancestor: string, descendant: string): boolean {
+  return git(["merge-base", "--is-ancestor", ancestor, descendant]).status === 0;
+}
+
+/**
+ * Brings an open agent-resolved sync pull request up to date with the target and the source.
+ * A draft, or a head that has not merged anything yet, waits for a person.
+ */
+async function updateSyncPullRequest(
+  git: GitRunner,
+  pair: SyncPair,
+  pullRequest: OpenPullRequest,
+): Promise<SyncOutcome> {
+  const syncBranch = syncBranchName(pair);
+  fetchBranches(git, [pair.source, pair.target, syncBranch]);
+  const syncHead = gitOrThrow(git, ["rev-parse", `refs/remotes/origin/${syncBranch}`]);
+  if (pullRequest.draft || isAncestor(git, syncHead, `refs/remotes/origin/${pair.source}`)) {
+    return { status: "skipped-open-pr", pullRequest: pullRequest.number };
+  }
+
+  const merges = [pair.target, pair.source]
+    .filter((ref) => !isAncestor(git, `refs/remotes/origin/${ref}`, syncHead))
+    .map((ref) => ({ ref, sha: gitOrThrow(git, ["rev-parse", `refs/remotes/origin/${ref}`]) }));
+  if (merges.length === 0) {
+    return { status: "up-to-date" };
+  }
+
+  gitOrThrow(git, ["checkout", "--detach", syncHead]);
+  for (const { sha } of merges) {
+    if (git(["merge", "--no-ff", "--no-edit", sha]).status !== 0) {
+      gitOrThrow(git, ["merge", "--abort"]);
+      return {
+        status: "needs-resolution",
+        plan: {
+          source: pair.source,
+          target: pair.target,
+          base: syncHead,
+          merges,
+          expectedSyncHead: syncHead,
+          pullRequest: pullRequest.number,
+        },
+      };
+    }
+  }
+  // The lease fails if an approval landed and deleted the branch meanwhile; the next run starts over.
+  gitOrThrow(git, [
+    "push",
+    `--force-with-lease=refs/heads/${syncBranch}:${syncHead}`,
+    "origin",
+    `HEAD:refs/heads/${syncBranch}`,
+  ]);
+  return { status: "pr-updated", pullRequest: pullRequest.number };
 }
 
 export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutcome> {
@@ -116,15 +249,18 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
   const syncBranch = syncBranchName(pair);
   const openPullRequest = await io.findOpenPullRequest(pair.target, syncBranch);
   if (openPullRequest !== undefined) {
-    return { status: "skipped-open-pr", pullRequest: openPullRequest };
+    if (resolvesWithAgent(pair)) {
+      return updateSyncPullRequest(git, pair, openPullRequest);
+    }
+    return { status: "skipped-open-pr", pullRequest: openPullRequest.number };
   }
 
   const source = `refs/remotes/origin/${pair.source}`;
   const target = `refs/remotes/origin/${pair.target}`;
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt += 1) {
-    fetchBranches(git, pair);
-    if (git(["merge-base", "--is-ancestor", source, target]).status === 0) {
+    fetchBranches(git, [pair.source, pair.target]);
+    if (isAncestor(git, source, target)) {
       return { status: "up-to-date" };
     }
 
@@ -141,6 +277,19 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
         throw new Error(`git merge failed without conflicts: ${merge.stderr || merge.stdout}`);
       }
       gitOrThrow(git, ["merge", "--abort"]);
+      if (resolvesWithAgent(pair)) {
+        return {
+          status: "needs-resolution",
+          plan: {
+            source: pair.source,
+            target: pair.target,
+            base: targetSha,
+            merges: [{ ref: pair.source, sha: sourceSha }],
+            expectedSyncHead: remoteBranchSha(git, syncBranch),
+            pullRequest: null,
+          },
+        };
+      }
       gitOrThrow(git, ["push", "--force", "origin", `${sourceSha}:refs/heads/${syncBranch}`]);
       const { title, body } = renderConflictPr(pair, files, sourceSha, targetSha);
       const pullRequest = await io.createPullRequest({
@@ -171,11 +320,12 @@ function makeIo(token: string, repository: string): SyncIo {
         base,
         head: `${owner}:${head}`,
       });
-      const pulls = await githubRequest<{ number: number }[]>(
+      const pulls = await githubRequest<OpenPullRequest[]>(
         token,
         `/repos/${repository}/pulls?${query}`,
       );
-      return pulls[0]?.number;
+      const pull = pulls[0];
+      return pull && { number: pull.number, draft: pull.draft };
     },
     async createPullRequest({ labels, ...draft }) {
       const created = await githubRequest<{ number: number }>(
@@ -210,9 +360,18 @@ async function main(): Promise<void> {
       break;
     case "skipped-open-pr":
       console.log(
-        `::notice::${syncBranchName(pair)} PR #${outcome.pullRequest} is open; skipping.`,
+        `::notice::${syncBranchName(pair)} PR #${outcome.pullRequest} is open and waiting for a person; skipping.`,
       );
       break;
+    case "pr-updated":
+      console.log(`Merged cleanly into ${syncBranchName(pair)} for PR #${outcome.pullRequest}.`);
+      break;
+    case "needs-resolution": {
+      const output = requireEnv("GITHUB_OUTPUT");
+      appendFileSync(output, `plan=${JSON.stringify(outcome.plan)}\n`);
+      console.log(`Conflicts merging into ${syncBranchName(pair)}; handing off to the agent.`);
+      break;
+    }
     case "up-to-date":
       console.log(`${pair.target} already contains ${pair.source}.`);
       break;

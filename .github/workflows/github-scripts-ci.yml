@@ -17,6 +17,7 @@ on:
       - ".github/workflows/fast-forward.yml"
       - ".github/workflows/lint-pull-request.yml"
       - ".github/workflows/sync-branches.yml"
+      - ".github/sync-branches/**"
       - "apps/cli/scripts/analyze-commits-title.js"
       - ".github/workflows/github-scripts-ci.yml"
       - ".github/workflows/mirror-slim-image.yml"

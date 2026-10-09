@@ -131,10 +131,16 @@ Full procedures live in the
 [release process runbook](../apps/cli/docs/release-process.md); the decision is
 [ADR 0028](../docs/adr/0028-release-branches-and-maintenance-lines.md).
 
-**Resolving a sync PR.** When `Sync branches` cannot merge cleanly it opens
-`sync/<source>-into-<target>` (for example `sync/develop-into-next`). Further
-syncs for that pair skip while it is open. Merge the target into the sync
-branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
+**Resolving a sync PR.** When `Sync branches` cannot merge `main` into
+`develop` cleanly it opens `sync/main-into-develop`; further syncs for that pair
+skip while it is open. A `develop` → `next` conflict is resolved by Claude on
+`sync/develop-into-next`, which every later `develop` push updates; review its
+resolution comments, answer any decision it flags (push the fix and reply with
+the decision so later syncs reuse it), and approve. A draft sync PR waits for
+you; see the
+[runbook](../apps/cli/docs/release-process.md#agent-resolved-develop-into-next).
+To resolve by hand, merge the target into the sync branch, resolve, and push;
+then **approve** the PR. Approval fast-forwards the
 target and deletes the branch. Never use the merge button. If the target or the
 source moved, the bot merges the latest target and source into the approved head and lands
 it directly if the merge is clean, as for a clean sync (the merge commit is
