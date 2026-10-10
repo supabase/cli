@@ -217,6 +217,7 @@ checksum = "sha256:de9eb05af3cde409dc0b37fe2fd6a21b875a575374e7b26c02d45a7086645
 url = "https://github.com/jdx/jactionlint/releases/download/v1.8.2/jactionlint_1.8.2_darwin_arm64.tar.gz"
 url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/611338605"
 provenance = "github-attestations"
+provenance_verified = true
 
 [tools.jactionlint."platforms.macos-x64"]
 checksum = "sha256:42790b2565759b7f4a81696fb9034b2060f97f551d2ced54cf722c9de9abe6b2"

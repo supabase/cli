@@ -346,7 +346,7 @@ describe("publishRepair", () => {
     ]);
     expect(calls.resolved).toEqual(["T1"]);
     const record = calls.comments[0]?.body ?? "";
-    expect(record).toStartWith(`<!-- sync-repair round=1 head=${repairPlan.head} -->`);
+    expect(record).toStartWith(`<!-- sync-repair-result round=1 head=${repairPlan.head} -->`);
     expect(record).toContain("(`.github/ci.yml`)");
     expect(calls.reviews).toEqual(["cli"]);
   });

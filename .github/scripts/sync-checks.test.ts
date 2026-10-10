@@ -19,6 +19,7 @@ function mergedCheckout(): { checkout: string; merge: string } {
   const repo = createTestRepo();
   repos.push(repo);
   const checkout = repo.checkout();
+  git(checkout, "switch", "-q", "main");
   writeFileSync(join(checkout, "shared.txt"), "next\ndevelop\n");
   git(checkout, "commit", "-qam", "Merge develop");
   return { checkout, merge: git(checkout, "rev-parse", "HEAD") };

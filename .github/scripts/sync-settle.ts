@@ -99,7 +99,8 @@ export function decideSettle(
   const lineageStart = state.comments.findLastIndex(
     (c) => byBot(c) && c.body.startsWith(RESOLUTION_MARKER),
   );
-  const lineage = lineageStart === -1 ? [] : state.comments.slice(lineageStart);
+  // A pull request a maintainer resolved by hand has no resolution record; its rounds count from the start.
+  const lineage = lineageStart === -1 ? state.comments : state.comments.slice(lineageStart);
   const resolvedAt = lineageStart === -1 ? undefined : Date.parse(lineage[0]?.createdAt ?? "");
   const reviewed =
     state.aiReview !== undefined &&
@@ -158,6 +159,7 @@ interface CheckRunResponse {
   id: number;
   name: string;
   started_at: string | null;
+  completed_at: string | null;
   status: string;
   conclusion: string | null;
   details_url: string | null;
@@ -296,8 +298,9 @@ async function readState(
   const latest = new Map<string, CheckRunResponse>();
   for (const run of runs) {
     const current = latest.get(run.name);
-    // A queued run has no start time yet and is the newest.
-    const started = (check: CheckRunResponse) => check.started_at ?? "\uffff";
+    // A queued run has no start time yet and is the newest; a run cancelled before starting is not.
+    const started = (check: CheckRunResponse) =>
+      check.started_at ?? (check.status === "completed" ? (check.completed_at ?? "") : "\uffff");
     const newer =
       !current ||
       started(run) > started(current) ||
@@ -429,6 +432,13 @@ async function main(): Promise<void> {
       break;
     }
     case "repair":
+      // Recorded before the repair runs, so a repair that crashes still uses up its round.
+      await githubRequest(token, `${base}/issues/${pullRequest}/comments`, {
+        body: [
+          `${REPAIR_MARKER}${decision.plan.round} head=${decision.plan.head} -->`,
+          `Repair round ${decision.plan.round} started on \`${decision.plan.head.slice(0, 7)}\`: ${decision.plan.failures.length} failing jobs, ${decision.plan.findings.length} AI review findings. [Workflow run](${requireEnv("RUN_URL")})`,
+        ].join("\n"),
+      });
       appendFileSync(requireEnv("GITHUB_OUTPUT"), `repair=${JSON.stringify(decision.plan)}\n`);
       console.log(
         `Repair round ${decision.plan.round}: ${decision.plan.failures.length} failing jobs, ${decision.plan.findings.length} findings.`,

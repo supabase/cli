@@ -6,6 +6,7 @@ name: Sync repair
 on:
   workflow_run:
     workflows:
+      - CI
       - Test
       - AI Review
       - GitHub Scripts CI
@@ -65,6 +66,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           READ_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bun .github/scripts/sync-settle.ts
 
   # Holds the Anthropic key but no write token; the agent runs in the same container sandbox as the resolve job.

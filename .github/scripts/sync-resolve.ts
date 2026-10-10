@@ -58,8 +58,11 @@ export type ConflictResolver = (conflict: Conflict) => Promise<AgentResolution |
 /** Marks the bot comment that records one run's resolution; later runs read these as precedent. */
 export const RESOLUTION_MARKER = "<!-- sync-resolution -->";
 
-/** Prefixes the bot comment that records one repair round, `<!-- sync-repair round=N -->`. */
-export const REPAIR_MARKER = "<!-- sync-repair";
+/** Prefixes the bot comment that starts a repair round, `<!-- sync-repair round=N head=SHA -->`; one per round. */
+export const REPAIR_MARKER = "<!-- sync-repair round=";
+
+/** Prefixes the bot comment that records what a repair round did; later runs read these as precedent. */
+export const REPAIR_RESULT_MARKER = "<!-- sync-repair-result";
 
 const MAX_AGENT_ATTEMPTS = 2;
 /** Small enough that one agent call resolves a group within its turn budget. */
@@ -374,7 +377,9 @@ async function writersAmong(
 function isResolutionRecord(remark: Remark): boolean {
   return (
     remark.user?.login === RELEASE_BOT_LOGIN &&
-    Boolean(remark.body?.startsWith(RESOLUTION_MARKER) || remark.body?.startsWith(REPAIR_MARKER))
+    Boolean(
+      remark.body?.startsWith(RESOLUTION_MARKER) || remark.body?.startsWith(REPAIR_RESULT_MARKER),
+    )
   );
 }
 

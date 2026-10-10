@@ -81,10 +81,8 @@ export async function githubRequest<T>(
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 /** The only branch pairs that sync; each is promoted by a `sync/<source>-into-<target>` pull request. */

@@ -135,6 +135,17 @@ describe("decideSettle", () => {
     expect(decision).toMatchObject({ action: "escalate" });
   });
 
+  test("counts every round on a pull request a maintainer resolved by hand", () => {
+    const comments = [
+      bot("<!-- sync-repair round=1 head=b -->", hours(-2)),
+      bot("<!-- sync-repair round=2 head=c -->", hours(-1)),
+    ];
+
+    const decision = decideSettle(state({ comments, checks: failingQuality(2) }), pair);
+
+    expect(decision).toMatchObject({ action: "escalate" });
+  });
+
   test("counts rounds only since the latest resolution", () => {
     const comments = [
       bot("<!-- sync-resolution -->", hours(-5)),

@@ -22,7 +22,7 @@ import type { RepairPlan, RepairResult } from "./sync-repair.ts";
 import {
   type AgentResolution,
   type CheckResult,
-  REPAIR_MARKER,
+  REPAIR_RESULT_MARKER,
   RESOLUTION_MARKER,
   type ResolveResult,
 } from "./sync-resolve.ts";
@@ -71,6 +71,11 @@ function short(sha: string): string {
 /** Agent text is rendered into bot comments; this keeps it from pinging anyone or forging a hidden marker. */
 function neutralize(text: string): string {
   return text.replace(/@(?=[\w-])/g, "@\u200b").replace(/<!--/g, "&lt;!--");
+}
+
+/** An agent-reported path as inline code, unable to close its code span. */
+function pathCode(path: string): string {
+  return `\`${neutralize(path).replaceAll("`", "'")}\``;
 }
 
 function capped(body: string): string {
@@ -246,7 +251,7 @@ function renderDecisions(decisions: AgentResolution["decisions"]): string[] {
     "**Needs a decision**",
     "",
     ...decisions.flatMap((decision, index) => [
-      `${index + 1}. ${neutralize(decision.question)} (${decision.paths.map((path) => `\`${path}\``).join(", ")})`,
+      `${index + 1}. ${neutralize(decision.question)} (${decision.paths.map(pathCode).join(", ")})`,
       `   - Chosen: ${neutralize(decision.chosen)}`,
       `   - Alternative: ${neutralize(decision.alternative)}`,
     ]),
@@ -267,17 +272,17 @@ function renderMerge(ref: string, sha: string, resolution: AgentResolution | nul
   lines.push("", "**Resolved files**", "");
   for (const file of resolution.files) {
     const precedent = file.precedent === null ? "" : ` (follows #${file.precedent})`;
-    lines.push(`- \`${file.path}\`: ${neutralize(file.resolution)}${precedent}`);
+    lines.push(`- ${pathCode(file.path)}: ${neutralize(file.resolution)}${precedent}`);
   }
   for (const path of resolution.deletedFiles) {
-    lines.push(`- \`${path}\`: deleted`);
+    lines.push(`- ${pathCode(path)}: deleted`);
   }
   return lines;
 }
 
 function renderCheck(check: CheckResult): string[] {
   const fixes = check.fixes.map(
-    ({ path, resolution }) => `- \`${path}\`: ${neutralize(resolution)}`,
+    ({ path, resolution }) => `- ${pathCode(path)}: ${neutralize(resolution)}`,
   );
   const decisions = renderDecisions(check.decisions);
   if (check.passed) {
@@ -373,11 +378,11 @@ function renderManualComment(
 ): string {
   const branch = syncBranchName(plan);
   return [
-    `Merging \`${result.ref}\` (\`${short(result.sha)}\`) into \`${branch}\` needs a maintainer. ${result.reason}`,
+    `Merging \`${result.ref}\` (\`${short(result.sha)}\`) into \`${branch}\` needs a maintainer. ${neutralize(result.reason)}`,
     "",
     "Conflicting files:",
     "",
-    ...result.files.map((file) => `- \`${file}\``),
+    ...result.files.map((file) => `- ${pathCode(file)}`),
     "",
     "This pull request is now a draft, so syncs pause. To resolve:",
     "",
@@ -502,7 +507,7 @@ export function renderRepairRecord(
 ): string {
   const moved = result.head !== plan.head;
   const lines = [
-    `${REPAIR_MARKER} round=${plan.round} head=${plan.head} -->`,
+    `${REPAIR_RESULT_MARKER} round=${plan.round} head=${plan.head} -->`,
     `### Repair round ${plan.round} for \`${short(result.head)}\``,
     "",
     `Claude (\`${options.model}\`) worked on ${plan.failures.length} failing CI job${plan.failures.length === 1 ? "" : "s"} and ${plan.findings.length} AI review finding${plan.findings.length === 1 ? "" : "s"}. [Workflow run](${options.runUrl})`,
@@ -524,7 +529,7 @@ export function renderRepairRecord(
       "**Changed files**",
       "",
       ...result.outcome.files.map(
-        ({ path, resolution }) => `- \`${path}\`: ${neutralize(resolution)}`,
+        ({ path, resolution }) => `- ${pathCode(path)}: ${neutralize(resolution)}`,
       ),
     );
   }
@@ -586,6 +591,10 @@ export async function publishRepair(
       `${head}:refs/heads/${branch}`,
     ]);
     if (push.status !== 0) {
+      const remote = gitOrThrow(git, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+      if (remote.split("\t")[0] === plan.head) {
+        throw new Error(`git push to ${branch} failed: ${push.stderr}`);
+      }
       return { status: "superseded" };
     }
   } else {

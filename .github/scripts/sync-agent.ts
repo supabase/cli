@@ -26,7 +26,7 @@ export interface AgentSession {
   home: string;
 }
 
-export interface AgentRun<T> {
+interface AgentRun<T> {
   outcome: T | string;
   /** The reported cost, or the call's whole budget when the call ended without reporting one. */
   costUsd: number;
@@ -48,7 +48,7 @@ const MAX_USD_PER_RUN = 80;
 const MIN_CALL_USD = 1;
 const MAX_MINUTES_PER_CALL = 25;
 /** Below the workflow job's timeout, so a slow run still hands the merge to a person instead of being killed. */
-export const RUN_DEADLINE_MINUTES = 70;
+const RUN_DEADLINE_MINUTES = 70;
 /** A call with less time left than this would only be cut off. */
 const MIN_CALL_MINUTES = 5;
 
@@ -64,7 +64,7 @@ const EXPLORER_AGENT = {
   },
 };
 
-export function isStringArray(value: unknown): value is string[] {
+function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
