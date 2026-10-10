@@ -102,6 +102,7 @@ jobs:
       # read-only token, so the label stays there and must be removed by hand.
       - name: Remove trigger label
         if: >-
+          always() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         env:

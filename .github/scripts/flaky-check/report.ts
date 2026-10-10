@@ -3,6 +3,8 @@ import type { JsonTestResults } from "vitest/node";
 
 export const COMMENT_MARKER = "<!-- flaky-check -->";
 const MAX_ROWS = 50;
+// GitHub rejects issue comments longer than 65,536 characters.
+const MAX_COMMENT = 65_000;
 const MAX_MESSAGE = 200;
 const FILE_LEVEL_TITLE = "(file setup)";
 const SKIPPED = new Set(["skipped", "pending", "todo", "disabled"]);
@@ -288,7 +290,10 @@ export function renderMarkdown(
       "",
       "| Run | Problem |",
       "| --- | --- |",
-      ...report.runProblems.map((p) => `| \`${p.name}\` | ${p.problem} |`),
+      ...report.runProblems.slice(0, MAX_ROWS).map((p) => `| \`${p.name}\` | ${cell(p.problem)} |`),
+      ...(report.runProblems.length > MAX_ROWS
+        ? ["", `…and ${report.runProblems.length - MAX_ROWS} more in \`report.json\`.`]
+        : []),
       "",
     );
   }
@@ -296,4 +301,13 @@ export function renderMarkdown(
     "<sub>Each execution is a separate Vitest process; `Where` lists failing runs, as `run.iteration` for suites executed more than once per run. The full data is in the `flaky-check-report` artifact.</sub>",
   );
   return `${lines.join("\n")}\n`;
+}
+
+/** The report cut to fit a PR comment; the job summary and artifact keep the full version. */
+export function commentBody(markdown: string): string {
+  const note =
+    "\n\n…truncated; the full report is in the job summary and the `flaky-check-report` artifact.\n";
+  return markdown.length <= MAX_COMMENT
+    ? markdown
+    : markdown.slice(0, MAX_COMMENT - note.length) + note;
 }

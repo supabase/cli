@@ -21,6 +21,7 @@ import {
 import {
   aggregate,
   COMMENT_MARKER,
+  commentBody,
   isClean,
   parseVitestJson,
   renderMarkdown,
@@ -228,7 +229,14 @@ function commentCommand(): void {
       existing === undefined
         ? ["POST", `${issue}/${env("PR_NUMBER")}/comments`]
         : ["PATCH", `${issue}/comments/${existing.id}`];
-    capture(["gh", "api", "--method", ...target, "--field", `body=@${reportPath}`]);
+    capture([
+      "gh",
+      "api",
+      "--method",
+      ...target,
+      "--raw-field",
+      `body=${commentBody(readFileSync(reportPath, "utf8"))}`,
+    ]);
   } catch (error) {
     // The report stays in the job summary and artifact, so a comment failure only warns.
     console.log(
