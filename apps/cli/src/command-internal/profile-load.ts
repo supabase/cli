@@ -1,4 +1,4 @@
-import { Data, Effect, FileSystem } from "effect";
+import { Data, Effect, FileSystem, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -71,7 +71,10 @@ export function loadProfile(
 
     const ext = goFilepathExt(token);
     if (!VIPER_SUPPORTED_EXTS.has(ext)) {
-      return yield* failRead(`Unsupported Config Type ${JSON.stringify(ext)}`);
+      const quoted = yield* quoteJsonString(ext).pipe(
+        Effect.mapError((error) => readError(error.message)),
+      );
+      return yield* failRead(`Unsupported Config Type ${quoted}`);
     }
 
     const content = yield* fs
@@ -90,12 +93,10 @@ export function loadProfile(
         ),
       );
 
-    let parsed: unknown;
-    try {
-      parsed = parseYaml(content);
-    } catch (cause) {
-      return yield* failRead(`While parsing config: ${parseDetail(cause)}`);
-    }
+    let parsed = yield* Effect.try({
+      try: (): unknown => parseYaml(content),
+      catch: (cause) => readError(`While parsing config: ${parseDetail(cause)}`),
+    });
     if (parsed === null || parsed === undefined) {
       parsed = {};
     }
@@ -166,7 +167,12 @@ export function loadProfile(
 
 const fail = (message: string) => Effect.fail(new ProfileLoadError({ message }));
 
-const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
+const readError = (detail: string) =>
+  new ProfileLoadError({ message: `failed to read profile: ${detail}` });
+
+const failRead = (detail: string) => Effect.fail(readError(detail));
+
+const quoteJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
 /** Aggregate decode-error template: multiple failing fields render as one block. */
 const failDecode = (detail: string) =>

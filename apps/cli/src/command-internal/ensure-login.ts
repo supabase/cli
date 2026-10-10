@@ -135,14 +135,12 @@ export const browserLogin = Effect.fn("Login.browser")(function* (opts: BrowserL
           const failures = failuresSoFar + 1;
           if (failures > MAX_LOGIN_RETRIES) {
             yield* Effect.annotateCurrentSpan("login.verify_attempt_count", failures);
-            return yield* Effect.fail(
-              new LoginFailedError({
-                message: err.message,
-                statusCode: err.statusCode,
-                network: err.network,
-                decode: err.decode,
-              }),
-            );
+            return yield* new LoginFailedError({
+              message: err.message,
+              statusCode: err.statusCode,
+              network: err.network,
+              decode: err.decode,
+            });
           }
           yield* output.raw(`${err.message}\nRetry (${failures}/${MAX_LOGIN_RETRIES}): `, "stderr");
           return yield* verifyWithRetries(failures);

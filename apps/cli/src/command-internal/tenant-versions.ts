@@ -75,7 +75,7 @@ const fetchJson = (request: HttpClientRequest.HttpClientRequest) =>
     const response = yield* httpClient.execute(request);
     if (response.status !== 200) return Option.none<unknown>();
     return Option.some(yield* response.json);
-  }).pipe(Effect.catch(() => Effect.succeed(Option.none<unknown>())));
+  }).pipe(Effect.orElseSucceed(() => Option.none<unknown>()));
 
 const fetchText = (request: HttpClientRequest.HttpClientRequest) =>
   Effect.gen(function* () {
@@ -83,7 +83,7 @@ const fetchText = (request: HttpClientRequest.HttpClientRequest) =>
     const response = yield* httpClient.execute(request);
     if (response.status !== 200) return Option.none<string>();
     return Option.some(yield* response.text);
-  }).pipe(Effect.catch(() => Effect.succeed(Option.none<string>())));
+  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
 export const fetchPostgrestVersion = (
   opts: TenantVersionOptions,
