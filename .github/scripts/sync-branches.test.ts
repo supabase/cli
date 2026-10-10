@@ -7,6 +7,7 @@ import {
   renderConflictPr,
   syncBranches,
   syncBranchName,
+  type OpenPullRequest,
   type PullRequestDraft,
   type SyncIo,
 } from "./sync-branches.ts";
@@ -30,7 +31,7 @@ function branchFromMain(repo: TestRepo, name: string): void {
   git(repo.seed, "push", "origin", name);
 }
 
-function fakeIo(checkout: string, openPullRequest?: number) {
+function fakeIo(checkout: string, openPullRequest?: OpenPullRequest) {
   const created: PullRequestDraft[] = [];
   const io: SyncIo = {
     git: makeGit(checkout),
@@ -117,7 +118,7 @@ describe("syncBranches", () => {
     repo.commit(repo.seed, "main.txt", "main\n", "fix: main");
     git(repo.seed, "push", "origin", "main");
     const developBefore = repo.remoteTip("develop");
-    const { io } = fakeIo(repo.checkout(), 12);
+    const { io } = fakeIo(repo.checkout(), { number: 12, draft: false });
 
     const outcome = await syncBranches(io, pair);
 
@@ -233,5 +234,120 @@ describe("syncBranches", () => {
     const developTip = repo.remoteTip("develop");
     expect(repo.isAncestor(mainTip, developTip)).toBe(true);
     expect(git(repo.remote, "show", `${developTip}^1:late.txt`)).toBe("late");
+  });
+});
+
+describe("syncBranches with agent resolution", () => {
+  const nextPair = parsePair("develop-into-next");
+
+  /** `develop` and `next` both edit shared.txt; returns their tips. */
+  function divergedBranches(repo: TestRepo): { develop: string; next: string } {
+    branchFromMain(repo, "next");
+    const next = repo.commit(repo.seed, "shared.txt", "next\n", "feat!: next edit");
+    git(repo.seed, "push", "origin", "next");
+    branchFromMain(repo, "develop");
+    const develop = repo.commit(repo.seed, "shared.txt", "develop\n", "fix: develop edit");
+    git(repo.seed, "push", "origin", "develop");
+    return { develop, next };
+  }
+
+  /** Pushes a resolved merge of `develop` into `next` as the sync branch head. */
+  function resolvedSyncBranch(repo: TestRepo, tips: { develop: string; next: string }): string {
+    git(repo.seed, "switch", "--detach", tips.next);
+    git(repo.seed, "merge", "-s", "ours", "--no-commit", tips.develop);
+    return resolvedMerge(repo);
+  }
+
+  function resolvedMerge(repo: TestRepo): string {
+    repo.commit(repo.seed, "shared.txt", "resolved\n", "Merge develop into sync/develop-into-next");
+    git(repo.seed, "push", "--force", "origin", "HEAD:refs/heads/sync/develop-into-next");
+    return git(repo.seed, "rev-parse", "HEAD");
+  }
+
+  test("hands a conflict to the agent instead of opening a pull request", async () => {
+    const repo = setup();
+    const tips = divergedBranches(repo);
+    const { io, created } = fakeIo(repo.checkout());
+
+    const outcome = await syncBranches(io, nextPair);
+
+    expect(outcome).toEqual({
+      status: "needs-resolution",
+      plan: {
+        source: "develop",
+        target: "next",
+        base: tips.next,
+        merges: [{ ref: "develop", sha: tips.develop }],
+        expectedSyncHead: null,
+        pullRequest: null,
+      },
+    });
+    expect(created).toHaveLength(0);
+    expect(repo.remoteTip("next")).toBe(tips.next);
+  });
+
+  test("merges a clean develop push into the open sync pull request, not into next", async () => {
+    const repo = setup();
+    const tips = divergedBranches(repo);
+    const syncHead = resolvedSyncBranch(repo, tips);
+    git(repo.seed, "switch", "develop");
+    const developTip = repo.commit(repo.seed, "other.txt", "other\n", "feat: unrelated");
+    git(repo.seed, "push", "origin", "develop");
+    const { io, created } = fakeIo(repo.checkout(), { number: 7, draft: false });
+
+    expect(await syncBranches(io, nextPair)).toEqual({ status: "pr-updated", pullRequest: 7 });
+
+    const updated = repo.remoteTip("sync/develop-into-next");
+    expect(git(repo.remote, "rev-parse", `${updated}^1`)).toBe(syncHead);
+    expect(git(repo.remote, "rev-parse", `${updated}^2`)).toBe(developTip);
+    expect(git(repo.remote, "show", `${updated}:shared.txt`)).toBe("resolved");
+    expect(repo.remoteTip("next")).toBe(tips.next);
+    expect(created).toHaveLength(0);
+  });
+
+  test("hands a develop push that conflicts with the open resolution to the agent", async () => {
+    const repo = setup();
+    const tips = divergedBranches(repo);
+    const syncHead = resolvedSyncBranch(repo, tips);
+    git(repo.seed, "switch", "develop");
+    const developTip = repo.commit(repo.seed, "shared.txt", "develop again\n", "fix: again");
+    git(repo.seed, "push", "origin", "develop");
+    const { io } = fakeIo(repo.checkout(), { number: 7, draft: false });
+
+    const outcome = await syncBranches(io, nextPair);
+
+    expect(outcome).toEqual({
+      status: "needs-resolution",
+      plan: {
+        source: "develop",
+        target: "next",
+        base: syncHead,
+        merges: [{ ref: "develop", sha: developTip }],
+        expectedSyncHead: syncHead,
+        pullRequest: 7,
+      },
+    });
+    expect(repo.remoteTip("sync/develop-into-next")).toBe(syncHead);
+  });
+
+  test.each([
+    ["is a draft", true, true],
+    ["still points at a develop commit", false, false],
+  ])("waits for a person while the open pull request %s", async (_, draft, resolved) => {
+    const repo = setup();
+    const tips = divergedBranches(repo);
+    if (resolved) {
+      resolvedSyncBranch(repo, tips);
+    } else {
+      git(repo.seed, "push", "origin", `${tips.develop}:refs/heads/sync/develop-into-next`);
+    }
+    const syncHead = repo.remoteTip("sync/develop-into-next");
+    git(repo.seed, "switch", "develop");
+    repo.commit(repo.seed, "other.txt", "other\n", "feat: unrelated");
+    git(repo.seed, "push", "origin", "develop");
+    const { io } = fakeIo(repo.checkout(), { number: 7, draft });
+
+    expect(await syncBranches(io, nextPair)).toEqual({ status: "skipped-open-pr", pullRequest: 7 });
+    expect(repo.remoteTip("sync/develop-into-next")).toBe(syncHead);
   });
 });

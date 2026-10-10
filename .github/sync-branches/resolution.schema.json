@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "files", "deletedFiles", "decisions"],
+  "properties": {
+    "status": { "enum": ["resolved", "unresolved"] },
+    "summary": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "resolution", "precedent"],
+        "properties": {
+          "path": { "type": "string" },
+          "resolution": { "type": "string" },
+          "precedent": {
+            "type": ["integer", "null"],
+            "description": "Number of the earlier sync pull request whose decision this follows."
+          }
+        }
+      }
+    },
+    "deletedFiles": { "type": "array", "items": { "type": "string" } },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["paths", "question", "chosen", "alternative"],
+        "properties": {
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "question": { "type": "string" },
+          "chosen": { "type": "string" },
+          "alternative": { "type": "string" }
+        }
+      }
+    }
+  }
+}
