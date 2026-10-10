@@ -117,10 +117,10 @@ export interface TestStack<
 }
 
 const runtimeOverride = Config.option(
-  Config.literals(["native", "docker", "podman"], "SUPABASE_STACK_TEST_RUNTIME"),
+  Config.Literals(["native", "docker", "podman"], "SUPABASE_STACK_TEST_RUNTIME"),
 );
 
-const cacheHome = Config.option(Config.nonEmptyString("XDG_CACHE_HOME"));
+const cacheHome = Config.option(Config.NonEmptyString("XDG_CACHE_HOME"));
 
 const testFailure = (operation: string) => (cause: unknown) => stackError(operation, cause);
 

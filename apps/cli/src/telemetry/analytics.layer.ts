@@ -86,7 +86,7 @@ export const collectEnvSignals = Effect.gen(function* () {
   const signals: Record<string, true | string> = {};
 
   for (const key of EnvSignalPresenceKeys) {
-    const raw = yield* Config.option(Config.string(key));
+    const raw = yield* Config.option(Config.String(key));
     if (Option.isNone(raw)) continue;
     const value = raw.value;
     if (value.trim().length === 0) continue;
@@ -94,7 +94,7 @@ export const collectEnvSignals = Effect.gen(function* () {
   }
 
   for (const key of EnvSignalValueKeys) {
-    const raw = yield* Config.option(Config.string(key));
+    const raw = yield* Config.option(Config.String(key));
     if (Option.isNone(raw)) continue;
     const trimmed = raw.value.trim();
     if (trimmed.length === 0) continue;
@@ -115,7 +115,7 @@ function makeLoadLinkedProject(
   runtimeInfo: { readonly cwd: string },
 ): Effect.Effect<Option.Option<LinkedProjectCacheValue>> {
   return Effect.gen(function* () {
-    const configuredWorkdir = yield* Config.option(Config.string("SUPABASE_WORKDIR"));
+    const configuredWorkdir = yield* Config.option(Config.String("SUPABASE_WORKDIR"));
     const workdir = Option.getOrElse(configuredWorkdir, () => runtimeInfo.cwd);
     const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
     const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));

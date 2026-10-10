@@ -214,7 +214,7 @@ const resolveDbPassword = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const ambientPassword = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
+  const ambientPassword = yield* Config.option(Config.String("SUPABASE_DB_PASSWORD"));
   return (
     Option.getOrUndefined(passwordFlag) ??
     Option.getOrUndefined(ambientPassword) ??

@@ -274,6 +274,7 @@ const { visitedFiles, bareSpecifiers } = collectImportGraph(join(srcDir, "index.
 const expectedPureGraphFiles = [
   "index.ts",
   "base.ts",
+  "json-schema-document.ts",
   "errors.ts",
   "config-document.ts",
   "config-diff.ts",

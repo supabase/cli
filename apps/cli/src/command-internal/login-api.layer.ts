@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { LoginApi, type LoginApiSessionResponse } from "../commands/login/login-api.service.ts";

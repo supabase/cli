@@ -1,5 +1,5 @@
 import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";

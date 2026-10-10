@@ -6,7 +6,7 @@ import type { ContainerEngine } from "../src/runtime/Container.ts";
  * selects `podman`. Resolving it never contacts the engine.
  */
 export const testEngine: ContainerEngine = Effect.runSync(
-  Config.literals(["docker", "podman"], "SUPABASE_STACK_TEST_ENGINE").pipe(
+  Config.Literals(["docker", "podman"], "SUPABASE_STACK_TEST_ENGINE").pipe(
     Config.withDefault("docker"),
   ),
 );

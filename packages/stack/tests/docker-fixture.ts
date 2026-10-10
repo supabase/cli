@@ -1,4 +1,4 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Layer, Schema, Sink, Stream } from "effect";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
 import { testEngine } from "./test-engine.ts";

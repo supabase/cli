@@ -13,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import * as StackNamespace from "../StackNamespace.ts";
 import type { SavedStack } from "../StackNamespace.ts";

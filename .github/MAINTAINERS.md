@@ -132,8 +132,9 @@ Full procedures live in the
 [ADR 0028](../docs/adr/0028-release-branches-and-maintenance-lines.md).
 
 **Resolving a sync PR.** When `Sync branches` cannot merge `main` into
-`develop` cleanly it opens `sync/main-into-develop`; further syncs for that pair
-skip while it is open. A `develop` → `next` conflict is resolved by Claude on
+`develop` cleanly it opens `sync/main-into-develop`; CODEOWNERS requests the CLI
+team and the release Slack channel is told. Further syncs for that pair skip
+while it is open. A `develop` → `next` conflict is resolved by Claude on
 `sync/develop-into-next`, which every later `develop` push updates; review its
 resolution comments, answer any decision it flags (push the fix and reply with
 the decision so later syncs reuse it), and approve. A draft sync PR waits for

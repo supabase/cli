@@ -253,8 +253,8 @@ describe("dohFetchLayer (Effect layer integration)", () => {
   });
 
   it.effect("dohFetchLayer provides FetchHttpClient.Fetch from context via DnsResolverFlag", () => {
-    const { FetchHttpClient } = require("effect/unstable/http") as {
-      FetchHttpClient: typeof import("effect/unstable/http").FetchHttpClient;
+    const { FetchHttpClient } = require("effect/http") as {
+      FetchHttpClient: typeof import("effect/http").FetchHttpClient;
     };
 
     return Effect.gen(function* () {
@@ -265,8 +265,8 @@ describe("dohFetchLayer (Effect layer integration)", () => {
   });
 
   it.effect("dohFetchLayer with 'native' also provides a fetch function", () => {
-    const { FetchHttpClient } = require("effect/unstable/http") as {
-      FetchHttpClient: typeof import("effect/unstable/http").FetchHttpClient;
+    const { FetchHttpClient } = require("effect/http") as {
+      FetchHttpClient: typeof import("effect/http").FetchHttpClient;
     };
 
     return Effect.gen(function* () {

@@ -310,6 +310,13 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
   throw new Error(`${pair.target} kept moving; gave up after ${MAX_PUSH_ATTEMPTS} attempts`);
 }
 
+function appendOutput(name: string, value: string): void {
+  const file = process.env.GITHUB_OUTPUT;
+  if (file) {
+    appendFileSync(file, `${name}=${value}\n`);
+  }
+}
+
 function makeIo(token: string, repository: string): SyncIo {
   const owner = repository.split("/")[0] ?? "";
   return {
@@ -367,8 +374,7 @@ async function main(): Promise<void> {
       console.log(`Merged cleanly into ${syncBranchName(pair)} for PR #${outcome.pullRequest}.`);
       break;
     case "needs-resolution": {
-      const output = requireEnv("GITHUB_OUTPUT");
-      appendFileSync(output, `plan=${JSON.stringify(outcome.plan)}\n`);
+      appendOutput("plan", JSON.stringify(outcome.plan));
       console.log(`Conflicts merging into ${syncBranchName(pair)}; handing off to the agent.`);
       break;
     }
@@ -382,6 +388,7 @@ async function main(): Promise<void> {
       console.log(
         `::warning::Opened PR #${outcome.pullRequest} for conflicts in ${outcome.files.join(", ")}.`,
       );
+      appendOutput("conflict_pr", String(outcome.pullRequest));
       break;
   }
 }

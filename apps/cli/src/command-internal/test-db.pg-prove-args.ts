@@ -1,5 +1,6 @@
 import * as nodePath from "node:path";
 import { Option } from "effect";
+import { postgresMajor } from "@supabase/stack/internal/artifacts";
 import { toDockerMountPath } from "./docker-path.ts";
 
 interface PostgresClientMount {
@@ -23,6 +24,12 @@ export interface PgProveArgs {
   /** Container working directory (dir of the first test path). */
   readonly workingDir: Option.Option<string>;
 }
+
+/** Catalog `pg_prove` major for a stack database artifact version, including OrioleDB builds. */
+export const pgProveMajor = (version: string): 15 | 17 | undefined => {
+  const major = postgresMajor(version);
+  return major === "15" ? 15 : major === "17" ? 17 : undefined;
+};
 
 /**
  * Builds the `pg_prove` command, volume binds, and working directory for a

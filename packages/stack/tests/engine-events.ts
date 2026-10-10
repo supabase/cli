@@ -1,5 +1,5 @@
 import { Data, Effect, Option, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { engineTarget, testEngine } from "./engine-target.ts";
 
 class EngineEventsError extends Data.TaggedError("EngineEventsError")<{

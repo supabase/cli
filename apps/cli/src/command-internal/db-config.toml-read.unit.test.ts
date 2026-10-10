@@ -2231,7 +2231,7 @@ describe("readDbToml", () => {
     // A mere load for SUPABASE_YES has no global side effect.
     const processEnvValues = Effect.forEach(
       ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"],
-      (k) => Config.option(Config.string(k)).parse(ConfigProvider.fromEnv()),
+      (k) => Config.option(Config.String(k)).parse(ConfigProvider.fromEnv()),
     );
     return Effect.gen(function* () {
       const before = yield* processEnvValues;

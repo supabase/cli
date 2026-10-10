@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, PlatformError, Redacted, Layer } from "effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { mockAnalytics, mockOutput } from "../../tests/helpers/mocks.ts";

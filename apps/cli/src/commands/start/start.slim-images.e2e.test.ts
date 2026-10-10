@@ -1,4 +1,4 @@
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { BunServices } from "@effect/platform-bun";
 import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";

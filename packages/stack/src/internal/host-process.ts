@@ -1,6 +1,7 @@
 import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
+import { failureKind } from "../FailureKind.ts";
 import { SavedStack } from "../StackNamespace.ts";
 import {
   RegistrationCheckInterval,
@@ -87,10 +88,12 @@ const program = (
     yield* runStackHost({ ...host, ...overrides }).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+        const kind = failureKind(cause);
         return report({
           type: "error",
           message: failure?.message ?? Cause.pretty(cause),
           ...(failure?.reason === undefined ? {} : { reason: failure.reason }),
+          ...(kind === undefined ? {} : { kind }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );

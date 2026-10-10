@@ -1,6 +1,7 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
@@ -48,8 +49,9 @@ export class DbDumpRunError extends Data.TaggedError("DbDumpRunError")<{
   readonly message: string;
   /** Printed on stderr after the error (IPv6 pooler guidance, native client hint). */
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return causeDeclaration(this.cause) ?? actionability.dbConnection;
   }
 }
