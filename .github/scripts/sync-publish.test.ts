@@ -237,7 +237,7 @@ describe("publishResolution", () => {
     const { result, bundlePath } = await resolveWith(repo, plan, (checkout) =>
       writeFileSync(
         join(checkout, "shared.txt"),
-        "next\nkey = sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdEfGhIjKlMn\n",
+        "next\n++sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdEfGhIjKlMn\n",
       ),
     );
     const { io, calls } = fakeIo(repo.checkout());

@@ -104,13 +104,19 @@ export function agentWrittenText(git: GitRunner, base: string, head: string): st
           "\n",
         )[0] ?? "")
       : first;
-    const diff = gitOrThrow(git, ["diff", "--no-color", "--unified=0", from, commit]);
-    added.push(
-      ...diff
-        .split("\n")
-        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-        .map((line) => line.slice(1)),
-    );
+    const diff = gitOrThrow(git, ["diff", "--no-color", "--text", "--unified=0", from, commit]);
+    // File headers (`+++ b/path`) come before a file's first hunk; inside a hunk every `+` line is content,
+    // including content that itself starts with `++`.
+    let inHunk = false;
+    for (const line of diff.split("\n")) {
+      if (line.startsWith("diff --git ")) {
+        inHunk = false;
+      } else if (line.startsWith("@@")) {
+        inHunk = true;
+      } else if (inHunk && line.startsWith("+")) {
+        added.push(line.slice(1));
+      }
+    }
     if (!first) {
       break;
     }

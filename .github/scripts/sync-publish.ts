@@ -320,7 +320,7 @@ function renderCheck(check: CheckResult): string[] {
     "",
     "<details><summary>Check output</summary>",
     "",
-    ...fencedOutput(neutralize((check.remaining ?? "").slice(-6000))),
+    ...fencedOutput(redactSecrets((check.remaining ?? "").slice(-6000))),
     "",
     "</details>",
   ];
