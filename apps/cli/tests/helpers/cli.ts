@@ -756,7 +756,7 @@ class DockerCommandError extends Data.TaggedError("DockerCommandError")<{
 /** Owns a Docker CLI process and drains its output while it runs. */
 export const runDockerEffect = (
   args: ReadonlyArray<string>,
-  options: { readonly timeout?: number } = {},
+  options: { readonly timeout?: number; readonly forceKillAfter?: number } = {},
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -765,6 +765,7 @@ export const runDockerEffect = (
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        forceKillAfter: options.forceKillAfter,
       }),
     );
     // Keep recent diagnostics while draining both pipes completely so the child can exit.

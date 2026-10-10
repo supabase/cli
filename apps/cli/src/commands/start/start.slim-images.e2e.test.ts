@@ -1,6 +1,6 @@
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { BunServices } from "@effect/platform-bun";
-import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Clock, Crypto, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { catalogPins, type ArtifactKind } from "@supabase/stack/internal/artifacts";
 
@@ -49,6 +49,9 @@ const makeProject = Effect.fnUntraced(function* (prefix: string) {
 
 const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
+const WGET_PROBE_TIMEOUT_MS = 10_000;
+const WGET_PROBE_FORCE_KILL_AFTER_MS = 2_000;
+const WGET_PROBE_CLEANUP_TIMEOUT_MS = 5_000;
 const PULL_TIMEOUT_MS = 240_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
@@ -81,6 +84,12 @@ const WGET_PROBE_SERVICES: ReadonlyArray<ArtifactKind> = [
   "vector",
   "pooler",
 ];
+const WGET_PROBE_TEST_TIMEOUT_MS =
+  catalogPins()
+    .filter((entry) => WGET_PROBE_SERVICES.includes(entry.service))
+    .reduce((count, entry) => count + (entry.service === "vector" ? 2 : 1), 0) *
+    (WGET_PROBE_TIMEOUT_MS + WGET_PROBE_FORCE_KILL_AFTER_MS + WGET_PROBE_CLEANUP_TIMEOUT_MS) +
+  10_000;
 
 function wgetProbeCatalogImages(): ReadonlyArray<string> {
   return catalogPins()
@@ -209,32 +218,61 @@ const edgeRuntimeFailureDiagnostics = Effect.fnUntraced(function* (name: string)
   return `edge runtime Mounts: ${mounts}\nedge runtime logs:\n${logs}`;
 });
 
-const runWgetInImage = (image: string, args: ReadonlyArray<string>) =>
-  runDockerEffect([
-    "run",
-    "--rm",
-    "--network",
-    "none",
-    "--entrypoint",
-    "wget",
-    image,
-    ...args,
-  ]).pipe(
-    Effect.catchTag("DockerCommandError", (error) =>
-      Effect.succeed({ stdout: error.stdout, stderr: error.stderr }),
-    ),
-    Effect.orElseSucceed(() => ({ stdout: "", stderr: "" })),
+const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
+  image: string,
+  args: ReadonlyArray<string>,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const containerName = `sb-wget-probe-${yield* crypto.randomUUIDv4}`;
+  const removeContainer = runDockerEffect(["rm", "--force", containerName], {
+    timeout: WGET_PROBE_CLEANUP_TIMEOUT_MS,
+  }).pipe(
+    Effect.catchTag("DockerCommandError", (error) => {
+      const output = `${error.message}\n${error.stdout}\n${error.stderr}`;
+      return /no such container/iu.test(output)
+        ? Effect.void
+        : Effect.fail(
+            new StartE2eSetupError({
+              message: `failed to clean up wget probe container ${containerName}: ${error.message}`,
+              cause: error,
+            }),
+          );
+    }),
   );
-
-function expectBusyBoxAccepted(
-  output: { readonly stdout: string; readonly stderr: string },
-  label: string,
-): void {
-  const text = `${output.stdout}\n${output.stderr}`;
-  expect(text, label).not.toMatch(
-    /Unable to find image|executable file not found|unrecognized option|invalid option|unknown option/i,
+  return yield* runDockerEffect(
+    [
+      "run",
+      "--rm",
+      "--name",
+      containerName,
+      "--network",
+      "none",
+      "--entrypoint",
+      "wget",
+      image,
+      ...args,
+    ],
+    { timeout: WGET_PROBE_TIMEOUT_MS, forceKillAfter: WGET_PROBE_FORCE_KILL_AFTER_MS },
+  ).pipe(
+    Effect.catchTag("DockerCommandError", (error) => {
+      const output = `${error.stdout}\n${error.stderr}`
+        .replace(
+          /^WARNING: The requested image's platform \([a-z0-9._/-]+\) does not match the detected host platform \([a-z0-9._/-]+\) and no specific platform was requested\r?$/gmu,
+          "",
+        )
+        .trim();
+      return output === "wget: can't connect to remote host (127.0.0.1): Connection refused"
+        ? Effect.succeed({ stdout: error.stdout, stderr: error.stderr })
+        : Effect.fail(
+            new StartE2eSetupError({
+              message: `wget probe failed for ${image}: ${error.message}`,
+              cause: error,
+            }),
+          );
+    }),
+    Effect.onExit(() => removeContainer),
   );
-}
+});
 
 const pullLatestImage = Effect.fnUntraced(function* (image: string, deadline: number) {
   const now = yield* Clock.currentTimeMillis;
@@ -276,14 +314,14 @@ describe("supabase start slim images (e2e)", () => {
                   header: `Host:${REALTIME_TENANT_ID}`,
                 })
               : slimWgetHealthcheck("http://127.0.0.1:9/");
-          expectBusyBoxAccepted(yield* runWgetInImage(image, probe.test.slice(2)), image);
+          yield* runWgetInImage(image, probe.test.slice(2));
           if (entry.service === "vector") {
             const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
-            expectBusyBoxAccepted(yield* runWgetInImage(image, waitArgs), `${image} wait`);
+            yield* runWgetInImage(image, waitArgs);
           }
         }
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
-    SHORT_E2E_TIMEOUT_MS,
+    WGET_PROBE_TEST_TIMEOUT_MS,
   );
 
   it.live(
