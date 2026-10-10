@@ -10,6 +10,8 @@ coverage/
 .agents/.repos/effect-v3
 .repos/slim-services/
 .worktrees/
+# Vitest JSON reports written by .github/scripts/flaky-check.
+.flaky-results/
 .supabase/
 erl_crash.dump
 # Stray `supabase` project dir created by running the CLI at the repo root

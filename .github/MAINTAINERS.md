@@ -83,6 +83,32 @@ the preview. This is independent of `run-ci` and `run-live-e2e-ci`.
 The `run-preview-packages` label must exist as a repository label; create it
 from **Issues → Labels** if it is missing.
 
+## `run-flaky-check`: repeat the suites to find flaky tests
+
+[`flaky-check.yml`](./workflows/flaky-check.yml) runs one commit on many fresh
+runners with retries off. A test that passes in some runs and fails in others is
+reported as flaky; one that fails in every run is reported separately.
+
+| Trigger                  | Commit          | Suites                                        |
+| ------------------------ | --------------- | --------------------------------------------- |
+| Nightly, 03:17 UTC       | `develop`       | unit, integration ×10                         |
+| Weekly, Sunday 03:47 UTC | `develop`       | CLI e2e, stack e2e ×3                         |
+| `run-flaky-check` label  | PR merge commit | unit, integration ×10, plus `focused`         |
+| Manual dispatch          | any ref         | chosen suites, runs, repeats, and file filter |
+
+`focused` runs the tests affected by the PR (`vitest --changed` against the merge
+base) five times per job, each in a fresh Vitest process, to show a flaky-test fix
+holds; a changed `package.json` or Vitest config selects every test. Dispatch with
+`suites=focused` and a `filter` to target specific files.
+
+The label is removed when the run starts, so re-add it to run again (by hand on
+fork PRs, which also get no comment). The report goes to the job summary, the
+`flaky-check-report` artifact, and one PR comment, and fails the run when any test
+failed or any run produced no results.
+
+The `run-flaky-check` label must exist as a repository label; create it from
+**Issues → Labels** if it is missing.
+
 ## Live e2e coverage and stable releases
 
 [`Live E2E`](./workflows/live-e2e.yml) exercises managed staging after every push

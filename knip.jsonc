@@ -9,6 +9,11 @@
   "ignoreDependencies": ["verdaccio"],
   "ignoreWorkspaces": ["apps/cli-go"],
   "workspaces": {
+    ".": {
+      // flaky-check.yml runs it from a second checkout of the workflow revision, through a
+      // path knip cannot trace.
+      "entry": [".github/scripts/flaky-check/cli.ts"],
+    },
     "apps/cli": {
       "entry": [
         // Bundled by `bun build` in the build:shim script; knip's bun resolver derives no

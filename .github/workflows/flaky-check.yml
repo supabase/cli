@@ -1,0 +1,249 @@
+name: Flaky check
+
+# Runs one commit on many fresh runners and reports tests that both passed and failed. The logic
+# lives in .github/scripts/flaky-check; triggers and usage are in .github/MAINTAINERS.md.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+    - cron: "47 3 * * 0"
+  pull_request:
+    types:
+      - labeled
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or SHA to test (defaults to the branch this runs from)
+        type: string
+        default: ""
+      suites:
+        description: Comma-separated subset of unit,integration,focused,e2e,stack-e2e
+        type: string
+        default: unit,integration
+      runs:
+        description: Parallel runs per suite (1-30)
+        type: number
+        default: 10
+      repeats:
+        description: Extra executions per focused run, each in a separate Vitest process
+        type: number
+        default: 4
+      filter:
+        description: >-
+          Space-separated vitest file filters for unit, integration, and focused. Focused
+          repeats these instead of the tests affected by changes when set.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Other label events still start a run; a unique group keeps them from cancelling a real one.
+concurrency:
+  group: >-
+    flaky-check-${{ github.event.pull_request.number || github.ref }}-${{ github.event.schedule || github.event_name }}${{
+      (github.event.action == 'labeled' && github.event.label.name != 'run-flaky-check'
+        && format('-noop-{0}', github.run_id))
+      || ''
+    }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+env:
+  # The CLI comes from this workflow's revision, so runs against older refs can use it.
+  FLAKY_CLI: .flaky-tooling/.github/scripts/flaky-check/cli.ts
+
+jobs:
+  plan:
+    if: |
+      (github.event_name == 'schedule' && github.repository == 'supabase/cli') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-flaky-check')
+    name: Plan runs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      base: ${{ steps.plan.outputs.base }}
+      filter: ${{ steps.plan.outputs.filter }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/scripts/flaky-check
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install: true
+          install_args: bun
+          working_directory: .flaky-tooling
+
+      - name: Plan runs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SUITES: ${{ inputs.suites }}
+          INPUT_RUNS: ${{ inputs.runs }}
+          INPUT_REPEATS: ${{ inputs.repeats }}
+          INPUT_FILTER: ${{ inputs.filter }}
+        run: bun "$FLAKY_CLI" plan
+
+      # Removing the label lets a maintainer re-add it to start another run. Fork PRs get a
+      # read-only token, so the label stays there and must be removed by hand.
+      - name: Remove trigger label
+        if: >-
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/run-flaky-check" >/dev/null \
+            || echo "::warning::Unable to remove the run-flaky-check label."
+
+  run:
+    needs: plan
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: ${{ matrix.fetchDepth }}
+          persist-credentials: false
+
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/scripts/flaky-check
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: ${{ matrix.goCache }}
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
+
+      - name: Cache Go CLI binary
+        if: matrix.suite == 'e2e'
+        id: cache-go-binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
+            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
+
+      - name: Build Go CLI
+        if: matrix.suite == 'e2e' && steps.cache-go-binary.outputs.cache-hit != 'true'
+        run: go build -o supabase-go .
+        working-directory: apps/cli-go
+
+      - name: Build CLI
+        if: matrix.suite == 'e2e'
+        run: pnpm exec turbo run supabase#build
+
+      - name: Run tests
+        id: run
+        env:
+          MATRIX: ${{ toJSON(matrix) }}
+          BASE_REF: ${{ needs.plan.outputs.base }}
+          FILTER: ${{ needs.plan.outputs.filter }}
+        run: bun "$FLAKY_CLI" run
+
+      - name: Collect results
+        id: collect
+        if: always()
+        env:
+          MATRIX: ${{ toJSON(matrix) }}
+          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+          EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
+        run: bun "$FLAKY_CLI" collect
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.collect.outputs.dir }}
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
+
+  report:
+    needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    name: Report flaky tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/scripts/flaky-check
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install: true
+          install_args: bun
+          working_directory: .flaky-tooling
+
+      - name: Download results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flaky-*-run*
+          path: results
+
+      - name: Build report
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          FILTER: ${{ needs.plan.outputs.filter }}
+        run: bun "$FLAKY_CLI" report results flaky-report
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-check-report
+          path: flaky-report
+          retention-days: 30
+          overwrite: true
+
+      - name: Comment on PR
+        if: >-
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bun "$FLAKY_CLI" comment flaky-report/report.md
