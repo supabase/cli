@@ -315,7 +315,8 @@ describe("publishRepair", () => {
       head: repaired,
       outcome: {
         status: "repaired" as const,
-        summary: "Restored the setup input develop relies on.",
+        summary:
+          "Restored the setup input develop relies on. sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdEfGhIjKlMn",
         files: [{ path: ".github/ci.yml", resolution: "Restored the input." }],
         findings: [
           { commentId: 11, disposition: "fixed" as const, reply: "Restored it, thanks @someone." },
@@ -348,6 +349,7 @@ describe("publishRepair", () => {
     const record = calls.comments[0]?.body ?? "";
     expect(record).toStartWith(`<!-- sync-repair-result round=1 head=${repairPlan.head} -->`);
     expect(record).toContain("(`.github/ci.yml`)");
+    expect(record).not.toContain("sk-ant-api03");
     expect(calls.reviews).toEqual(["cli"]);
   });
 

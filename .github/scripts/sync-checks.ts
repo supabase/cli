@@ -97,11 +97,16 @@ export async function checkAndFix(
 
 /** The root `check:all` script with `--continue`, so one failing task does not hide the others. */
 function checkAllCommand(workDir: string): string {
-  const script = (
-    JSON.parse(readFileSync(join(workDir, "package.json"), "utf8")) as {
-      scripts?: Record<string, string>;
-    }
-  ).scripts?.["check:all"];
+  let script: string | undefined;
+  try {
+    script = (
+      JSON.parse(readFileSync(join(workDir, "package.json"), "utf8")) as {
+        scripts?: Record<string, string>;
+      }
+    ).scripts?.["check:all"];
+  } catch {
+    // An unparsable package.json is a check failure for the fix agent, not a reason to abort the run.
+  }
   return script?.startsWith("pnpm exec turbo run ")
     ? `${script} --continue --output-logs=errors-only`
     : "pnpm run check:all";

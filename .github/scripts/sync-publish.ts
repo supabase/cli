@@ -17,6 +17,7 @@ import {
   renderConflictPr,
   syncBranchName,
 } from "./sync-branches.ts";
+import { redactSecrets } from "./ai-review/post-review.ts";
 import type { AgentDecision } from "./sync-agent.ts";
 import type { RepairPlan, RepairResult } from "./sync-repair.ts";
 import {
@@ -68,9 +69,14 @@ function short(sha: string): string {
   return sha.slice(0, 7);
 }
 
-/** Agent text is rendered into bot comments; this keeps it from pinging anyone or forging a hidden marker. */
+/**
+ * Agent text is rendered into public bot comments; this redacts anything secret-shaped the agent may have echoed,
+ * such as the API key its container holds, and keeps the text from pinging anyone or forging a hidden marker.
+ */
 function neutralize(text: string): string {
-  return text.replace(/@(?=[\w-])/g, "@\u200b").replace(/<!--/g, "&lt;!--");
+  return redactSecrets(text)
+    .replace(/@(?=[\w-])/g, "@\u200b")
+    .replace(/<!--/g, "&lt;!--");
 }
 
 /** An agent-reported path as inline code, unable to close its code span. */

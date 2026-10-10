@@ -183,6 +183,20 @@ export async function replayMerges(
     }
 
     const combined = combine(resolutions);
+    // A later group's edits can touch an earlier group's files, so every conflicted file is checked again.
+    const leftover = allFiles.find((path) => {
+      const file = join(workDir, path);
+      return (
+        !combined.deletedFiles.includes(path) &&
+        existsSync(file) &&
+        CONFLICT_MARKER.test(readFileSync(file, "utf8"))
+      );
+    });
+    if (leftover !== undefined) {
+      return giveUp(
+        `\`${leftover}\` still contains conflict markers after every group was resolved.`,
+      );
+    }
     for (const path of combined.deletedFiles) {
       gitOrThrow(git, ["rm", "-q", "--ignore-unmatch", "--", path]);
     }
