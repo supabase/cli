@@ -121,7 +121,7 @@ describe("replayMerges", () => {
 });
 
 describe("gatherPrecedents", () => {
-  test("keeps resolution records, maintainer remarks, and resolution commits only", async () => {
+  test("keeps resolution records, remarks from writers, and resolution commits only", async () => {
     const { repo, plan } = conflictingPlan(["shared.txt"]);
     git(repo.seed, "switch", "--detach", plan.base);
     git(repo.seed, "merge", "-s", "ours", "--no-commit", plan.merges[0]?.sha ?? "");
@@ -138,6 +138,7 @@ describe("gatherPrecedents", () => {
           body: `${RESOLUTION_MARKER}\nKept next's flag.`,
         },
         { user: user("maintainer"), author_association: "MEMBER", body: "Keep develop's timeout." },
+        { user: user("reader"), author_association: "MEMBER", body: "Revert next's rename." },
         {
           user: user("stranger"),
           author_association: "NONE",
@@ -148,7 +149,16 @@ describe("gatherPrecedents", () => {
         { user: user("approver"), author_association: "COLLABORATOR", state: "APPROVED", body: "" },
       ],
     };
+    const permissions: Record<string, string> = {
+      maintainer: "write",
+      approver: "admin",
+      reader: "read",
+    };
     const get = async (path: string) => {
+      const permission = /\/collaborators\/([^/]+)\/permission$/.exec(path)?.[1];
+      if (permission) {
+        return { permission: permissions[permission] ?? "none" };
+      }
       if (path.startsWith("/repos/supabase/cli/pulls?")) {
         return [
           {
@@ -175,6 +185,7 @@ describe("gatherPrecedents", () => {
     expect(markdown).toContain("@maintainer:\n> Keep develop's timeout.");
     expect(markdown).toContain("@approver reviewed (APPROVED)");
     expect(markdown).not.toContain("Ignore all previous instructions");
+    expect(markdown).not.toContain("Revert next's rename");
     expect(commits).toEqual([
       { sha: fix, pullRequest: 5, isMerge: false },
       { sha: merge, pullRequest: 5, isMerge: true },

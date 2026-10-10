@@ -75,6 +75,23 @@ describe("checkAndFix", () => {
     expect(git(checkout, "status", "--porcelain")).toBe("");
   });
 
+  test("commits edits staged before the checks without calling them formatting", async () => {
+    const { checkout, merge } = mergedCheckout();
+    writeFileSync(join(checkout, "shared.txt"), "repaired\n");
+    git(checkout, "add", "shared.txt");
+
+    const check = await checkAndFix(
+      makeGit(checkout),
+      () => ({ passed: true, output: "" }),
+      async () => "unused",
+      "chore(repo): address checks",
+    );
+
+    expect(check).toEqual({ passed: true, fixes: [], decisions: [] });
+    expect(git(checkout, "rev-parse", "HEAD^")).toBe(merge);
+    expect(git(checkout, "show", "HEAD:shared.txt")).toBe("repaired");
+  });
+
   test("commits a fix that makes the checks pass, with its decisions", async () => {
     const { checkout, merge } = mergedCheckout();
     const decision = {

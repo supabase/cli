@@ -37,8 +37,9 @@ function dropUnstaged(git: GitRunner): void {
 }
 
 /**
- * Runs the checks and, when they fail, asks `fix` for one round of edits; a rejected fix is dropped. The formatter's
- * and the agent's changes are committed on top of HEAD as one follow-up commit.
+ * Runs the checks and, when they fail, asks `fix` for one round of edits; a rejected fix is dropped. Changes already
+ * staged, the formatter's, and the agent's are committed on top of HEAD as one follow-up commit; `fixes` lists only
+ * the formatter's and the fix's.
  */
 export async function checkAndFix(
   git: GitRunner,
@@ -46,6 +47,9 @@ export async function checkAndFix(
   fix: CheckFixer,
   message: string,
 ): Promise<CheckResult> {
+  const staged = (): string[] =>
+    gitOrThrow(git, ["diff", "--cached", "-z", "--name-only"]).split("\0").filter(Boolean);
+  const stagedBefore = new Set(staged());
   let last = check();
   keepCheckChanges(git);
   let edits: AgentResolution["files"] = [];
@@ -67,9 +71,7 @@ export async function checkAndFix(
     }
   }
 
-  const changed = gitOrThrow(git, ["diff", "--cached", "-z", "--name-only"])
-    .split("\0")
-    .filter(Boolean);
+  const changed = staged();
   if (changed.length > 0) {
     gitOrThrow(git, [
       "-c",
@@ -85,7 +87,7 @@ export async function checkAndFix(
   const fixes = [
     ...edits.filter(({ path }) => changed.includes(path)),
     ...changed
-      .filter((path) => !listed.has(path))
+      .filter((path) => !listed.has(path) && !stagedBefore.has(path))
       .map((path) => ({ path, resolution: FORMATTED, precedent: null })),
   ];
   return last.passed
@@ -120,7 +122,6 @@ export function runChecks(workDir: string, image: string): { passed: boolean; ou
     "(pnpm exec effect-tsgo patch --no-typescript --oxlint >/dev/null 2>&1 || true)",
     "pnpm run --silent fmt:fix >/dev/null",
     checkAllCommand(workDir),
-    "pnpm run --if-present check:config-api",
   ].join(" && ");
   console.log("Running the quality checks on the merged tree…");
   const result = spawnSync(

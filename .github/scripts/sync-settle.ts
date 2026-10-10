@@ -125,7 +125,7 @@ export function decideSettle(
   if (rounds.some((c) => REPAIR_HEAD.exec(c.body)?.[1] === head)) {
     return {
       action: "escalate",
-      reason: `a repair round on \`${head.slice(0, 7)}\` already ran and ${failing.length} job${failing.length === 1 ? " still fails" : "s still fail"}`,
+      reason: `a repair round on \`${head.slice(0, 7)}\` already ran, and ${failing.length} failing job${failing.length === 1 ? "" : "s"} and ${state.findings.length} unanswered review finding${state.findings.length === 1 ? "" : "s"} remain`,
     };
   }
   if (rounds.length >= MAX_REPAIR_ROUNDS) {
@@ -165,10 +165,11 @@ interface CheckRunResponse {
 }
 
 const THREADS_QUERY = `
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
@@ -188,24 +189,27 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+interface ReviewThread {
+  id: string;
+  isResolved: boolean;
+  comments: {
+    nodes: {
+      databaseId: number;
+      body: string;
+      path: string;
+      line: number | null;
+      author: { login: string } | null;
+      pullRequestReview: { body: string } | null;
+    }[];
+  };
+}
+
 interface ThreadsPage {
   repository: {
     pullRequest: {
       reviewThreads: {
-        nodes: {
-          id: string;
-          isResolved: boolean;
-          comments: {
-            nodes: {
-              databaseId: number;
-              body: string;
-              path: string;
-              line: number | null;
-              author: { login: string } | null;
-              pullRequestReview: { body: string } | null;
-            }[];
-          };
-        }[];
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: ReviewThread[];
       };
     } | null;
   } | null;
@@ -292,10 +296,12 @@ async function readState(
   const latest = new Map<string, CheckRunResponse>();
   for (const run of runs) {
     const current = latest.get(run.name);
+    // A queued run has no start time yet and is the newest.
+    const started = (check: CheckRunResponse) => check.started_at ?? "\uffff";
     const newer =
       !current ||
-      (run.started_at ?? "") > (current.started_at ?? "") ||
-      (run.started_at === current.started_at && run.id > current.id);
+      started(run) > started(current) ||
+      (started(run) === started(current) && run.id > current.id);
     if (run.app?.slug === "github-actions" && newer) {
       latest.set(run.name, run);
     }
@@ -330,13 +336,21 @@ async function readState(
     .map(({ body, submitted_at }) => ({ body, submittedAt: submitted_at }))
     .at(-1);
 
-  const threads = await githubGraphql<ThreadsPage>(token, THREADS_QUERY, {
-    owner,
-    name,
-    number: pull.number,
-  });
+  const threads: ReviewThread[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: ThreadsPage = await githubGraphql<ThreadsPage>(token, THREADS_QUERY, {
+      owner,
+      name,
+      number: pull.number,
+      cursor,
+    });
+    const connection = page.repository?.pullRequest?.reviewThreads;
+    threads.push(...(connection?.nodes ?? []));
+    cursor = connection?.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (cursor !== null);
   const findings: RepairFinding[] = [];
-  for (const thread of threads.repository?.pullRequest?.reviewThreads.nodes ?? []) {
+  for (const thread of threads) {
     const [first, ...rest] = thread.comments.nodes;
     if (
       thread.isResolved ||

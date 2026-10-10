@@ -338,12 +338,37 @@ function resolutionCommits(
     });
 }
 
-function byMaintainer(remark: Remark): boolean {
-  return remark.user?.type !== "Bot" && TRUSTED_ASSOCIATIONS.has(remark.author_association);
+function byMaintainer(remark: Remark, writers: Set<string>): boolean {
+  return remark.user?.type !== "Bot" && writers.has(remark.user?.login ?? "");
 }
 
-function isMaintainerRemark(remark: Remark): boolean {
-  return byMaintainer(remark) && Boolean(remark.body?.trim());
+function isMaintainerRemark(remark: Remark, writers: Set<string>): boolean {
+  return byMaintainer(remark, writers) && Boolean(remark.body?.trim());
+}
+
+const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
+/**
+ * The remark authors with write access to the repository. Association alone is not enough: an organization member
+ * or collaborator may only have read access, and these remarks steer an agent whose edits run in CI.
+ */
+async function writersAmong(
+  get: GithubGet,
+  repository: string,
+  remarks: Remark[],
+  known: Map<string, boolean>,
+): Promise<Set<string>> {
+  for (const remark of remarks) {
+    const login = remark.user?.login;
+    if (!login || known.has(login) || !TRUSTED_ASSOCIATIONS.has(remark.author_association)) {
+      continue;
+    }
+    const permission = (await get(`/repos/${repository}/collaborators/${login}/permission`).catch(
+      () => undefined,
+    )) as { permission?: string } | undefined;
+    known.set(login, WRITE_PERMISSIONS.has(permission?.permission ?? ""));
+  }
+  return new Set([...known].filter(([, canWrite]) => canWrite).map(([login]) => login));
 }
 
 function isResolutionRecord(remark: Remark): boolean {
@@ -388,6 +413,7 @@ export async function gatherPrecedents(
     "Newest first. A landed pull request's resolutions were approved; maintainer remarks and fix commits override the agent records they answer.",
   ];
 
+  const permissions = new Map<string, boolean>();
   for (const pull of pulls) {
     const [comments, reviews, reviewComments] = await Promise.all([
       getAll<Remark>(get, `/repos/${repository}/issues/${pull.number}/comments`),
@@ -408,24 +434,31 @@ export async function gatherPrecedents(
       sections.push("", "### Agent resolution records", ...records.map((r) => quote(r.body ?? "")));
     }
 
+    const writers = await writersAmong(
+      get,
+      repository,
+      [...comments, ...reviews, ...reviewComments],
+      permissions,
+    );
     const remarks = [
       ...reviews
         .filter(
           (review) =>
-            isMaintainerRemark(review) || (byMaintainer(review) && review.state === "APPROVED"),
+            isMaintainerRemark(review, writers) ||
+            (byMaintainer(review, writers) && review.state === "APPROVED"),
         )
         .map(
           (review) =>
             `- @${review.user?.login} reviewed (${review.state}):\n${quote(review.body || "(no comment)")}`,
         ),
       ...reviewComments
-        .filter(isMaintainerRemark)
+        .filter((remark) => isMaintainerRemark(remark, writers))
         .map(
           (remark) =>
             `- @${remark.user?.login} on \`${remark.path}\`:\n${quote(remark.body ?? "")}`,
         ),
       ...comments
-        .filter(isMaintainerRemark)
+        .filter((remark) => isMaintainerRemark(remark, writers))
         .map((remark) => `- @${remark.user?.login}:\n${quote(remark.body ?? "")}`),
     ];
     if (remarks.length > 0) {

@@ -497,6 +497,7 @@ export function renderRepairRecord(
   plan: RepairPlan,
   result: RepairResult,
   decisions: AgentDecision[],
+  unanswered: number,
   options: Pick<PublishOptions, "model" | "owner" | "runUrl">,
 ): string {
   const moved = result.head !== plan.head;
@@ -527,11 +528,12 @@ export function renderRepairRecord(
       ),
     );
   }
-  if (result.outcome && result.outcome.findings.length > 0) {
-    const fixed = result.outcome.findings.filter(({ disposition }) => disposition === "fixed");
+  if (plan.findings.length > 0) {
     lines.push(
       "",
-      `Replied on every review finding: ${fixed.length} fixed and resolved, ${result.outcome.findings.length - fixed.length} declined and left open.`,
+      unanswered === 0
+        ? "Replied on every AI review finding; fixed ones are resolved, declined ones stay open for you to judge."
+        : `${unanswered} AI review finding${unanswered === 1 ? " was" : "s were"} not addressed and stay${unanswered === 1 ? "s" : ""} open for a maintainer.`,
     );
   }
   lines.push(...renderDecisions(decisions));
@@ -593,14 +595,21 @@ export async function publishRepair(
     }
   }
 
+  // Findings left unanswered stay open, so the settle step hands them to a maintainer instead of treating them as done.
   const replies = new Map(result.outcome?.findings.map((reply) => [reply.commentId, reply]));
+  let answered = 0;
   for (const finding of plan.findings) {
     const reply = replies.get(finding.commentId);
-    const fixed = moved && reply?.disposition === "fixed";
-    const body = reply
-      ? `${fixed ? "Fixed" : "Declined"} in repair round ${plan.round}: ${neutralize(reply.reply)}`
-      : `Repair round ${plan.round} did not address this finding; it needs a maintainer.`;
-    await io.replyToReviewComment(plan.pullRequest, finding.commentId, body);
+    const fixed = reply?.disposition === "fixed";
+    if (!reply || (fixed && !moved)) {
+      continue;
+    }
+    answered += 1;
+    await io.replyToReviewComment(
+      plan.pullRequest,
+      finding.commentId,
+      `${fixed ? "Fixed" : "Declined"} in repair round ${plan.round}: ${neutralize(reply.reply)}`,
+    );
     if (fixed) {
       await io.resolveReviewThread(finding.threadId);
     }
@@ -611,7 +620,10 @@ export async function publishRepair(
     ...agentDecisions,
     ...protectedDecisions(protectedEdits, agentDecisions, EDIT_QUESTION),
   ];
-  await io.comment(plan.pullRequest, renderRepairRecord(plan, result, decisions, options));
+  await io.comment(
+    plan.pullRequest,
+    renderRepairRecord(plan, result, decisions, plan.findings.length - answered, options),
+  );
   if (decisions.length > 0) {
     try {
       await io.requestTeamReview(plan.pullRequest, REVIEW_TEAM_SLUG);

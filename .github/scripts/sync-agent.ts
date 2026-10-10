@@ -213,7 +213,7 @@ function runClaudeAgent<T>(
       session,
     };
   }
-  const costUsd = output.total_cost_usd ?? 0;
+  const costUsd = output.total_cost_usd ?? options.maxBudgetUsd;
   console.log(
     `Claude ${output.subtype ?? "finished"} after ${output.num_turns} turns for $${costUsd.toFixed(2)}.`,
   );

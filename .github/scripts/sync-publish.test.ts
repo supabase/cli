@@ -351,6 +351,24 @@ describe("publishRepair", () => {
     expect(calls.reviews).toEqual(["cli"]);
   });
 
+  test("leaves findings open when the round produced no repair", async () => {
+    const { repo, plan } = diverged();
+    const { repairPlan, bundlePath } = repairedBranch(repo, plan);
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishRepair(
+      io,
+      repairPlan,
+      { head: repairPlan.head, outcome: null, failure: "Claude timed out after 25 minutes." },
+      options(bundlePath),
+    );
+
+    expect(outcome).toEqual({ status: "published", head: repairPlan.head, decisions: 0 });
+    expect(calls.replies).toHaveLength(0);
+    expect(calls.resolved).toHaveLength(0);
+    expect(calls.comments[0]?.body).toContain("2 AI review findings were not addressed");
+  });
+
   test.each([
     ["pushed a repair", false],
     ["changed nothing", true],
