@@ -416,7 +416,7 @@ async function main(): Promise<void> {
       await githubRequest(token, `${base}/issues/${pullRequest}/comments`, {
         body: [
           `${ESCALATED_MARKER} head=${state.pull?.headSha} -->`,
-          `@${owner}/${REVIEW_TEAM_SLUG}: ${decision.reason}, so this pull request is now a draft and needs a maintainer. Fix it on the branch, then mark it ready for review; syncs and repairs resume after that.`,
+          `@${owner}/${REVIEW_TEAM_SLUG}: ${decision.reason}, so this pull request is now a draft and needs a maintainer. Fix it on the branch, then mark it ready for review; syncs resume after that, but this resolution gets no more repair rounds.`,
         ].join("\n"),
       });
       const { node_id: id } = await githubRequest<{ node_id: string }>(

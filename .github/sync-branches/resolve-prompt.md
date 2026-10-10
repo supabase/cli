@@ -31,7 +31,7 @@ Repository conventions live in `CLAUDE.md`, `AGENTS.md`, and `docs/adr/`.
 ## Your task
 
 1. Resolve every file in your group, listed in the merge section. Remove every conflict marker.
-   Report only those files in your JSON.
+   Report those files, and any other file you edited, in your JSON.
 2. Keep both sides' intent. `develop`'s bug fixes and features must survive in `next`; `next`'s
    breaking changes must survive too. When `next` moved or reshaped code that `develop` changed,
    port `develop`'s change into `next`'s shape rather than reverting either side.

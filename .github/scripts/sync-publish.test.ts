@@ -232,6 +232,26 @@ describe("publishResolution", () => {
     expect(calls.comments).toHaveLength(0);
   });
 
+  test("refuses a resolution whose agent-written text holds a secret", async () => {
+    const { repo, plan } = diverged();
+    const { result, bundlePath } = await resolveWith(repo, plan, (checkout) =>
+      writeFileSync(
+        join(checkout, "shared.txt"),
+        "next\nkey = sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdEfGhIjKlMn\n",
+      ),
+    );
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishResolution(io, plan, result, options(bundlePath));
+
+    expect(outcome).toEqual({
+      status: "rejected",
+      reason: "The agent's changes contain secret-shaped text.",
+    });
+    expect(() => repo.remoteTip("sync/develop-into-next")).toThrow();
+    expect(calls.comments).toHaveLength(0);
+  });
+
   test("accepts a fix commit on a workflow file and asks for a decision on it", async () => {
     const { repo, plan } = diverged();
     const { result, bundlePath } = await resolveWith(

@@ -10,7 +10,8 @@ import {
   requireEnv,
 } from "./promotion-shared.ts";
 import { type AgentDecision, createAgentCaller, isDecisionList, loadSchema } from "./sync-agent.ts";
-import type { ResolutionPlan } from "./sync-branches.ts";
+import { redactSecrets, redactSecretsDeep } from "./ai-review/post-review.ts";
+import { type ResolutionPlan, agentWrittenText } from "./sync-branches.ts";
 import {
   type CheckFixer,
   type CheckResult,
@@ -316,7 +317,7 @@ async function main(): Promise<void> {
   console.log(
     `Claude: repair round ${plan.round} (${plan.failures.length} failing jobs, ${plan.findings.length} findings)…`,
   );
-  const result = await repair(
+  let result = await repair(
     git,
     plan,
     async () => {
@@ -328,6 +329,15 @@ async function main(): Promise<void> {
     `chore(repo): address checks and review on sync/${plan.source}-into-${plan.target}`,
   );
 
+  // The agent's container holds the API key; nothing secret-shaped it wrote may reach the artifact or the branch.
+  const written = result.head === plan.head ? "" : agentWrittenText(git, plan.head, result.head);
+  if (redactSecrets(written) !== written) {
+    result = {
+      head: plan.head,
+      outcome: null,
+      failure: "The agent's changes contain secret-shaped text, so they were discarded.",
+    };
+  }
   if (result.head !== plan.head) {
     gitOrThrow(git, ["update-ref", "refs/sync/resolved", result.head]);
     gitOrThrow(git, [
@@ -338,7 +348,7 @@ async function main(): Promise<void> {
       `^${plan.head}`,
     ]);
   }
-  writeFileSync(join(outputDir, "result.json"), JSON.stringify(result, null, 2));
+  writeFileSync(join(outputDir, "result.json"), JSON.stringify(redactSecretsDeep(result), null, 2));
   console.log(
     result.failure
       ? `::warning::No repair: ${result.failure}`

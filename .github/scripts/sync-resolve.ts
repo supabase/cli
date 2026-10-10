@@ -21,9 +21,11 @@ import {
 import {
   PROTECTED_PATH_PREFIX,
   type ResolutionPlan,
+  agentWrittenText,
   protectedPathChanges,
   syncBranchName,
 } from "./sync-branches.ts";
+import { redactSecrets, redactSecretsDeep } from "./ai-review/post-review.ts";
 import { type CheckFixer, type CheckResult, checkAndFix, runChecks } from "./sync-checks.ts";
 
 export interface MergeRecord {
@@ -407,7 +409,7 @@ function quote(body: string): string {
 
 /**
  * Collects earlier sync pull requests for the agent: recorded resolutions, maintainer remarks, and the commits
- * that landed. Remarks from anyone without write-level association are left out, since anyone can comment.
+ * that landed. Remarks from anyone without write permission on the repository are left out.
  */
 export async function gatherPrecedents(
   get: GithubGet,
@@ -635,6 +637,20 @@ async function main(): Promise<void> {
       `chore(repo): fix checks after merging ${plan.source} into ${syncBranchName(plan)}`,
     );
     result = { ...replayed, head: gitOrThrow(git, ["rev-parse", "HEAD"]), check };
+    // The agent's container holds the API key; nothing secret-shaped it wrote may reach the artifact or the branch.
+    const written = agentWrittenText(git, plan.base, result.head);
+    if (redactSecrets(written) !== written) {
+      const merge = plan.merges.at(-1);
+      result = {
+        status: "manual",
+        reason: "The agent's changes contain secret-shaped text, so they were discarded.",
+        ref: merge?.ref ?? plan.source,
+        sha: merge?.sha ?? "",
+        files: replayed.merges.flatMap(
+          ({ resolution }) => resolution?.files.map(({ path }) => path) ?? [],
+        ),
+      };
+    }
   }
 
   if (result.status === "resolved") {
@@ -647,7 +663,7 @@ async function main(): Promise<void> {
       `^${plan.base}`,
     ]);
   }
-  writeFileSync(join(outputDir, "result.json"), JSON.stringify(result, null, 2));
+  writeFileSync(join(outputDir, "result.json"), JSON.stringify(redactSecretsDeep(result), null, 2));
   console.log(
     result.status === "resolved"
       ? `Resolved ${result.merges.length} merge(s); head ${result.head}.`

@@ -12,6 +12,7 @@ import {
 import {
   PROTECTED_PATH_PREFIX,
   type PullRequestDraft,
+  agentWrittenText,
   type ResolutionPlan,
   protectedPathChanges,
   renderConflictPr,
@@ -77,6 +78,13 @@ function neutralize(text: string): string {
   return redactSecrets(text)
     .replace(/@(?=[\w-])/g, "@\u200b")
     .replace(/<!--/g, "&lt;!--");
+}
+
+/** Check output in a code fence longer than any backtick run inside it, so the output cannot close it. */
+function fencedOutput(text: string): string[] {
+  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return [`${fence}text`, text, fence];
 }
 
 /** An agent-reported path as inline code, unable to close its code span. */
@@ -312,9 +320,7 @@ function renderCheck(check: CheckResult): string[] {
     "",
     "<details><summary>Check output</summary>",
     "",
-    "````text",
-    (check.remaining ?? "").slice(-6000),
-    "````",
+    ...fencedOutput(neutralize((check.remaining ?? "").slice(-6000))),
     "",
     "</details>",
   ];
@@ -461,6 +467,10 @@ export async function publishResolution(
   if ("error" in validation) {
     return { status: "rejected", reason: validation.error };
   }
+  const written = agentWrittenText(git, plan.base, head);
+  if (redactSecrets(written) !== written) {
+    return { status: "rejected", reason: "The agent's changes contain secret-shaped text." };
+  }
   const reviewed = withProtectedDecisions(
     result,
     validation.protectedConflicts,
@@ -590,6 +600,10 @@ export async function publishRepair(
       return { status: "rejected", reason: validation.error };
     }
     protectedEdits = validation.protectedEdits;
+    const written = agentWrittenText(git, plan.head, head);
+    if (redactSecrets(written) !== written) {
+      return { status: "rejected", reason: "The agent's changes contain secret-shaped text." };
+    }
     const push = git([
       "push",
       `--force-with-lease=refs/heads/${branch}:${plan.head}`,

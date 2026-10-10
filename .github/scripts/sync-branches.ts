@@ -88,6 +88,38 @@ export function isProtectedPath(path: string): boolean {
 }
 
 /**
+ * The lines the agent wrote between `base` and `head`: what each merge adds beyond git's own merge of its parents,
+ * and what each plain commit adds.
+ */
+export function agentWrittenText(git: GitRunner, base: string, head: string): string {
+  const added: string[] = [];
+  let commit = head;
+  while (commit !== base) {
+    const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
+      .split(" ")
+      .slice(1);
+    const [first = "", second] = parents;
+    const from = second
+      ? (git(["merge-tree", "--write-tree", "--no-messages", first, second]).stdout.split(
+          "\n",
+        )[0] ?? "")
+      : first;
+    const diff = gitOrThrow(git, ["diff", "--no-color", "--unified=0", from, commit]);
+    added.push(
+      ...diff
+        .split("\n")
+        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+        .map((line) => line.slice(1)),
+    );
+    if (!first) {
+      break;
+    }
+    commit = first;
+  }
+  return added.join("\n");
+}
+
+/**
  * Compares a merge commit's protected paths with git's own merge of its two parents: `conflicted` paths are the
  * ones the resolution had to decide, `strayEdits` the ones it changed without a conflict.
  */
