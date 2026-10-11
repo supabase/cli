@@ -138,11 +138,9 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           // after the script completed — the script's output is still valid. Any other
           // non-zero exit is real.
           if (result.exitCode !== 0 && !result.stderr.includes("main worker has been destroyed")) {
-            return yield* Effect.fail(
-              new EdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
-              }),
-            );
+            return yield* new EdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
+            });
           }
 
           // A script crash is otherwise masked by the "main worker has been destroyed"
@@ -150,11 +148,9 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           // sentinel — printed only by the templates' catch blocks — marks that real failure so
           // the collected stderr reaches the user instead of looking like an empty diff.
           if (result.stderr.includes(EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL)) {
-            return yield* Effect.fail(
-              new EdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
-              }),
-            );
+            return yield* new EdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
+            });
           }
 
           return {

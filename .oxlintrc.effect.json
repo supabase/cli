@@ -28,6 +28,7 @@
     "!apps/cli/src/command-internal/db-*.ts",
     "!apps/cli/src/command-internal/debug-logger.*",
     "!apps/cli/src/command-internal/dotenv.*",
+    "!apps/cli/src/command-internal/edge-runtime-*.ts",
     "!apps/cli/src/command-internal/ensure-login.*",
     "!apps/cli/src/command-internal/experimental-feature.ts",
     "!apps/cli/src/command-internal/experimental-gate.*",
