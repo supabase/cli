@@ -24,7 +24,7 @@ export const iterateStoragePaths = <E>(
   Effect.gen(function* () {
     const [bucket, prefix] = splitBucketPrefix(remotePath);
     if (bucket.length === 0 || (prefix.length === 0 && !remotePath.endsWith("/"))) {
-      const buckets = yield* gateway.listBuckets();
+      const buckets = yield* gateway.listBuckets;
       for (const b of buckets) {
         if (b.name.startsWith(bucket)) {
           yield* callback(`${b.name}/`);
