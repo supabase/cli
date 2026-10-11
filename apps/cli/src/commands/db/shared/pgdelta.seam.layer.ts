@@ -162,6 +162,7 @@ export const declarativeSeamLayer = Layer.effect(
             );
             const tomlProjectId = toml.projectId;
             const projectId = resolveLocalProjectId(
+              path,
               Option.getOrUndefined(cliSettings.projectId),
               Option.getOrUndefined(tomlProjectId),
               cliSettings.workdir,

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import { describe, expect, it, layer } from "@effect/vitest";
+import { ConfigProvider, Effect, Path } from "effect";
 
 import {
   CLI_PROJECT_LABEL,
@@ -13,25 +14,37 @@ import {
 import { resolveDockerNetworkMode } from "../shared/functions/functions-docker.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 
-describe("resolveLocalProjectId", () => {
-  it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
-    expect(resolveLocalProjectId("env-id", "toml-id", "/work/proj")).toBe("env-id");
-  });
+layer(BunPath.layer)("resolveLocalProjectId", (it) => {
+  it.effect("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(resolveLocalProjectId(path, "env-id", "toml-id", "/work/proj")).toBe("env-id");
+    }),
+  );
 
-  it("falls back to config.toml project_id when the env var is unset/empty", () => {
-    expect(resolveLocalProjectId(undefined, "toml-id", "/work/proj")).toBe("toml-id");
-    expect(resolveLocalProjectId("", "toml-id", "/work/proj")).toBe("toml-id");
-  });
+  it.effect("falls back to config.toml project_id when the env var is unset/empty", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(resolveLocalProjectId(path, undefined, "toml-id", "/work/proj")).toBe("toml-id");
+      expect(resolveLocalProjectId(path, "", "toml-id", "/work/proj")).toBe("toml-id");
+    }),
+  );
 
-  it("falls back to the workdir basename when both env and config.toml are absent", () => {
-    expect(resolveLocalProjectId(undefined, undefined, "/work/my-app")).toBe("my-app");
-    expect(resolveLocalProjectId(undefined, "", "/work/my-app")).toBe("my-app");
-  });
+  it.effect("falls back to the workdir basename when both env and config.toml are absent", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(resolveLocalProjectId(path, undefined, undefined, "/work/my-app")).toBe("my-app");
+      expect(resolveLocalProjectId(path, undefined, "", "/work/my-app")).toBe("my-app");
+    }),
+  );
 
-  it("feeds the resolved id into the local db container name", () => {
-    const id = resolveLocalProjectId("env-id", undefined, "/work/proj");
-    expect(localDbContainerId(id)).toBe("supabase_db_env-id");
-  });
+  it.effect("feeds the resolved id into the local db container name", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const id = resolveLocalProjectId(path, "env-id", undefined, "/work/proj");
+      expect(localDbContainerId(id)).toBe("supabase_db_env-id");
+    }),
+  );
 });
 
 describe("serviceContainerIds", () => {

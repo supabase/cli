@@ -303,7 +303,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       // Precedence: `SUPABASE_PROJECT_ID` env override, then config.toml's `project_id`, then
       // the workdir basename fallback — with the matched `[remotes.<ref>]` block's own
       // `project_id` suppressing the raw env argument on the linked path.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
