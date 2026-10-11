@@ -123,6 +123,7 @@ import type { StartFlags } from "./start.command.ts";
 import {
   StartConfigLoadError,
   StartInvalidConfigError,
+  StartSnippetsDirectoryError,
   StartWorkdirError,
 } from "./start.errors.ts";
 import { partitionStartExcludeFlags } from "./start.exclude.ts";
@@ -140,7 +141,6 @@ import {
   rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
 import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
-import { DbSetupError } from "../../command-internal/db-bootstrap/db-setup.ts";
 import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
 import { START_SERVICES } from "./start.services.ts";
 import {
@@ -844,9 +844,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         .pipe(
           Effect.mapError(
             (error) =>
-              new DbSetupError({
+              new StartSnippetsDirectoryError({
                 message: `Unable to create the Studio snippets directory: ${error.message}`,
-                reason: "filesystem",
               }),
           ),
         );

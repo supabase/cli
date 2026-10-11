@@ -1554,6 +1554,7 @@ describe("start integration", () => {
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StartSnippetsDirectoryError");
           expect(Cause.pretty(exit.cause)).toContain(
             "Unable to create the Studio snippets directory",
           );
