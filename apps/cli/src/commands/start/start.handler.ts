@@ -140,6 +140,7 @@ import {
   rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
 import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
+import { DbSetupError } from "../../command-internal/db-bootstrap/db-setup.ts";
 import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
 import { START_SERVICES } from "./start.services.ts";
 import {
@@ -836,6 +837,19 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           projectEnvValues,
         )
       : new Set<string>();
+    /* Docker creates a missing bind source, but `podman create -v` rejects it. */
+    if (gates.studio)
+      yield* fs
+        .makeDirectory(path.join(cliSettings.workdir, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new DbSetupError({
+                message: `Unable to create the Studio snippets directory: ${error.message}`,
+                reason: "filesystem",
+              }),
+          ),
+        );
 
     // `--network-id` wins over the generated `supabase_network_<project>` fallback, falling back
     // to `SUPABASE_NETWORK_ID` only when the flag was never passed. See
