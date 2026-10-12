@@ -1,3 +1,5 @@
+import { Data } from "effect";
+
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -23,11 +25,11 @@ const STORAGE_INVALID_URL_MESSAGE = "URL must match pattern ss:///bucket/[prefix
  * Thrown when `goUrlParse` fails: `parse "<url>": <inner>`. Callers wrap
  * `.message` in their own `failed to parse … url: <message>` text.
  */
-export class GoUrlParseError extends Error {
+export class GoUrlParseError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "GoUrlParseError";
+  override readonly name = "GoUrlParseError";
   constructor(rawURL: string, inner: string) {
-    super(`parse "${rawURL}": ${inner}`);
-    this.name = "GoUrlParseError";
+    super({ message: `parse "${rawURL}": ${inner}` });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -40,11 +42,11 @@ export class GoUrlParseError extends Error {
  * pattern. Distinct from `GoUrlParseError` so handlers can map it to a
  * separate tagged error.
  */
-export class StorageUrlPatternError extends Error {
+export class StorageUrlPatternError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "StorageUrlPatternError";
+  override readonly name = "StorageUrlPatternError";
   constructor() {
-    super(STORAGE_INVALID_URL_MESSAGE);
-    this.name = "StorageUrlPatternError";
+    super({ message: STORAGE_INVALID_URL_MESSAGE });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

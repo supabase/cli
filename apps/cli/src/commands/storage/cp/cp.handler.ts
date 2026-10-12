@@ -320,10 +320,10 @@ interface UploadCtx {
 const resolveContentType = (ctx: UploadCtx, filePath: string) =>
   Effect.gen(function* () {
     if (ctx.contentTypeFlag.length > 0) {
-      return refineUploadContentType(ctx.contentTypeFlag, filePath);
+      return refineUploadContentType(ctx.path, ctx.contentTypeFlag, filePath);
     }
     const sniff = yield* readSniffBytes(ctx.fs, filePath);
-    return contentTypeForUpload(sniff, filePath);
+    return contentTypeForUpload(ctx.path, sniff, filePath);
   });
 
 /** Uploads a single file without overwrite and without an "Uploading:" progress line. */

@@ -2271,6 +2271,31 @@ describe("seed buckets", () => {
     ),
   );
 
+  it.live("--linked falls back to the project's service-role key when the env var is empty", () =>
+    seedScenario(
+      withEnvVar(
+        "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+        "",
+        Effect.gen(function* () {
+          const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+          const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+            toml: "[storage.buckets.test]\npublic = true\n",
+            projectRef: VALID_REF,
+            args: ["seed", "buckets", "--linked"],
+            routes: [
+              { method: "GET", match: "/storage/v1/bucket", body: [] },
+              { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+            ],
+          });
+          const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(requests.length).toBeGreaterThan(0);
+          expect(requests.every((r) => r.headers["apikey"] === "test-service-role-key")).toBe(true);
+        }),
+      ),
+    ),
+  );
+
   it.live("upserts analytics buckets when analytics.enabled and --linked", () =>
     Effect.gen(function* () {
       const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };

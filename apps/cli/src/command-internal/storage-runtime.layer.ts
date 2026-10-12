@@ -61,7 +61,11 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     stackApiLayer,
   );
 
-  const _serviceCoverageCheck: Layer.Layer<StorageGatewayServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    StorageGatewayServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;
