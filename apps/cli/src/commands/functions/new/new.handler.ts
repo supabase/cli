@@ -31,8 +31,6 @@ import {
   renderFunctionsNewEntrypoint,
 } from "./new.templates.ts";
 
-const DEFAULT_LOCAL_API_PORT = 54321;
-
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -95,22 +93,14 @@ const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(f
   slug: string,
 ) {
   const configValues = yield* CliConfigValues;
-  const resolvedConfig = yield* configValues
-    .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
-    .pipe(Effect.option);
-  yield* Effect.annotateCurrentSpan(
-    "config.found",
-    Option.exists(resolvedConfig, (s) => s.hasConfigFile),
-  );
-  const config = Option.map(resolvedConfig, (loaded) => loaded.materialized.config);
-  const port = Option.match(config, {
-    onNone: () => DEFAULT_LOCAL_API_PORT,
-    onSome: (value) => value.api.port,
+  const resolvedConfig = yield* configValues.load({
+    workdir: cliSettings.workdir,
+    projectRef: Option.none(),
   });
-  const publishableKey = Option.getOrElse(
-    Option.flatMapNullishOr(config, (value) => value.auth.publishable_key),
-    () => defaultPublishableKey,
-  );
+  yield* Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile);
+  const { config } = resolvedConfig.materialized;
+  const port = config.api.port;
+  const publishableKey = config.auth.publishable_key ?? defaultPublishableKey;
   return {
     url: `http://127.0.0.1:${port}/functions/v1/${slug}`,
     publishableKey,
@@ -204,6 +194,8 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
     const functionDir = path.join(cliSettings.workdir, relFunctionDir);
     const entrypointPath = path.join(cliSettings.workdir, relEntrypoint);
 
+    const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
+
     yield* fs.makeDirectory(functionDir, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -225,7 +217,6 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
       });
     }
 
-    const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
     yield* fs
       .writeFileString(entrypointPath, renderFunctionsNewEntrypoint(authMode, templateInputs))
       .pipe(

@@ -76,10 +76,9 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Creates a new Edge Function scaffold locally.
 - Requires exactly one argument: the function name.
 - `--auth` selects the auth-mode template (`none` | `apikey` | `user`, default: `apikey`).
-- The example `curl` URL port and publishable key come from the shared resolved config, so `SUPABASE_API_PORT` and the other `SUPABASE_*` config overrides apply; a config that fails to load falls back to the defaults.
-- Best-effort config parsing is intentionally non-fatal here: malformed `config.toml` does not block scaffolding or config append.
+- The example `curl` URL port and publishable key come from the shared resolved config, so `SUPABASE_API_PORT` and the other `SUPABASE_*` config overrides apply; a config that fails to load (unparsable file or invalid value) fails before anything is written. Without a config file the defaults apply.
 - The `[functions.<name>]` config section is **appended** (`O_APPEND` semantics, `flag: "a"`), never rewritten, so the existing file is left byte-for-byte untouched and a partial write cannot truncate it.
-- Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. This is a deliberate design choice: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
+- Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. For all well-formed configs the two approaches agree.
 - IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.
 - A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/functions/…` tree (plus a new `config.toml`) at the wrong path.

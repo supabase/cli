@@ -164,7 +164,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("appends config even when the existing config.toml is malformed", () => {
+  it.live("fails before writing anything when the existing config.toml is malformed", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -172,11 +172,29 @@ describe("functions new integration", () => {
       yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), "not valid toml ][");
 
-      yield* functionsNew({ functionName: "after-bad-config", auth: "none" });
-      const config = yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"));
-      expect(config).toContain("not valid toml ][");
-      expect(config).toContain("[functions.after-bad-config]");
+      const exit = yield* functionsNew({ functionName: "after-bad-config", auth: "none" }).pipe(
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "functions"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
+        "not valid toml ][",
+      );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails on an invalid SUPABASE_API_PORT without creating the function directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      const exit = yield* functionsNew({ functionName: "hello", auth: "apikey" }).pipe(Effect.exit);
+
+      expect(exitTag(exit)).toBe("CliConfigValueError");
+      expect(yield* fs.exists(path.join(workdir, "supabase", "functions", "hello"))).toBe(false);
+    }).pipe(Effect.provide(layer), (body) => withEnvVar("SUPABASE_API_PORT", "abc", body));
   });
 
   it.live("warns and skips the config append when the function is already declared", () => {
@@ -324,8 +342,11 @@ describe("functions new integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      // A directory at the config.toml path makes the append write fail (EISDIR).
-      yield* fs.makeDirectory(path.join(workdir, "supabase", "config.toml"), { recursive: true });
+      // A read-only config.toml loads fine but makes the append write fail (EACCES).
+      const configPath = path.join(workdir, "supabase", "config.toml");
+      yield* fs.makeDirectory(path.dirname(configPath), { recursive: true });
+      yield* fs.writeFileString(configPath, 'project_id = "test-project"\n');
+      yield* fs.chmod(configPath, 0o444);
       const exit = yield* Effect.exit(functionsNew({ functionName: "write-fail", auth: "apikey" }));
       expect(exitTag(exit)).toBe("FunctionsNewWriteError");
       expect(telemetry.flushed).toBe(true);
