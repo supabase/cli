@@ -47,7 +47,7 @@ function setupLogout(opts: SetupOpts = {}) {
 }
 
 describe("logout integration", () => {
-  it.live("confirms then deletes the token + all project credentials", () => {
+  it.effect("confirms then deletes the token + all project credentials", () => {
     const { layer, out, credentials } = setupLogout({ confirm: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -58,7 +58,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--yes skips the prompt and logs out", () => {
+  it.effect("--yes skips the prompt and logs out", () => {
     const { layer, out, credentials } = setupLogout({ yes: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -72,7 +72,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declining the prompt cancels with a failure and does not sweep credentials", () => {
+  it.effect("declining the prompt cancels with a failure and does not sweep credentials", () => {
     const { layer, credentials } = setupLogout({ confirm: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
@@ -84,7 +84,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
+  it.effect("empty non-interactive stdin takes Go's default (false) and cancels", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
@@ -96,7 +96,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped 'y' on non-interactive stdin and logs out", () => {
+  it.effect("honors a piped 'y' on non-interactive stdin and logs out", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["y"] });
     return Effect.gen(function* () {
       yield* logout();
@@ -104,7 +104,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
+  it.effect("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
     return withEnvVar(
       "SUPABASE_YES",
@@ -116,7 +116,7 @@ describe("logout integration", () => {
     );
   });
 
-  it.live("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
+  it.effect("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
     const { layer, out, credentials } = setupLogout({
       yes: true,
       deleteOutcome: "notLoggedIn",
@@ -129,7 +129,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("delete failure propagates as a failure", () => {
+  it.effect("delete failure propagates as a failure", () => {
     const { layer, credentials } = setupLogout({ yes: true, deleteOutcome: "deleteError" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
@@ -141,7 +141,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resets the telemetry identity on successful logout", () => {
+  it.effect("resets the telemetry identity on successful logout", () => {
     const { layer, telemetry } = setupLogout({ confirm: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -149,7 +149,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resets the telemetry identity even when not logged in", () => {
+  it.effect("resets the telemetry identity even when not logged in", () => {
     const { layer, telemetry } = setupLogout({ confirm: true, deleteOutcome: "notLoggedIn" });
     return Effect.gen(function* () {
       yield* logout();
@@ -157,7 +157,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupLogout({ yes: true });
     return Effect.gen(function* () {
       yield* logout();
@@ -165,7 +165,7 @@ describe("logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on cancel", () => {
+  it.effect("flushes telemetry state on cancel", () => {
     const { layer, telemetry } = setupLogout({ confirm: false });
     return Effect.gen(function* () {
       yield* Effect.exit(logout());
@@ -174,7 +174,7 @@ describe("logout integration", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format} with --yes emits a single success result`, () => {
+    it.effect(`${format} with --yes emits a single success result`, () => {
       const { layer, out } = setupLogout({ format, yes: true });
       return Effect.gen(function* () {
         yield* logout();
@@ -186,7 +186,7 @@ describe("logout integration", () => {
   }
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format} not-logged-in emits the not-logged-in message as the result`, () => {
+    it.effect(`${format} not-logged-in emits the not-logged-in message as the result`, () => {
       const { layer, out, credentials } = setupLogout({
         format,
         yes: true,
@@ -201,7 +201,7 @@ describe("logout integration", () => {
     });
   }
 
-  it.live("json mode without --yes fails cleanly at the confirm prompt", () => {
+  it.effect("json mode without --yes fails cleanly at the confirm prompt", () => {
     const { layer } = setupLogout({ format: "json", yes: false, promptConfirmFail: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
