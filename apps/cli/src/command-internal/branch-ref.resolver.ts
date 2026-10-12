@@ -33,12 +33,12 @@ export interface BranchRefResolveMappers<EGet, EFind> {
  * directory: the UUID endpoint does not use a parent ref, so requiring one
  * up front would fail invocations the API itself can serve.
  */
-export function resolveBranchProjectRef<EGet, EFind, EParent = never, RParent = never>(
-  input: string,
-  projectRef: string | Effect.Effect<string, EParent, RParent>,
-  mappers: BranchRefResolveMappers<EGet, EFind>,
-) {
-  return Effect.gen(function* () {
+export const resolveBranchProjectRef = Effect.fn("BranchRef.resolve")(
+  function* <EGet, EFind, EParent = never, RParent = never>(
+    input: string,
+    projectRef: string | Effect.Effect<string, EParent, RParent>,
+    mappers: BranchRefResolveMappers<EGet, EFind>,
+  ) {
     if (BRANCH_PROJECT_REF_PATTERN.test(input)) {
       yield* Effect.annotateCurrentSpan("branch_ref.input_kind", "project_ref");
       return input;
@@ -60,8 +60,6 @@ export function resolveBranchProjectRef<EGet, EFind, EParent = never, RParent = 
       .getABranch({ ref: parentRef, name: input })
       .pipe(Effect.catch(mappers.mapFindError));
     return branch.project_ref;
-  }).pipe(
-    Effect.tap((ref) => Effect.annotateCurrentSpan("project.ref", ref)),
-    Effect.withSpan("BranchRef.resolve"),
-  );
-}
+  },
+  Effect.tap((ref) => Effect.annotateCurrentSpan("project.ref", ref)),
+);
