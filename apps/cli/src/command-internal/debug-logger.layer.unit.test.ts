@@ -44,7 +44,7 @@ describe("debugLoggerLayer", () => {
     );
   });
 
-  it.effect("http emits Go timestamp order and method/url format", () => {
+  it.effect("http emits timestamp, method and url in order", () => {
     const stderr = captureStderr();
     const body = Effect.gen(function* () {
       const localTime = DateTime.makeZonedUnsafe(

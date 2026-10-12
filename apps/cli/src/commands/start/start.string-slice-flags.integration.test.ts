@@ -17,8 +17,8 @@ import {
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { startCommand } from "./start.command.ts";
 
-// Malformed CSV aborts flag parsing before the handler runs, with pflag's exact
-// `invalid argument %q for %q flag: %v` line on stderr — a shorthand flag frames both spellings
+// Malformed CSV aborts flag parsing before the handler runs, with the exact
+// `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr — a shorthand flag frames both spellings
 // (`-x, --exclude`). These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
@@ -66,9 +66,9 @@ function setup() {
   return { layer };
 }
 
-describe("start --exclude flag (pflag CSV parity)", () => {
-  // Both spellings render the identical diagnostic line: pflag always frames a shorthand
-  // flag as `-x, --exclude`.
+describe("start --exclude flag", () => {
+  // Both spellings render the identical diagnostic line: a shorthand
+  // flag is always framed as `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },
@@ -76,7 +76,7 @@ describe("start --exclude flag (pflag CSV parity)", () => {
 
   for (const { name, flag } of spellings) {
     it.live(
-      `${name}: malformed CSV fails at parse time with pflag's shorthand-framed diagnostic`,
+      `${name}: malformed CSV fails at parse time with the shorthand-framed diagnostic`,
       () => {
         const { layer } = setup();
         return Effect.gen(function* () {

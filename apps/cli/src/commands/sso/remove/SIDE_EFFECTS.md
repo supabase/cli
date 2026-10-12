@@ -52,11 +52,11 @@
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled property/value markdown table showing the removed provider's details.
+Styled property/value markdown table showing the removed provider's details.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
+Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
 
 ### `--output env`
 

@@ -157,7 +157,7 @@ Bucket <name> not found in supabase/config.toml. Do you want to prune it? [y/N]
 
 ### `--output-format json`
 
-Additive (no Go equivalent). A final `result` object summarising the run is
+A final `result` object summarising the run is
 emitted on stdout; progress/prompts are suppressed (prompts use their defaults:
 overwrite → yes, prune → no).
 
@@ -168,8 +168,7 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **`--project-ref`** (TS-only, no Go equivalent — Go's `seed` defines no
-  `--project-ref` at all) overrides ONLY the linked-ref resolution used above
+- **`--project-ref`** overrides ONLY the linked-ref resolution used above
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it without `--linked` (i.e. targeting local) is a hard
   error rather than a silently discarded flag.
@@ -204,7 +203,7 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
 - **Idempotent.** Existing buckets are updated (after an overwrite confirm),
   objects are uploaded with `x-upsert: true`.
 - **Content-Type** for uploaded objects: the first
-  512 bytes are sniffed with a 1:1 port of Go's `http.DetectContentType`
+  512 bytes are sniffed using the WHATWG-style content-type sniffing algorithm
   (`command-internal/detect-content-type.ts`), and only a generic `text/plain`
   result is refined by extension via a built-in MIME table (the host OS MIME
   database is not consulted; the deterministic built-in table is used instead).

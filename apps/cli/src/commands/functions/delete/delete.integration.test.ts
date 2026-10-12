@@ -73,40 +73,37 @@ describe("functions delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:153)",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
-      const analytics = mockContextualAnalytics();
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-          analytics,
-        }),
-        commandRuntimeLayer(["functions", "delete"]).pipe(Layer.provide(BunCrypto.layer)),
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "delete",
-            "hello-world",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
-      );
+  it.live("does not redact --project-ref in cli_command_executed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+    const analytics = mockContextualAnalytics();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        analytics,
+      }),
+      commandRuntimeLayer(["functions", "delete"]).pipe(Layer.provide(BunCrypto.layer)),
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "delete",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
 
-      return Effect.gen(function* () {
-        yield* functionsDeleteHandler({
-          functionName: "hello-world",
-          projectRef: Option.some("abcdefghijklmnopqrst"),
-        });
+    return Effect.gen(function* () {
+      yield* functionsDeleteHandler({
+        functionName: "hello-world",
+        projectRef: Option.some("abcdefghijklmnopqrst"),
+      });
 
-        const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-        expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
+    }).pipe(Effect.provide(layer));
+  });
 });

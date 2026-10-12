@@ -56,11 +56,11 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 
 ## Output
 
-Matches `get` on success: stderr headings plus the Glamour-rendered table.
+Matches `get` on success: stderr headings plus the rendered table.
 
 ### `--output-format text` (default)
 
-Renders the updated config map as a Glamour ASCII table.
+Renders the updated config map as an ASCII table.
 
 ### `--output pretty`
 

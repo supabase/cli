@@ -9,7 +9,7 @@ import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
 
 // All three domain flags are CSV string-slice flags; malformed CSV reports
-// pflag's diagnostic (see `stringSliceFlag`).
+// a diagnostic (see `stringSliceFlag`).
 export const ssoUpdateDomainsFlag = stringSliceFlag(
   "domains",
   "Replace domains with this comma separated list of email domains.",

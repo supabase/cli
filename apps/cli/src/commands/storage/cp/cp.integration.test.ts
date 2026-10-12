@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { StorageUnsupportedOperationError } from "../storage.errors.ts";
 import { storageCp } from "./cp.handler.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
@@ -667,7 +667,7 @@ describe("stack backend", () => {
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
       expect(requests[0]?.headers["apikey"]).toBe(
-        generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+        generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
       );
     }).pipe(Effect.provide(layer));
   });

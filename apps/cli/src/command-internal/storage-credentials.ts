@@ -6,7 +6,7 @@ import { resolveApiExternalUrl } from "./api-url.ts";
 import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
 import { loadProjectEnv } from "./db-config.toml-read.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
-import { generateGoJwt } from "./go-jwt.ts";
+import { generateLocalJwt } from "./local-jwt.ts";
 import { getHostname } from "./hostname.ts";
 import {
   decryptAuthSecret,
@@ -224,7 +224,7 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
   });
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
-    : generateGoJwt(jwtSecret, "service_role");
+    : generateLocalJwt(jwtSecret, "service_role");
 });
 
 /**

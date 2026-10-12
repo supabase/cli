@@ -20,7 +20,7 @@ describe("isEncryptedSecret", () => {
 });
 
 describe("decryptSecret", () => {
-  it("decrypts Go's test vector to the expected plaintext", () => {
+  it("decrypts the test vector to the expected plaintext", () => {
     const result = decryptSecret(ENCRYPTED_VALUE, [PRIVATE_KEY]);
     expect(result).toEqual({ ok: true, value: "value" });
   });

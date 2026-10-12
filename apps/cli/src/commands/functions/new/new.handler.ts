@@ -1,4 +1,4 @@
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../../command-internal/cli-config-load.ts";
 import { defaultPublishableKey } from "../../../shared/stack-constants.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -96,7 +96,6 @@ const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(f
   slug: string,
 ) {
   const loaded = yield* loadCliConfig(cliSettings.workdir, {
-    goViperCompat: true,
     search: shouldSearchAncestors(cliSettings),
   }).pipe(Effect.orElseSucceed(() => null));
   yield* Effect.annotateCurrentSpan("config.found", loaded !== null);

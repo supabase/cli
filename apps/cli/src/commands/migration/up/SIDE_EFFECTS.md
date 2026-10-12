@@ -56,12 +56,11 @@ Same structured `applied` result delivered as an NDJSON `result` event.
 ## Notes
 
 - `--local` (default true), `--linked`, and `--db-url` are mutually exclusive.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target).
 - `--include-all` applies all migrations not found on the remote history table.
 - Pipeline-incompatible statements (`CREATE [UNIQUE] INDEX CONCURRENTLY`,

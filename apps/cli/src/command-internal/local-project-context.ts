@@ -4,9 +4,9 @@ import {
   type LoadedCliConfig,
   type CliConfig,
 } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
 import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
 
+import { loadCliConfig } from "./cli-config-load.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
@@ -79,7 +79,6 @@ export const loadLocalProjectContext = <E>(
       // Restricts resolution to `supabase/config.toml`; without this, a workdir with a stray
       // `config.json` would be preferred over it.
       tomlOnly: true,
-      goViperCompat: true,
       projectRef,
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),

@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { statusExcludeFlag, statusOverrideNameFlag } from "./status.command.ts";
 
-describe("status --override-name flag (pflag StringSlice parity)", () => {
+describe("status --override-name flag", () => {
   it.live("splits a comma-separated value into multiple overrides", () =>
     Effect.gen(function* () {
       const [, overrideName] = yield* statusOverrideNameFlag
@@ -41,7 +41,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.live("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, overrideName] = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['a=1\nb"2'] }, arguments: [] })
@@ -51,7 +51,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", () =>
+  it.live("rejects malformed CSV (unterminated quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ['"api.url=FOO'] }, arguments: [] })
@@ -66,7 +66,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.live("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* statusOverrideNameFlag
         .parse({ flags: { "override-name": ["\n"] }, arguments: [] })
@@ -82,7 +82,7 @@ describe("status --override-name flag (pflag StringSlice parity)", () => {
   );
 });
 
-describe("status --exclude flag (pflag StringSlice parity)", () => {
+describe("status --exclude flag", () => {
   it.live("splits a comma-separated value into multiple exclusions", () =>
     Effect.gen(function* () {
       const [, exclude] = yield* statusExcludeFlag
@@ -103,7 +103,7 @@ describe("status --exclude flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.live("rejects malformed CSV (bare quote) with pflag's exact diagnostic", () =>
+  it.live("rejects malformed CSV (bare quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* statusExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })

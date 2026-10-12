@@ -5,7 +5,7 @@ import { dbPull } from "../../pull/pull.handler.ts";
 import type { DbPullFlags } from "../../pull/pull.command.ts";
 import type { DbRemoteCommitFlags } from "./commit.command.ts";
 
-/** Cobra's former `Deprecated` line on Go `db remote commit`. */
+/** The deprecation line printed by `db remote commit`. */
 const REMOTE_COMMIT_DEPRECATION = 'Command "commit" is deprecated, use "db pull" instead.\n';
 
 /** `db remote commit` is `db pull` with a fixed name and no PostRun line. */

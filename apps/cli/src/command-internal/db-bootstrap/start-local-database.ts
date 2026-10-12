@@ -45,9 +45,9 @@ import {
   resolveLocalConfigValues,
   resolveThirdPartyProviders,
 } from "../local-config-values.ts";
-import { parseGoDuration, resolveHealthTimeoutSeconds } from "../go-duration.ts";
+import { parseDuration, resolveHealthTimeoutSeconds } from "../duration.ts";
 import { ramInBytes } from "../size-units.ts";
-import { goUrlParse } from "../storage-url.ts";
+import { parseUrl } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -137,7 +137,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     resolveAuthEmail(config.auth.email, authDocForValidation, projectEnvValues),
   );
   yield* wrapDbConfigOverride("auth.email.max_frequency", () =>
-    parseGoDuration(resolvedEmailForValidation.max_frequency),
+    parseDuration(resolvedEmailForValidation.max_frequency),
   );
   yield* wrapDbConfigOverride("auth.email.smtp", () =>
     resolveAuthEmailSmtp(authDocForValidation, projectEnvValues),
@@ -146,7 +146,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     resolveAuthSms(authDocForValidation, config.auth.sms, projectEnvValues),
   );
   yield* wrapDbConfigOverride("auth.sms.max_frequency", () =>
-    parseGoDuration(smsForValidation.max_frequency),
+    parseDuration(smsForValidation.max_frequency),
   );
   const authEnabledForValidation = envOverrideBool(
     "SUPABASE_AUTH_ENABLED",
@@ -173,16 +173,16 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   const gotrueSessionsForValidation = resolveGotrueSessions(config.auth.sessions, projectEnvValues);
   if (gotrueSessionsForValidation?.timebox !== undefined) {
     yield* wrapDbConfigOverride("auth.sessions.timebox", () =>
-      parseGoDuration(gotrueSessionsForValidation.timebox!),
+      parseDuration(gotrueSessionsForValidation.timebox!),
     );
   }
   if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
     yield* wrapDbConfigOverride("auth.sessions.inactivity_timeout", () =>
-      parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+      parseDuration(gotrueSessionsForValidation.inactivity_timeout!),
     );
   }
   yield* wrapDbConfigOverride("auth.mfa.phone.max_frequency", () =>
-    parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
+    parseDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
   );
   yield* wrapDbConfigOverride("auth.rate_limit", () =>
     resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
@@ -532,7 +532,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     config.studio.api_url;
   if (studioEnabledForValidation) {
     yield* Effect.try({
-      try: () => goUrlParse(studioApiUrlForValidation),
+      try: () => parseUrl(studioApiUrlForValidation),
       catch: (cause) =>
         new DbConfigLoadError({
           message: `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,

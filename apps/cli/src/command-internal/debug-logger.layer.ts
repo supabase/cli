@@ -5,7 +5,7 @@ import { DebugLogger } from "./debug-logger.service.ts";
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
-/** Formats a timestamp matching Go's `log.LstdFlags`: `YYYY/MM/DD HH:MM:SS`. */
+/** Formats a timestamp as `YYYY/MM/DD HH:MM:SS`. */
 function formatTimestamp(now: DateTime.DateTime): string {
   const local = DateTime.toParts(DateTime.setZone(now, DateTime.zoneMakeLocal()));
   return (

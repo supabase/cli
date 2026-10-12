@@ -12,11 +12,11 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { domainsDelete } from "./delete.handler.ts";
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
 }
@@ -38,7 +38,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -75,8 +75,8 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores -o json and still only prints to stderr (Go parity)", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.live("ignores -o json and still only prints to stderr", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
@@ -84,7 +84,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --include-raw-output (inert on delete, Go parity)", () => {
+  it.live("ignores --include-raw-output (inert on delete)", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });

@@ -56,7 +56,7 @@ The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,j
 
 ### `--output pretty` (default) / `--output-format text`
 
-For PITR-only projects, prints a Glamour-styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`. The table is rendered byte-for-byte using `glamour.WithStandardStyle(styles.AsciiStyle)`.
+For PITR-only projects, prints a styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`.
 
 ### `--output json`
 

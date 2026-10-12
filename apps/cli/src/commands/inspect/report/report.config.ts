@@ -108,7 +108,7 @@ export const readInspectRules = Effect.fnUntraced(function* (
     // Rejects a non-table entry (e.g. `rules = ["foo"]`) instead of silently skipping it.
     if (record === undefined) {
       return yield* new DbConfigLoadError({
-        message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
+        message: `failed to load config: experimental.inspect.rules[${index}] expected a table`,
       });
     }
     // An unknown or misspelled key aborts the whole load instead of being ignored.
@@ -117,7 +117,7 @@ export const readInspectRules = Effect.fnUntraced(function* (
     );
     if (unknownKeys.length > 0) {
       return yield* new DbConfigLoadError({
-        message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
+        message: `failed to load config: experimental.inspect.rules[${index}] has unknown keys: ${unknownKeys.join(", ")}`,
       });
     }
     const fields: Record<string, string> = {};

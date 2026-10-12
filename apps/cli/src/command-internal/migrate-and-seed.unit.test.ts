@@ -141,7 +141,9 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table schema_marker ()");
             expect(execs).not.toContain("create table migration_marker ()");
-            expect(out.rawChunks.map((c) => c.text).join("")).not.toContain("Applying migration");
+            const stderr = out.rawChunks.map((c) => c.text).join("");
+            expect(stderr).not.toContain("Applying migration");
+            expect(stderr).not.toContain("schema_paths is not applied");
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),
@@ -150,7 +152,7 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
   );
 
   it.effect(
-    "falls back to migration files when pg-delta is enabled, even with experimental on and an empty version",
+    "falls back to migration files and warns that schema_paths is ignored when pg-delta is enabled, even with experimental on and an empty version",
     () => {
       const workdir = makeWorkdir();
       writeFile(workdir, "supabase/schemas/a.sql", "create table schema_marker ();");
@@ -177,6 +179,9 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table migration_marker ()");
             expect(execs).not.toContain("create table schema_marker ()");
+            expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+              "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+            );
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),
@@ -244,6 +249,45 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table migration_marker ()");
             expect(execs).not.toContain("create table schema_marker ()");
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "warns that schema_paths is ignored even when migrations are disabled and pg-delta is enabled",
+    () => {
+      const workdir = makeWorkdir();
+      writeFile(workdir, "supabase/schemas/a.sql", "create table schema_marker ();");
+      writeFile(
+        workdir,
+        "supabase/migrations/20240101000000_x.sql",
+        "create table migration_marker ();",
+      );
+      const { session, execs } = fakeSession();
+      const out = mockOutput();
+      return run(
+        workdir,
+        "",
+        {
+          ...baseConfig,
+          migrationsEnabled: false,
+          experimental: true,
+          pgDeltaEnabled: true,
+          schemaPaths: ["supabase/schemas/a.sql"],
+        },
+        session,
+        out,
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(execs).not.toContain("create table migration_marker ()");
+            expect(execs).not.toContain("create table schema_marker ()");
+            expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+              "[db.migrations].schema_paths is not applied while pg-delta is enabled",
+            );
             rmSync(workdir, { recursive: true, force: true });
           }),
         ),
@@ -421,38 +465,35 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
     },
   );
 
-  it.effect(
-    "attaches the failing schema file as Go's CmdSuggestion (See schema file: <fp>)",
-    () => {
-      const workdir = makeWorkdir();
-      const schemaPath = "supabase/schemas/broken.sql";
-      writeFile(workdir, schemaPath, "totally not valid sql;");
-      const { session } = failingExecSession();
-      const out = mockOutput();
-      return run(
-        workdir,
-        "",
-        {
-          ...baseConfig,
-          experimental: true,
-          schemaPaths: [schemaPath],
-        },
-        session,
-        out,
-      ).pipe(
-        Effect.flip,
-        Effect.tap((error) =>
-          Effect.sync(() => {
-            expect(error).toBeInstanceOf(MigrationApplyError);
-            const suggestion = (error as MigrationApplyError).suggestion;
-            expect(suggestion).toBeDefined();
-            expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("attaches the failing schema file as a suggestion (See schema file: <fp>)", () => {
+    const workdir = makeWorkdir();
+    const schemaPath = "supabase/schemas/broken.sql";
+    writeFile(workdir, schemaPath, "totally not valid sql;");
+    const { session } = failingExecSession();
+    const out = mockOutput();
+    return run(
+      workdir,
+      "",
+      {
+        ...baseConfig,
+        experimental: true,
+        schemaPaths: [schemaPath],
+      },
+      session,
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(MigrationApplyError);
+          const suggestion = (error as MigrationApplyError).suggestion;
+          expect(suggestion).toBeDefined();
+          expect(stripAnsi(suggestion ?? "")).toBe(`See schema file: ${schemaPath}`);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("migrateAndSeed local pg_net remediation", () => {

@@ -116,15 +116,14 @@ describe("generateCompletionScript", () => {
     });
   });
 
-  // Fixtures are the literal stdout of a pinned cobra v1.10.2 binary running
-  // `supabase completion <shell> [--no-descriptions]`, captured once and checked in.
-  // Regenerate them only if cobra is upgraded.
-  describe("byte-exact parity with real cobra v1.10.2 output", () => {
+  // Fixtures are the literal stdout of `supabase completion <shell> [--no-descriptions]`,
+  // captured once and checked in.
+  describe("byte-exact match with the checked-in fixtures", () => {
     const shells: ReadonlyArray<CompletionShell> = ["bash", "zsh", "fish", "powershell"];
 
     for (const shell of shells) {
       it.live(
-        `matches the real cobra ${shell} completion script byte-for-byte (with descriptions)`,
+        `matches the ${shell} completion script fixture byte-for-byte (with descriptions)`,
         () =>
           Effect.gen(function* () {
             const generated = generateCompletionScript(shell, { noDescriptions: false });
@@ -133,7 +132,7 @@ describe("generateCompletionScript", () => {
       );
 
       it.live(
-        `matches the real cobra ${shell} completion script byte-for-byte (--no-descriptions)`,
+        `matches the ${shell} completion script fixture byte-for-byte (--no-descriptions)`,
         () =>
           Effect.gen(function* () {
             const generated = generateCompletionScript(shell, { noDescriptions: true });

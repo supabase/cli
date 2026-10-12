@@ -20,7 +20,7 @@ import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-f
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { unusedGateway } from "./unused-stack.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
-import { generateGoJwt } from "../../src/command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../src/command-internal/local-jwt.ts";
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
@@ -106,8 +106,8 @@ const stackCredentials = {
   databasePassword: "postgres",
   publishableKey: "sb_publishable_storage_test",
   secretKey: "sb_secret_storage_test",
-  anonKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "anon"),
-  serviceRoleKey: generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+  anonKey: generateLocalJwt(STORAGE_TEST_JWT_SECRET, "anon"),
+  serviceRoleKey: generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
   jwks: JSON.stringify({
     keys: [{ kty: "oct", k: Buffer.from(STORAGE_TEST_JWT_SECRET).toString("base64url") }],
   }),

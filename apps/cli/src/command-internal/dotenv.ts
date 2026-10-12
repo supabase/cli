@@ -1,9 +1,9 @@
-// godotenv-compatible: `KEY=VALUE`/`KEY="VALUE"` lines, `#` comments, blank lines, and an
+// Dotenv syntax: `KEY=VALUE`/`KEY="VALUE"` lines, `#` comments, blank lines, and an
 // optional `export ` prefix. An empty or invalid variable name throws.
 const EXPORT_PREFIX = /^\s*export\s+/;
 
 /**
- * Minimal godotenv-compatible parser for project `.env` files. Throws when a variable name is
+ * Minimal dotenv parser for project `.env` files. Throws when a variable name is
  * empty or contains an invalid character.
  */
 export function parseDotEnv(contents: string): Record<string, string> {

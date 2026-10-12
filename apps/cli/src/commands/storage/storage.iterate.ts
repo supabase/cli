@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import type { StorageGatewayError } from "../../command-internal/storage-gateway.errors.ts";
 import { PAGE_LIMIT, type StorageGateway } from "../../command-internal/storage-gateway.ts";
-import { goPathSplit, splitBucketPrefix } from "../../command-internal/storage-url.ts";
+import { splitDirAndFile, splitBucketPrefix } from "../../command-internal/storage-url.ts";
 
 /**
  * Pagination + traversal helpers shared by `storage ls/cp/mv/rm`. `callback` receives
@@ -74,7 +74,7 @@ export const iterateStoragePathsAll = <E>(
   callback: (objectPath: string) => Effect.Effect<void, E>,
 ): Effect.Effect<void, StorageGatewayError | E> =>
   Effect.gen(function* () {
-    const basePath = remotePath.endsWith("/") ? remotePath : goPathSplit(remotePath)[0];
+    const basePath = remotePath.endsWith("/") ? remotePath : splitDirAndFile(remotePath)[0];
     const dirQueue: Array<string> = [];
 
     yield* iterateStoragePaths(gateway, output, remotePath, (objectName) =>

@@ -99,21 +99,18 @@ describe("loadLocalProjectContext", () => {
     );
   });
 
-  it.effect(
-    "does NOT install a project .env's DOCKER_HOST into process.env, matching Go's Docker client being frozen at binary startup, before godotenv.Load ever runs",
-    () => {
-      const workdir = tempRoot.current;
-      return Effect.gen(function* () {
-        yield* writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
+  it.effect("does NOT install a project .env's DOCKER_HOST into process.env", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
 
-        yield* loadLocalProjectContext(workdir, (message) => new TestError({ message }));
-        expect(yield* processEnvValue(DOCKER_HOST_KEY)).toBeUndefined();
-      }).pipe(
-        (body) => withEnvVar(DOCKER_HOST_KEY, undefined, body),
-        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
-      );
-    },
-  );
+      yield* loadLocalProjectContext(workdir, (message) => new TestError({ message }));
+      expect(yield* processEnvValue(DOCKER_HOST_KEY)).toBeUndefined();
+    }).pipe(
+      (body) => withEnvVar(DOCKER_HOST_KEY, undefined, body),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    );
+  });
 
   it.effect(
     "leaves an already-set shell DOCKER_HOST untouched regardless of a conflicting project .env value",

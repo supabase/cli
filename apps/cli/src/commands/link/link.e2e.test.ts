@@ -8,7 +8,7 @@ const TEST_TOKEN = "sbp_" + "a".repeat(40);
 describe("supabase link", () => {
   // Golden-path surface test: in a real subprocess with no TTY, no --project-ref
   // and no SUPABASE_PROJECT_ID, ref resolution fails before any API call with the
-  // cobra-style required-flag error. Validates dispatch + ref-resolution wiring
+  // required-flag error. Validates dispatch + ref-resolution wiring
   // without needing a network fixture.
   it.live(
     "without a resolvable project ref exits 1 with the required-flag error",

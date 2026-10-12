@@ -34,7 +34,7 @@ const baseEnvInput: BuildStudioEnvInput = {
 };
 
 describe("buildStudioEnv", () => {
-  it.effect("mirrors Go's TestBuildStudioEnv fixture", () => {
+  it.effect("builds the studio env fixture", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const env = buildStudioEnv(baseEnvInput, path);
@@ -78,7 +78,7 @@ describe("buildStudioEnv", () => {
   });
 
   it.effect(
-    "LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input",
+    "LOGFLARE_PRIVATE_ACCESS_TOKEN is always the hardcoded 'api-key', regardless of input",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -104,24 +104,21 @@ describe("buildStudioEnv", () => {
     }).pipe(Effect.provide(BunPath.layer));
   });
 
-  it.effect(
-    'reflects analyticsEnabled/analyticsBackend verbatim (Go\'s fmt.Sprintf("%v", ...))',
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const env = buildStudioEnv(
-          {
-            ...baseEnvInput,
-            analyticsEnabled: false,
-            analyticsBackend: "bigquery",
-          },
-          path,
-        );
-        expect(env["NEXT_PUBLIC_ENABLE_LOGS"]).toBe("false");
-        expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("reflects analyticsEnabled/analyticsBackend verbatim", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const env = buildStudioEnv(
+        {
+          ...baseEnvInput,
+          analyticsEnabled: false,
+          analyticsBackend: "bigquery",
+        },
+        path,
+      );
+      expect(env["NEXT_PUBLIC_ENABLE_LOGS"]).toBe("false");
+      expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect(
     "EDGE_FUNCTIONS_MANAGEMENT_FOLDER is workdir/supabase/functions in Docker-path form",
@@ -204,23 +201,20 @@ describe("buildStudioContainerSpec", () => {
     },
   );
 
-  it.effect(
-    "dedupes the snippets bind against an identical functionBinds entry (Go's utils.RemoveDuplicates)",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const spec = buildStudioContainerSpec(
-          {
-            ...baseSpecInput,
-            functionBinds: ["/project/supabase/snippets:/project/supabase/snippets:rw"],
-          },
-          path,
-        );
+  it.effect("dedupes the snippets bind against an identical functionBinds entry", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const spec = buildStudioContainerSpec(
+        {
+          ...baseSpecInput,
+          functionBinds: ["/project/supabase/snippets:/project/supabase/snippets:rw"],
+        },
+        path,
+      );
 
-        expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+      expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
+    }).pipe(Effect.provide(BunPath.layer));
+  });
   it.effect("translates Windows function and snippet mounts for the container", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

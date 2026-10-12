@@ -600,45 +600,42 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
 });
 
 describe("dbConfigResolver (linked config ordering)", () => {
-  it.effect(
-    "validates the ref-merged config before any network work (Go ParseDatabaseConfig order)",
-    () => {
-      // The ref is sourced from the config's top-level project_id; the matching remote block
-      // sets an unsupported major_version. If validation happened after the connection work,
-      // `mockDbConnection.connect()` would die first.
-      const ref = "abcdefghijklmnopqrst";
-      return Effect.gen(function* () {
-        const dir = yield* withWorkdir(
-          [
-            `project_id = "${ref}"`,
-            "[db]",
-            "major_version = 15",
-            `[remotes.${ref.slice(0, 4)}]`,
-            `project_id = "${ref}"`,
-            `[remotes.${ref.slice(0, 4)}.db]`,
-            "major_version = 99",
-            "",
-          ].join("\n"),
-        );
-        // The linked ref is sourced via the project-ref resolver's env fallback.
-        return yield* resolve(dir, linkedFlags, { configEnv: { SUPABASE_PROJECT_ID: ref } });
-      }).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              expect(Cause.pretty(exit.cause)).toContain(
-                "Failed reading config: Invalid db.major_version: 99.",
-              );
-            }
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(BunServices.layer),
+  it.effect("validates the ref-merged config before any network work", () => {
+    // The ref is sourced from the config's top-level project_id; the matching remote block
+    // sets an unsupported major_version. If validation happened after the connection work,
+    // `mockDbConnection.connect()` would die first.
+    const ref = "abcdefghijklmnopqrst";
+    return Effect.gen(function* () {
+      const dir = yield* withWorkdir(
+        [
+          `project_id = "${ref}"`,
+          "[db]",
+          "major_version = 15",
+          `[remotes.${ref.slice(0, 4)}]`,
+          `project_id = "${ref}"`,
+          `[remotes.${ref.slice(0, 4)}.db]`,
+          "major_version = 99",
+          "",
+        ].join("\n"),
       );
-    },
-  );
+      // The linked ref is sourced via the project-ref resolver's env fallback.
+      return yield* resolve(dir, linkedFlags, { configEnv: { SUPABASE_PROJECT_ID: ref } });
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "Failed reading config: Invalid db.major_version: 99.",
+            );
+          }
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+    );
+  });
 
   it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
     // The ref file is seeded as a directory (not a file), with no project_id or env fallback,

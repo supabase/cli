@@ -24,9 +24,9 @@ import {
   StorageGatewayStatusError,
 } from "../../../command-internal/storage-gateway.errors.ts";
 import {
-  GoUrlParseError,
+  UrlParseError,
   STORAGE_SCHEME,
-  goUrlParse,
+  parseUrl,
   splitBucketPrefix,
 } from "../../../command-internal/storage-url.ts";
 import {
@@ -171,11 +171,11 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
 
 const parseCpUrl = (raw: string, which: "src" | "dst") =>
   Effect.try({
-    try: () => goUrlParse(raw),
+    try: () => parseUrl(raw),
     catch: (cause) =>
       new StorageUrlParseError({
         message: `failed to parse ${which} url: ${
-          cause instanceof GoUrlParseError ? cause.message : String(cause)
+          cause instanceof UrlParseError ? cause.message : String(cause)
         }`,
       }),
   });

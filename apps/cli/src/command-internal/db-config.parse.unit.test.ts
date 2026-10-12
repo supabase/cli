@@ -53,18 +53,16 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect(
-    "defaults the user to the OS account when userinfo is omitted (libpq/pgconn parity)",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* parseConnectionString("postgresql://localhost/mydb")).toEqual({
-          host: "localhost",
-          port: 5432,
-          user: osUser,
-          password: "",
-          database: "mydb",
-        });
-      }),
+  it.effect("defaults the user to the OS account when userinfo is omitted (libpq parity)", () =>
+    Effect.gen(function* () {
+      expect(yield* parseConnectionString("postgresql://localhost/mydb")).toEqual({
+        host: "localhost",
+        port: 5432,
+        user: osUser,
+        password: "",
+        database: "mydb",
+      });
+    }),
   );
 
   it.effect("defaults user to the OS account and database to that user when both are omitted", () =>
@@ -103,7 +101,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     ),
   );
 
-  it.effect("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () =>
+  it.effect("honors libpq query params (host/dbname) over the structural URL", () =>
     Effect.gen(function* () {
       expect(
         yield* parseConnectionString("postgresql:///postgres?host=/var/run/postgresql"),
@@ -128,7 +126,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () =>
+  it.effect("strips the brackets from an IPv6 literal host", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
         host: "::1",
@@ -158,7 +156,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("collects non-structural query settings as runtimeParams (pgconn parity)", () =>
+  it.effect("collects non-structural query settings as runtimeParams", () =>
     Effect.gen(function* () {
       const parsed = yield* parseConnectionString(
         "postgres://u:pw@h/db?search_path=tenant&statement_timeout=5000&sslmode=require&options=reference%3Dabc",
@@ -176,7 +174,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("merges PGAPPNAME into runtimeParams as application_name (pgconn env merge)", () =>
+  it.effect("merges PGAPPNAME into runtimeParams as application_name (env merge)", () =>
     Effect.gen(function* () {
       const env = (name: string): string | undefined =>
         name === "PGAPPNAME" ? "myapp" : undefined;
@@ -185,18 +183,16 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect(
-    "lets a connection-string application_name override PGAPPNAME (pgconn precedence)",
-    () =>
-      Effect.gen(function* () {
-        const env = (name: string): string | undefined =>
-          name === "PGAPPNAME" ? "from-env" : undefined;
-        const parsed = yield* parseConnectionString(
-          "postgres://u:pw@h/db?application_name=from-url",
-          env,
-        );
-        expect(parsed?.runtimeParams?.application_name).toBe("from-url");
-      }),
+  it.effect("lets a connection-string application_name override PGAPPNAME (precedence)", () =>
+    Effect.gen(function* () {
+      const env = (name: string): string | undefined =>
+        name === "PGAPPNAME" ? "from-env" : undefined;
+      const parsed = yield* parseConnectionString(
+        "postgres://u:pw@h/db?application_name=from-url",
+        env,
+      );
+      expect(parsed?.runtimeParams?.application_name).toBe("from-url");
+    }),
   );
 
   it.effect("merges a pg_service.conf runtime setting (search_path) into runtimeParams", () =>
@@ -230,7 +226,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("resolves client certs from PGSSLCERT/PGSSLKEY env (pgconn precedence)", () =>
+  it.effect("resolves client certs from PGSSLCERT/PGSSLKEY env (precedence)", () =>
     Effect.gen(function* () {
       const env = (name: string): string | undefined =>
         name === "PGSSLCERT" ? "/e/c.crt" : name === "PGSSLKEY" ? "/e/c.key" : undefined;
@@ -240,7 +236,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("rejects a client cert with sslcert but no sslkey (pgconn both-or-neither)", () =>
+  it.effect("rejects a client cert with sslcert but no sslkey (both or neither)", () =>
     Effect.gen(function* () {
       expect(
         yield* parseConnectionString("postgres://u:pw@h/db?sslcert=/c/client.crt"),
@@ -261,7 +257,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("rejects a non-numeric or empty ?port= query override (pgconn parsePort error)", () =>
+  it.effect("rejects a non-numeric or empty ?port= query override (invalid port)", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
       expect(yield* parseConnectionString("postgresql://db.example.com/app?port=")).toBeUndefined();
@@ -278,7 +274,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     ),
   );
 
-  it.effect("rejects an invalid sslmode value (pgconn 'sslmode is invalid')", () =>
+  it.effect("rejects an invalid sslmode value ('sslmode is invalid')", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://h/db?sslmode=verifyfull")).toBeUndefined();
       expect(yield* parseConnectionString("host=h sslmode=bogus")).toBeUndefined();
@@ -298,7 +294,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () =>
+  it.effect("fills sslmode from PGSSLMODE when the URL omits it (env default)", () =>
     withConfigEnv(
       { PGSSLMODE: "verify-full" },
       Effect.gen(function* () {
@@ -367,7 +363,7 @@ layer(parseTestLayer)("parseConnectionString (libpq keyword/value DSN)", (it) =>
     }),
   );
 
-  it.effect("prefers PGUSER over the OS account for the default user (pgconn env precedence)", () =>
+  it.effect("prefers PGUSER over the OS account for the default user (env precedence)", () =>
     withConfigEnv(
       { PGUSER: "pg_role" },
       Effect.gen(function* () {
@@ -384,7 +380,7 @@ layer(parseTestLayer)("parseConnectionString (libpq keyword/value DSN)", (it) =>
     ),
   );
 
-  it.effect("fills omitted DSN fields from PG* env vars (pgconn env defaults)", () =>
+  it.effect("fills omitted DSN fields from PG* env vars (env defaults)", () =>
     withConfigEnv(
       { PGHOST: "pg.env.com", PGPORT: "6543", PGPASSWORD: "env-secret", PGDATABASE: "envdb" },
       Effect.gen(function* () {
@@ -427,7 +423,7 @@ layer(parseTestLayer)("parseConnectionString (libpq keyword/value DSN)", (it) =>
   );
 });
 
-layer(parseTestLayer)("empty-password precedence (pgconn parity)", (it) => {
+layer(parseTestLayer)("empty-password precedence", (it) => {
   // Points PGPASSFILE at a temp file we control and sets PGPASSWORD, to prove which one wins.
   const withPgpass = <A, E, R>(
     env: Readonly<Record<string, string>>,
@@ -505,7 +501,7 @@ layer(parseTestLayer)("empty-password precedence (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("multi-host failover (pgconn parity)", (it) => {
+layer(parseTestLayer)("multi-host failover", (it) => {
   it.effect("parses a comma-separated multi-host URL into primary + fallbacks", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://u:pw@h1:5432,h2:5433/db")).toEqual({
@@ -532,7 +528,7 @@ layer(parseTestLayer)("multi-host failover (pgconn parity)", (it) => {
     }),
   );
 
-  it.effect("zips hosts to the (compacted) port list exactly as pgconn does", () =>
+  it.effect("zips hosts to the (compacted) port list positionally", () =>
     Effect.gen(function* () {
       // Empty ports are dropped before zipping, so a host that omits a port takes the next entry
       // in the compacted port list rather than inheriting the previous host's port; only a host
@@ -569,7 +565,7 @@ layer(parseTestLayer)("multi-host failover (pgconn parity)", (it) => {
     }),
   );
 
-  it.effect("rejects a multi-host URL with a non-numeric port (pgconn parsePort error)", () =>
+  it.effect("rejects a multi-host URL with a non-numeric port (invalid port)", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://u:pw@h1:5432,h2:bad/db")).toBeUndefined();
     }),
@@ -596,7 +592,7 @@ layer(parseTestLayer)("multi-host failover (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("passfile= DSN setting (pgconn parity)", (it) => {
+layer(parseTestLayer)("passfile= DSN setting", (it) => {
   // Points PGPASSFILE at one file and `passfile=` at a different one, to prove the
   // connection-string setting wins.
   const withPassfiles = <A, E, R>(body: (customPath: string) => Effect.Effect<A, E, R>) =>
@@ -716,7 +712,7 @@ layer(parseTestLayer)("injected env lookup (project dotenv parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("pgservice resolution (pgconn parity)", (it) => {
+layer(parseTestLayer)("pgservice resolution", (it) => {
   // A `service=`/`PGSERVICE` resolves against the service file and merges its settings between
   // env and the explicit connection-string fields. `dbname` is remapped to `database`. An
   // unresolvable service is a hard parse error.
@@ -820,7 +816,7 @@ layer(parseTestLayer)("pgservice resolution (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("keyword/value DSN backslash handling (pgconn parity)", (it) => {
+layer(parseTestLayer)("keyword/value DSN backslash handling", (it) => {
   it.effect("preserves backslashes before ordinary chars (Windows cert paths)", () =>
     Effect.gen(function* () {
       expect(
@@ -851,20 +847,18 @@ layer(parseTestLayer)("keyword/value DSN backslash handling (pgconn parity)", (i
     }),
   );
 
-  it.effect(
-    "rejects an unquoted value ending in a lone backslash (pgconn 'invalid backslash')",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* parseConnectionString("host=h user=u password=secret\\")).toBeUndefined();
-        // A complete trailing `\\` escape pair is still accepted (→ single backslash).
-        expect(
-          (yield* parseConnectionString("host=h user=u dbname=d sslrootcert=C:\\\\"))?.sslrootcert,
-        ).toBe("C:\\");
-      }),
+  it.effect("rejects an unquoted value ending in a lone backslash ('invalid backslash')", () =>
+    Effect.gen(function* () {
+      expect(yield* parseConnectionString("host=h user=u password=secret\\")).toBeUndefined();
+      // A complete trailing `\\` escape pair is still accepted (→ single backslash).
+      expect(
+        (yield* parseConnectionString("host=h user=u dbname=d sslrootcert=C:\\\\"))?.sslrootcert,
+      ).toBe("C:\\");
+    }),
   );
 });
 
-layer(parseTestLayer)("connect_timeout (pgconn parity)", (it) => {
+layer(parseTestLayer)("connect_timeout", (it) => {
   it.effect("parses connect_timeout from a URL query into connectTimeoutSeconds", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://u:p@h/db?connect_timeout=15")).toMatchObject({
@@ -893,7 +887,7 @@ layer(parseTestLayer)("connect_timeout (pgconn parity)", (it) => {
     }),
   );
 
-  it.effect("omits connectTimeoutSeconds when unset or zero (driver applies Go's default)", () =>
+  it.effect("omits connectTimeoutSeconds when unset or zero (driver applies its default)", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://u:p@h/db")).not.toHaveProperty(
         "connectTimeoutSeconds",
@@ -914,7 +908,7 @@ layer(parseTestLayer)("connect_timeout (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("empty URL query overrides (pgconn parity)", (it) => {
+layer(parseTestLayer)("empty URL query overrides", (it) => {
   it.effect("an empty ?dbname= overrides the path with an empty database", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://u:p@host/production?dbname=")).toMatchObject({
@@ -939,7 +933,7 @@ layer(parseTestLayer)("empty URL query overrides (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("pgconn parse refinements", (it) => {
+layer(parseTestLayer)("DSN parse refinements", (it) => {
   it.effect("accepts a comma-separated ?port= list for a multi-host URL", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://h1,h2/db?port=5432,5433")).toMatchObject({
@@ -996,7 +990,7 @@ layer(parseTestLayer)("pgconn parse refinements", (it) => {
   );
 });
 
-layer(parseTestLayer)("database= alias and empty service values (pgconn parity)", (it) => {
+layer(parseTestLayer)("database= alias and empty service values", (it) => {
   const svcDir = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1020,21 +1014,19 @@ layer(parseTestLayer)("database= alias and empty service values (pgconn parity)"
     }),
   );
 
-  it.effect(
-    "uses last-wins for dbname/database aliases in a DSN (pgconn remaps at parse time)",
-    () =>
-      Effect.gen(function* () {
-        expect(
-          yield* parseConnectionString("host=h user=u dbname=template1 database=appdb"),
-        ).toMatchObject({
-          database: "appdb",
-        });
-        expect(
-          yield* parseConnectionString("host=h user=u database=appdb dbname=template1"),
-        ).toMatchObject({
-          database: "template1",
-        });
-      }),
+  it.effect("uses last-wins for dbname/database aliases in a DSN (remapped at parse time)", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* parseConnectionString("host=h user=u dbname=template1 database=appdb"),
+      ).toMatchObject({
+        database: "appdb",
+      });
+      expect(
+        yield* parseConnectionString("host=h user=u database=appdb dbname=template1"),
+      ).toMatchObject({
+        database: "template1",
+      });
+    }),
   );
 
   it.effect("an empty service password= suppresses PGPASSWORD (falls through to .pgpass)", () =>
@@ -1085,7 +1077,7 @@ layer(parseTestLayer)("database= alias and empty service values (pgconn parity)"
   );
 });
 
-layer(parseTestLayer)("more pgconn parse refinements", (it) => {
+layer(parseTestLayer)("more DSN parse refinements", (it) => {
   it.effect(
     "honors a present-but-empty ?host= as a literal empty host (overrides structural)",
     () =>
@@ -1110,7 +1102,7 @@ layer(parseTestLayer)("more pgconn parse refinements", (it) => {
     }),
   );
 
-  it.effect("does not dial hostaddr as the host (pgconn ignores hostaddr)", () =>
+  it.effect("does not dial hostaddr as the host (hostaddr is ignored)", () =>
     Effect.gen(function* () {
       const env = (name: string): string | undefined => (name === "PGHOST" ? "envhost" : undefined);
       const parsed = yield* parseConnectionString("hostaddr=10.0.0.5 user=u", env);

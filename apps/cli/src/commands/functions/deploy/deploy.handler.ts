@@ -2,7 +2,7 @@ import { Effect, Option, Path, Stdio } from "effect";
 import { deployFunctions } from "../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -39,7 +39,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     projectRoot: cliSettings.workdir,
     supabaseDir: path.join(cliSettings.workdir, "supabase"),
     dashboardUrl: dashboardUrl(cliSettings.profile),
-    goConfigCompat: functionsGoConfigCompat,
+    localConfigLoader: functionsLocalConfigLoader,
     yes,
     rawArgs,
     edgeRuntimeVersion,
