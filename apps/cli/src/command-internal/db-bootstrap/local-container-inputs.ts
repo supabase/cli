@@ -136,7 +136,10 @@ export const buildLocalDbContainerInputs = (
     // See {@link resolveDockerNetworkMode} for the full flag/env/fallback precedence.
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: yield* viperEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        projectEnvValues,
+      ),
       projectId,
     });
     // Only needed on Linux; Docker Desktop already resolves `host.docker.internal` elsewhere.

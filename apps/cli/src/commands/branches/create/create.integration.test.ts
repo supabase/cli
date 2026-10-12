@@ -21,7 +21,6 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   withConfigEnv,
-  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { branchesCreateCommand, type BranchesCreateFlags } from "./create.command.ts";
 import { branchesCreate } from "./create.handler.ts";
@@ -266,9 +265,8 @@ describe("branches create integration", () => {
   it.live("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
     const { layer, out, api } = setup({ stdinIsTty: true });
     return withGitBranch(
-      withEnvVar(
-        "SUPABASE_YES",
-        "1",
+      withConfigEnv(
+        { SUPABASE_YES: "1" },
         Effect.gen(function* () {
           yield* branchesCreate(baseFlags);
           expect(out.stderrText).toContain("? [Y/n] y\n");

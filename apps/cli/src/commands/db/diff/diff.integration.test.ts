@@ -22,6 +22,7 @@ import {
   VALID_REF,
   failWriteStringMatchingFsLayer,
   failWriteStringOnNthCallFsLayer,
+  withConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockDockerDaemonCliSpawner,
@@ -29,7 +30,7 @@ import {
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -442,6 +443,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
     workdirFiles,
+    shadowCacheDisabledLayer,
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
   const failWriteLayer =
@@ -515,7 +517,6 @@ const readFileText = (file: string) =>
   });
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 /** `DiffEntry` shape, defaulting to a kept entry. */
 function pgadminEntry(overrides: Record<string, unknown> = {}) {
@@ -577,7 +578,7 @@ describe("db diff", () => {
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromEnvRecord(
-            { SUPABASE_SSL_DEBUG: "TRUE" },
+            { SUPABASE_SSL_DEBUG: "TRUE", SUPABASE_SHADOW_CACHE: "0" },
             { preserveEmptyStrings: true },
           ),
         ),
@@ -593,7 +594,10 @@ describe("db diff", () => {
       yield* dbDiff(flags()).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({ SUPABASE_SSL_DEBUG: "" }, { preserveEmptyStrings: true }),
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_SSL_DEBUG: "", SUPABASE_SHADOW_CACHE: "0" },
+            { preserveEmptyStrings: true },
+          ),
         ),
       );
       expect(s.edgeCalls).toHaveLength(1);
@@ -2588,17 +2592,16 @@ describe("db diff", () => {
         return yield* withEnvVar(
           "SUPABASE_HOME",
           path.join(tmp.current, "_supabase_home"),
-          withEnvVar(
-            "SUPABASE_SHADOW_CACHE",
-            "1",
+          withConfigEnv(
+            { SUPABASE_SHADOW_CACHE: "1" },
             dbDiff(
               flags(
                 engine === "pg-delta"
                   ? { usePgDelta: Option.some(true) }
                   : { useMigra: Option.some(true) },
               ),
-            ).pipe(Effect.provide(s.layer)),
-          ),
+            ),
+          ).pipe(Effect.provide(s.layer)),
         ).pipe(Effect.as(s));
       });
 

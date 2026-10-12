@@ -8,7 +8,12 @@ import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
-import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  VALID_REF,
+  useTempWorkdir,
+  withConfigEnv,
+  withEnvVar,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { storageRm } from "./rm.handler.ts";
 
 const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
@@ -93,9 +98,8 @@ describe("storage rm", () => {
       local: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
