@@ -44,10 +44,12 @@ const makeSources = (parts: SourceParts = {}): CliConfigSources => {
       const value = parts.projectEnv?.[name];
       return value === undefined ? undefined : { value, file: "/work/supabase/.env" };
     },
-    config: (path) =>
-      path in config
-        ? { value: config[path], origin: { path: path.split("."), source: "local" } }
-        : undefined,
+    config: (segments) => {
+      const path = segments.join(".");
+      return path in config
+        ? { value: config[path], origin: { path: segments, source: "local" } }
+        : undefined;
+    },
     dotenvPrivateKeys: parts.dotenvPrivateKeys ?? [],
     context: {
       workdir: "/work/app",
@@ -247,7 +249,7 @@ describe("pickCliConfigKey attributes", () => {
       env: ["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"],
       codec: boolCodec,
       default: false,
-      envRequiresSection: "experimental.webhooks",
+      envRequiresSection: ["experimental", "webhooks"],
     });
     const shell = { SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED: "true" };
 

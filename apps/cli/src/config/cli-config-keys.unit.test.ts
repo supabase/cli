@@ -141,6 +141,15 @@ describe("config key registry", () => {
     ).toEqual(["SUPABASE_AUTH_EMAIL_NOTIFICATION_EMAIL_CHANGED_ENABLED"]);
   });
 
+  it("keeps a dotted family name as one segment in the key path and its section gate", () => {
+    const external = CLI_CONFIG_FAMILIES.find((family) => family.id === "authExternal");
+
+    const key = external && cliConfigFamilyKey(external, "a.b", "secret");
+
+    expect(key?.segments).toEqual(["auth", "external", "a.b", "secret"]);
+    expect(key?.envRequiresSection).toEqual(["auth", "external", "a.b"]);
+  });
+
   it("keeps document-only keys out of the environment and the linked password out of the document", () => {
     expect(CliConfigKeys.db.password.env).toEqual([]);
     expect(CliConfigKeys.db.rootKey.secret).toBe(true);
@@ -158,13 +167,15 @@ describe("config key registry", () => {
 
   it("marks schema secrets and gates section-scoped env", () => {
     expect(CliConfigKeys.auth.jwtSecret.secret).toBe(true);
-    expect(CliConfigKeys.auth.captcha.secret.envRequiresSection).toBe("auth.captcha");
-    expect(CliConfigKeys.experimental.webhooks.enabled.envRequiresSection).toBe(
-      "experimental.webhooks",
-    );
-    expect(CliConfigKeys.storage.imageTransformation.enabled.envRequiresSection).toBe(
-      "storage.image_transformation",
-    );
+    expect(CliConfigKeys.auth.captcha.secret.envRequiresSection).toEqual(["auth", "captcha"]);
+    expect(CliConfigKeys.experimental.webhooks.enabled.envRequiresSection).toEqual([
+      "experimental",
+      "webhooks",
+    ]);
+    expect(CliConfigKeys.storage.imageTransformation.enabled.envRequiresSection).toEqual([
+      "storage",
+      "image_transformation",
+    ]);
     expect(CliConfigKeys.db.seed.enabled.envRequiresSection).toBeUndefined();
   });
 
@@ -178,7 +189,7 @@ describe("config key registry", () => {
       .flatMap((section) =>
         cliConfigRegistry.keys
           .filter((key) => key.env.length > 0 && key.path.startsWith(`${section}.`))
-          .filter((key) => key.envRequiresSection !== section)
+          .filter((key) => key.envRequiresSection?.join(".") !== section)
           .map((key) => key.path),
       );
 
@@ -207,7 +218,7 @@ describe("config key registry", () => {
       };
 
       const mismatched = cliConfigRegistry.keys.flatMap((key) => {
-        const raw = getDocumentValue(decoded, key.path);
+        const raw = getDocumentValue(decoded, key.segments);
         if (
           key.document === false ||
           key.materializeDefault === true ||

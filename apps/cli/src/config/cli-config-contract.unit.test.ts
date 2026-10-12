@@ -128,16 +128,17 @@ const sourcesFor = (key: AnyCliConfigKey, scenario: Scenario): CliConfigSources 
       }
       return name === canonical ? { value: b.env, file: ENV_FILE } : undefined;
     },
-    config: (path) => {
+    config: (segments) => {
+      const path = segments.join(".");
       if (path === key.path && present("config")) {
         return {
           value: valueFor("config").typed,
-          origin: { path: path.split("."), source: "local" },
+          origin: { path: segments, source: "local" },
           remote: REMOTE,
         };
       }
-      if (path === key.envRequiresSection && scenario.sectionPresent) {
-        return { value: {}, origin: { path: path.split("."), source: "local" } };
+      if (path === key.envRequiresSection?.join(".") && scenario.sectionPresent) {
+        return { value: {}, origin: { path: segments, source: "local" } };
       }
       return undefined;
     },

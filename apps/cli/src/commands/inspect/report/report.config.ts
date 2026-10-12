@@ -15,7 +15,11 @@ export const readInspectRules = Effect.fn("inspect.report.readRules")(function* 
   const configValues = yield* CliConfigValues;
   const resolvedConfig = yield* configValues.load({ workdir, projectRef: Option.none() });
   const rules = resolvedConfig.materialized.config.experimental.inspect?.rules ?? [];
-  const rawRules = getDocumentValue(resolvedConfig.loaded.document, "experimental.inspect.rules");
+  const rawRules = getDocumentValue(resolvedConfig.loaded.document, [
+    "experimental",
+    "inspect",
+    "rules",
+  ]);
 
   for (const [index, raw] of (Array.isArray(rawRules) ? rawRules : []).entries()) {
     const unknownKeys = isDocumentRecord(raw)

@@ -881,6 +881,103 @@ describe("CliConfigValues reads", () => {
   );
 });
 
+describe("CliConfigValues dynamic family names", () => {
+  const POLLUTING = "SUPABASE_AUTH_EMAIL_TEMPLATE___PROTO___POLLUTED_SUBJECT";
+  const polluting = '[auth.email.template."__proto__.polluted"]\nsubject = "file"\n';
+
+  const templates = (root: string) =>
+    CliConfigValues.use((values) =>
+      Effect.map(
+        values.load({ workdir: root, projectRef: Option.none() }),
+        (resolvedConfig) =>
+          resolvedConfig.loaded.config.auth.email.template as Record<
+            string,
+            { readonly subject?: string } | undefined
+          >,
+      ),
+    ).pipe(Effect.provide(configValuesLayer()));
+
+  const cleanPrototype = Effect.sync(() => {
+    delete (Object.prototype as Record<string, unknown>)["polluted"];
+  });
+
+  it.live("keeps a shell override for a prototype-like template name out of Object.prototype", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "proto"\n${polluting}`);
+
+      const decoded = yield* templates(root);
+
+      expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+      expect(decoded["__proto__.polluted"]?.subject).toBe("override");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ [POLLUTING]: "override" }, effect),
+      Effect.ensuring(cleanPrototype),
+      Effect.scoped,
+    ),
+  );
+
+  it.live(
+    "keeps a project .env override for a prototype-like template name out of Object.prototype",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* project(`project_id = "proto"\n${polluting}`, {
+          supabaseEnv: `${POLLUTING}=override\n`,
+        });
+
+        const decoded = yield* templates(root);
+
+        expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+        expect(decoded["__proto__.polluted"]?.subject).toBe("override");
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        (effect) => withShell({}, effect),
+        Effect.ensuring(cleanPrototype),
+        Effect.scoped,
+      ),
+  );
+
+  for (const name of ["constructor", "prototype"]) {
+    it.live(`overrides a template named ${name} on its own table`, () =>
+      Effect.gen(function* () {
+        const root = yield* project(
+          `project_id = "proto"\n[auth.email.template.${name}]\nsubject = "file"\n`,
+        );
+
+        const decoded = yield* templates(root);
+
+        expect(Object.hasOwn(Object.prototype, "subject")).toBe(false);
+        expect(Object.hasOwn(decoded, name) ? decoded[name]?.subject : undefined).toBe("override");
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        (effect) =>
+          withShell(
+            { [`SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}_SUBJECT`]: "override" },
+            effect,
+          ),
+        Effect.scoped,
+      ),
+    );
+  }
+
+  it.live("applies an override to a dotted template name without creating a phantom table", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "dotted"\n[auth.email.template."a.b"]\nsubject = "file"\n',
+      );
+
+      const decoded = yield* templates(root);
+
+      expect(decoded["a.b"]?.subject).toBe("fromenv");
+      expect(Object.hasOwn(decoded, "a")).toBe(false);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_AUTH_EMAIL_TEMPLATE_A_B_SUBJECT: "fromenv" }, effect),
+      Effect.scoped,
+    ),
+  );
+});
+
 describe("CliConfigValues.materialized", () => {
   const richConfig = `project_id = "rich"
 

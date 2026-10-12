@@ -4,14 +4,24 @@ import { Redacted } from "effect";
 export const isDocumentRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The value at a dotted path of a parsed config document, or `undefined`. */
-export const getDocumentValue = (document: unknown, path: string): unknown => {
+/** The value at a path of segments in a parsed config document, or `undefined`. */
+export const getDocumentValue = (document: unknown, segments: ReadonlyArray<string>): unknown => {
   let current: unknown = document;
-  for (const segment of path.split(".")) {
+  for (const segment of segments) {
     if (!isDocumentRecord(current) || !Object.hasOwn(current, segment)) return undefined;
     current = current[segment];
   }
   return current;
+};
+
+/** Defines an own data property so a `__proto__` segment never reaches the prototype setter. */
+const defineOwn = (target: Record<string, unknown>, key: string, value: unknown): void => {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 };
 
 /** Whether two document values are the same plain scalars, arrays or tables. */
@@ -35,27 +45,26 @@ export const cloneDocumentRecord = (value: unknown): Record<string, unknown> => 
   return isDocumentRecord(copy) ? copy : {};
 };
 
-/** Writes `value` at a dotted path, creating intermediate tables and replacing non-table values. */
+/** Writes `value` at a path of segments, creating intermediate tables and replacing non-table values. */
 export const setDocumentValue = (
   document: Record<string, unknown>,
-  path: string,
+  segments: ReadonlyArray<string>,
   value: unknown,
 ): void => {
-  const segments = path.split(".");
   const last = segments[segments.length - 1];
   if (last === undefined) return;
   let node = document;
   for (const segment of segments.slice(0, -1)) {
-    const existing = node[segment];
+    const existing = Object.hasOwn(node, segment) ? node[segment] : undefined;
     if (isDocumentRecord(existing)) {
       node = existing;
       continue;
     }
     const created: Record<string, unknown> = {};
-    node[segment] = created;
+    defineOwn(node, segment, created);
     node = created;
   }
-  node[last] = value;
+  defineOwn(node, last, value);
 };
 
 /** Every leaf path of a document (arrays and scalars are leaves), dotted. */
@@ -78,14 +87,14 @@ export const documentLeafPaths = (
 /** Removes the leaves at `paths`, then each table they emptied unless `declared` also holds it. */
 export const pruneDocumentPaths = (
   document: Record<string, unknown>,
-  paths: Iterable<string>,
+  paths: Iterable<ReadonlyArray<string>>,
   declared: unknown,
 ): void => {
-  for (const path of paths) {
-    const segments = path.split(".");
+  for (const segments of paths) {
     const tables: Array<Record<string, unknown>> = [document];
     for (const segment of segments.slice(0, -1)) {
-      const next = tables.at(-1)?.[segment];
+      const holder = tables.at(-1);
+      const next = holder !== undefined && Object.hasOwn(holder, segment) ? holder[segment] : null;
       if (!isDocumentRecord(next)) break;
       tables.push(next);
     }
@@ -99,7 +108,7 @@ export const pruneDocumentPaths = (
       const key = segments[depth - 1];
       if (table === undefined || parent === undefined || key === undefined) break;
       if (Object.keys(table).length > 0) break;
-      if (getDocumentValue(declared, segments.slice(0, depth).join(".")) !== undefined) break;
+      if (getDocumentValue(declared, segments.slice(0, depth)) !== undefined) break;
       delete parent[key];
     }
   }

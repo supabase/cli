@@ -92,7 +92,7 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
   for (const remote of Object.keys(remotes)) names.add(cliRemoteProjectIdEnvName(remote));
   for (const scope of [rawDocument, ...Object.values(remotes)]) {
     for (const family of CLI_CONFIG_FAMILIES) {
-      const table = getDocumentValue(scope, family.prefix);
+      const table = getDocumentValue(scope, family.prefix.split("."));
       if (!isDocumentRecord(table)) continue;
       for (const entry of Object.keys(table)) {
         for (const name of cliConfigFamilyEnvNames(family, entry)) names.add(name);
@@ -260,7 +260,9 @@ export const cliConfigValuesLayer = Layer.effect(
       const localLeaves = documentLeafPaths(merged?.rawDocument ?? {});
       const appliedRemote = merged?.appliedRemote;
 
-      const configAt = (configPath: string) => getDocumentValue(document, configPath);
+      const configAtSegments = (segments: ReadonlyArray<string>) =>
+        getDocumentValue(document, segments);
+      const configAt = (configPath: string) => configAtSegments(configPath.split("."));
       const dotenvPrivateKeys = collectDotenvPrivateKeys({
         ...projectEnv.values,
         ...Object.fromEntries(shell.entries()),
@@ -270,10 +272,10 @@ export const cliConfigValuesLayer = Layer.effect(
         flags: (flagPath) => flagInputs.assignments.get(flagPath),
         shell: shellFor,
         projectEnv: projectEnvFor,
-        config: (configPath) => {
-          const value = configAt(configPath);
+        config: (segments) => {
+          const value = configAtSegments(segments);
           if (value === undefined) return undefined;
-          const segments = configPath.split(".");
+          const configPath = segments.join(".");
           const referenced =
             typeof value === "string" ? ENV_CAPTURE_REGEX.exec(value)?.[1] : undefined;
           const source: "remote" | "local" =
@@ -301,7 +303,7 @@ export const cliConfigValuesLayer = Layer.effect(
       const familyNames: ResolvedCliConfig["familyNames"] = (id) => {
         const family = cliConfigRegistry.families.find((candidate) => candidate.id === id);
         if (family === undefined) return [];
-        const table = getDocumentValue(document, family.prefix);
+        const table = getDocumentValue(document, family.prefix.split("."));
         return [
           ...new Set([
             ...staticCliConfigFamilyNames(family),
@@ -335,8 +337,8 @@ export const cliConfigValuesLayer = Layer.effect(
         if (Result.isFailure(picked)) {
           if (target.tolerateInvalid) {
             invalid.push(picked.failure);
-            pruneDocumentPaths(declaredDraft, [key.path], document);
-            pruneDocumentPaths(materializedDraft, [key.path], document);
+            pruneDocumentPaths(declaredDraft, [key.segments], document);
+            pruneDocumentPaths(materializedDraft, [key.segments], document);
           } else if (picked.failure.issues === undefined) {
             return yield* picked.failure;
           } else {
@@ -353,10 +355,11 @@ export const cliConfigValuesLayer = Layer.effect(
             );
           }
         }
-        const declared = declaredWrite(key, picked.success, sources.config(key.path)?.value);
-        if (declared !== undefined) setDocumentValue(declaredDraft, key.path, declared);
+        const declared = declaredWrite(key, picked.success, sources.config(key.segments)?.value);
+        if (declared !== undefined) setDocumentValue(declaredDraft, key.segments, declared);
         const materialized = materializedWrite(key, picked.success, declared);
-        if (materialized !== undefined) setDocumentValue(materializedDraft, key.path, materialized);
+        if (materialized !== undefined)
+          setDocumentValue(materializedDraft, key.segments, materialized);
       }
       const [firstFailure] = entryFailures;
       if (firstFailure !== undefined) {

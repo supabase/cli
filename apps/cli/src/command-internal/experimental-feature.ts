@@ -101,9 +101,9 @@ export const resolveExperimentalFeature = <E, R>(input: {
       flags: () => undefined,
       shell: (name) => (name === envName ? shell : undefined),
       projectEnv: () => undefined,
-      config: (configPath) =>
-        configPath === key.path && configValue !== undefined
-          ? { value: configValue, origin: { path: configPath.split("."), source: "local" } }
+      config: (segments) =>
+        segments.join(".") === key.path && configValue !== undefined
+          ? { value: configValue, origin: { path: segments, source: "local" } }
           : undefined,
       dotenvPrivateKeys: [],
       context: { workdir: "", projectRef: Option.none(), path, configAt: () => undefined },

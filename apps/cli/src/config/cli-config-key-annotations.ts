@@ -19,6 +19,8 @@ import {
 /** A hand-written registry entry for a key the schema walk cannot produce. */
 export interface CliConfigKeyDef {
   readonly path: string;
+  /** The document path as segments when a segment may itself contain `.`; defaults to `path` split on `.`. */
+  readonly segments?: ReadonlyArray<string>;
   readonly codec: CliConfigCodec<unknown>;
   /** Consumers read `Option<X>`; absent keys default to `None`. */
   readonly optional?: true;
@@ -107,18 +109,22 @@ export const CLI_CONFIG_NORMALIZERS: Readonly<
   "experimental.pgdelta.declarative_schema_path": (value, ctx) => prefixed(ctx, value),
 };
 
-const SECTION_GATES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) => string]> = [
-  [/^experimental\.webhooks\./, () => "experimental.webhooks"],
-  [/^storage\.image_transformation\./, () => "storage.image_transformation"],
-  [/^db\.ssl_enforcement\./, () => "db.ssl_enforcement"],
-  [/^auth\.captcha\./, () => "auth.captcha"],
-  [/^auth\.email\.smtp\./, () => "auth.email.smtp"],
-  [/^auth\.hook\.([^.]+)\./, (match) => `auth.hook.${match[1]}`],
-  [/^auth\.sms\.(twilio_verify|messagebird|textlocal|vonage)\./, (match) => `auth.sms.${match[1]}`],
-  [/^auth\.passkey\./, () => "auth.passkey"],
-  [/^auth\.webauthn\./, () => "auth.webauthn"],
-  [/^auth\.external\.(?!apple\.)([^.]+)\./, (match) => `auth.external.${match[1]}`],
+const STATIC_SECTION_GATES: ReadonlyArray<ReadonlyArray<string>> = [
+  ["experimental", "webhooks"],
+  ["storage", "image_transformation"],
+  ["db", "ssl_enforcement"],
+  ["auth", "captcha"],
+  ["auth", "email", "smtp"],
+  ["auth", "passkey"],
+  ["auth", "webauthn"],
 ];
+
+const SMS_PROVIDER_SECTIONS: ReadonlySet<string> = new Set([
+  "twilio_verify",
+  "messagebird",
+  "textlocal",
+  "vonage",
+]);
 
 /** Optional schema sections whose env overrides apply while the section is absent, with the reason. */
 export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
@@ -131,12 +137,21 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */
-export const envRequiresSectionFor = (path: string): string | undefined => {
-  for (const [pattern, section] of SECTION_GATES) {
-    const match = pattern.exec(path);
-    if (match !== null) return section(match);
+export const envRequiresSectionFor = (
+  segments: ReadonlyArray<string>,
+): ReadonlyArray<string> | undefined => {
+  for (const gate of STATIC_SECTION_GATES) {
+    if (segments.length > gate.length && gate.every((part, index) => segments[index] === part)) {
+      return gate;
+    }
   }
-  return undefined;
+  const [root, group, name] = segments;
+  if (name === undefined || segments.length < 4) return undefined;
+  const dynamic =
+    (root === "auth" && group === "hook") ||
+    (root === "auth" && group === "sms" && SMS_PROVIDER_SECTIONS.has(name)) ||
+    (root === "auth" && group === "external" && name !== "apple");
+  return dynamic ? [root, group, name] : undefined;
 };
 
 /** Keys read from the raw document that the schema does not model. */

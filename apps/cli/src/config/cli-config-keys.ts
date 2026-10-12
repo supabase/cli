@@ -104,8 +104,9 @@ const codecForLeaf = (segments: ReadonlyArray<string>, node: SchemaAST.AST) => {
 };
 
 const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
+  const segments = def.segments ?? def.path.split(".");
   const env = def.noEnv === true ? [] : (def.env ?? [deriveCliConfigEnvName(def.path)]);
-  const section = envRequiresSectionFor(def.path);
+  const section = envRequiresSectionFor(segments);
   const normalize = CLI_CONFIG_NORMALIZERS[def.path];
   const optional = def.optional === true && def.defaultFrom === undefined;
   const flags = flagDeclarations[def.path];
@@ -117,6 +118,7 @@ const buildKey = (def: CliConfigKeyDef): AnyCliConfigKey => {
   return makeCliConfigKey<unknown, unknown, CliConfigFlagDeclaration>(
     {
       path: def.path,
+      segments,
       env,
       codec: CLI_CONFIG_CODEC_OVERRIDES[def.path] ?? def.codec,
       ...(def.secret === undefined ? {} : { secret: def.secret }),
@@ -223,19 +225,22 @@ export const cliConfigFamilyKey = (
 ): AnyCliConfigKey | undefined => {
   const spec = family.fields.find((candidate) => candidate.name === field);
   if (spec === undefined) return undefined;
-  const path = `${family.prefix}.${name}.${field}`;
+  const segments = [...family.prefix.split("."), name, field];
+  const path = segments.join(".");
   const registered = keysByPath.get(path);
   if (registered !== undefined) return registered;
-  const cached = familyKeys.get(path);
+  const cacheKey = JSON.stringify(segments);
+  const cached = familyKeys.get(cacheKey);
   if (cached !== undefined) return cached;
   const key = buildKey({
     path,
+    segments,
     codec: spec.codec,
     env: [familyEnvName(family, name, field)],
     ...(spec.optional === undefined ? { default: spec.default } : { optional: true }),
     ...(spec.secret === undefined ? {} : { secret: spec.secret }),
   });
-  familyKeys.set(path, key);
+  familyKeys.set(cacheKey, key);
   return key;
 };
 

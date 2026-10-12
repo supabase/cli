@@ -67,7 +67,7 @@ export interface CliConfigSources {
   readonly projectEnv: (
     name: string,
   ) => { readonly value: string; readonly file?: string } | undefined;
-  readonly config: (path: string) => CliConfigConfigValue | undefined;
+  readonly config: (segments: ReadonlyArray<string>) => CliConfigConfigValue | undefined;
   readonly dotenvPrivateKeys: ReadonlyArray<string>;
   readonly context: CliConfigKeyContext;
 }
@@ -270,13 +270,15 @@ export const literalCodec = <const T extends string>(
 
 export interface CliConfigKeySpec<X, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
   readonly path: string;
+  /** The document path as segments when a segment may itself contain `.`; defaults to `path` split on `.`. */
+  readonly segments?: ReadonlyArray<string>;
   /** `[0]` is the canonical name; the rest are deprecated aliases. Empty means not env-overridable. */
   readonly env?: ReadonlyArray<string>;
   readonly codec: CliConfigCodec<X>;
   readonly secret?: true;
   readonly normalize?: (value: X, ctx: CliConfigKeyContext) => X;
-  /** Env tiers apply only while this dotted section is present in the merged document. */
-  readonly envRequiresSection?: string;
+  /** Env tiers apply only while this section (as path segments) is present in the merged document. */
+  readonly envRequiresSection?: ReadonlyArray<string>;
   /** Marks a credential for the linked target; the loader may withhold its env sources. */
   readonly envScope?: "linkedTarget";
   /** `false` when the key has no document path, so the config tier never applies. */
@@ -293,6 +295,8 @@ export interface CliConfigKeySpec<X, F extends CliConfigFlagDeclaration = CliCon
  */
 export interface CliConfigKey<A, X = A, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
   readonly path: string;
+  /** The document path; a dynamic table name stays one segment even if it contains `.`. */
+  readonly segments: ReadonlyArray<string>;
   readonly env: ReadonlyArray<string>;
   readonly codec: CliConfigCodec<X>;
   /** The default-tier value; a context-dependent default reads the merged document. */
@@ -301,7 +305,7 @@ export interface CliConfigKey<A, X = A, F extends CliConfigFlagDeclaration = Cli
   readonly toDocument: (value: A) => unknown;
   readonly secret?: true;
   readonly normalize?: (value: X, ctx: CliConfigKeyContext) => X;
-  readonly envRequiresSection?: string;
+  readonly envRequiresSection?: ReadonlyArray<string>;
   readonly envScope?: "linkedTarget";
   readonly document?: false;
   readonly materializeDefault?: true;
@@ -317,6 +321,7 @@ export const makeCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
 ): CliConfigKey<A, X, F> => {
   const key: CliConfigKey<A, X, F> = {
     path: spec.path,
+    segments: spec.segments ?? spec.path.split("."),
     env: spec.env ?? [],
     codec: spec.codec,
     ...shape,
@@ -584,7 +589,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
     }
   }
 
-  const configured = key.document === false ? undefined : sources.config(key.path);
+  const configured = key.document === false ? undefined : sources.config(key.segments);
   if (configured !== undefined) {
     const origin: CliConfigKeyOrigin = {
       tier: "config",
