@@ -93,6 +93,15 @@ describe("decideSettle", () => {
     expect(decideSettle(state(), pair)).toEqual({ action: "ready" });
   });
 
+  test("does not treat a refused fast-forward approval as failing CI", () => {
+    const checks = [
+      ...state().checks,
+      check("Fast-forward next to sync/develop-into-next", { conclusion: "failure", runId: 9 }),
+    ];
+
+    expect(decideSettle(state({ checks }), pair)).toEqual({ action: "ready" });
+  });
+
   test("re-runs a failed job once before repairing", () => {
     expect(decideSettle(state({ checks: failingQuality(1) }), pair)).toEqual({
       action: "rerun",

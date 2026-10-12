@@ -122,6 +122,29 @@ describe("checkAndFix", () => {
     expect(git(checkout, "show", "HEAD:shared.txt")).toBe("next");
   });
 
+  test("does not ask the agent to fix checks that never completed", async () => {
+    const { checkout, merge } = mergedCheckout();
+    let asked = false;
+
+    const check = await checkAndFix(
+      makeGit(checkout),
+      () => ({
+        passed: false,
+        output: "The checks did not complete: spawnSync docker ETIMEDOUT",
+        infrastructure: true,
+      }),
+      async () => {
+        asked = true;
+        return "unused";
+      },
+      "chore(repo): fix checks",
+    );
+
+    expect(asked).toBe(false);
+    expect(check).toMatchObject({ passed: false, fixes: [] });
+    expect(git(checkout, "rev-parse", "HEAD")).toBe(merge);
+  });
+
   test("drops an unresolved fix and reports the failing output", async () => {
     const { checkout, merge } = mergedCheckout();
 

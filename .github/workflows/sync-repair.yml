@@ -64,7 +64,7 @@ jobs:
         id: settle
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          READ_TOKEN: ${{ github.token }}
+          JOB_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bun .github/scripts/sync-settle.ts

@@ -16,7 +16,8 @@ export interface CheckResult {
   remaining?: string;
 }
 
-export type Checker = () => { passed: boolean; output: string };
+/** `infrastructure` marks a check that never ran to completion (a timeout or a container that failed to start). */
+export type Checker = () => { passed: boolean; output: string; infrastructure?: boolean };
 
 /** Returns the agent's fix for the failing check output, or the reason it produced none. */
 export type CheckFixer = (output: string) => Promise<AgentResolution | string>;
@@ -55,7 +56,7 @@ export async function checkAndFix(
   let edits: AgentResolution["files"] = [];
   let decisions: AgentDecision[] = [];
   let fixRan = false;
-  if (!last.passed) {
+  if (!last.passed && !last.infrastructure) {
     const outcome = await fix(last.output.slice(-MAX_CHECK_OUTPUT));
     if (
       typeof outcome === "string" ||
@@ -121,7 +122,7 @@ let checkHome: string | undefined;
  * holds agent edits and the install runs package code. mise provisions the toolchain the tree's own config pins;
  * the tools and ignored output such as `node_modules` stay for the next check in the run.
  */
-export function runChecks(workDir: string, image: string): { passed: boolean; output: string } {
+export function runChecks(workDir: string, image: string): ReturnType<Checker> {
   checkHome ??= mkdtempSync(join(tmpdir(), "sync-check-home-"));
   const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
   const steps = [
@@ -164,6 +165,14 @@ export function runChecks(workDir: string, image: string): { passed: boolean; ou
   );
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   const passed = result.status === 0;
+  if (result.error) {
+    console.log(`Checks did not complete: ${result.error.message}`);
+    return {
+      passed: false,
+      output: `The checks did not complete: ${result.error.message}`,
+      infrastructure: true,
+    };
+  }
   console.log(passed ? "Checks passed." : `Checks failed (status ${result.status}).`);
   return { passed, output };
 }

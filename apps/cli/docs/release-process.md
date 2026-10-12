@@ -361,7 +361,7 @@ A person takes over when the agent cannot resolve the merge. With no PR open, th
 
 #### Repair loop
 
-[`sync-repair.yml`](../../../.github/workflows/sync-repair.yml) (`Sync repair`) runs whenever a CI workflow or the AI review finishes, and every 30 minutes as a fallback. Its `Settle the sync pull request` job acts only once the sync PR's head commit has settled: every check on it finished, and the AI review posted (or two hours passed since the resolution). `Require fast-forward` is ignored, since branch policy fails it on every sync PR to block the merge button.
+[`sync-repair.yml`](../../../.github/workflows/sync-repair.yml) (`Sync repair`) runs whenever a CI workflow or the AI review finishes, and every 30 minutes as a fallback. Its `Settle the sync pull request` job acts only once the sync PR's head commit has settled: every check on it finished, and the AI review posted (or two hours passed since the resolution). `Require fast-forward` is ignored, since branch policy fails it on every sync PR to block the merge button, and so are the approval-driven fast-forward jobs, whose refusal asks for a new approval rather than a repair.
 
 - Failed jobs are re-run once first, since a single failure may be a flake.
 - When all checks pass and every AI review finding has a reply, the PR waits for approval.

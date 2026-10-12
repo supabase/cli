@@ -405,14 +405,23 @@ function renderManualComment(
   ].join("\n");
 }
 
-function pushSyncBranch(git: GitRunner, plan: ResolutionPlan, sha: string): void {
+/** Pushes with a lease on the planned head; false means a newer sync or repair moved the branch first. */
+function pushSyncBranch(git: GitRunner, plan: ResolutionPlan, sha: string): boolean {
   const branch = syncBranchName(plan);
-  gitOrThrow(git, [
+  const push = git([
     "push",
     `--force-with-lease=refs/heads/${branch}:${plan.expectedSyncHead ?? ""}`,
     "origin",
     `${sha}:refs/heads/${branch}`,
   ]);
+  if (push.status === 0) {
+    return true;
+  }
+  const remote = gitOrThrow(git, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+  if ((remote.split("\t")[0] || null) === plan.expectedSyncHead) {
+    throw new Error(`git push to ${branch} failed: ${push.stderr}`);
+  }
+  return false;
 }
 
 export async function publishResolution(
@@ -441,7 +450,9 @@ export async function publishResolution(
       await io.convertToDraft(plan.pullRequest);
       return { status: "needs-maintainer", pullRequest: plan.pullRequest };
     }
-    pushSyncBranch(git, plan, result.sha);
+    if (!pushSyncBranch(git, plan, result.sha)) {
+      return { status: "superseded" };
+    }
     const { title, body } = renderConflictPr(
       plan,
       result.files,
@@ -482,7 +493,9 @@ export async function publishResolution(
     validation.protectedEdits,
   );
 
-  pushSyncBranch(git, plan, head);
+  if (!pushSyncBranch(git, plan, head)) {
+    return { status: "superseded" };
+  }
   const record = renderResolutionRecord(plan, reviewed, options);
   const decisions = decisionCount(reviewed);
   const body = renderPullRequestBody(plan, record, decisions, reviewed.check?.passed === false);

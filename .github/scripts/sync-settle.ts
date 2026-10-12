@@ -7,8 +7,15 @@ import { REVIEW_TEAM_SLUG } from "./sync-publish.ts";
 import type { RepairFinding, RepairPlan } from "./sync-repair.ts";
 import { REPAIR_MARKER, RESOLUTION_MARKER } from "./sync-resolve.ts";
 
-/** Checks that never settle green on a sync pull request: branch policy fails them to block the merge button. */
-export const IGNORED_CHECKS = new Set(["Require fast-forward"]);
+/**
+ * Checks that are not CI: branch policy fails `Require fast-forward` on every sync pull request to block the merge
+ * button, and the fast-forward jobs run on approval, whose refusal asks for a fresh approval rather than a re-run.
+ */
+function isIgnoredCheck(name: string): boolean {
+  return (
+    name === "Require fast-forward" || name === "Check approver" || name.startsWith("Fast-forward ")
+  );
+}
 
 const MAX_REPAIR_ROUNDS = 2;
 /** How long to wait for the AI review after a resolution before repairing without it. */
@@ -92,7 +99,7 @@ export function decideSettle(
     return { action: "wait", reason: "already handed to a maintainer" };
   }
 
-  const checks = state.checks.filter(({ name }) => !IGNORED_CHECKS.has(name));
+  const checks = state.checks.filter(({ name }) => !isIgnoredCheck(name));
   const missing = REQUIRED_CHECKS.filter((name) => !checks.some((check) => check.name === name));
   if (missing.length > 0 || checks.some(({ status }) => status !== "completed")) {
     return { action: "wait", reason: "CI is still running" };
@@ -396,10 +403,10 @@ async function readState(
 }
 
 async function main(): Promise<void> {
-  const readToken = requireEnv("READ_TOKEN");
+  const jobToken = requireEnv("JOB_TOKEN");
   const repository = requireEnv("REPOSITORY");
   const pair = { source: "develop", target: "next" };
-  const state = await readState(readToken, repository, pair);
+  const state = await readState(jobToken, repository, pair);
   const decision = decideSettle(state, pair);
   if (process.argv.includes("--dry-run")) {
     console.log(JSON.stringify(decision, null, 2));
@@ -418,13 +425,13 @@ async function main(): Promise<void> {
       break;
     case "rerun":
       for (const runId of decision.runIds) {
-        await githubRequest(readToken, `${base}/actions/runs/${runId}/rerun-failed-jobs`, {});
+        await githubRequest(jobToken, `${base}/actions/runs/${runId}/rerun-failed-jobs`, {});
       }
       console.log(`Re-ran the failed jobs of ${decision.runIds.length} workflow run(s) once.`);
       break;
     case "escalate": {
       const current = await githubRequest<{ head: { sha: string } }>(
-        readToken,
+        jobToken,
         `${base}/pulls/${pullRequest}`,
       );
       if (current.head.sha !== state.pull?.headSha) {
