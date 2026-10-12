@@ -1,3 +1,5 @@
+import { Predicate, Result } from "effect";
+
 import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
   encodeGoToml,
@@ -55,10 +57,6 @@ export type ParsedFunctions = {
 const INVALID_FIELD = Symbol("invalid function field");
 type InvalidField = typeof INVALID_FIELD;
 const EMPTY_FUNCTION_RECORD: Record<string, unknown> = {};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readOptionalBoolean(
   record: Record<string, unknown>,
@@ -167,7 +165,8 @@ function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   }
   const functions: FunctionRecord[] = [];
   for (const item of value) {
-    const record = item === null ? EMPTY_FUNCTION_RECORD : isRecord(item) ? item : undefined;
+    const record =
+      item === null ? EMPTY_FUNCTION_RECORD : Predicate.isObject(item) ? item : undefined;
     if (record === undefined) {
       return undefined;
     }
@@ -201,26 +200,17 @@ function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   return { functions, isNil: false };
 }
 
-export function decodeFunctionsResponse(
-  rawBody: string,
-):
-  | { readonly ok: true; readonly value: ParsedFunctions }
-  | { readonly ok: false; readonly message: string } {
+export function decodeFunctionsResponse(rawBody: string): Result.Result<ParsedFunctions, string> {
   try {
     const parsed = parseFunctionsResponse(JSON.parse(rawBody));
     if (parsed === undefined) {
-      return {
-        ok: false,
-        message:
-          "failed to list functions: response body did not match the expected function array shape",
-      };
+      return Result.fail(
+        "failed to list functions: response body did not match the expected function array shape",
+      );
     }
-    return { ok: true, value: parsed };
+    return Result.succeed(parsed);
   } catch (cause) {
-    return {
-      ok: false,
-      message: `failed to list functions: ${String(cause)}`,
-    };
+    return Result.fail(`failed to list functions: ${String(cause)}`);
   }
 }
 
