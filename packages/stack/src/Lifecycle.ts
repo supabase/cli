@@ -344,7 +344,7 @@ const specsEqual = (a: ServiceSpec, b: ServiceSpec): boolean =>
  * just the immediate one) so a wake deep in a fully stopped chain is visible to every prerequisite
  * in the same pass.
  */
-const hasDemand = (state: LifecycleState, id: string): boolean => {
+export const hasDemand = (state: LifecycleState, id: string): boolean => {
   const service = state.services.get(id);
   if (service === undefined) return false;
   if (ownsDemand(service)) return true;
@@ -541,6 +541,28 @@ const activeDependents = (state: LifecycleState, id: string): ReadonlyArray<stri
     return dependentState !== undefined && dependentIsActive(dependentState);
   });
 
+/**
+ * Stops every starting or running transitive dependent of a lost session. A dependent holds state
+ * bound to the prerequisite's process, such as pooled connections, so it must not outlive it. The
+ * stop is not a failure: the dependent keeps its intent and demand and relaunches once the
+ * prerequisite's next generation is ready.
+ */
+const stopDependentsOfLostSession = (
+  state: LifecycleState,
+  id: string,
+  commands: Array<LifecycleCommand>,
+): LifecycleState => {
+  let next = state;
+  for (const dependent of state.graph.transitiveDependents.get(id) ?? []) {
+    const phase = next.services.get(dependent)?.phase;
+    if (phase?._tag !== "Starting" && phase?._tag !== "Running") continue;
+    const { generation } = phase;
+    commands.push(LifecycleCommand.Stop({ id: dependent, generation }));
+    next = setService(next, dependent, (s) => ({ ...s, phase: Phase.Stopping({ generation }) }));
+  }
+  return next;
+};
+
 /** Applies an explicit stop, or returns undefined after rejecting it for active dependents. */
 const requestStop = (
   state: LifecycleState,
@@ -732,13 +754,11 @@ const applyEvent = (
         break;
       // The crash counts and fails its waiters now; the generation then winds down like a stop.
       const failed = recordFailure(state, id, generation, cause, now, commands);
-      return [
-        setService(failed, id, (s) => ({
-          ...s,
-          phase: Phase.Stopping({ generation, crash: { cause } }),
-        })),
-        commands,
-      ];
+      const lost = setService(failed, id, (s) => ({
+        ...s,
+        phase: Phase.Stopping({ generation, crash: { cause } }),
+      }));
+      return [stopDependentsOfLostSession(lost, id, commands), commands];
     }
     case "Exited": {
       const { id, generation, requested } = event;
