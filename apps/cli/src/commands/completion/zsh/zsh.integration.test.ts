@@ -17,7 +17,7 @@ function testRoot() {
 }
 
 describe("completion zsh", () => {
-  it.live("prints the native zsh completion script", () => {
+  it.effect("prints the native zsh completion script", () => {
     const out = setupCompletionZsh();
     return Effect.gen(function* () {
       yield* completionZsh({ noDescriptions: false });
@@ -27,7 +27,7 @@ describe("completion zsh", () => {
     }).pipe(Effect.provide(out.layer));
   });
 
-  it.live(
+  it.effect(
     "prints the native zsh completion script without descriptions when --no-descriptions is set",
     () => {
       const out = setupCompletionZsh();
@@ -38,7 +38,7 @@ describe("completion zsh", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
       const out = setupCompletionZsh();
@@ -58,7 +58,7 @@ describe("completion zsh", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
     () => {
       const out = setupCompletionZsh();
