@@ -419,8 +419,26 @@ const expandConfigValue = (
   return value;
 };
 
-const display = (value: unknown, secret: boolean): string => {
-  if (secret) return "<redacted>";
+interface RedactionSubject {
+  readonly secret?: true;
+  readonly codec: { readonly kind: CliConfigCodecKind };
+}
+
+const describeTomlType = (value: unknown): string => {
+  if (typeof value === "number" || typeof value === "bigint") return "a number";
+  if (typeof value === "boolean") return "a boolean";
+  if (Array.isArray(value)) return "an array";
+  if (value instanceof Date) return "a date-time";
+  return typeof value === "object" && value !== null ? "a table" : typeof value;
+};
+
+/** A string codec's parse is the identity, so it fails only on type and the value is never echoed. */
+const isTypeOnlyFailure = (key: RedactionSubject): boolean =>
+  key.codec.kind === "string" && key.secret !== true;
+
+const display = (value: unknown, key: RedactionSubject): string => {
+  if (key.secret === true) return "<redacted>";
+  if (isTypeOnlyFailure(key)) return describeTomlType(value);
   return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
 };
 
@@ -458,6 +476,8 @@ interface CliConfigValueFailure {
   readonly raw: string;
   readonly expected: string;
   readonly origin: Exclude<CliConfigKeyOrigin, { readonly tier: "default" }>;
+  /** `raw` names the value's type rather than quoting it. */
+  readonly typeOnly?: true;
 }
 
 /** The error for a value a codec rejected; the message names the source that supplied it. */
@@ -465,7 +485,7 @@ const invalidCliConfigValue = (
   failure: CliConfigValueFailure,
   ctx: Pick<CliConfigKeyContext, "workdir" | "path">,
 ): CliConfigValueError => {
-  const { path, raw, expected, origin } = failure;
+  const { path, raw, expected, origin, typeOnly } = failure;
   const source = describeCliConfigOrigin(origin, ctx);
   switch (origin.tier) {
     case "flag":
@@ -496,8 +516,9 @@ const invalidCliConfigValue = (
         path,
         tier: "config",
         source,
-        message:
-          where === "config"
+        message: typeOnly
+          ? `Invalid ${path}${where === "config" ? "" : ` in ${where}`}: expected ${expected}, got ${raw}.`
+          : where === "config"
             ? `Invalid ${path}: "${raw}" is not ${expected}.`
             : `Invalid ${path} in ${where}: "${raw}" is not ${expected}.`,
       });
@@ -516,6 +537,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
 ): Result.Result<CliConfigValue<A>, CliConfigValueError> => {
   const lookup = (name: string) => lookupCliConfigEnv(sources, name);
   const secret = key.secret === true;
+  const typeOnly = isTypeOnlyFailure(key);
 
   const failure = (
     origin: Exclude<CliConfigKeyOrigin, { readonly tier: "default" }>,
@@ -523,7 +545,13 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
   ) =>
     Result.fail(
       invalidCliConfigValue(
-        { path: key.path, raw: display(raw, secret), expected: key.codec.expected, origin },
+        {
+          path: key.path,
+          raw: display(raw, key),
+          expected: key.codec.expected,
+          origin,
+          ...(typeOnly ? { typeOnly } : {}),
+        },
         sources.context,
       ),
     );

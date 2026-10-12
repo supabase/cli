@@ -17,6 +17,8 @@ import {
   type CliConfigKey,
   type CliConfigSources,
 } from "./cli-config-key.ts";
+import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
+import { cliConfigFamilyKey, cliConfigRegistry, type AnyCliConfigKey } from "./cli-config-keys.ts";
 
 const pathService = Effect.runSync(
   Effect.gen(function* () {
@@ -350,6 +352,55 @@ describe("pickCliConfigKey attributes", () => {
 });
 
 describe("pickCliConfigKey failure text", () => {
+  const dbPassword = (): AnyCliConfigKey => {
+    const key = cliConfigRegistry.keyAt("db.password");
+    if (key === undefined) throw new Error("db.password is not registered");
+    return key;
+  };
+
+  it("never echoes a non-string db.password and names the TOML type instead", () => {
+    const numeric = failureOf(dbPassword(), { config: { "db.password": 98765432 } });
+    const listed = failureOf(dbPassword(), { config: { "db.password": ["98765432"] } });
+
+    expect(numeric.message).toBe("Invalid db.password: expected a string, got a number.");
+    expect(numeric.message).not.toContain("98765432");
+    expect(listed.message).toContain("got an array");
+    expect(listed.message).not.toContain("98765432");
+  });
+
+  it("never echoes the config value of any string-codec key", () => {
+    const stringKeys: Array<AnyCliConfigKey> = [
+      ...cliConfigRegistry.keys.filter(
+        (key) => key.codec.kind === "string" && key.document !== false,
+      ),
+      ...CLI_CONFIG_FAMILIES.flatMap((family) =>
+        family.fields.flatMap((field) =>
+          field.codec.kind === "string"
+            ? [cliConfigFamilyKey(family, "custom", field.name) ?? []]
+            : [],
+        ),
+      ).flat(),
+    ];
+
+    expect(stringKeys.length).toBeGreaterThan(10);
+    for (const key of stringKeys) {
+      const picked = pickCliConfigKey(key, makeSources({ config: { [key.path]: 123456789 } }));
+      if (Result.isSuccess(picked)) throw new Error(`${key.path} accepted a number`);
+      expect(picked.failure.message, key.path).not.toContain("123456789");
+    }
+  });
+
+  it("still shows the rejected value of a non-string codec", () => {
+    const port = requiredCliConfigKey({
+      path: "api.port",
+      env: ["SUPABASE_API_PORT"],
+      codec: portCodec,
+      default: 54321,
+    });
+
+    expect(failureOf(port, { config: { "api.port": "abc" } }).message).toContain('"abc"');
+  });
+
   it("names the env variable, the key and the expected bool", () => {
     const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "maybe" } });
 
