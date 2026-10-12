@@ -2,46 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "summary", "files", "findings", "decisions"],
+  "required": ["summary", "findings"],
   "properties": {
-    "status": { "enum": ["repaired", "unresolved"] },
     "summary": { "type": "string" },
-    "files": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["path", "resolution"],
-        "properties": {
-          "path": { "type": "string" },
-          "resolution": { "type": "string" }
-        }
-      }
-    },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["commentId", "disposition", "reply"],
+        "required": ["id", "fixed", "reply"],
         "properties": {
-          "commentId": { "type": "integer" },
-          "disposition": { "enum": ["fixed", "declined"] },
+          "id": { "type": "integer" },
+          "fixed": { "type": "boolean" },
           "reply": { "type": "string" }
-        }
-      }
-    },
-    "decisions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["paths", "question", "chosen", "alternative"],
-        "properties": {
-          "paths": { "type": "array", "items": { "type": "string" } },
-          "question": { "type": "string" },
-          "chosen": { "type": "string" },
-          "alternative": { "type": "string" }
         }
       }
     }

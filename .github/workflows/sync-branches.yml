@@ -40,7 +40,6 @@ jobs:
     env:
       PAIR: ${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}
     outputs:
-      plan: ${{ steps.sync.outputs.plan }}
       conflict_pr: ${{ steps.sync.outputs.conflict_pr }}
     steps:
       - id: app-token
@@ -62,8 +61,8 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Sync
-        id: sync
+      - id: sync
+        name: Sync
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}
@@ -88,33 +87,34 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
-  # Holds the Anthropic key but no write token. The agent itself runs in a container that sees only
-  # the worktree (`.git` read-only) and the context files; see `.github/scripts/sync-resolve.ts`.
+  # Claude edits the merge with file tools only and no write token; the App token exists only in the publish step,
+  # which runs nothing from the edited worktree. See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
   resolve:
     name: Resolve conflicts with Claude
     needs: sync
-    if: needs.sync.outputs.plan != ''
+    if: |
+      needs.sync.outputs.conflict_pr != '' &&
+      (github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair) == 'develop-into-next'
     runs-on: ubuntu-latest
-    # Covers the script's 70-minute agent deadline, two 20-minute check runs after it, and setup.
-    timeout-minutes: 120
+    timeout-minutes: 75
+    # The AI review skips bot pull requests, so the job's own token dispatches it (`actions: write`).
     permissions:
       contents: read
-      pull-requests: read
+      actions: write
     env:
       CLAUDE_MODEL: claude-opus-5-5
-      AGENT_IMAGE: node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
-      CHECK_IMAGE: sync-check:local
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Checkout scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: trusted
           persist-credentials: false
 
-      - name: Checkout merge worktree
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: work
+          ref: sync/develop-into-next
           fetch-depth: 0
           persist-credentials: false
 
@@ -124,54 +124,23 @@ jobs:
 
       # Same pinned release and isolated npm config as the AI review workflow.
       - name: Install Claude Code CLI
-        working-directory: trusted
         run: |
           npm install -g \
-            --prefix "${RUNNER_TEMP}/claude-cli" \
             --userconfig "${RUNNER_TEMP}/sync-npmrc-user" \
             --globalconfig "${RUNNER_TEMP}/sync-npmrc-global" \
             --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
-          docker pull "$AGENT_IMAGE"
-
-      - name: Build the check image
-        run: docker build --tag "$CHECK_IMAGE" --file trusted/.github/sync-branches/check.Dockerfile trusted/.github/sync-branches
 
       - name: Resolve
+        id: resolve
         working-directory: trusted
         env:
-          PLAN: ${{ needs.sync.outputs.plan }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WORK_DIR: ${{ github.workspace }}/work
-          CLAUDE_CLI_DIR: ${{ runner.temp }}/claude-cli
-          OUTPUT_DIR: ${{ runner.temp }}/sync-resolution
         run: |
           git -C "$WORK_DIR" config user.name "github-actions[bot]"
           git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          bun .github/scripts/sync-resolve.ts
+          bun .github/scripts/sync-agent.ts resolve
 
-      - name: Upload resolution
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sync-resolution
-          path: ${{ runner.temp }}/sync-resolution
-          retention-days: 7
-
-  publish:
-    name: Publish the sync pull request
-    needs:
-      - sync
-      - resolve
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # `actions: write` lets the job's own token start the AI review on the sync pull request.
-    permissions:
-      contents: read
-      actions: write
-    env:
-      CLAUDE_MODEL: claude-opus-5-5
-    steps:
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -181,28 +150,18 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sync-resolution
-          path: ${{ runner.temp }}/sync-resolution
-
       - name: Publish
         env:
-          PLAN: ${{ needs.sync.outputs.plan }}
-          RESULT_DIR: ${{ runner.temp }}/sync-resolution
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          AI_REVIEW_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: bun .github/scripts/sync-publish.ts
+          JOB_TOKEN: ${{ github.token }}
+          PR: ${{ needs.sync.outputs.conflict_pr }}
+          RESOLVED: ${{ steps.resolve.outputs.resolved }}
+        run: |
+          if [ "$RESOLVED" = true ]; then
+            git -C work -c core.hooksPath=/dev/null push \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUTPUT_DIR/comment.md"
+          if [ "$RESOLVED" = true ]; then
+            GH_TOKEN="$JOB_TOKEN" gh workflow run ai-review.yml --repo "$GITHUB_REPOSITORY" -f pr="$PR"
+          fi

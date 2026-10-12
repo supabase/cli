@@ -1,8 +1,7 @@
 name: Sync repair
 
-# Once CI and the AI review settle on the agent-resolved sync/develop-into-next pull request, re-runs failed jobs
-# once, then lets Claude fix what still fails and answer the review, for at most two rounds. See
-# apps/cli/docs/release-process.md#agent-resolved-develop-into-next.
+# Once CI and the AI review finish on a Claude-resolved sync/develop-into-next pull request, lets Claude fix what
+# the merge broke and answer the review. See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
 on:
   workflow_run:
     workflows:
@@ -15,145 +14,84 @@ on:
       - run-ci
     types:
       - completed
+  # A run started by the job token, such as the dispatched AI review, may not emit `workflow_run`.
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions: {}
 
-# A separate group from `Sync branches`, so a queued repair never replaces a queued sync; leases on the sync
-# branch keep the two from overwriting each other.
 concurrency:
   group: sync-repair-develop-into-next
   cancel-in-progress: false
 
 jobs:
-  settle:
-    name: Settle the sync pull request
+  repair:
+    name: Repair with Claude
+    # AI Review runs are dispatched from the default branch, so their head branch is not the sync branch.
     if: >-
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.head_branch == 'sync/develop-into-next' ||
       github.event.workflow_run.name == 'AI Review'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # The job's own token reads the pull request and re-runs failed jobs; the release App token posts as the bot.
+    timeout-minutes: 75
     permissions:
       contents: read
-      actions: write
+      pull-requests: read
       checks: read
-      pull-requests: read
-    outputs:
-      repair: ${{ steps.settle.outputs.repair }}
-    steps:
-      - id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          permission-pull-requests: write
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - name: Settle
-        id: settle
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          JOB_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bun .github/scripts/sync-settle.ts
-
-  # Holds the Anthropic key but no write token; the agent runs in the same container sandbox as the resolve job.
-  repair:
-    name: Repair with Claude
-    needs: settle
-    if: needs.settle.outputs.repair != ''
-    runs-on: ubuntu-latest
-    # Covers the script's 70-minute agent deadline, two 20-minute check runs after it, and setup.
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      pull-requests: read
       actions: read
-      checks: read
     env:
       CLAUDE_MODEL: claude-opus-5-5
-      AGENT_IMAGE: node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
-      CHECK_IMAGE: sync-check:local
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Checkout scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: trusted
-          persist-credentials: false
-
-      - name: Checkout the sync branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: work
-          ref: sync/develop-into-next
-          fetch-depth: 0
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: trusted/.bun-version
 
+      - name: Collect
+        id: collect
+        working-directory: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun .github/scripts/sync-agent.ts collect
+
+      - if: steps.collect.outputs.action == 'repair'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: work
+          ref: ${{ steps.collect.outputs.head }}
+          persist-credentials: false
+
       # Same pinned release and isolated npm config as the AI review workflow.
       - name: Install Claude Code CLI
-        working-directory: trusted
+        if: steps.collect.outputs.action == 'repair'
         run: |
           npm install -g \
-            --prefix "${RUNNER_TEMP}/claude-cli" \
             --userconfig "${RUNNER_TEMP}/sync-npmrc-user" \
             --globalconfig "${RUNNER_TEMP}/sync-npmrc-global" \
             --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
-          docker pull "$AGENT_IMAGE"
-
-      - name: Build the check image
-        run: docker build --tag "$CHECK_IMAGE" --file trusted/.github/sync-branches/check.Dockerfile trusted/.github/sync-branches
 
       - name: Repair
+        id: repair
+        if: steps.collect.outputs.action == 'repair'
         working-directory: trusted
         env:
-          REPAIR: ${{ needs.settle.outputs.repair }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WORK_DIR: ${{ github.workspace }}/work
-          CLAUDE_CLI_DIR: ${{ runner.temp }}/claude-cli
-          OUTPUT_DIR: ${{ runner.temp }}/sync-repair
+          HEAD_SHA: ${{ steps.collect.outputs.head }}
         run: |
           git -C "$WORK_DIR" config user.name "github-actions[bot]"
           git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          bun .github/scripts/sync-repair.ts
+          bun .github/scripts/sync-agent.ts repair
 
-      - name: Upload repair
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sync-repair
-          path: ${{ runner.temp }}/sync-repair
-          retention-days: 7
-
-  publish:
-    name: Publish the repair
-    needs:
-      - settle
-      - repair
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    env:
-      CLAUDE_MODEL: claude-opus-5-5
-    steps:
       - id: app-token
+        if: steps.collect.outputs.action == 'repair' || steps.collect.outputs.action == 'exhausted'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
@@ -162,29 +100,27 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .bun-version
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sync-repair
-          path: ${{ runner.temp }}/sync-repair
-
+      # A plain push fails if the branch moved since the checks settled; the next completed run retries.
       - name: Publish
+        if: steps.collect.outputs.action == 'repair' || steps.collect.outputs.action == 'exhausted'
         env:
-          REPAIR: ${{ needs.settle.outputs.repair }}
-          RESULT_DIR: ${{ runner.temp }}/sync-repair
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR: ${{ steps.collect.outputs.pr }}
+          CHANGED: ${{ steps.repair.outputs.changed }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          bun .github/scripts/sync-publish.ts repair
+          if [ "$CHANGED" = true ]; then
+            git -C work -c core.hooksPath=/dev/null push \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
+          fi
+          if [ -f "$OUTPUT_DIR/replies.json" ]; then
+            jq -c '.[]' "$OUTPUT_DIR/replies.json" | while read -r reply; do
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments/$(jq -r .commentId <<<"$reply")/replies" \
+                -f body="$(jq -r .body <<<"$reply")" > /dev/null
+              if [ "$(jq -r .resolve <<<"$reply")" = true ]; then
+                # shellcheck disable=SC2016 # `$threadId` is a GraphQL variable.
+                gh api graphql -f threadId="$(jq -r .threadId <<<"$reply")" \
+                  -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id } } }' > /dev/null
+              fi
+            done
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUTPUT_DIR/comment.md"

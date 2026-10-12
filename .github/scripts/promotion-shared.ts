@@ -57,13 +57,8 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/** GET without a body, POST (or `method`) with one. */
-export async function githubRequest<T>(
-  token: string,
-  path: string,
-  body?: unknown,
-  method: "POST" | "PATCH" = "POST",
-): Promise<T> {
+/** GET without a body, POST with one. */
+export async function githubRequest<T>(token: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
@@ -74,15 +69,14 @@ export async function githubRequest<T>(
     body === undefined
       ? await fetch(url, { method: "GET", headers })
       : await fetch(url, {
-          method,
+          method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
   }
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  return (await response.json()) as T;
 }
 
 /** The only branch pairs that sync; each is promoted by a `sync/<source>-into-<target>` pull request. */

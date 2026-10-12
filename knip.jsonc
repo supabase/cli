@@ -1,11 +1,7 @@
 {
   "$schema": "./node_modules/knip/schema.json",
   // Required in the event that git submodules are present. Do not remove this, despite knip warnings.
-  "ignore": [
-    ".repos/**",
-    // Run as a standalone node script inside the sync agent's proxy container, never imported.
-    ".github/sync-branches/anthropic-proxy.mjs",
-  ],
+  "ignore": [".repos/**"],
   // These come from mise.
   "ignoreBinaries": ["go", "jactionlint"],
   // Spawned through a node_modules/.bin path in tools/release/local-registry.ts and

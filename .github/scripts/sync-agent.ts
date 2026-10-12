@@ -1,368 +1,502 @@
+/**
+ * Lets Claude finish a conflicting `develop` → `next` sync and repair its pull request after CI and the AI review.
+ * See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
+ */
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { requireEnv } from "./promotion-shared.ts";
+import { AI_REVIEW_MARKER } from "./ai-review/post-review.ts";
+import { type CheckRun, fetchPullRequestCheckRuns, REQUIRED_CHECKS } from "./fast-forward.ts";
+import {
+  githubGraphql,
+  githubRequest,
+  gitOrThrow,
+  type GitRunner,
+  makeGit,
+  RELEASE_BOT_LOGIN,
+  requireEnv,
+} from "./promotion-shared.ts";
 
-export interface AgentDecision {
-  paths: string[];
-  question: string;
-  chosen: string;
-  alternative: string;
+const SYNC_BRANCH = "sync/develop-into-next";
+const PROMPTS_DIR = join(import.meta.dir, "../sync-branches");
+const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
+const REPAIR_MARKER = "<!-- sync-agent repair";
+const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
+const MAX_REPAIR_ROUNDS = 2;
+const LOG_TAIL_LINES = 150;
+
+/** Author of the AI review's inline comments; GraphQL drops the `[bot]` suffix from bot logins. */
+const AI_REVIEW_LOGIN = "github-actions[bot]";
+
+export interface ReviewThread {
+  threadId: string;
+  commentId: number;
+  path: string;
+  line: number | null;
+  body: string;
 }
 
-export interface AgentResolution {
-  status: "resolved" | "unresolved";
-  summary: string;
-  files: { path: string; resolution: string; precedent: number | null }[];
-  deletedFiles: string[];
-  decisions: AgentDecision[];
+export type RepairPlan =
+  | { action: "skip"; reason: string }
+  | { action: "exhausted" }
+  | { action: "repair"; failures: CheckRun[]; threads: ReviewThread[] };
+
+function repairMarker(head: string): string {
+  return `${REPAIR_MARKER} head=${head} -->`;
 }
 
-export interface AgentSession {
-  sessionId: string;
-  home: string;
-}
-
-interface AgentRun<T> {
-  outcome: T | string;
-  /** The reported cost, or the call's whole budget when the call ended without reporting one. */
-  costUsd: number;
-  session: AgentSession;
-}
-
-/** Shared by every call of one run, so the run's budget and deadline bound all of them together. */
-export interface AgentConfig {
-  workDir: string;
-  contextDir: string;
-  cliDir: string;
-  image: string;
-  model: string;
-}
-
-const MAX_TURNS_PER_CALL = 150;
-const MAX_USD_PER_CALL = 12;
-const MAX_USD_PER_RUN = 80;
-const MIN_CALL_USD = 1;
-const MAX_MINUTES_PER_CALL = 25;
-/** Below the workflow job's timeout, so a slow run still hands the merge to a person instead of being killed. */
-const RUN_DEADLINE_MINUTES = 70;
-/** A call with less time left than this would only be cut off. */
-const MIN_CALL_MINUTES = 5;
-
-/** A read-only explorer on a cheaper model, so broad searches do not spend the main model's tokens. */
-const EXPLORER_AGENT = {
-  explorer: {
-    description:
-      "Read-only repository search: finds files, symbols, callers, usages, and where code moved, and reports file:line answers. Use it for any search beyond the files you are editing.",
-    prompt:
-      "Search the repository read-only and answer with concise file:line findings. Do not resolve conflicts, judge behavior, or edit files.",
-    tools: ["Read", "Grep", "Glob"],
-    model: "haiku",
-  },
-};
-
-/** `text` in a code fence longer than any backtick run inside it, so the text cannot close the fence. */
-export function codeFence(text: string, language = ""): string[] {
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(longest + 1);
-  return [`${fence}${language}`, text, fence];
-}
-
-/**
- * Runs `docker run` under a unique container name and kills the container if the client times out, since killing
- * the client alone may leave the container running.
- */
-export function runContainer(
-  args: string[],
-  options: { timeoutMinutes: number; env: NodeJS.ProcessEnv; inheritStderr?: boolean },
-): ReturnType<typeof spawnSync> & { stdout: string; stderr: string } {
-  const name = `sync-${randomUUID()}`;
-  const result = spawnSync("docker", ["run", "--rm", "--name", name, ...args], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", options.inheritStderr ? "inherit" : "pipe"],
-    timeout: options.timeoutMinutes * 60 * 1000,
-    env: options.env,
-  });
-  if (result.error) {
-    spawnSync("docker", ["kill", name], { stdio: "ignore" });
-  }
-  return { ...result, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-export function isDecisionList(value: unknown): value is AgentDecision[] {
+/** Branch policy fails `Require fast-forward` on every sync pull request by design; the others run on approval. */
+function isIgnoredCheck(name: string): boolean {
   return (
-    Array.isArray(value) &&
-    value.every(
-      (decision: Record<string, unknown>) =>
-        isStringArray(decision?.paths) &&
-        typeof decision.question === "string" &&
-        typeof decision.chosen === "string" &&
-        typeof decision.alternative === "string",
-    )
+    name === "Require fast-forward" || name === "Check approver" || name.startsWith("Fast-forward ")
   );
 }
 
-/** Validates the agent's structured output; anything else is treated as no resolution. */
-export function parseResolution(value: unknown): AgentResolution | undefined {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  const candidate = value as Record<string, unknown>;
-  const files = candidate.files;
-  const valid =
-    (candidate.status === "resolved" || candidate.status === "unresolved") &&
-    typeof candidate.summary === "string" &&
-    isStringArray(candidate.deletedFiles) &&
-    Array.isArray(files) &&
-    files.every(
-      (file: Record<string, unknown>) =>
-        typeof file?.path === "string" &&
-        typeof file.resolution === "string" &&
-        (file.precedent === null || Number.isSafeInteger(file.precedent)),
-    ) &&
-    isDecisionList(candidate.decisions);
-  return valid ? (candidate as unknown as AgentResolution) : undefined;
+function isLogin(login: string | undefined, bot: string): boolean {
+  return login === bot || `${login}[bot]` === bot;
 }
 
-/** The private network the agent runs on and the proxy that holds the API key. */
-interface KeyProxy {
-  network: string;
-  url: string;
-}
-
-const PROXY_SCRIPT = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../sync-branches/anthropic-proxy.mjs",
-);
-
-function docker(
-  args: string[],
-  env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
-) {
-  return spawnSync("docker", args, { encoding: "utf8", env });
-}
-
-/**
- * Starts the API key proxy on an internal network, which has no route out, and connects only the proxy to the default
- * bridge. The agent joins the internal network with a placeholder key: it can reach the proxy and nothing else, and
- * holds no credential to leak.
- */
-function startKeyProxy(image: string): KeyProxy {
-  const id = randomUUID().slice(0, 8);
-  const network = `sync-agent-${id}`;
-  const proxy = `sync-proxy-${id}`;
-  const stop = () => {
-    docker(["rm", "--force", proxy]);
-    docker(["network", "rm", network]);
-  };
-  process.on("exit", stop);
-  if (docker(["network", "create", "--internal", network]).status !== 0) {
-    throw new Error(`Could not create the agent network ${network}.`);
-  }
-  const started = docker(
-    [
-      "run",
-      "--detach",
-      "--rm",
-      "--name",
-      proxy,
-      "--network",
-      network,
-      "--env",
-      "ANTHROPIC_API_KEY",
-      "--volume",
-      `${PROXY_SCRIPT}:/proxy.mjs:ro`,
-      image,
-      "node",
-      "/proxy.mjs",
-    ],
-    {
-      PATH: process.env.PATH ?? "",
-      HOME: process.env.HOME ?? "",
-      ANTHROPIC_API_KEY: requireEnv("ANTHROPIC_API_KEY"),
-    },
-  );
-  if (started.status !== 0 || docker(["network", "connect", "bridge", proxy]).status !== 0) {
-    throw new Error(`Could not start the API key proxy: ${started.stderr}`);
-  }
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    if (docker(["logs", proxy]).stdout.includes("proxy listening")) {
-      return { network, url: `http://${proxy}:8080` };
+function latestRuns(runs: CheckRun[]): CheckRun[] {
+  const latest = new Map<string, CheckRun>();
+  for (const run of runs) {
+    const current = latest.get(run.name);
+    if (!current || run.id > current.id) {
+      latest.set(run.name, run);
     }
-    Bun.sleepSync(500);
   }
-  throw new Error("The API key proxy did not start.");
+  return [...latest.values()];
 }
 
-interface CallOptions {
-  prompt: string;
-  schema: string;
-  /** Continues this session, from the same home directory, instead of starting over. */
-  resume?: AgentSession;
-  timeoutMinutes: number;
-  maxBudgetUsd: number;
+/** Repairs once the head's checks settle, at most once per head and `MAX_REPAIR_ROUNDS` times per pull request. */
+export function planRepair(state: {
+  head: string;
+  botComments: string[];
+  runs: CheckRun[];
+  threads: ReviewThread[];
+}): RepairPlan {
+  const { head, botComments, threads } = state;
+  if (!botComments.some((body) => body.includes(RESOLVE_MARKER))) {
+    return { action: "skip", reason: "Claude did not resolve this pull request." };
+  }
+  const runs = latestRuns(state.runs.filter((run) => !isIgnoredCheck(run.name)));
+  if (
+    REQUIRED_CHECKS.some((name) => !runs.some((run) => run.name === name)) ||
+    runs.some((run) => run.status !== "completed")
+  ) {
+    return { action: "skip", reason: "Checks are still running." };
+  }
+  const failures = runs.filter(
+    (run) => run.conclusion === "failure" || run.conclusion === "timed_out",
+  );
+  const headRepaired = botComments.some((body) => body.includes(repairMarker(head)));
+  if (threads.length === 0 && (failures.length === 0 || headRepaired)) {
+    return { action: "skip", reason: "Nothing to repair." };
+  }
+  const rounds = botComments.filter((body) => body.includes(REPAIR_MARKER)).length;
+  if (rounds >= MAX_REPAIR_ROUNDS) {
+    return botComments.some((body) => body.includes(EXHAUSTED_MARKER))
+      ? { action: "skip", reason: "Already handed to a maintainer." }
+      : { action: "exhausted" };
+  }
+  return { action: "repair", failures, threads };
+}
+
+/** Lines that still carry a conflict marker, as `path:line`. */
+export function leftoverConflictMarkers(workDir: string, paths: string[]): string[] {
+  return paths.flatMap((path) => {
+    const file = join(workDir, path);
+    if (!existsSync(file)) {
+      return [];
+    }
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .flatMap((line, index) => (/^(<{7}|>{7}) /.test(line) ? [`${path}:${index + 1}`] : []));
+  });
 }
 
 /**
- * Runs Claude Code in a container that sees only the worktree (with `.git` read-only), the context
- * directory, and the API key, so a prompt-injected agent cannot reach the runner or other credentials.
+ * Runs Claude Code with file tools only: edits stay in the worktree outside `.git`, and with no shell, network tools,
+ * or `/proc` reads the API key in its environment stays out of reach.
  */
-function runClaudeAgent<T>(
-  config: AgentConfig,
-  proxy: KeyProxy,
-  options: CallOptions,
-  parse: (value: unknown) => T | undefined,
-): AgentRun<T> {
-  const session = options.resume ?? {
-    sessionId: randomUUID(),
-    home: mkdtempSync(join(tmpdir(), "sync-agent-home-")),
-  };
-  const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
-  const result = runContainer(
+function runClaude(prompt: string, schemaFile: string, workDir: string, contextDir?: string) {
+  const { $schema: _, ...schema } = JSON.parse(readFileSync(join(PROMPTS_DIR, schemaFile), "utf8"));
+  const result = spawnSync(
+    "claude",
     [
-      "--user",
-      user,
-      "--network",
-      proxy.network,
-      "--env",
-      `ANTHROPIC_BASE_URL=${proxy.url}`,
-      "--env",
-      "ANTHROPIC_API_KEY=sync-agent-placeholder",
-      "--env",
-      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-      "--env",
-      "HOME=/home/agent",
-      "--volume",
-      `${config.workDir}:/work`,
-      "--volume",
-      `${join(config.workDir, ".git")}:/work/.git:ro`,
-      "--volume",
-      `${config.contextDir}:/context:ro`,
-      "--volume",
-      `${config.cliDir}:/opt/claude:ro`,
-      "--volume",
-      `${session.home}:/home/agent`,
-      "--workdir",
-      "/work",
-      config.image,
-      "/opt/claude/bin/claude",
       "--bare",
       "--strict-mcp-config",
-      ...(options.resume ? ["--resume", session.sessionId] : ["--session-id", session.sessionId]),
       "-p",
-      options.prompt,
+      prompt,
       "--model",
-      config.model,
-      "--agents",
-      JSON.stringify(EXPLORER_AGENT),
+      requireEnv("CLAUDE_MODEL"),
       "--output-format",
       "json",
       "--json-schema",
-      options.schema,
+      JSON.stringify(schema),
+      "--permission-mode",
+      "acceptEdits",
       "--allowedTools",
-      "Read,Grep,Glob,Edit,Write,Agent(explorer),Task(explorer)",
+      "Read,Grep,Glob",
       "--disallowedTools",
-      "Bash,BashOutput,KillShell,WebFetch,WebSearch,NotebookEdit,Agent(general-purpose),Task(general-purpose),Agent(Plan),Task(Plan),Read(//proc/**),Grep(//proc/**),Glob(//proc/**)",
-      "--add-dir",
-      "/context",
+      "Bash,WebFetch,WebSearch,Read(//proc/**),Edit(./.git/**),Write(./.git/**)",
+      ...(contextDir ? ["--add-dir", contextDir] : []),
       "--max-turns",
-      String(MAX_TURNS_PER_CALL),
+      "200",
       "--max-budget-usd",
-      options.maxBudgetUsd.toFixed(2),
+      "40",
     ],
     {
-      inheritStderr: true,
-      timeoutMinutes: options.timeoutMinutes,
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+      cwd: workDir,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "inherit"],
+      timeout: 60 * 60 * 1000,
     },
   );
-  if (result.error) {
-    const timedOut = (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-    return {
-      outcome: timedOut
-        ? `Claude timed out after ${options.timeoutMinutes} minutes.`
-        : `Claude did not run: ${result.error.message}`,
-      costUsd: timedOut ? options.maxBudgetUsd : 0,
-      session,
-    };
-  }
-  let output: {
-    is_error?: boolean;
-    subtype?: string;
-    structured_output?: unknown;
-    num_turns?: number;
-    total_cost_usd?: number;
-  };
   try {
-    output = JSON.parse(result.stdout);
-  } catch {
-    return {
-      outcome: `Claude exited with status ${result.status} without a result.`,
-      costUsd: options.maxBudgetUsd,
-      session,
+    const output = JSON.parse(result.stdout) as {
+      is_error?: boolean;
+      subtype?: string;
+      num_turns?: number;
+      total_cost_usd?: number;
+      structured_output?: unknown;
     };
-  }
-  const costUsd = output.total_cost_usd ?? options.maxBudgetUsd;
-  console.log(
-    `Claude ${output.subtype ?? "finished"} after ${output.num_turns} turns for $${costUsd.toFixed(2)}.`,
-  );
-  const outcome =
-    output.is_error || result.status !== 0
-      ? `Claude stopped (${output.subtype ?? `exit ${result.status}`}) after ${output.num_turns} turns.`
-      : (parse(output.structured_output) ?? "Claude returned no valid result.");
-  return { outcome, costUsd, session };
-}
-
-export type AgentCaller = <T>(
-  prompt: string,
-  schema: string,
-  parse: (value: unknown) => T | undefined,
-  resume?: AgentSession,
-) => AgentRun<T> | string;
-
-/** Returns a caller whose calls stop, with the reason, once the run's budget or deadline is spent. */
-export function createAgentCaller(config: AgentConfig): AgentCaller {
-  const deadline = Date.now() + RUN_DEADLINE_MINUTES * 60 * 1000;
-  let spentUsd = 0;
-  let proxy: KeyProxy | undefined;
-  return (prompt, schema, parse, resume) => {
-    const budgetLeftUsd = MAX_USD_PER_RUN - spentUsd;
-    if (budgetLeftUsd < MIN_CALL_USD) {
-      return `The run already spent $${spentUsd.toFixed(2)} of its $${MAX_USD_PER_RUN} budget.`;
-    }
-    const minutesLeft = Math.floor((deadline - Date.now()) / 60_000);
-    if (minutesLeft < MIN_CALL_MINUTES) {
-      return `The run reached its ${RUN_DEADLINE_MINUTES}-minute deadline.`;
-    }
-    proxy ??= startKeyProxy(config.image);
-    const run = runClaudeAgent(
-      config,
-      proxy,
-      {
-        prompt,
-        schema,
-        ...(resume ? { resume } : {}),
-        timeoutMinutes: Math.min(MAX_MINUTES_PER_CALL, minutesLeft),
-        maxBudgetUsd: Math.min(MAX_USD_PER_CALL, budgetLeftUsd),
-      },
-      parse,
+    console.log(
+      `Claude ${output.subtype} after ${output.num_turns} turns for $${output.total_cost_usd?.toFixed(2)}.`,
     );
-    spentUsd += run.costUsd;
-    return run;
-  };
+    if (output.is_error || result.status !== 0 || output.structured_output === undefined) {
+      return `Claude stopped (${output.subtype ?? `exit ${result.status}`}).`;
+    }
+    return output.structured_output;
+  } catch {
+    return `Claude exited with status ${result.status ?? result.error?.message} without a result.`;
+  }
 }
 
-/** Reads a JSON schema file and drops `$schema`, which the CLI's `--json-schema` does not accept. */
-export function loadSchema(text: string): string {
-  const { $schema: _, ...schema } = JSON.parse(text) as Record<string, unknown>;
-  return JSON.stringify(schema);
+function commit(git: GitRunner, message?: string): void {
+  gitOrThrow(git, ["add", "-A"]);
+  gitOrThrow(git, [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "commit",
+    "--no-verify",
+    ...(message ? ["-m", message] : ["--no-edit"]),
+  ]);
+}
+
+function setOutput(name: string, value: string): void {
+  appendFileSync(requireEnv("GITHUB_OUTPUT"), `${name}=${value}\n`);
+}
+
+function runLink(): string {
+  return `[workflow run](${requireEnv("RUN_URL")})`;
+}
+
+interface Resolution {
+  status: "resolved" | "unresolved";
+  summary: string;
+  files: { path: string; resolution: string }[];
+  deletedFiles: string[];
+  decisions: { question: string; chosen: string }[];
+}
+
+/** Merges `next` into the sync branch, which starts at the `develop` tip, and lets Claude resolve the conflicts. */
+function resolve(workDir: string, outputDir: string): void {
+  const git = makeGit(workDir);
+  const merge = git([
+    "-c",
+    "merge.conflictStyle=zdiff3",
+    "merge",
+    "--no-ff",
+    "--no-commit",
+    "origin/next",
+  ]);
+  const conflicts = gitOrThrow(git, ["diff", "--name-only", "--diff-filter=U"])
+    .split("\n")
+    .filter(Boolean);
+  if (merge.status !== 0 && conflicts.length === 0) {
+    throw new Error(`git merge failed without conflicts: ${merge.stderr || merge.stdout}`);
+  }
+
+  const prompt = [
+    readFileSync(join(PROMPTS_DIR, "resolve-prompt.md"), "utf8"),
+    "## Conflicted files",
+    "",
+    ...conflicts.map((path) => `- \`${path}\``),
+  ].join("\n");
+  const output =
+    conflicts.length > 0 ? runClaude(prompt, "resolution.schema.json", workDir) : undefined;
+  const result = typeof output === "object" ? (output as Resolution) : undefined;
+  for (const path of result?.deletedFiles ?? []) {
+    git(["rm", "--quiet", "--ignore-unmatch", "--", path]);
+  }
+  const leftovers = leftoverConflictMarkers(workDir, conflicts);
+  const failure =
+    typeof output === "string"
+      ? output
+      : result?.status === "unresolved"
+        ? result.summary
+        : leftovers.length > 0
+          ? `Conflict markers remain at ${leftovers.slice(0, 10).join(", ")}.`
+          : undefined;
+
+  if (failure !== undefined) {
+    setOutput("resolved", "false");
+    writeFileSync(
+      join(outputDir, "comment.md"),
+      `@supabase/cli Claude could not resolve this merge: ${failure}\n\nResolve it by hand as described above (${runLink()}).\n`,
+    );
+    return;
+  }
+
+  commit(git);
+  setOutput("resolved", "true");
+  const lines = [
+    RESOLVE_MARKER,
+    "### Claude resolved the merge of `next`",
+    "",
+    result?.summary ?? "`next` merged cleanly.",
+    "",
+    ...(result?.files.length
+      ? [
+          "| File | Resolution |",
+          "| --- | --- |",
+          ...result.files.map(
+            (file) =>
+              `| \`${file.path}\` | ${file.resolution.replaceAll("|", "\\|").replaceAll("\n", " ")} |`,
+          ),
+          "",
+        ]
+      : []),
+    ...(result?.decisions.length
+      ? [
+          "**Decisions for @supabase/cli.** Confirm them, or push a change to this branch:",
+          "",
+          ...result.decisions.map((decision) => `- ${decision.question} Chose: ${decision.chosen}`),
+          "",
+        ]
+      : []),
+    `Approve to fast-forward \`next\` once checks pass (${runLink()}).`,
+    "",
+  ];
+  writeFileSync(join(outputDir, "comment.md"), lines.join("\n"));
+}
+
+const THREADS_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 50) {
+            nodes { databaseId body path line author { login } pullRequestReview { body } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface ThreadsPage {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        nodes: {
+          id: string;
+          isResolved: boolean;
+          comments: {
+            nodes: {
+              databaseId: number;
+              body: string;
+              path: string;
+              line: number | null;
+              author: { login: string } | null;
+              pullRequestReview: { body: string } | null;
+            }[];
+          };
+        }[];
+      };
+    } | null;
+  } | null;
+}
+
+/** Unresolved AI review threads the release bot has not answered; nobody else's comments reach the agent. */
+async function fetchOpenFindings(
+  token: string,
+  repository: string,
+  number: number,
+): Promise<ReviewThread[]> {
+  const [owner, name] = repository.split("/");
+  const page = await githubGraphql<ThreadsPage>(token, THREADS_QUERY, { owner, name, number });
+  return (page.repository?.pullRequest?.reviewThreads.nodes ?? []).flatMap((thread) => {
+    const [first, ...rest] = thread.comments.nodes;
+    if (
+      thread.isResolved ||
+      !first ||
+      !isLogin(first.author?.login, AI_REVIEW_LOGIN) ||
+      !first.pullRequestReview?.body.includes(AI_REVIEW_MARKER) ||
+      rest.some((comment) => isLogin(comment.author?.login, RELEASE_BOT_LOGIN))
+    ) {
+      return [];
+    }
+    return [
+      {
+        threadId: thread.id,
+        commentId: first.databaseId,
+        path: first.path,
+        line: first.line,
+        body: first.body,
+      },
+    ];
+  });
+}
+
+async function logTail(token: string, repository: string, jobId: number): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`,
+    {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+    },
+  );
+  if (!response.ok) {
+    return `(log unavailable: ${response.status})`;
+  }
+  return (await response.text()).split("\n").slice(-LOG_TAIL_LINES).join("\n");
+}
+
+/** Reads the sync pull request's state with the job's read-only token and writes the repair context. */
+async function collect(outputDir: string): Promise<void> {
+  const token = requireEnv("GH_TOKEN");
+  const repository = requireEnv("GITHUB_REPOSITORY");
+  const [owner] = repository.split("/");
+  const pulls = await githubRequest<{ number: number; draft: boolean; head: { sha: string } }[]>(
+    token,
+    `/repos/${repository}/pulls?state=open&base=next&head=${owner}:${SYNC_BRANCH}`,
+  );
+  const pull = pulls[0];
+  if (!pull || pull.draft) {
+    console.log("No open sync pull request to repair.");
+    setOutput("action", "skip");
+    return;
+  }
+  const comments = await githubRequest<{ user: { login: string } | null; body: string }[]>(
+    token,
+    `/repos/${repository}/issues/${pull.number}/comments?per_page=100`,
+  );
+  const plan = planRepair({
+    head: pull.head.sha,
+    botComments: comments
+      .filter((comment) => comment.user?.login === RELEASE_BOT_LOGIN)
+      .map((comment) => comment.body),
+    runs: await fetchPullRequestCheckRuns(
+      (query, variables) => githubGraphql(token, query, variables),
+      repository,
+      pull.number,
+      pull.head.sha,
+    ),
+    threads: await fetchOpenFindings(token, repository, pull.number),
+  });
+  setOutput("action", plan.action);
+  setOutput("pr", String(pull.number));
+  setOutput("head", pull.head.sha);
+
+  if (plan.action === "skip") {
+    console.log(plan.reason);
+    return;
+  }
+  if (plan.action === "exhausted") {
+    writeFileSync(
+      join(outputDir, "comment.md"),
+      `${EXHAUSTED_MARKER}\n@supabase/cli Claude ran ${MAX_REPAIR_ROUNDS} repair rounds and work remains; please take over (${runLink()}).\n`,
+    );
+    return;
+  }
+
+  const contextDir = join(outputDir, "context");
+  mkdirSync(contextDir, { recursive: true });
+  const failures = await Promise.all(
+    plan.failures.map(
+      async (run) =>
+        `## ${run.name} (${run.conclusion})\n\n\`\`\`\`text\n${await logTail(token, repository, run.id)}\n\`\`\`\`\n`,
+    ),
+  );
+  writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n") || "No CI job failed.\n");
+  writeFileSync(
+    join(contextDir, "review-findings.md"),
+    plan.threads
+      .map(
+        (thread, index) =>
+          `## Finding ${index + 1}: \`${thread.path}${thread.line ? `:${thread.line}` : ""}\`\n\n${thread.body}\n`,
+      )
+      .join("\n") || "No open review findings.\n",
+  );
+  writeFileSync(join(outputDir, "threads.json"), JSON.stringify(plan.threads));
+}
+
+interface Repair {
+  summary: string;
+  findings: { id: number; fixed: boolean; reply: string }[];
+}
+
+/** Lets Claude repair the checked-out sync branch, then commits its edits and writes the replies to post. */
+function repair(workDir: string, outputDir: string, head: string): void {
+  const threads = JSON.parse(
+    readFileSync(join(outputDir, "threads.json"), "utf8"),
+  ) as ReviewThread[];
+  const output = runClaude(
+    readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
+    "repair.schema.json",
+    workDir,
+    join(outputDir, "context"),
+  );
+  const result = typeof output === "object" ? (output as Repair) : undefined;
+
+  const git = makeGit(workDir);
+  const changed = result !== undefined && gitOrThrow(git, ["status", "--porcelain"]) !== "";
+  if (changed) {
+    commit(git, "chore(repo): repair the develop-into-next sync");
+  }
+  setOutput("changed", String(changed));
+
+  const replies = (result?.findings ?? []).flatMap(({ id, fixed, reply }) => {
+    const thread = threads[id - 1];
+    return thread
+      ? [{ commentId: thread.commentId, threadId: thread.threadId, body: reply, resolve: fixed }]
+      : [];
+  });
+  writeFileSync(join(outputDir, "replies.json"), JSON.stringify(replies));
+  writeFileSync(
+    join(outputDir, "comment.md"),
+    [
+      repairMarker(head),
+      "### Claude repair round",
+      "",
+      result?.summary ??
+        `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
+      "",
+      `${replies.filter((reply) => reply.resolve).length} findings fixed, ${replies.filter((reply) => !reply.resolve).length} declined (${runLink()}).`,
+      "",
+    ].join("\n"),
+  );
+}
+
+if (import.meta.main) {
+  const outputDir = requireEnv("OUTPUT_DIR");
+  mkdirSync(outputDir, { recursive: true });
+  switch (process.argv[2]) {
+    case "resolve":
+      resolve(requireEnv("WORK_DIR"), outputDir);
+      break;
+    case "collect":
+      await collect(outputDir);
+      break;
+    case "repair":
+      repair(requireEnv("WORK_DIR"), outputDir, requireEnv("HEAD_SHA"));
+      break;
+    default:
+      throw new Error("usage: sync-agent.ts resolve | collect | repair");
+  }
 }

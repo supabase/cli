@@ -11,14 +11,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["path", "resolution", "precedent"],
+        "required": ["path", "resolution"],
         "properties": {
           "path": { "type": "string" },
-          "resolution": { "type": "string" },
-          "precedent": {
-            "type": ["integer", "null"],
-            "description": "Number of the earlier sync pull request whose decision this follows."
-          }
+          "resolution": { "type": "string" }
         }
       }
     },
@@ -28,12 +24,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["paths", "question", "chosen", "alternative"],
+        "required": ["question", "chosen"],
         "properties": {
-          "paths": { "type": "array", "items": { "type": "string" } },
           "question": { "type": "string" },
-          "chosen": { "type": "string" },
-          "alternative": { "type": "string" }
+          "chosen": { "type": "string" }
         }
       }
     }
