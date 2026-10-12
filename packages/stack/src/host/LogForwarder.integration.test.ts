@@ -966,7 +966,6 @@ describe("LogForwarder", () => {
             if (logLevel === "Warn") warnings.push(message);
           }),
         ]);
-        yield* analytics.set(true);
         yield* startForwarder(
           store,
           logflare,
@@ -976,7 +975,9 @@ describe("LogForwarder", () => {
         const lines = Array.from({ length: 256 }, (_, index) => `line ${index}`);
         const storedCount = storedMessages(logflare).pipe(Effect.map((stored) => stored.length));
 
+        // Seeded while Analytics sleeps, so no read can land mid-append and split the 256 lines.
         yield* database.log(...lines);
+        yield* analytics.set(true);
         const posts = yield* drive(logflare, manual, () =>
           Effect.map(storedCount, (n) => n >= 255),
         );
