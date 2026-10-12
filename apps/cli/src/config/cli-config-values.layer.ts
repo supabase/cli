@@ -130,6 +130,16 @@ const declaredWrite = (
   }
 };
 
+/** The coerced config-tier value a file-only view needs, or `undefined` when the file value decodes as written. */
+const fileWrite = (key: AnyCliConfigKey, sources: CliConfigSources): unknown => {
+  const raw = sources.config(key.segments)?.value;
+  if (raw === undefined || key.secret === true || isEnvReference(raw)) return undefined;
+  const picked = pickCliConfigKey(key, sources, { configOnly: true });
+  if (Result.isFailure(picked) || picked.success.origin.tier !== "config") return undefined;
+  const written = key.toDocument(picked.success.unnormalized ?? picked.success.value);
+  return needsCoercion(key, written, raw) ? written : undefined;
+};
+
 const materializedWrite = (
   key: AnyCliConfigKey,
   picked: CliConfigValue<unknown>,
@@ -328,11 +338,14 @@ export const cliConfigValuesLayer = Layer.effect(
 
       const declaredDraft = cloneDocumentRecord(document);
       const materializedDraft = cloneDocumentRecord(declaredDraft);
+      const fileDraft = cloneDocumentRecord(document);
       const origins = new Map<string, CliConfigKeyOrigin>();
       const invalid: Array<CliConfigValueError> = [];
       const entryFailures: Array<CliConfigValueError> = [];
       const overrideWarnings: Array<string> = [];
       for (const key of enumerated.values()) {
+        const fileValue = fileWrite(key, sources);
+        if (fileValue !== undefined) setDocumentValue(fileDraft, key.segments, fileValue);
         const picked = pickCliConfigKey(key, sources);
         if (Result.isFailure(picked)) {
           if (target.tolerateInvalid) {
@@ -388,7 +401,12 @@ export const cliConfigValuesLayer = Layer.effect(
         }),
       );
       const fileDeclared = withPlatform(
-        decodeMergedCliConfig(mergedForDecode, { envValues, cliCompat: true, silent: true }),
+        decodeMergedCliConfig(mergedForDecode, {
+          envValues,
+          cliCompat: true,
+          document: fileDraft,
+          silent: true,
+        }),
       );
       const materializedLoaded = yield* withPlatform(
         decodeMergedCliConfig(mergedForDecode, {

@@ -711,7 +711,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         // would resolve, so fall back to what the config file declares.
         const pgDeltaEnabled =
           pgDeltaSetting.origin.tier === "flag"
-            ? ((yield* resolvedConfig.fileDeclared).config.experimental.pgdelta?.enabled ?? true)
+            ? yield* resolvedConfig.fileDeclared.pipe(
+                Effect.map((declared) => declared.config.experimental.pgdelta?.enabled ?? true),
+                Effect.orElseSucceed(() => pgDeltaSetting.value),
+              )
             : pgDeltaSetting.value;
         // Mirrors migra's declarative source precedence (`loadDeclaredSchemas`), which applies
         // only to local targets: schema_paths first, then this dir while pg-delta stays enabled

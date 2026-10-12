@@ -754,6 +754,30 @@ describe("CliConfigValues reads", () => {
     ),
   );
 
+  it.live("coerces weakly typed config values in the file-only view without the env overlay", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "weak"\n[api]\nmax_rows = "10"\n[db.seed]\nenabled = "TRUE"\n[db.pooler]\nenabled = "env(POOLER_ON)"\n[experimental.pgdelta]\nenabled = 0\n',
+      );
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+      const declared = yield* resolvedConfig.fileDeclared;
+
+      expect(declared.config.db.seed.enabled).toBe(true);
+      expect(declared.config.api.max_rows).toBe(10);
+      expect(declared.config.db.pooler.enabled).toBe(true);
+      expect(declared.config.experimental.pgdelta?.enabled).toBe(false);
+      expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(false);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ POOLER_ON: "true", SUPABASE_DB_SEED_ENABLED: "false" }, effect),
+      Effect.scoped,
+    ),
+  );
+
   it.live("sanitizes project_id once, whichever tier supplies it", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "my app"\n');

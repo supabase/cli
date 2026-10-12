@@ -507,11 +507,12 @@ const invalidCliConfigValue = (
 
 /**
  * The single precedence implementation: flag > shell > projectEnv > config > default. Pure; the
- * caller decides which sources exist.
+ * caller decides which sources exist. `configOnly` skips the flag and env tiers.
  */
 export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliConfigNoFlags>(
   key: CliConfigKey<A, X, F>,
   sources: CliConfigSources,
+  options: { readonly configOnly?: true } = {},
 ): Result.Result<CliConfigValue<A>, CliConfigValueError> => {
   const lookup = (name: string) => lookupCliConfigEnv(sources, name);
   const secret = key.secret === true;
@@ -560,7 +561,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
     return shell === undefined ? sources.projectEnv(name) : undefined;
   };
 
-  const flag = sources.flags(key.path);
+  const flag = options.configOnly === true ? undefined : sources.flags(key.path);
   if (flag !== undefined) {
     const origin = { tier: "flag", flag: flag.flag } as const;
     const decoded = key.codec.fromConfig(flag.value);
@@ -570,7 +571,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
 
   const envAllowed =
     key.envRequiresSection === undefined || sources.config(key.envRequiresSection) !== undefined;
-  if (envAllowed) {
+  if (envAllowed && options.configOnly !== true) {
     for (const tier of ["shell", "projectEnv"] as const) {
       for (const name of key.env) {
         const found = readEnv(tier, name);

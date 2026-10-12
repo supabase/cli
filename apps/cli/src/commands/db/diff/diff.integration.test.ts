@@ -768,6 +768,37 @@ describe("db diff", () => {
     }),
   );
 
+  it.effect("reads a string-typed [experimental.pgdelta] enabled in the declarative advisory", () =>
+    Effect.gen(function* () {
+      const err = yield* ignoredDeclarativeNote(
+        '[experimental.pgdelta]\nenabled = "false"\n',
+        "supabase/schemas/public.sql",
+      );
+      expect(err).toContain("Run supabase db schema declarative sync --experimental to generate");
+      expect(err).toContain("or pass --use-migra to diff them with migra");
+    }),
+  );
+
+  it.effect("keeps the diff successful when the advisory cannot read the config file value", () =>
+    Effect.gen(function* () {
+      const s = setup(tmp.current, {
+        usePgDelta: true,
+        files: {
+          "supabase/config.toml": '[db.seed]\nenabled = "banana"\n',
+          "supabase/.env": "SUPABASE_DB_SEED_ENABLED=true\n",
+          "supabase/schemas/public.sql": "create table declared ();\n",
+        },
+        diffSql: "",
+      });
+
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("declared") })).pipe(
+        Effect.provide(s.layer),
+      );
+
+      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
+    }),
+  );
+
   it.effect(
     "suggests --use-migra for an absolute path to supabase/schemas with pg-delta disabled",
     () =>
