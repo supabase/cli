@@ -100,18 +100,24 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # A plain push fails if the branch moved since the checks settled; the next completed run retries.
+      # A push, or the head check without one, stops when the branch moved since the checks settled; the next completed
+      # run starts over. The round comment goes first so a failed reply cannot hide a round from the limit.
       - name: Publish
         if: steps.collect.outputs.action == 'repair' || steps.collect.outputs.action == 'exhausted'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ steps.collect.outputs.pr }}
+          HEAD_SHA: ${{ steps.collect.outputs.head }}
           CHANGED: ${{ steps.repair.outputs.changed }}
         run: |
           if [ "$CHANGED" = true ]; then
             git -C work -c core.hooksPath=/dev/null push \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
+          elif [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
+            echo "::notice::The sync branch moved since the checks settled; skipping."
+            exit 0
           fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUTPUT_DIR/comment.md"
           if [ -f "$OUTPUT_DIR/replies.json" ]; then
             jq -c '.[]' "$OUTPUT_DIR/replies.json" | while read -r reply; do
               gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments/$(jq -r .commentId <<<"$reply")/replies" \
@@ -123,4 +129,3 @@ jobs:
               fi
             done
           fi
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUTPUT_DIR/comment.md"

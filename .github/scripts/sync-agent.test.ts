@@ -68,14 +68,14 @@ describe("planRepair", () => {
     expect(plan).toEqual({ action: "skip", reason: "Nothing to repair." });
   });
 
-  test("does not repair the same head twice unless new findings arrive", () => {
+  test("hands a head a round left failing to a maintainer unless new findings arrive", () => {
     const state = {
       head: HEAD,
       botComments: [RESOLVED, repaired(HEAD)],
       runs: [...green, run(99, "Check code quality", "failure")],
     };
 
-    expect(planRepair({ ...state, threads: [] }).action).toBe("skip");
+    expect(planRepair({ ...state, threads: [] }).action).toBe("exhausted");
     expect(planRepair({ ...state, threads: [finding] }).action).toBe("repair");
   });
 

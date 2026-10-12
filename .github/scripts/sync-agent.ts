@@ -68,7 +68,10 @@ function latestRuns(runs: CheckRun[]): CheckRun[] {
   return [...latest.values()];
 }
 
-/** Repairs once the head's checks settle, at most once per head and `MAX_REPAIR_ROUNDS` times per pull request. */
+/**
+ * Repairs once the head's checks settle, at most `MAX_REPAIR_ROUNDS` times per pull request. A head a round already
+ * repaired gets another round only for new review findings; its remaining failures go to a maintainer.
+ */
 export function planRepair(state: {
   head: string;
   botComments: string[];
@@ -89,12 +92,12 @@ export function planRepair(state: {
   const failures = runs.filter(
     (run) => run.conclusion === "failure" || run.conclusion === "timed_out",
   );
-  const headRepaired = botComments.some((body) => body.includes(repairMarker(head)));
-  if (threads.length === 0 && (failures.length === 0 || headRepaired)) {
+  if (threads.length === 0 && failures.length === 0) {
     return { action: "skip", reason: "Nothing to repair." };
   }
   const rounds = botComments.filter((body) => body.includes(REPAIR_MARKER)).length;
-  if (rounds >= MAX_REPAIR_ROUNDS) {
+  const headRepaired = botComments.some((body) => body.includes(repairMarker(head)));
+  if (rounds >= MAX_REPAIR_ROUNDS || (headRepaired && threads.length === 0)) {
     return botComments.some((body) => body.includes(EXHAUSTED_MARKER))
       ? { action: "skip", reason: "Already handed to a maintainer." }
       : { action: "exhausted" };
@@ -193,6 +196,26 @@ function runLink(): string {
   return `[workflow run](${requireEnv("RUN_URL")})`;
 }
 
+/** `git status` codes for unmerged paths; `HEAD` is `develop` and the merged side is `next`. */
+const CONFLICT_KINDS: Record<string, string> = {
+  UU: "both modified",
+  AA: "both added",
+  DU: "deleted on develop, modified on next",
+  UD: "modified on develop, deleted on next",
+  AU: "added on develop",
+  UA: "added on next",
+  DD: "deleted on both",
+};
+
+function conflictedPaths(git: GitRunner): { path: string; kind: string }[] {
+  return gitOrThrow(git, ["status", "--porcelain=v1", "-z", "--untracked-files=no"])
+    .split("\0")
+    .flatMap((entry) => {
+      const kind = CONFLICT_KINDS[entry.slice(0, 2)];
+      return kind ? [{ path: entry.slice(3), kind }] : [];
+    });
+}
+
 interface Resolution {
   status: "resolved" | "unresolved";
   summary: string;
@@ -204,6 +227,11 @@ interface Resolution {
 /** Merges `next` into the sync branch, which starts at the `develop` tip, and lets Claude resolve the conflicts. */
 function resolve(workDir: string, outputDir: string): void {
   const git = makeGit(workDir);
+  if (git(["merge-base", "--is-ancestor", "origin/next", "HEAD"]).status === 0) {
+    console.log("The sync branch already contains next.");
+    setOutput("resolved", "false");
+    return;
+  }
   const merge = git([
     "-c",
     "merge.conflictStyle=zdiff3",
@@ -212,9 +240,7 @@ function resolve(workDir: string, outputDir: string): void {
     "--no-commit",
     "origin/next",
   ]);
-  const conflicts = gitOrThrow(git, ["diff", "--name-only", "--diff-filter=U"])
-    .split("\n")
-    .filter(Boolean);
+  const conflicts = conflictedPaths(git);
   if (merge.status !== 0 && conflicts.length === 0) {
     throw new Error(`git merge failed without conflicts: ${merge.stderr || merge.stdout}`);
   }
@@ -223,7 +249,7 @@ function resolve(workDir: string, outputDir: string): void {
     readFileSync(join(PROMPTS_DIR, "resolve-prompt.md"), "utf8"),
     "## Conflicted files",
     "",
-    ...conflicts.map((path) => `- \`${path}\``),
+    ...conflicts.map(({ path, kind }) => `- \`${path}\` (${kind})`),
   ].join("\n");
   const output =
     conflicts.length > 0 ? runClaude(prompt, "resolution.schema.json", workDir) : undefined;
@@ -231,7 +257,10 @@ function resolve(workDir: string, outputDir: string): void {
   for (const path of result?.deletedFiles ?? []) {
     git(["rm", "--quiet", "--ignore-unmatch", "--", path]);
   }
-  const leftovers = leftoverConflictMarkers(workDir, conflicts);
+  const leftovers = leftoverConflictMarkers(
+    workDir,
+    conflicts.map(({ path }) => path),
+  );
   const failure =
     typeof output === "string"
       ? output
@@ -460,6 +489,11 @@ function repair(workDir: string, outputDir: string, head: string): void {
     commit(git, "chore(repo): repair the develop-into-next sync");
   }
   setOutput("changed", String(changed));
+  const workflowEdits = changed
+    ? gitOrThrow(git, ["diff", "--name-only", "HEAD~1", "HEAD", "--", ".github/"])
+        .split("\n")
+        .filter(Boolean)
+    : [];
 
   const replies = (result?.findings ?? []).flatMap(({ id, fixed, reply }) => {
     const thread = threads[id - 1];
@@ -477,6 +511,12 @@ function repair(workDir: string, outputDir: string, head: string): void {
       result?.summary ??
         `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
       "",
+      ...(workflowEdits.length > 0
+        ? [
+            `@supabase/cli this round changed files under \`.github/\`, which run in this PR's CI: ${workflowEdits.map((path) => `\`${path}\``).join(", ")}.`,
+            "",
+          ]
+        : []),
       `${replies.filter((reply) => reply.resolve).length} findings fixed, ${replies.filter((reply) => !reply.resolve).length} declined (${runLink()}).`,
       "",
     ].join("\n"),

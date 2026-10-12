@@ -12,7 +12,8 @@ ancestor, `>>>>>>>` is `next`. Repository conventions live in `CLAUDE.md`, `AGEN
 
 ## Your task
 
-1. Resolve every conflicted file listed below and remove every conflict marker.
+1. Resolve every conflicted file listed below and remove every conflict marker. A file deleted on
+   one side has no markers: keep it as is, edit it, or list it in `deletedFiles`.
 2. Keep both sides' intent: `develop`'s fixes and features must survive, and so must `next`'s
    breaking changes. When `next` moved or reshaped code that `develop` changed, port `develop`'s
    change into `next`'s shape.
