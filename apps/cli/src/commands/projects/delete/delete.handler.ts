@@ -1,5 +1,5 @@
 import type { V1DeleteAProjectOutput } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -45,7 +45,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
 
   // Captured so the `Effect.ensuring` cache write below can use whichever ref resolved from
   // the arg or prompt.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Unlike other commands, delete does not fall back to the linked ref file — only the arg
@@ -60,7 +60,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
         message: "accepts 1 arg(s), received 0",
       });
     }
-    resolvedRef = ref;
+    yield* Ref.set(resolvedRef, Option.some(ref));
 
     if (!PROJECT_REF_PATTERN.test(ref)) {
       return yield* new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
@@ -86,19 +86,16 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
       output.format === "text" ? yield* output.task("Deleting project...") : undefined;
     const deleted: DeletedProject = yield* api.v1.deleteAProject({ ref }).pipe(
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          if (
-            HttpClientError.isHttpClientError(cause) &&
-            cause.response !== undefined &&
-            cause.response.status === 404
-          ) {
-            return yield* new ProjectsDeleteNotFoundError({
-              message: `Project does not exist:${ref}`,
-            });
-          }
-          return yield* mapDeleteError(cause);
-        }),
+      Effect.catchIf(
+        (cause) =>
+          HttpClientError.isHttpClientError(cause) &&
+          cause.response !== undefined &&
+          cause.response.status === 404,
+        () =>
+          Effect.fail(
+            new ProjectsDeleteNotFoundError({ message: `Project does not exist:${ref}` }),
+          ),
+        mapDeleteError,
       ),
     );
     yield* deleting?.clear ?? Effect.void;
@@ -126,8 +123,13 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     yield* output.raw(`Deleted project: ${deleted.name}\n`);
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

@@ -1,9 +1,10 @@
 import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
-import { CliOutput, Command } from "effect/cli";
+import { CliError, CliOutput, Command } from "effect/cli";
 
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { ExperimentalRequiredError } from "../../../command-internal/experimental-gate.ts";
 import { GLOBAL_FLAGS, ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
@@ -103,21 +104,11 @@ function setup(opts: SetupOpts = {}) {
 }
 
 function postBody(api: { requests: ReadonlyArray<{ method: string; body?: unknown }> }) {
-  return api.requests.find((r) => r.method === "POST")?.body as Record<string, unknown> | undefined;
-}
-
-function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
-  expect(Exit.isFailure(exit)).toBe(true);
-  if (!Exit.isFailure(exit)) {
-    return {};
-  }
-  const failure = Cause.findErrorOption(exit.cause);
-  expect(Option.isSome(failure)).toBe(true);
-  return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
+  return api.requests.find((r) => r.method === "POST")?.body;
 }
 
 describe("projects create integration", () => {
-  it.live("creates a project non-interactively from flags", () => {
+  it.effect("creates a project non-interactively from flags", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -142,7 +133,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes desired_instance_size only when --size is set", () => {
+  it.effect("includes desired_instance_size only when --size is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -153,11 +144,11 @@ describe("projects create integration", () => {
         region: Option.some("us-east-1"),
         size: Option.some("medium"),
       });
-      expect(postBody(api)?.desired_instance_size).toBe("medium");
+      expect(postBody(api)).toMatchObject({ desired_instance_size: "medium" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes high_availability only when --high-availability is set", () => {
+  it.effect("includes high_availability only when --high-availability is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -168,11 +159,11 @@ describe("projects create integration", () => {
         region: Option.some("us-east-1"),
         highAvailability: Option.some(true),
       });
-      expect(postBody(api)?.high_availability).toBe(true);
+      expect(postBody(api)).toMatchObject({ high_availability: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forwards --high-availability=false when explicitly set", () => {
+  it.effect("forwards --high-availability=false when explicitly set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -183,11 +174,11 @@ describe("projects create integration", () => {
         region: Option.some("us-east-1"),
         highAvailability: Option.some(false),
       });
-      expect(postBody(api)?.high_availability).toBe(false);
+      expect(postBody(api)).toMatchObject({ high_availability: false });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "sends both release_channel and postgres_engine when both flags and --experimental are set",
     () => {
       const { layer, api } = setup({ experimental: true });
@@ -201,13 +192,15 @@ describe("projects create integration", () => {
           releaseChannel: Option.some("internal"),
           postgresEngine: Option.some("17-oriole"),
         });
-        expect(postBody(api)?.release_channel).toBe("internal");
-        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+        expect(postBody(api)).toMatchObject({
+          release_channel: "internal",
+          postgres_engine: "17-oriole",
+        });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "sends only postgres_engine when only --postgres-engine is set (with --experimental)",
     () => {
       const { layer, api } = setup({ experimental: true });
@@ -220,18 +213,18 @@ describe("projects create integration", () => {
           region: Option.some("us-east-1"),
           postgresEngine: Option.some("17-oriole"),
         });
-        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+        expect(postBody(api)).toMatchObject({ postgres_engine: "17-oriole" });
         expect(postBody(api)).not.toHaveProperty("release_channel");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "fails with ExperimentalRequiredError when --release-channel is set without --experimental",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           projectsCreate({
             ...BASE_FLAGS,
             name: Option.some("alpha"),
@@ -241,20 +234,19 @@ describe("projects create integration", () => {
             releaseChannel: Option.some("internal"),
           }),
         );
-        const failure = findFailure(exit);
-        expect(failure["_tag"]).toBe("ExperimentalRequiredError");
-        expect(failure["message"]).toBe("must set the --experimental flag to run this command");
+        expect(error).toBeInstanceOf(ExperimentalRequiredError);
+        expect(error.message).toBe("must set the --experimental flag to run this command");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "fails with ExperimentalRequiredError when --postgres-engine is set without --experimental",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           projectsCreate({
             ...BASE_FLAGS,
             name: Option.some("alpha"),
@@ -264,15 +256,14 @@ describe("projects create integration", () => {
             postgresEngine: Option.some("15"),
           }),
         );
-        const failure = findFailure(exit);
-        expect(failure["_tag"]).toBe("ExperimentalRequiredError");
-        expect(failure["message"]).toBe("must set the --experimental flag to run this command");
+        expect(error).toBeInstanceOf(ExperimentalRequiredError);
+        expect(error.message).toBe("must set the --experimental flag to run this command");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, api } = setup();
@@ -289,14 +280,16 @@ describe("projects create integration", () => {
             releaseChannel: Option.some("internal"),
             postgresEngine: Option.some("17-oriole"),
           });
-          expect(postBody(api)?.release_channel).toBe("internal");
-          expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+          expect(postBody(api)).toMatchObject({
+            release_channel: "internal",
+            postgres_engine: "17-oriole",
+          });
         }).pipe(Effect.provide(layer)),
       );
     },
   );
 
-  it.live("excludes release_channel and postgres_engine when neither flag is set", () => {
+  it.effect("excludes release_channel and postgres_engine when neither flag is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -311,7 +304,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores the hidden --plan flag (no-op)", () => {
+  it.effect("ignores the hidden --plan flag (no-op)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -326,7 +319,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails non-interactively when required flags are missing", () => {
+  it.effect("fails non-interactively when required flags are missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -341,7 +334,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --interactive=false as non-interactive even on a TTY", () => {
+  it.effect("treats --interactive=false as non-interactive even on a TTY", () => {
     const { layer, api } = setup({ stdinIsTty: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -359,7 +352,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts for name, org, region and password when interactive", () => {
+  it.effect("prompts for name, org, region and password when interactive", () => {
     const { layer, out, api } = setup({
       stdinIsTty: true,
       promptTextResponses: ["my-proj"],
@@ -369,17 +362,18 @@ describe("projects create integration", () => {
     return Effect.gen(function* () {
       yield* projectsCreate({ ...BASE_FLAGS });
       expect(api.requests.some((r) => r.method === "GET")).toBe(true);
-      const body = postBody(api);
-      expect(body?.name).toBe("my-proj");
-      expect(body?.organization_slug).toBe("org-abc");
-      expect(body?.region).toBe("us-west-2");
-      expect(String(body?.db_pass)).toHaveLength(16);
+      expect(postBody(api)).toMatchObject({
+        name: "my-proj",
+        organization_slug: "org-abc",
+        region: "us-west-2",
+        db_pass: expect.stringMatching(/^.{16}$/),
+      });
       expect(out.stderrText).toContain("Selected org-id:");
       expect(out.stderrText).toContain("Selected region:");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
+  it.effect("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
     const { layer } = setup({ stdinIsTty: true, promptTextResponses: [""] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsCreate({ ...BASE_FLAGS }));
@@ -390,7 +384,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the interactive organization list request errors", () => {
+  it.effect("fails when the interactive organization list request errors", () => {
     const { layer } = setup({
       stdinIsTty: true,
       byMethod: { GET: { status: 500, body: {} }, POST: { status: 201, body: CREATED } },
@@ -406,7 +400,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format json", () => {
+  it.effect("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -422,7 +416,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the created project for --output env", () => {
+  it.effect("encodes the created project for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -436,7 +430,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the created project for --output yaml", () => {
+  it.effect("encodes the created project for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -450,7 +444,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -465,7 +459,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps the created project under [project]-style toml output", () => {
+  it.effect("wraps the created project under [project]-style toml output", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -479,7 +473,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -500,7 +494,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsCreateUnexpectedStatusError on HTTP 500", () => {
+  it.effect("fails with ProjectsCreateUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ byMethod: { POST: { status: 500, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -519,7 +513,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the request body with Go-sorted keys", () => {
+  it.effect("sends the request body with Go-sorted keys", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -540,7 +534,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
+  it.effect("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
     // The typed client validates refs to be 20+ chars; `executeRaw` bypasses that to render
     // placeholders verbatim.
     const { layer, out } = setup({
@@ -562,7 +556,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -577,7 +571,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry but skips cache when creation fails", () => {
+  it.effect("flushes telemetry but skips cache when creation fails", () => {
     const { layer, telemetry, cache } = setup({ network: "fail" });
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -594,7 +588,7 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+  it.effect("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([projectsCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -611,7 +605,7 @@ describe("projects create integration", () => {
     );
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         Command.runWith(root, { version: "0.0.0-test" })([
           "create",
           "alpha",
@@ -625,10 +619,7 @@ describe("projects create integration", () => {
           "nano",
         ]),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(rejectsInvalidSizeChoice(Cause.squash(exit.cause))).toBe(true);
-      }
+      expect(rejectsInvalidSizeChoice(error)).toBe(true);
     }).pipe(Effect.provide(commandLayer));
   });
 });
@@ -636,16 +627,10 @@ describe("projects create integration", () => {
 // Confirms the failure came from the `--size` flag itself, not an unrelated error, so the
 // regression test can't pass for the wrong reason.
 function rejectsInvalidSizeChoice(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("errors" in error)) return false;
-  const { errors } = error;
-  if (!Array.isArray(errors)) return false;
-  return errors.some(
-    (candidate: unknown) =>
-      typeof candidate === "object" &&
-      candidate !== null &&
-      "_tag" in candidate &&
-      candidate._tag === "InvalidValue" &&
-      "option" in candidate &&
-      candidate.option === "size",
+  return (
+    Schema.is(CliError.ShowHelp)(error) &&
+    error.errors.some(
+      (candidate) => Schema.is(CliError.InvalidValue)(candidate) && candidate.option === "size",
+    )
   );
 }

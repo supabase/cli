@@ -104,7 +104,7 @@ function hasMethod(
 }
 
 describe("projects delete integration", () => {
-  it.live("deletes a project by positional ref after confirmation", () => {
+  it.effect("deletes a project by positional ref after confirmation", () => {
     const { layer, out, api } = setup({ stdinIsTty: true, promptConfirmResponses: [true] });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -113,7 +113,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("respects --yes and skips the confirmation prompt", () => {
+  it.effect("respects --yes and skips the confirmation prompt", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -122,7 +122,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels without deleting when the user declines confirmation", () => {
+  it.effect("cancels without deleting when the user declines confirmation", () => {
     const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -134,7 +134,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts to select a project when no ref is given on a TTY", () => {
+  it.effect("prompts to select a project when no ref is given on a TTY", () => {
     const { layer, api } = setup({
       stdinIsTty: true,
       promptSelectResponses: [VALID_REF],
@@ -151,7 +151,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when no ref is given on a non-TTY", () => {
+  it.effect("fails when no ref is given on a non-TTY", () => {
     const { layer, cache } = setup({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.none() }));
@@ -163,7 +163,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels on a non-TTY when a ref is provided but --yes is unset", () => {
+  it.effect("cancels on a non-TTY when a ref is provided but --yes is unset", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -177,7 +177,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
+  it.effect("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
     const { layer, out, api } = setup({ yes: false });
     return withEnvVar(
       "SUPABASE_YES",
@@ -191,7 +191,7 @@ describe("projects delete integration", () => {
     );
   });
 
-  it.live("non-TTY with piped `y` confirms like Go", () => {
+  it.effect("non-TTY with piped `y` confirms like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -201,7 +201,7 @@ describe("projects delete integration", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.live(`${format} does not authorize deletion from piped y`, () => {
+    it.effect(`${format} does not authorize deletion from piped y`, () => {
       const { layer, out, api } = setup({ format, stdinIsTty: false, stdinInput: "y\n" });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -212,7 +212,7 @@ describe("projects delete integration", () => {
     });
   }
 
-  it.live("non-TTY with piped `n` declines like Go", () => {
+  it.effect("non-TTY with piped `n` declines like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -222,7 +222,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result for --output-format stream-json", () => {
+  it.effect("emits a result for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -231,7 +231,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on an invalid project-ref format", () => {
+  it.effect("fails on an invalid project-ref format", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some("BADREF") }));
@@ -242,7 +242,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("removes the linked supabase/.temp dir when the deleted ref matches", () => {
+  it.effect("removes the linked supabase/.temp dir when the deleted ref matches", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -254,7 +254,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("leaves the linked dir intact when the deleted ref differs", () => {
+  it.effect("leaves the linked dir intact when the deleted ref differs", () => {
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -268,7 +268,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 404 to project-does-not-exist", () => {
+  it.effect("maps HTTP 404 to project-does-not-exist", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 404, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -281,7 +281,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 503 to delete-failed", () => {
+  it.effect("maps HTTP 503 to delete-failed", () => {
     const { layer } = setup({ yes: true, byMethod: { DELETE: { status: 503, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -294,7 +294,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsDeleteNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsDeleteNetworkError on transport failure", () => {
     const { layer } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
@@ -307,7 +307,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format json", () => {
+  it.effect("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json", yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -317,7 +317,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -326,7 +326,7 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even when the delete fails", () => {
+  it.effect("flushes telemetry even when the delete fails", () => {
     const { layer, telemetry } = setup({ yes: true, network: "fail" });
     return Effect.gen(function* () {
       yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
