@@ -38,6 +38,7 @@ on:
           - new
           - legacy-stack
           - published
+          - published-native-default
         default: all
       samples:
         description: Independent samples per supported case
@@ -58,7 +59,7 @@ concurrency:
 
 jobs:
   build:
-    if: inputs.case_set != 'published'
+    if: ${{ !startsWith(inputs.case_set, 'published') }}
     name: Build CLI (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -149,7 +150,7 @@ jobs:
         platform:
           - linux-x64
           - macos-arm64
-        case: ${{ fromJSON((inputs.case_set || 'all') == 'eager' && '["stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-eager","stack-new-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'new' && '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","schema-new-native","schema-new-docker"]' || (inputs.case_set || 'all') == 'legacy-stack' && '["stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
+        case: ${{ fromJSON((inputs.case_set || 'all') == 'eager' && '["stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-eager","stack-new-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'docker-stack' && '["stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'new' && '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","schema-new-native","schema-new-docker"]' || (inputs.case_set || 'all') == 'legacy-stack' && '["stack-legacy-docker-default","stack-legacy-docker-eager-pooler"]' || (inputs.case_set || 'all') == 'published-native-default' && '["stack-new-native-default"]' || '["stack-new-native-default","stack-new-native-eager","stack-new-native-eager-pooler","stack-new-docker-default","stack-new-docker-eager","stack-new-docker-eager-pooler","stack-legacy-docker-default","stack-legacy-docker-eager-pooler","schema-new-native","schema-new-docker","schema-legacy-docker"]') }}
         sample: ${{ fromJSON(github.event_name == 'push' && '[1]' || inputs.samples == '1' && '[1]' || inputs.samples == '3' && '[1,2,3]' || '[1,2,3,4,5]') }}
         exclude:
           - platform: macos-arm64
@@ -174,14 +175,14 @@ jobs:
           submodules: false
 
       - name: Download compiled CLI
-        if: inputs.case_set != 'published'
+        if: ${{ !startsWith(inputs.case_set, 'published') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: compiled-cli-${{ matrix.platform }}
           path: ${{ runner.temp }}/compiled-cli
 
       - name: Install CLI binary and record runner metadata
-        if: inputs.case_set != 'published'
+        if: ${{ !startsWith(inputs.case_set, 'published') }}
         env:
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
           BENCHMARK_RUNNER_LABEL: ${{ matrix.platform == 'linux-x64' && 'ubuntu-22.04' || 'macos-15' }}
@@ -249,7 +250,7 @@ jobs:
           echo "$(brew --prefix libpq)/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned npm CLI release
-        if: inputs.case_set == 'published' || contains(matrix.case, 'legacy')
+        if: startsWith(inputs.case_set, 'published') || contains(matrix.case, 'legacy')
         env:
           LEGACY_VERSION: ${{ inputs.legacy_version || '2.117.0' }}
         run: |
@@ -257,7 +258,7 @@ jobs:
           "$RUNNER_TEMP/legacy-cli/node_modules/.bin/supabase" --version
 
       - name: Record published CLI metadata
-        if: inputs.case_set == 'published'
+        if: startsWith(inputs.case_set, 'published')
         env:
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
           BENCHMARK_CASE: ${{ matrix.case }}
@@ -317,7 +318,7 @@ jobs:
           BENCHMARK_CASE: ${{ matrix.case }}
           BENCHMARK_SAMPLE: ${{ matrix.sample }}
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
-          COMPILED_CLI: ${{ inputs.case_set == 'published' && format('{0}/legacy-cli/node_modules/.bin/supabase', runner.temp) || format('{0}/benchmark-bin/supabase', runner.temp) }}
+          COMPILED_CLI: ${{ startsWith(inputs.case_set, 'published') && format('{0}/legacy-cli/node_modules/.bin/supabase', runner.temp) || format('{0}/benchmark-bin/supabase', runner.temp) }}
           LEGACY_CLI: ${{ runner.temp }}/legacy-cli/node_modules/.bin/supabase
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ${{ contains(matrix.case, 'legacy') && inputs.legacy_registry == 'ghcr.io' && 'ghcr.io' || '' }}
         run: |

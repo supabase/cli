@@ -424,8 +424,7 @@ def prepare_new_stack(
         }
         return
     command_args = [str(cli), "stack", "prepare"]
-    if not (args.mode == "default" and args.runtime == "native"):
-        command_args += ["--runtime", args.runtime]
+    command_args += ["--runtime", args.runtime]
     command_args += ["--output-format", "json", "--workdir", str(project)]
     network_before = network_counters()
     started = time.perf_counter()
@@ -669,8 +668,7 @@ def failure_diagnostics(
 def start_args(cli: Path, implementation: str, runtime: str, mode: str, project: Path, stack_name: str) -> list[str]:
     args = [str(cli), "start", "--workdir", str(project)]
     if implementation == "new":
-        if not (mode == "default" and runtime == "native"):
-            args += ["--runtime", runtime]
+        args += ["--runtime", runtime]
         args += ["--output-format", "json"]
         if mode in {"eager", "eager-pooler"}:
             args.append("--eager")
