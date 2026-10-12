@@ -1,4 +1,4 @@
-import type { Command } from "effect/unstable/cli";
+import type { Command } from "effect/cli";
 
 import { rootCommandForFeatures } from "../../src/cli/root.ts";
 import {

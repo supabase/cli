@@ -1,5 +1,5 @@
 import { Context, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { mapped } from "./model.ts";
 import type { CommandPermissions, PermissionFragment } from "./model.ts";

@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { readPermissions, withPermissions } from "./command-permissions.annotation.ts";
