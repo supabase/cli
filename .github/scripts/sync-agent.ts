@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { requireEnv } from "./promotion-shared.ts";
 
@@ -132,6 +133,76 @@ export function parseResolution(value: unknown): AgentResolution | undefined {
   return valid ? (candidate as unknown as AgentResolution) : undefined;
 }
 
+/** The private network the agent runs on and the proxy that holds the API key. */
+interface KeyProxy {
+  network: string;
+  url: string;
+}
+
+const PROXY_SCRIPT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../sync-branches/anthropic-proxy.mjs",
+);
+
+function docker(
+  args: string[],
+  env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+) {
+  return spawnSync("docker", args, { encoding: "utf8", env });
+}
+
+/**
+ * Starts the API key proxy on an internal network, which has no route out, and connects only the proxy to the default
+ * bridge. The agent joins the internal network with a placeholder key: it can reach the proxy and nothing else, and
+ * holds no credential to leak.
+ */
+function startKeyProxy(image: string): KeyProxy {
+  const id = randomUUID().slice(0, 8);
+  const network = `sync-agent-${id}`;
+  const proxy = `sync-proxy-${id}`;
+  const stop = () => {
+    docker(["rm", "--force", proxy]);
+    docker(["network", "rm", network]);
+  };
+  process.on("exit", stop);
+  if (docker(["network", "create", "--internal", network]).status !== 0) {
+    throw new Error(`Could not create the agent network ${network}.`);
+  }
+  const started = docker(
+    [
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      proxy,
+      "--network",
+      network,
+      "--env",
+      "ANTHROPIC_API_KEY",
+      "--volume",
+      `${PROXY_SCRIPT}:/proxy.mjs:ro`,
+      image,
+      "node",
+      "/proxy.mjs",
+    ],
+    {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      ANTHROPIC_API_KEY: requireEnv("ANTHROPIC_API_KEY"),
+    },
+  );
+  if (started.status !== 0 || docker(["network", "connect", "bridge", proxy]).status !== 0) {
+    throw new Error(`Could not start the API key proxy: ${started.stderr}`);
+  }
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (docker(["logs", proxy]).stdout.includes("proxy listening")) {
+      return { network, url: `http://${proxy}:8080` };
+    }
+    Bun.sleepSync(500);
+  }
+  throw new Error("The API key proxy did not start.");
+}
+
 interface CallOptions {
   prompt: string;
   schema: string;
@@ -147,6 +218,7 @@ interface CallOptions {
  */
 function runClaudeAgent<T>(
   config: AgentConfig,
+  proxy: KeyProxy,
   options: CallOptions,
   parse: (value: unknown) => T | undefined,
 ): AgentRun<T> {
@@ -159,8 +231,14 @@ function runClaudeAgent<T>(
     [
       "--user",
       user,
+      "--network",
+      proxy.network,
       "--env",
-      "ANTHROPIC_API_KEY",
+      `ANTHROPIC_BASE_URL=${proxy.url}`,
+      "--env",
+      "ANTHROPIC_API_KEY=sync-agent-placeholder",
+      "--env",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
       "--env",
       "HOME=/home/agent",
       "--volume",
@@ -193,7 +271,7 @@ function runClaudeAgent<T>(
       "--allowedTools",
       "Read,Grep,Glob,Edit,Write,Agent(explorer),Task(explorer)",
       "--disallowedTools",
-      "Bash,BashOutput,KillShell,WebFetch,WebSearch,NotebookEdit,Agent(general-purpose),Task(general-purpose),Agent(Plan),Task(Plan)",
+      "Bash,BashOutput,KillShell,WebFetch,WebSearch,NotebookEdit,Agent(general-purpose),Task(general-purpose),Agent(Plan),Task(Plan),Read(//proc/**),Grep(//proc/**),Glob(//proc/**)",
       "--add-dir",
       "/context",
       "--max-turns",
@@ -204,11 +282,7 @@ function runClaudeAgent<T>(
     {
       inheritStderr: true,
       timeoutMinutes: options.timeoutMinutes,
-      env: {
-        PATH: process.env.PATH ?? "",
-        HOME: process.env.HOME ?? "",
-        ANTHROPIC_API_KEY: requireEnv("ANTHROPIC_API_KEY"),
-      },
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
     },
   );
   if (result.error) {
@@ -259,6 +333,7 @@ export type AgentCaller = <T>(
 export function createAgentCaller(config: AgentConfig): AgentCaller {
   const deadline = Date.now() + RUN_DEADLINE_MINUTES * 60 * 1000;
   let spentUsd = 0;
+  let proxy: KeyProxy | undefined;
   return (prompt, schema, parse, resume) => {
     const budgetLeftUsd = MAX_USD_PER_RUN - spentUsd;
     if (budgetLeftUsd < MIN_CALL_USD) {
@@ -268,8 +343,10 @@ export function createAgentCaller(config: AgentConfig): AgentCaller {
     if (minutesLeft < MIN_CALL_MINUTES) {
       return `The run reached its ${RUN_DEADLINE_MINUTES}-minute deadline.`;
     }
+    proxy ??= startKeyProxy(config.image);
     const run = runClaudeAgent(
       config,
+      proxy,
       {
         prompt,
         schema,
