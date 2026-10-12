@@ -24,7 +24,14 @@ const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 const REPAIR_MARKER = "<!-- sync-agent repair";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
 const MAX_REPAIR_ROUNDS = 2;
+const MAX_FIX_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
+/** The same checks as the pull request's `Check code quality`, unit, and integration jobs. */
+const CHECKS = [
+  ["pnpm", "run", "check:all", "--continue"],
+  ["pnpm", "run", "test:unit"],
+  ["pnpm", "run", "test:integration"],
+];
 
 /** Author of the AI review's inline comments; GraphQL drops the `[bot]` suffix from bot logins. */
 const AI_REVIEW_LOGIN = "github-actions[bot]";
@@ -120,21 +127,24 @@ export function leftoverConflictMarkers(workDir: string, paths: string[]): strin
 
 /**
  * Runs Claude Code with file tools only: edits stay in the worktree outside `.git`, and with no shell, network tools,
- * or `/proc` reads the API key in its environment stays out of reach.
+ * or `/proc` reads the API key in its environment stays out of reach. `--bare` is avoided because it also drops the
+ * search and write tools; ignoring project settings keeps the merged tree's hooks from running.
  */
 function runClaude(prompt: string, schemaFile: string, workDir: string, contextDir?: string) {
   const { $schema: _, ...schema } = JSON.parse(readFileSync(join(PROMPTS_DIR, schemaFile), "utf8"));
   const result = spawnSync(
     "claude",
     [
-      "--bare",
+      "--setting-sources",
+      "user",
       "--strict-mcp-config",
       "-p",
       prompt,
       "--model",
       requireEnv("CLAUDE_MODEL"),
       "--output-format",
-      "json",
+      "stream-json",
+      "--verbose",
       "--json-schema",
       JSON.stringify(schema),
       "--permission-mode",
@@ -152,21 +162,29 @@ function runClaude(prompt: string, schemaFile: string, workDir: string, contextD
     {
       cwd: workDir,
       encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+      maxBuffer: 256 * 1024 * 1024,
       stdio: ["ignore", "pipe", "inherit"],
       timeout: 60 * 60 * 1000,
     },
   );
   try {
-    const output = JSON.parse(result.stdout) as {
+    const events = (result.stdout ?? "")
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const init = events.find((event) => event.type === "system" && event.subtype === "init");
+    console.log(`Claude tools: ${JSON.stringify(init?.tools)}`);
+    const output = events.findLast((event) => event.type === "result") as {
       is_error?: boolean;
       subtype?: string;
       num_turns?: number;
       total_cost_usd?: number;
       structured_output?: unknown;
+      permission_denials?: { tool_name: string }[];
     };
     console.log(
-      `Claude ${output.subtype} after ${output.num_turns} turns for $${output.total_cost_usd?.toFixed(2)}.`,
+      `Claude ${output.subtype} after ${output.num_turns} turns for $${output.total_cost_usd?.toFixed(2)}; denied: ${JSON.stringify(output.permission_denials?.map((denial) => denial.tool_name) ?? [])}.`,
     );
     if (output.is_error || result.status !== 0 || output.structured_output === undefined) {
       return `Claude stopped (${output.subtype ?? `exit ${result.status}`}).`;
@@ -194,6 +212,89 @@ function setOutput(name: string, value: string): void {
 
 function runLink(): string {
   return `[workflow run](${requireEnv("RUN_URL")})`;
+}
+
+function outputTail(text: string): string {
+  return (
+    text
+      // oxlint-disable-next-line no-control-regex -- strips ANSI colour codes from tool output
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .split("\n")
+      .slice(-LOG_TAIL_LINES)
+      .join("\n")
+  );
+}
+
+/**
+ * Installs the merged tree's toolchain and dependencies, formats it, and runs its checks. Returns one report per
+ * failing command; the API key is left out of their environment.
+ */
+function runChecks(workDir: string): string[] {
+  const env = {
+    ...process.env,
+    ANTHROPIC_API_KEY: "",
+    CI: "true",
+    HUSKY: "0",
+    MISE_TRUSTED_CONFIG_PATHS: workDir,
+    MISE_YES: "1",
+  };
+  const run = (command: string[]) => {
+    console.log(`::group::${command.join(" ")}`);
+    const [program = "", ...args] =
+      command[0] === "mise" ? command : ["mise", "exec", "--", ...command];
+    const result = spawnSync(program, args, {
+      cwd: workDir,
+      env,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+      timeout: 30 * 60 * 1000,
+    });
+    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+    console.log(outputTail(output));
+    console.log("::endgroup::");
+    return result.status === 0
+      ? []
+      : [
+          `## \`${command.join(" ")}\` (${result.error?.message ?? `exit ${result.status}`})\n\n\`\`\`\`text\n${outputTail(output)}\n\`\`\`\`\n`,
+        ];
+  };
+  const setup = [...run(["mise", "install"]), ...run(["pnpm", "install", "--frozen-lockfile"])];
+  if (setup.length > 0) {
+    return setup;
+  }
+  run(["pnpm", "run", "fmt:fix"]);
+  return CHECKS.flatMap(run);
+}
+
+/**
+ * Runs the checks on the committed merge and lets Claude fix what fails, up to `MAX_FIX_ROUNDS` times. Returns the
+ * fix summaries and the failures that remain.
+ */
+function checkAndFix(git: GitRunner, workDir: string, outputDir: string) {
+  const contextDir = join(outputDir, "context");
+  mkdirSync(contextDir, { recursive: true });
+  const summaries: string[] = [];
+  let failures = runChecks(workDir);
+  for (let round = 1; failures.length > 0 && round <= MAX_FIX_ROUNDS; round += 1) {
+    writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n"));
+    writeFileSync(join(contextDir, "review-findings.md"), "No open review findings.\n");
+    const output = runClaude(
+      readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
+      "repair.schema.json",
+      workDir,
+      contextDir,
+    );
+    summaries.push(typeof output === "string" ? output : (output as Repair).summary);
+    if (gitOrThrow(git, ["status", "--porcelain"]) === "") {
+      break;
+    }
+    commit(git, "chore(repo): fix the develop-into-next merge");
+    failures = runChecks(workDir);
+  }
+  if (gitOrThrow(git, ["status", "--porcelain"]) !== "") {
+    commit(git, "chore(repo): format the develop-into-next merge");
+  }
+  return { summaries, failures };
 }
 
 /** `git status` codes for unmerged paths; `HEAD` is `develop` and the merged side is `next`. */
@@ -280,6 +381,7 @@ function resolve(workDir: string, outputDir: string): void {
   }
 
   commit(git);
+  const checks = checkAndFix(git, workDir, outputDir);
   setOutput("resolved", "true");
   const lines = [
     RESOLVE_MARKER,
@@ -306,6 +408,11 @@ function resolve(workDir: string, outputDir: string): void {
           "",
         ]
       : []),
+    ...checks.summaries.flatMap((summary, index) => [`**Check fix ${index + 1}.** ${summary}`, ""]),
+    checks.failures.length > 0
+      ? `@supabase/cli These checks still fail on the merged tree: ${checks.failures.map((failure) => failure.split("\n")[0]?.replace(/^## /, "")).join(", ")}.`
+      : "The merged tree passes `check:all`, unit, and integration tests.",
+    "",
     `Approve to fast-forward \`next\` once checks pass (${runLink()}).`,
     "",
   ];

@@ -17,15 +17,19 @@ ancestor, `>>>>>>>` is `next`. Repository conventions live in `CLAUDE.md`, `AGEN
 2. Keep both sides' intent: `develop`'s fixes and features must survive, and so must `next`'s
    breaking changes. When `next` moved or reshaped code that `develop` changed, port `develop`'s
    change into `next`'s shape.
-3. Read the callers of anything you change so the result type-checks. Edit other files only when
-   the merge requires it, for example a call site of a function one side renamed.
+3. Fix semantic conflicts too: a side that renamed, moved, or removed something (a module path, an
+   exported symbol, a flag, a workflow or action input) breaks every use the other side still has,
+   including files that did not conflict and files that exist on only one side. For each such
+   change, search the whole tree with `Grep` and update every remaining use, so the merged tree
+   type-checks, lints, and passes `actionlint`. Edit unrelated files only for these uses.
 4. To delete a file (for example `next` removed it and `develop` only touched it), list it in
    `deletedFiles` instead of editing it.
 5. When both behaviors cannot be kept, or both sides claim the same identifier (an ADR or
    migration number, a flag, an error code), pick the option you judge best (by default `next`'s
    behavior with `develop`'s fix ported onto it) and record it in `decisions`. Record every change
    under `.github/` as a decision too. Mechanical merges are not decisions.
-6. Never edit `.git/` or create scratch files. You cannot run commands; CI runs the checks.
+6. Never edit `.git/` or create scratch files. You cannot run commands; after you finish, the job
+   runs `check:all`, unit, and integration tests on the merged tree and asks you to fix failures.
 
 If you cannot produce a correct resolution, return `status: "unresolved"` with the reason in
 `summary`; a maintainer resolves it by hand.
