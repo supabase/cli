@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Redacted } from "effect";
 import { resolveCliConfigValue, resolveCliConfigSubtree } from "../index.ts";
+import { resolveCliConfigValueAtPath } from "./resolve.ts";
 
 // Behavioral coverage of the two public sync resolvers, imported from the
 // public `.` entrypoint (not `./resolve.ts` directly) — this is the exact
@@ -58,5 +59,11 @@ describe("own-key handling", () => {
     expect(Object.getOwnPropertyDescriptor(resolved, "__proto__")?.value).toEqual({
       subject: "bar",
     });
+  });
+
+  test("a reference to an inherited property name stays unresolved", () => {
+    expect(resolveCliConfigValueAtPath("env(toString)", { values: {} }, [], true)).toBe(
+      "env(toString)",
+    );
   });
 });

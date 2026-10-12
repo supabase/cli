@@ -386,7 +386,7 @@ export const cliConfigValuesLayer = Layer.effect(
         });
       }
 
-      const envValues: Record<string, string> = {};
+      const envValues: Record<string, string> = Object.create(null);
       for (const name of new Set([...Object.keys(projectEnv.values), ...shell.entries().keys()])) {
         const value = lookupEnv(name);
         if (value !== undefined) envValues[name] = value;
@@ -470,7 +470,7 @@ export const cliConfigValuesLayer = Layer.effect(
           const wanted = [...new Set(names)];
           return shell.load(wanted).pipe(
             Effect.map(() => {
-              const values: Record<string, string> = {};
+              const values: Record<string, string> = Object.create(null);
               for (const name of wanted) {
                 const value = lookupEnv(name);
                 if (value !== undefined) values[name] = value;

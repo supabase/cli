@@ -687,6 +687,34 @@ describe("CliConfigValues secrets", () => {
       Effect.scoped,
     ),
   );
+
+  it.live("treats an env() reference to an inherited property name as an unset variable", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "inherited"\n[auth]\nsite_url = "env(toString)"\n');
+
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(configValuesLayer()));
+
+      expect(resolvedConfig.materialized.config.auth.site_url).toBe("env(toString)");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("reads a project .env line named like an inherited property", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "inherited"\n[auth]\nsite_url = "env(constructor)"\n',
+        { supabaseEnv: "constructor=http://ok\n" },
+      );
+
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(configValuesLayer()));
+
+      expect(resolvedConfig.projectEnvValues["constructor"]).toBe("http://ok");
+      expect(resolvedConfig.materialized.config.auth.site_url).toBe("http://ok");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
 });
 
 describe("CliConfigValues reads", () => {

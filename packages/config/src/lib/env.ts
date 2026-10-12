@@ -173,7 +173,7 @@ function substituteEnvLeaf(
     return { value, resolved: false };
   }
   const envName = match[1];
-  const resolved = envName === undefined ? undefined : env[envName];
+  const resolved = envName !== undefined && Object.hasOwn(env, envName) ? env[envName] : undefined;
   // A present-but-empty var (e.g. a dotenv `KEY=` line) preserves the `env(KEY)` literal, same
   // as an unset key, instead of substituting an empty string.
   if (envName === undefined || resolved === undefined || resolved === "") {

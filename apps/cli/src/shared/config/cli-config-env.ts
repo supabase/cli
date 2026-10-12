@@ -126,8 +126,8 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
   const env = Option.getOrElse(selected, () => DEFAULT_SUPABASE_ENV);
   const filenames = candidateDotenvFilenames(env);
 
-  const values: Record<string, string> = {};
-  const files: Record<string, string> = {};
+  const values: Record<string, string> = Object.create(null);
+  const files: Record<string, string> = Object.create(null);
   for (const dir of [path.join(workdir, "supabase"), workdir]) {
     for (const name of filenames) {
       const filePath = path.join(dir, name);
@@ -151,7 +151,7 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
           new CliConfigLoadError({ message: `failed to parse environment file: ${displayPath}` }),
       });
       for (const [key, value] of Object.entries(parsed)) {
-        if (values[key] !== undefined) continue;
+        if (Object.hasOwn(values, key)) continue;
         yield* shell.load([key]);
         if (shell.get(key) !== undefined) continue;
         values[key] = value;

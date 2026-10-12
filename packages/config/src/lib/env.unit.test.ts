@@ -38,4 +38,12 @@ describe("interpolateEnvReferencesAgainstSchema", () => {
       subject: "file",
     });
   });
+
+  test("treats a reference to an inherited property name as unset", () => {
+    expect(
+      interpolateEnvReferencesAgainstSchema({ project_id: "env(toString)" }, {}, schema, {
+        cliCompat: true,
+      }),
+    ).toEqual({ project_id: "env(toString)" });
+  });
 });

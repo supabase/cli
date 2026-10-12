@@ -39,7 +39,7 @@ function interpolateLeafValue(
     return value;
   }
 
-  const resolved = env[envName];
+  const resolved = Object.hasOwn(env, envName) ? env[envName] : undefined;
   // Preserve the literal `env(VAR)` verbatim when VAR is unset OR present but
   // empty (e.g. a dotenv `KEY=` line), the same gate as `substituteEnvLeaf` in
   // `./env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
