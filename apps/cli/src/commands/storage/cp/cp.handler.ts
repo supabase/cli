@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import { BunPath } from "@effect/platform-bun";
-import { Effect, FileSystem, Option, Path, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Ref, Result, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -19,8 +19,8 @@ import {
   resolveBucketProps,
 } from "../../../command-internal/storage-bucket-config.ts";
 import type { StorageGateway } from "../../../command-internal/storage-gateway.ts";
-import {
-  type StorageGatewayError,
+import type {
+  StorageGatewayError,
   StorageGatewayStatusError,
 } from "../../../command-internal/storage-gateway.errors.ts";
 import {
@@ -43,7 +43,7 @@ import {
   StorageUnsupportedOperationError,
   StorageUrlParseError,
 } from "../storage.errors.ts";
-import { iterateStoragePaths, iterateStoragePathsAll } from "../storage.iterate.ts";
+import { iterateStoragePathsAll, storagePaths } from "../storage.iterate.ts";
 import { resolveUploadDstPath } from "./cp.upload.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
 
@@ -78,7 +78,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   // An empty Cache-Control resets to the storage-js default.
   const cacheControl = cacheControlRaw.length === 0 ? "max-age=3600" : cacheControlRaw;
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
@@ -92,7 +92,9 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
+    }
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
@@ -163,7 +165,14 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
     );
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );
@@ -238,7 +247,7 @@ const downloadAll = Effect.fn("storage.cp.downloadAll")(function* (
   // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
   // mask a walk error, and a walk that errors partway must still run the already-queued
   // downloads before the walk error surfaces — so this is checked after the download pass below.
-  const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
+  const walk = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
     Effect.gen(function* () {
       const relPath = objectPath.startsWith(remotePath)
         ? objectPath.slice(remotePath.length)
@@ -247,10 +256,7 @@ const downloadAll = Effect.fn("storage.cp.downloadAll")(function* (
       yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
       tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
     }),
-  ).pipe(
-    Effect.as<StorageGatewayError | undefined>(undefined),
-    Effect.catch((error) => Effect.succeed(error)),
-  );
+  ).pipe(Effect.result);
 
   yield* Effect.annotateCurrentSpan({ "file.count": tasks.length });
 
@@ -287,8 +293,8 @@ const downloadAll = Effect.fn("storage.cp.downloadAll")(function* (
 
   // Surfaced only after the queued downloads have run; a download failure propagates from the
   // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
-  if (iterError !== undefined) {
-    return yield* iterError;
+  if (Result.isFailure(walk)) {
+    return yield* walk.failure;
   }
 });
 
@@ -348,17 +354,22 @@ const uploadAll = Effect.fn("storage.cp.uploadAll")(function* (
   const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
 
   // Detect whether base(noSlash) already exists remotely as a file or dir.
-  let dirExists = false;
-  let fileExists = false;
-  if (noSlash.length > 0) {
-    const base = ctx.posixPath.basename(noSlash);
-    yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
-      Effect.sync(() => {
-        if (objectName === base) fileExists = true;
-        if (objectName === `${base}/`) dirExists = true;
-      }),
-    );
-  }
+  const base = ctx.posixPath.basename(noSlash);
+  const dirName = `${base}/`;
+  const { fileExists, dirExists } =
+    noSlash.length > 0
+      ? yield* storagePaths(ctx.gateway, ctx.output, noSlash).pipe(
+          Stream.runFold(
+            () => ({ fileExists: false, dirExists: false }),
+            (found, objectName) =>
+              objectName === base
+                ? { ...found, fileExists: true }
+                : objectName === dirName
+                  ? { ...found, dirExists: true }
+                  : found,
+          ),
+        )
+      : { fileExists: false, dirExists: false };
 
   const baseName = ctx.path.basename(localPath);
   const files = yield* collectUploadFiles(ctx.fs, ctx.path, localPath);
@@ -399,8 +410,7 @@ const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: stri
       overwrite: true,
     });
     yield* upload.pipe(
-      Effect.catch((error) =>
-        error instanceof StorageGatewayStatusError &&
+      Effect.catchTag("StorageGatewayStatusError", (error) =>
         error.body.includes('"error":"Bucket not found"')
           ? autoCreateAndRetry(ctx, dstPath, upload, error)
           : Effect.fail(error),

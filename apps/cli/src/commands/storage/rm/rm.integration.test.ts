@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
@@ -24,18 +24,26 @@ const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
 const DELETE_BUCKET = (bucket: string) => `/storage/v1/bucket/${bucket}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 
+function prefixesOf(body: unknown): ReadonlyArray<unknown> | undefined {
+  return Predicate.hasProperty(body, "prefixes") && Array.isArray(body.prefixes)
+    ? body.prefixes
+    : undefined;
+}
+
 function prefixCount(body: unknown): number {
-  return typeof body === "object" &&
-    body !== null &&
-    Array.isArray((body as { prefixes?: unknown }).prefixes)
-    ? (body as { prefixes: unknown[] }).prefixes.length
-    : -1;
+  return prefixesOf(body)?.length ?? -1;
+}
+
+function prefixOf(body: unknown): string {
+  return Predicate.hasProperty(body, "prefix") && Predicate.isString(body.prefix)
+    ? body.prefix
+    : "";
 }
 
 describe("storage rm", () => {
   const tmp = useTempWorkdir("supabase-storage-rm-");
 
-  it.live("deletes multiple objects after confirmation", () => {
+  it.effect("deletes multiple objects after confirmation", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -64,7 +72,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("echoes the confirmation and deletes with --yes", () => {
+  it.effect("echoes the confirmation and deletes with --yes", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -86,7 +94,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
+  it.effect("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
     // The --yes flag itself stays false here, to isolate the env-var path.
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -111,7 +119,7 @@ describe("storage rm", () => {
     );
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.effect("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
     // SUPABASE_YES here lives only in supabase/.env, not the shell.
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -133,7 +141,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
     () => {
       // The malformed supabase/.env must never be read; ref resolution fails first.
@@ -165,7 +173,7 @@ describe("storage rm", () => {
     },
   );
 
-  it.live("skips the bucket when the confirmation is declined", () => {
+  it.effect("skips the bucket when the confirmation is declined", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -185,7 +193,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("honors a piped 'y' on non-TTY stdin and deletes", () => {
+  it.effect("honors a piped 'y' on non-TTY stdin and deletes", () => {
     const { layer, requests, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -207,7 +215,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("declines on an unparseable piped answer", () => {
+  it.effect("declines on an unparseable piped answer", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -228,7 +236,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "refuses to delete in json mode without --yes instead of reporting an empty success",
     () => {
       const { layer, requests, out } = setupStorage(tmp.current, {
@@ -272,7 +280,7 @@ describe("storage rm", () => {
     },
   );
 
-  it.live("still refuses -r with no paths in json mode without --yes", () => {
+  it.effect("still refuses -r with no paths in json mode without --yes", () => {
     const { layer, requests, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -299,31 +307,34 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("still reports the missing -r error, not the refusal, with no paths in json mode", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageRm({
-        files: [],
-        recursive: false,
-        linked: true,
+  it.effect(
+    "still reports the missing -r error, not the refusal, with no paths in json mode",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
         local: true,
-        projectRef: Option.none(),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "You must specify -r flag to delete directories.",
-        );
-      }
-      expect(requests).toHaveLength(0);
-    });
-  });
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: [],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(
+            "You must specify -r flag to delete directories.",
+          );
+        }
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 
-  it.live("chunks explicit deletes by the storage API limit (1000)", () => {
+  it.effect("chunks explicit deletes by the storage API limit (1000)", () => {
     const files = Array.from({ length: 1001 }, (_, i) => `ss:///private/file-${i}.txt`);
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -362,7 +373,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("fails with missing bucket when a path targets the root", () => {
+  it.effect("fails with missing bucket when a path targets the root", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -383,7 +394,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("requires -r to delete a directory prefix", () => {
+  it.effect("requires -r to delete a directory prefix", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -406,7 +417,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("requires -r when no paths are given", () => {
+  it.effect("requires -r when no paths are given", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -428,7 +439,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("with -r and no paths, clears and deletes every bucket", () => {
+  it.effect("with -r and no paths, clears and deletes every bucket", () => {
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -456,7 +467,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("recursively deletes a directory and tolerates a missing bucket on delete", () => {
+  it.effect("recursively deletes a directory and tolerates a missing bucket on delete", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -488,7 +499,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("recursively deletes a nested directory tree", () => {
+  it.effect("recursively deletes a nested directory tree", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -498,14 +509,14 @@ describe("storage rm", () => {
         {
           method: "DELETE",
           match: DELETE_OBJECT("private"),
-          when: (b) => prefixCount(b) === 1 && (b as { prefixes: string[] }).prefixes[0] === "dir",
+          when: (b) => prefixCount(b) === 1 && prefixesOf(b)?.[0] === "dir",
           body: [],
         },
         // walk "dir/": a subdir + a file
         {
           method: "POST",
           match: LIST("private"),
-          when: (b) => (b as { prefix?: string }).prefix === "dir/",
+          when: (b) => prefixOf(b) === "dir/",
           body: [
             { name: "sub", id: null },
             { name: "f.txt", id: "fi" },
@@ -515,20 +526,20 @@ describe("storage rm", () => {
         {
           method: "DELETE",
           match: DELETE_OBJECT("private"),
-          when: (b) => (b as { prefixes: string[] }).prefixes.includes("dir/f.txt"),
+          when: (b) => prefixesOf(b)?.includes("dir/f.txt") === true,
           body: [{ name: "dir/f.txt" }],
         },
         // descend into dir/sub/
         {
           method: "POST",
           match: LIST("private"),
-          when: (b) => (b as { prefix?: string }).prefix === "dir/sub/",
+          when: (b) => prefixOf(b) === "dir/sub/",
           body: [{ name: "g.txt", id: "gi" }],
         },
         {
           method: "DELETE",
           match: DELETE_OBJECT("private"),
-          when: (b) => (b as { prefixes: string[] }).prefixes.includes("dir/sub/g.txt"),
+          when: (b) => prefixesOf(b)?.includes("dir/sub/g.txt") === true,
           body: [{ name: "dir/sub/g.txt" }],
         },
       ],
@@ -544,15 +555,13 @@ describe("storage rm", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
         requests.some(
-          (r) =>
-            r.method === "DELETE" &&
-            (r.body as { prefixes?: string[] }).prefixes?.includes("dir/sub/g.txt"),
+          (r) => r.method === "DELETE" && prefixesOf(r.body)?.includes("dir/sub/g.txt") === true,
         ),
       ).toBe(true);
     });
   });
 
-  it.live("deletes a now-empty bucket and prints its success message", () => {
+  it.effect("deletes a now-empty bucket and prints its success message", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -581,7 +590,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("fails with Object not found for an empty recursive directory", () => {
+  it.effect("fails with Object not found for an empty recursive directory", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -606,7 +615,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("emits a { deleted, buckets_deleted } result in json mode", () => {
+  it.effect("emits a { deleted, buckets_deleted } result in json mode", () => {
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -630,7 +639,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("propagates a 500 from the object DELETE", () => {
+  it.effect("propagates a 500 from the object DELETE", () => {
     // A non-404 status escapes the bucket-not-found tolerance and fails hard.
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -660,7 +669,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("propagates a 503 from the bucket service when listing for -r", () => {
+  it.effect("propagates a 503 from the bucket service when listing for -r", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -683,7 +692,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("targets the linked project's Storage host and flushes telemetry", () => {
+  it.effect("targets the linked project's Storage host and flushes telemetry", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
       yes: true,
@@ -705,7 +714,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("deletes from the project given via --project-ref, overriding VALID_REF", () => {
+  it.effect("deletes from the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
@@ -728,7 +737,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("rejects --project-ref combined with --local", () => {
+  it.effect("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -754,7 +763,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "does not delete anything when --workdir names a config-less subdirectory of a real ancestor project",
     () =>
       // An explicit --workdir must hard-fail rather than climb to an ancestor's
@@ -789,7 +798,7 @@ describe("storage rm", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "a defaulted workdir with no project anywhere still proceeds using the embedded default config",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {
@@ -811,7 +820,7 @@ describe("storage rm", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any credential resolution",
     () =>
       Effect.gen(function* () {
@@ -839,7 +848,7 @@ describe("storage rm", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
+  it.effect("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -866,7 +875,7 @@ describe("storage rm", () => {
 describe("stack backend", () => {
   const tmp = useTempWorkdir("supabase-storage-rm-stack-");
 
-  it.live("deletes through the stack's api endpoint and JWT after confirmation", () => {
+  it.effect("deletes through the stack's api endpoint and JWT after confirmation", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -891,28 +900,31 @@ describe("stack backend", () => {
     });
   });
 
-  it.live("skips deletion when the confirmation is declined, still under the stack backend", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
-      stackBackend: true,
-      confirm: [false],
-      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageRm({
-        files: ["ss:///private/a.pdf"],
-        recursive: false,
-        linked: true,
+  it.effect(
+    "skips deletion when the confirmation is declined, still under the stack backend",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
         local: true,
-        projectRef: Option.none(),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
-    });
-  });
+        stackBackend: true,
+        confirm: [false],
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+      });
+    },
+  );
 
-  it.live(
+  it.effect(
     "fails with StackStorageCapabilityError when Storage is disabled, before any prompt",
     () => {
       const { layer, out, requests } = setupStorage(tmp.current, {

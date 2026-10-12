@@ -1,5 +1,5 @@
 import { BunPath } from "@effect/platform-bun";
-import { Effect, Option, Path } from "effect";
+import { Effect, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -7,7 +7,6 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { StorageGateway } from "../../../command-internal/storage-gateway.ts";
-import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { splitBucketPrefix } from "../../../command-internal/storage-url.ts";
 import {
   assertStorageWorkdir,
@@ -38,7 +37,7 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
   const resolver = yield* ProjectRefResolver;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
@@ -52,7 +51,9 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
+    }
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
@@ -78,10 +79,8 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           yield* output.raw(`Moving object: ${srcParsed} => ${dstParsed}\n`, "stderr");
           const result = yield* gateway.moveObject(srcBucket, srcPrefix, dstPrefix).pipe(
             Effect.map((message) => ({ moved: true, message })),
-            Effect.catch((error) =>
-              error instanceof StorageGatewayStatusError &&
-              error.body.includes('"error":"not_found"') &&
-              flags.recursive
+            Effect.catchTag("StorageGatewayStatusError", (error) =>
+              error.body.includes('"error":"not_found"') && flags.recursive
                 ? Effect.succeed({ moved: false, message: "" })
                 : Effect.fail(error),
             ),
@@ -110,7 +109,14 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
     );
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );
