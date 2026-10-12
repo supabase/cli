@@ -10,6 +10,7 @@ import {
   FileSystem,
   Fiber,
   Layer,
+  Option,
   Path,
   PlatformError,
   Runtime,
@@ -553,6 +554,8 @@ export interface RunCliOptions<BeforeParseError = never> {
     info: {
       readonly cleanShowHelp: boolean;
       readonly delegatedToGo: boolean;
+      readonly outputFormat: OutputFormat;
+      readonly detectedAgent: boolean;
       readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
@@ -646,9 +649,12 @@ export const runCli = Effect.fnUntraced(function* <
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = yield* Effect.gen(function* () {
+  const { outputFormat, detectedAgent } = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
-    return resolveAgentOutputFormatFromArgs(args, aiTool.name);
+    return {
+      outputFormat: resolveAgentOutputFormatFromArgs(args, aiTool.name),
+      detectedAgent: Option.isSome(aiTool.name),
+    };
   }).pipe(Effect.provide(aiToolLayer));
   const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
 
@@ -728,6 +734,8 @@ export const runCli = Effect.fnUntraced(function* <
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
                             delegatedToGo,
+                            outputFormat,
+                            detectedAgent,
                             workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,

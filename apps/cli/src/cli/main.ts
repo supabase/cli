@@ -4,6 +4,7 @@ import { Effect, Exit, Layer, Stdio } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
+import { accountRecoveryReminderHook } from "../command-internal/account-recovery-reminder.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../command-internal/stack-backend.ts";
@@ -19,7 +20,11 @@ const args = await Effect.runPromise(
 
 const selectionExit = await Effect.runPromiseExit(
   Effect.gen(function* () {
-    const stackBackend = yield* resolveStackBackend({ args, cwd: process.cwd(), env: process.env });
+    const stackBackend = yield* resolveStackBackend({
+      args,
+      cwd: process.cwd(),
+      env: process.env,
+    });
     const computeEnabled = yield* resolveComputeEnabled({
       args,
       cwd: process.cwd(),
@@ -43,7 +48,10 @@ if (
   await Effect.runPromise(
     runCli(selectedRoot, {
       analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-      afterSuccess: upgradeNoticeHook,
+      afterSuccess: (commandArgs, info) =>
+        upgradeNoticeHook(commandArgs, info).pipe(
+          Effect.andThen(accountRecoveryReminderHook(commandArgs, info)),
+        ),
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),
   );
