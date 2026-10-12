@@ -14,6 +14,8 @@ import {
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture owns inherited readiness and release descriptors.
 import { closeSync, createReadStream, writeSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- consumes its own startup payload file the way the real consumer does.
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { currentRelease, launchHost, authorizes, type HostEndpoint } from "../src/HostProcess.ts";
 import { bindControl } from "../src/StackHost.ts";
 import * as StackNamespace from "../src/StackNamespace.ts";
@@ -44,9 +46,28 @@ const report = (value: unknown) => {
   }
 };
 
-const [stateRoot, cacheRoot, stackId, mode = "owner", ownerEntrypoint] = process.argv.slice(2);
+const [stateRoot, cacheRoot, stackId, fourth, fifth] = process.argv.slice(2);
 if (stateRoot === undefined || stackId === undefined)
   throw new FixtureError({ message: "fixture arguments missing" });
+/**
+ * A spawned owner's startup payload travels as a file path in this same position instead of this
+ * fixture's own "mode"/entrypoint test convention; a real file path on disk, checked here,
+ * disambiguates it. Consuming it the way the real consumer does leaves nothing behind for a test
+ * that launches this fixture with `register` or `requestedCreations`.
+ */
+const payloadFile = fourth !== undefined && existsSync(fourth) ? fourth : undefined;
+if (payloadFile !== undefined) {
+  // Tests read this marker to assert the payload file's permissions at the moment it was read.
+  writeFileSync(`${stateRoot}/payload-mode`, (statSync(payloadFile).mode & 0o777).toString(8));
+  readFileSync(payloadFile, "utf8");
+  try {
+    unlinkSync(payloadFile);
+  } catch {
+    /* Already removed, or the parent is cleaning up; the secret is gone either way. */
+  }
+}
+const mode = payloadFile === undefined ? (fourth ?? "owner") : "owner";
+const ownerEntrypoint = payloadFile === undefined ? fifth : undefined;
 
 /** Follows the owner protocol without services; `held` acknowledges shutdown but stays alive. */
 const owner = Effect.scoped(

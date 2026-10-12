@@ -5,6 +5,7 @@ import {
   Exit,
   FileSystem,
   Hash,
+  Layer,
   Option,
   Path,
   Predicate,
@@ -559,4 +560,11 @@ export const makePorts = (state: StackNamespace.Interface) =>
     });
 
     return { acquire, assigned, release, releaseStack };
+  });
+
+/** Opens the machine-wide registry for the surrounding scope and builds the ports over it. */
+export const makeScopedPorts = (state: StackNamespace.Interface) =>
+  Effect.gen(function* () {
+    const reservations = yield* Layer.build(PortReservations.layer);
+    return yield* makePorts(state).pipe(Effect.provideContext(reservations));
   });

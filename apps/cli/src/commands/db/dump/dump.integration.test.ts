@@ -148,6 +148,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       stop: Effect.succeed([]),
       restart: Effect.succeed([]),
     },
+    startupEndpointChanges: Effect.succeed([]),
     stop: Effect.void,
     destroy: Effect.void,
     gateway: unusedGateway,
