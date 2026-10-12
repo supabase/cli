@@ -612,6 +612,27 @@ describe("CliConfigValues secrets", () => {
     ),
   );
 
+  it.live("tries every shell-only DOTENV_PRIVATE_KEY suffix, not just the highest", () =>
+    Effect.gen(function* () {
+      const root = yield* project(captcha(CIPHERTEXT));
+
+      const { decoded } = yield* readCaptcha(root);
+
+      expect(decoded).toBe("value");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) =>
+        withShell(
+          {
+            DOTENV_PRIVATE_KEY_2025: PRIVATE_KEY,
+            DOTENV_PRIVATE_KEY_2026: "11".repeat(32),
+          },
+          effect,
+        ),
+      Effect.scoped,
+    ),
+  );
+
   it.live("decrypts ciphertext reached through an env() reference", () =>
     Effect.gen(function* () {
       const root = yield* project(captcha("env(CAPTCHA_CIPHERTEXT)"), {

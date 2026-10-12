@@ -4,9 +4,13 @@ import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from 
 
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "./cli-config-env.ts";
+import { CliEnvNameSource } from "./cli-config-provider.layer.ts";
 
 const withShell = (shell: Record<string, string>) =>
-  ConfigProvider.layer(ConfigProvider.fromEnvRecord(shell, { preserveEmptyStrings: true }));
+  Layer.merge(
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord(shell, { preserveEmptyStrings: true })),
+    Layer.succeed(CliEnvNameSource, () => Object.keys(shell)),
+  );
 
 describe("ambient ConfigProvider", () => {
   it.effect("yields Some('') for a set-but-empty variable when empty strings are preserved", () =>
@@ -114,12 +118,35 @@ describe("shell snapshot", () => {
     }),
   );
 
-  it.effect("finds a shell-only dotenvx key whose numeric suffix is past the walk cap", () =>
+  it.effect("finds every shell-only dotenvx key by name, whatever its numeric suffix", () =>
     Effect.gen(function* () {
-      const shell = yield* readShellEnvironment({ highestNumericSuffixOf: ["DOTENV_PRIVATE_KEY"] });
+      const shell = yield* readShellEnvironment({ namesWithPrefix: ["DOTENV_PRIVATE_KEY"] });
 
-      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBe("k");
-    }).pipe(Effect.provide(withShell({ DOTENV_PRIVATE_KEY_2026: "k" }))),
+      expect(shell.get("DOTENV_PRIVATE_KEY_2025")).toBe("a");
+      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBe("b");
+    }).pipe(
+      Effect.provide(
+        withShell({
+          DOTENV_PRIVATE_KEY_2025: "a",
+          DOTENV_PRIVATE_KEY_2026: "b",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("loads nominated names through the provider, so an ambient-only name stays unset", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ namesWithPrefix: ["DOTENV_PRIVATE_KEY"] });
+
+      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          withShell({}),
+          Layer.succeed(CliEnvNameSource, () => ["DOTENV_PRIVATE_KEY_2026"]),
+        ),
+      ),
+    ),
   );
 
   it.effect("loads each requested name once", () =>

@@ -67,6 +67,7 @@ import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
+import { CliEnvNameSource } from "../../src/shared/config/cli-config-provider.layer.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import {
   mockAnalytics,
@@ -794,13 +795,19 @@ export const withConfigEnv = <A, E, R>(
   values: Readonly<Record<string, string>>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  Effect.flatMap(Effect.service(ConfigEnvPins), (pins) =>
-    body.pipe(
-      Effect.provideService(ConfigEnvPins, { ...pins, ...values }),
-      Effect.provide(
-        ConfigProvider.layerAdd(
-          ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
-          { asPrimary: true },
+  Effect.zip(Effect.service(ConfigEnvPins), Effect.service(CliEnvNameSource)).pipe(
+    Effect.flatMap(([pins, inheritedNames]) =>
+      body.pipe(
+        Effect.provideService(ConfigEnvPins, { ...pins, ...values }),
+        Effect.provideService(CliEnvNameSource, () => [
+          ...inheritedNames(),
+          ...Object.keys(values),
+        ]),
+        Effect.provide(
+          ConfigProvider.layerAdd(
+            ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
+            { asPrimary: true },
+          ),
         ),
       ),
     ),

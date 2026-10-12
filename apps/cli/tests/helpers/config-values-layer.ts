@@ -10,7 +10,8 @@ import { cliConfigValuesLayer } from "../../src/config/cli-config-values.layer.t
 import { CliConfigValues } from "../../src/config/cli-config-values.service.ts";
 import type { DebugLogger } from "../../src/shared/output/debug-logger.service.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
-import { pinnedConfigProvider } from "./config-env-pins.ts";
+import { CliEnvNameSource } from "../../src/shared/config/cli-config-provider.layer.ts";
+import { ConfigEnvPins, pinnedConfigProvider } from "./config-env-pins.ts";
 import { mockOutput } from "./mocks.ts";
 
 /**
@@ -24,8 +25,13 @@ export const withHermeticShellTier = (
   CliConfigValues.of({
     ...real,
     load: (target) =>
-      Effect.flatMap(pinnedConfigProvider(explicit), (provider) =>
-        Effect.provideService(real.load(target), ConfigProvider.ConfigProvider, provider),
+      Effect.flatMap(Effect.service(ConfigEnvPins), (pins) =>
+        Effect.flatMap(pinnedConfigProvider(explicit), (provider) =>
+          real.load(target).pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, provider),
+            Effect.provideService(CliEnvNameSource, () => Object.keys({ ...explicit, ...pins })),
+          ),
+        ),
       ),
   });
 
