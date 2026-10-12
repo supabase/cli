@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Predicate, Redacted, Stdio } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
@@ -22,6 +22,7 @@ import {
 import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
 import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
 import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { requestWithAuth } from "../../../command-internal/raw-http.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
@@ -111,30 +112,30 @@ const SSO_UPDATE_SCAN_SPEC = {
 } as const;
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
-    if (mapped._tag === "SsoUpdateUnexpectedStatusError") {
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: ref,
-        featureKey: "auth.saml_2",
-        statusCode: mapped.status,
-        response: gateResponse(cause),
-      });
-      if (mapped.status === 404) {
-        return yield* new SsoUpdateNotFoundError({
-          message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+  mapGetStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoUpdateNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoUpdateUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
           upgradeSuggested,
         });
-      }
-      return yield* new SsoUpdateUnexpectedStatusError({
-        status: mapped.status,
-        body: mapped.body,
-        message: mapped.message,
-        upgradeSuggested,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+      }),
+    ),
+  );
 
 interface ExistingDomainItem {
   readonly domain?: string;
@@ -145,18 +146,18 @@ interface ExistingDomainItem {
  * consumes.
  */
 function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
-  if (parsed === null || typeof parsed !== "object") {
+  if (!Predicate.hasProperty(parsed, "domains")) {
     return undefined;
   }
-  const domains = (parsed as Record<string, unknown>)["domains"];
+  const domains = parsed.domains;
   if (!Array.isArray(domains)) {
     return undefined;
   }
   return domains.map((item): ExistingDomainItem => {
-    if (item === null || typeof item !== "object") {
+    if (!Predicate.hasProperty(item, "domain")) {
       return {};
     }
-    const domain = (item as Record<string, unknown>)["domain"];
+    const domain = item.domain;
     return typeof domain === "string" ? { domain } : {};
   });
 }
@@ -210,20 +211,12 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // arity, and mutex checks — pflag fails on the first invalid occurrence
     // even if a later one overrides it, and its bool parsing excludes
     // `yes`/`no`.
-    const skipUrlValidation = yield* Result.match(
+    const skipUrlValidation = yield* Effect.fromResult(
       pflagBoolValue(occurrences, "skip-url-validation"),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
-    );
-    const nameIdFormat = yield* Result.match(
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const nameIdFormat = yield* Effect.fromResult(
       pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
-    );
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
 
     // A bare value-taking flag as the final token is a pflag parse error,
     // reported even when the arg count is also wrong. The TS parser accepts
@@ -286,9 +279,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     const addDomains = pflagSliceValue(occurrences, "add-domains", flags.addDomains);
     const removeDomains = pflagSliceValue(occurrences, "remove-domains", flags.removeDomains);
 
-    const providerId = yield* validateUuid(flags.providerId).pipe(
-      Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
-    );
+    const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
     const ref = yield* resolver.resolve(projectRefFlag);
 
@@ -316,17 +307,18 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       const rawGetProvider = Effect.gen(function* () {
         const tokenOpt =
           reconciledTokenCached !== undefined
-            ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
-                Option.isSome(resolved)
-                  ? Effect.succeed(resolved)
-                  : new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
+            ? yield* Effect.filterOrFail(
+                reconciledTokenCached,
+                Option.isSome,
+                () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
               )
             : yield* resolveAccessToken;
-        const request = HttpClientRequest.get(
-          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
-        ).pipe(
-          Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-          HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
+        const request = requestWithAuth(
+          HttpClientRequest.get(
+            `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+          ),
+          tokenOpt,
+          cliSettings.userAgent,
         );
         const response = yield* httpClient.execute(request).pipe(
           Effect.tapError(() => fetching?.fail() ?? Effect.void),
@@ -441,19 +433,21 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
       const tokenOpt =
         reconciledTokenCached !== undefined
-          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
-              Option.isSome(resolved)
-                ? Effect.succeed(resolved)
-                : new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
+          ? yield* Effect.filterOrFail(
+              reconciledTokenCached,
+              Option.isSome,
+              () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
             )
           : yield* resolveAccessToken;
 
       // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
-      const request = HttpClientRequest.put(
-        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+      const request = requestWithAuth(
+        HttpClientRequest.put(
+          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        ),
+        tokenOpt,
+        cliSettings.userAgent,
       ).pipe(
-        Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         // See `add.handler.ts` — key order matters for cli-e2e parity.
         HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
       );
@@ -524,9 +518,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          parsedJson !== null && typeof parsedJson === "object"
-            ? (parsedJson as Record<string, unknown>)
-            : { value: parsedJson },
+          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
         );
         return;
       }
