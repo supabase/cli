@@ -691,6 +691,77 @@ describe("Lifecycle reducer", () => {
       expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
     });
 
+    it("stops running dependents without counting a failure and relaunches them on the prerequisite's new generation", () => {
+      const graph = makeGraph([
+        lazy("a"),
+        lazy("b", { prerequisites: ["a"] }),
+        lazy("c", { prerequisites: ["b"] }),
+      ]);
+      let state = initialState(graph);
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state } = run(state, [
+        { event: open("c", 1), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 1 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "b", generation: 1 }), now: 2 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "c", generation: 1 }), now: 3 },
+      ]));
+      expect(state.services.get("c")?.phase).toMatchObject({ _tag: "Running", generation: 1 });
+
+      ({ state, commandsByStep } = run(state, [sessionLost("a", 1, 10)]));
+      expect(at(commandsByStep, 0)).toEqual([
+        { _tag: "Stop", id: "c", generation: 1 },
+        { _tag: "Stop", id: "b", generation: 1 },
+      ]);
+      for (const id of ["b", "c"]) {
+        expect(state.services.get(id)?.phase).toEqual({ _tag: "Stopping", generation: 1 });
+        expect(state.services.get(id)?.breaker.consecutiveFailures).toBe(0);
+      }
+      expect(state.services.get("a")?.breaker.consecutiveFailures).toBe(1);
+
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.Exited({ id: "c", generation: 1, requested: true }), now: 11 },
+        { event: LifecycleEvent.Exited({ id: "b", generation: 1, requested: true }), now: 12 },
+        { event: LifecycleEvent.Exited({ id: "a", generation: 1, requested: false }), now: 13 },
+      ]));
+      expect(tagsOf(commandsByStep[0])).toEqual([]);
+      expect(tagsOf(commandsByStep[1])).toEqual([]);
+      expect(commandTagged(at(commandsByStep, 2), "Launch")).toMatchObject({
+        id: "a",
+        generation: 2,
+      });
+      expect(state.services.get("b")?.phase._tag).toBe("Stopped");
+      expect(state.services.get("c")?.phase._tag).toBe("Stopped");
+
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 2 }), now: 14 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "b", generation: 2 }), now: 15 },
+      ]));
+      expect(commandTagged(at(commandsByStep, 0), "Launch")).toMatchObject({
+        id: "b",
+        generation: 2,
+      });
+      expect(commandTagged(at(commandsByStep, 1), "Launch")).toMatchObject({
+        id: "c",
+        generation: 2,
+      });
+      for (const id of ["b", "c"])
+        expect(state.services.get(id)?.breaker.consecutiveFailures).toBe(0);
+    });
+
+    it("leaves a dependent that is not up as it is when its prerequisite crashes", () => {
+      let state = initialState(makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]));
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state } = run(state, [
+        { event: open("a", 1), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 1 },
+      ]));
+      expect(state.services.get("b")?.phase._tag).toBe("Stopped");
+
+      ({ state, commandsByStep } = run(state, crashSteps("a", 1, 10)));
+      expect(commandsByStep.flat().filter((command) => command.id === "b")).toEqual([]);
+      expect(state.services.get("b")?.phase._tag).toBe("Stopped");
+    });
+
     it("fails the waiters of a generation that crashes while starting and ignores its late session", () => {
       let state = initialState(makeGraph([lazy("api")]));
       let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
