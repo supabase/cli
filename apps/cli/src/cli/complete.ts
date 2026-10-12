@@ -9,7 +9,7 @@ import {
   RESOURCE_OUTPUT_FORMATS,
 } from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { isValidBase0Int64, parseUintBase0 } from "../command-internal/parse-uint.ts";
+import { isValidBase0Int64, parseUintBase0 } from "../shared/config/parse-uint.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";

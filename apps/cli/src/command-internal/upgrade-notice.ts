@@ -30,6 +30,14 @@ const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** Bounds this pre-exit hook's latency. */
 const FETCH_TIMEOUT_MS = 800;
 
+const UPGRADE_NOTICE_ENV_NAMES = [
+  "SUPABASE_NO_UPDATE_NOTIFIER",
+  "SUPABASE_WORKDIR",
+  "SUPABASE_ENV",
+  "SUPABASE_DEBUG",
+  "GITHUB_TOKEN",
+];
+
 /** Recognized "true" spellings; anything else, including garbage, leaves the notifier on. */
 const PARSE_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
@@ -189,8 +197,10 @@ async function projectDotenvValues(
   const dirs = dirname(base) === base ? [join(base, "supabase")] : [join(base, "supabase"), base];
   for (const dir of dirs) {
     for (const filename of candidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
-      const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
-      if (contents === undefined) continue;
+      const bytes = await readFile(join(dir, filename)).catch(() => undefined);
+      if (bytes === undefined) continue;
+      // TextDecoder drops a leading byte-order mark, as the main loader's reader does.
+      const contents = new TextDecoder().decode(bytes);
       try {
         for (const [key, value] of Object.entries(parseDotEnv(contents))) {
           if (!(key in merged)) merged[key] = value;
@@ -355,7 +365,7 @@ export const upgradeNoticeHook = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const context = yield* Effect.context();
-    const shell = yield* readShellEnvironment().pipe(
+    const shell = yield* readShellEnvironment({ names: UPGRADE_NOTICE_ENV_NAMES }).pipe(
       Effect.map((environment) => Object.fromEntries(environment.entries())),
       Effect.orElseSucceed((): Record<string, string> => ({})),
     );

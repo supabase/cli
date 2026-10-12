@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Option, Path, type PlatformError } from "effect";
 
 import { parseDotEnv } from "./dotenv.ts";
 import { CliConfigLoadError } from "./cli-config-load.errors.ts";
@@ -6,26 +6,23 @@ import { CliEnvNameSource } from "./cli-config-provider.layer.ts";
 
 const DEFAULT_SUPABASE_ENV = "development";
 
-/** A sparse numeric name such as `RUN_2000000` would otherwise cost one provider load per index. */
-const MAX_NUMERIC_SEGMENTS = 256;
-
-/** The ambient shell environment: what the provider's key trie exposes, plus names loaded on demand. */
+/** The ambient shell environment: only the names a caller asked for, loaded straight from the provider. */
 export interface CliShellEnvironment {
   /** `undefined` when unset; a set-but-empty variable is `""` only if the provider preserves it. */
   readonly get: (name: string) => string | undefined;
+  /** The set variables among the names loaded so far. */
   readonly entries: () => ReadonlyMap<string, string>;
-  /** Loads each name straight from the provider, for names the key trie cannot reveal. */
+  /** Loads each name straight from the provider; later lookups see it through `get`. */
   readonly load: (names: Iterable<string>) => Effect.Effect<void, CliConfigLoadError>;
 }
 
 /**
- * Reads the ambient `ConfigProvider`. The key-trie walk only discovers names; it misses `orElse`
- * fallbacks, lookup-only providers and names added after construction, so every name a caller
- * depends on is also loaded directly, via `names` here or `load` later.
+ * Reads the ambient `ConfigProvider` by name. The provider is never enumerated, so lookup-only
+ * providers and `orElse` fallbacks behave the same as a plain environment.
  */
 export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function* (options?: {
   readonly names?: Iterable<string>;
-  /** Loads every variable named `<prefix>` or `<prefix>_*`, which the key-trie walk can miss when the suffixes are all numeric. */
+  /** Loads every variable named `<prefix>` or `<prefix>_*` that the environment name source lists. */
   readonly namesWithPrefix?: Iterable<string>;
 }) {
   const provider = yield* ConfigProvider.ConfigProvider;
@@ -42,21 +39,6 @@ export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function
         ),
       );
 
-  const walk = (path: ReadonlyArray<string | number>): Effect.Effect<void, CliConfigLoadError> =>
-    loadPath(path).pipe(
-      Effect.flatMap((node) => {
-        if (node === undefined) return Effect.void;
-        if (node.value !== undefined && path.length > 0) variables.set(path.join("_"), node.value);
-        const children: ReadonlyArray<string | number> =
-          node._tag === "Record"
-            ? [...node.keys]
-            : node._tag === "Array"
-              ? Array.from({ length: Math.min(node.length, MAX_NUMERIC_SEGMENTS) }, (_, i) => i)
-              : [];
-        return Effect.forEach(children, (child) => walk([...path, child]), { discard: true });
-      }),
-    );
-
   const load = (names: Iterable<string>) =>
     Effect.forEach(
       names,
@@ -72,7 +54,6 @@ export const readShellEnvironment = Effect.fn("CliConfigEnv.readShell")(function
       { discard: true },
     );
 
-  yield* walk([]);
   yield* load(options?.names ?? []);
   const prefixes = [...(options?.namesWithPrefix ?? [])];
   if (prefixes.length > 0) {
@@ -99,6 +80,18 @@ export const candidateDotenvFilenames = (env: string): ReadonlyArray<string> => 
   ".env",
 ];
 
+const ABSENT_FILE_CODES: ReadonlySet<unknown> = new Set(["ELOOP", "ENOTDIR"]);
+
+/** A missing file, a symlink loop, or a path through a non-directory: all read as "no such file". */
+const isAbsentFileReason = (reason: PlatformError.PlatformError["reason"]): boolean => {
+  if (reason._tag === "NotFound") return true;
+  if (reason._tag !== "BadResource") return false;
+  const { cause } = reason;
+  return typeof cause === "object" && cause !== null && "code" in cause
+    ? ABSENT_FILE_CODES.has(cause.code)
+    : false;
+};
+
 interface CliProjectEnvFiles {
   readonly values: Readonly<Record<string, string>>;
   /** The absolute path of the file each value came from. */
@@ -124,10 +117,11 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
     (value) => value.length > 0,
   );
   const env = Option.getOrElse(selected, () => DEFAULT_SUPABASE_ENV);
-  const filenames = candidateDotenvFilenames(env);
+  const filenames = [...new Set(candidateDotenvFilenames(env))];
 
   const values: Record<string, string> = Object.create(null);
   const files: Record<string, string> = Object.create(null);
+  let fileCount = 0;
   for (const dir of [path.join(workdir, "supabase"), workdir]) {
     for (const name of filenames) {
       const filePath = path.join(dir, name);
@@ -135,7 +129,7 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
+          isAbsentFileReason(error.reason)
             ? Effect.succeed(Option.none<string>())
             : Effect.fail(
                 new CliConfigLoadError({
@@ -145,6 +139,7 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
         ),
       );
       if (Option.isNone(content)) continue;
+      fileCount += 1;
       const parsed = yield* Effect.try({
         try: () => parseDotEnv(content.value),
         catch: () =>
@@ -159,5 +154,6 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
       }
     }
   }
+  yield* Effect.annotateCurrentSpan({ "file.count": fileCount });
   return { values, files } satisfies CliProjectEnvFiles;
 });

@@ -75,6 +75,12 @@ function parseBase0Digits(
   return { n };
 }
 
+/** The exact unsigned value of a base-0 token, or `undefined` when the token is not one. */
+export function parseBase0Bigint(token: string): bigint | undefined {
+  const parsed = parseBase0Digits(token, token);
+  return "cause" in parsed ? undefined : parsed.n;
+}
+
 export function parseUintBase0(token: string): ParseUintResult {
   const parsed = parseBase0Digits(token, token);
   // Magnitudes above 2^53 lose precision when converted to Number; only the accept/reject

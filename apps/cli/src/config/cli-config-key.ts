@@ -1,11 +1,21 @@
 import type { CliConfigValueOrigin } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
-import { Option, Result, type Path } from "effect";
+import { Option, Result, Schema, type Path } from "effect";
 import type { Flag } from "effect/cli";
-import { TomlDate } from "smol-toml";
 
-import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
+import {
+  boolSchemas,
+  commaListSchemas,
+  globEntries,
+  globListSchemas,
+  literalSchemas,
+  portSchemas,
+  stringSchemas,
+  uintSchemas,
+  unsupportedTypeName,
+  type CliConfigCodecSchemas,
+} from "./cli-config-codec-schemas.ts";
 import {
   makeCliConfigKeyFlag,
   type CliConfigFlagDeclaration,
@@ -90,183 +100,81 @@ export interface CliConfigCodec<X> {
 export const decodingFailedMessage = (issues: ReadonlyArray<string>): string =>
   `failed to parse config:\n${issues.join("\n")}`;
 
-const MAX_UINT = BigInt(Number.MAX_SAFE_INTEGER);
-const MAX_PORT = 65535;
-
-/** Base-0 unsigned integer literal grammar: base prefixes, bare-zero octal, `_` separators. */
-function parseBaseZeroUint(value: string): bigint | undefined {
-  if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;
-
-  let literal: string | undefined;
-  if (/^0[bB](_?[01])+$/.test(value)) {
-    literal = `0b${value.slice(2).replaceAll("_", "")}`;
-  } else if (/^0[oO](_?[0-7])+$/.test(value)) {
-    literal = `0o${value.slice(2).replaceAll("_", "")}`;
-  } else if (/^0[xX](_?[0-9a-fA-F])+$/.test(value)) {
-    literal = `0x${value.slice(2).replaceAll("_", "")}`;
-  } else if (value.startsWith("0") && value.length > 1) {
-    literal = /^[0-7](_?[0-7])*$/.test(value) ? `0o${value.replaceAll("_", "")}` : undefined;
-  } else {
-    literal = /^[0-9](_?[0-9])*$/.test(value) ? value.replaceAll("_", "") : undefined;
-  }
-  if (literal === undefined) return undefined;
-
-  try {
-    return BigInt(literal);
-  } catch {
-    return undefined;
-  }
-}
-
-const parseUintUpTo = (max: bigint) => (raw: string) => {
-  const parsed = parseBaseZeroUint(raw);
-  return parsed === undefined || parsed > max ? undefined : Number(parsed);
-};
-
-const integerUpTo = (max: number) => (value: unknown) =>
-  typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max
-    ? value
-    : undefined;
-
-const parseStringList = (raw: string): Array<string> => (raw.length === 0 ? [] : raw.split(","));
-
 const quoted = (values: ReadonlyArray<string>) => values.map((value) => `"${value}"`).join(", ");
 
-export const boolCodec: CliConfigCodec<boolean> = {
+const codecFromSchemas = <X>(spec: {
+  readonly kind: CliConfigCodecKind;
+  readonly expected: string;
+  readonly schemas: CliConfigCodecSchemas<X>;
+  readonly literals?: ReadonlyArray<string>;
+  readonly issues?: CliConfigCodec<X>["issues"];
+}): CliConfigCodec<X> => {
+  const decodeString = Schema.decodeUnknownOption(spec.schemas.fromString);
+  const decodeDocument = Schema.decodeUnknownOption(spec.schemas.fromDocument);
+  return {
+    kind: spec.kind,
+    ...(spec.literals === undefined ? {} : { literals: spec.literals }),
+    parse: (raw) => Option.getOrUndefined(decodeString(raw)),
+    fromConfig: (value) => Option.getOrUndefined(decodeDocument(value)),
+    expected: spec.expected,
+    ...(spec.issues === undefined ? {} : { issues: spec.issues }),
+  };
+};
+
+export const boolCodec = codecFromSchemas({
   kind: "bool",
-  parse: parseBoolLiteral,
-  fromConfig: (value) => {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number") return value !== 0;
-    return typeof value === "string" ? parseBoolLiteral(value) : undefined;
-  },
   expected: "true or false",
-};
+  schemas: boolSchemas,
+});
 
-export const uintCodec: CliConfigCodec<number> = {
+export const uintCodec = codecFromSchemas({
   kind: "uint",
-  parse: parseUintUpTo(MAX_UINT),
-  fromConfig: (value) =>
-    typeof value === "string"
-      ? parseUintUpTo(MAX_UINT)(value)
-      : integerUpTo(Number.MAX_SAFE_INTEGER)(value),
   expected: "a non-negative integer",
-};
+  schemas: uintSchemas,
+});
 
-const parsePort = (raw: string) =>
-  /^0[0-9_]/.test(raw) ? undefined : parseUintUpTo(BigInt(MAX_PORT))(raw);
-
-export const portCodec: CliConfigCodec<number> = {
+export const portCodec = codecFromSchemas({
   kind: "port",
-  parse: parsePort,
-  fromConfig: (value) =>
-    typeof value === "string" ? parsePort(value) : integerUpTo(MAX_PORT)(value),
   expected: "a port (0-65535)",
-};
+  schemas: portSchemas,
+});
 
-export const stringCodec: CliConfigCodec<string> = {
+export const stringCodec = codecFromSchemas({
   kind: "string",
-  parse: (raw) => raw,
-  fromConfig: (value) => (typeof value === "string" ? value : undefined),
   expected: "a string",
-};
+  schemas: stringSchemas,
+});
 
 /** Comma-separated list: no trimming, and an empty string is the empty list. */
-export const commaListCodec: CliConfigCodec<ReadonlyArray<string>> = {
+export const commaListCodec = codecFromSchemas({
   kind: "commaList",
-  parse: parseStringList,
-  fromConfig: (value) => {
-    if (typeof value === "string") return parseStringList(value);
-    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-      return value.map((item) => String(item));
-    }
-    return undefined;
-  },
   expected: "a comma-separated list",
-};
-
-/** A float rendered in fixed notation, with `+Inf`/`-Inf`/`NaN` and a signed zero spelled out. */
-const formatWeakFloat = (value: number): string => {
-  if (Number.isNaN(value)) return "NaN";
-  if (value === Number.POSITIVE_INFINITY) return "+Inf";
-  if (value === Number.NEGATIVE_INFINITY) return "-Inf";
-  if (Object.is(value, -0)) return "-0";
-  const text = value.toString();
-  const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(text);
-  if (match === null) return text;
-  const [, sign = "", intPart = "", fracPart = "", exponent = "0"] = match;
-  const digits = intPart + fracPart;
-  const pointAt = intPart.length + Number(exponent);
-  if (pointAt <= 0) return `${sign}0.${"0".repeat(-pointAt)}${digits}`;
-  if (pointAt >= digits.length) return `${sign}${digits}${"0".repeat(pointAt - digits.length)}`;
-  return `${sign}${digits.slice(0, pointAt)}.${digits.slice(pointAt)}`;
-};
-
-/** A bool becomes `"1"`/`"0"` and a number its decimal text; anything else is not a scalar. */
-const weakGlobEntry = (value: unknown): string | undefined => {
-  if (typeof value === "string") return value;
-  if (typeof value === "boolean") return value ? "1" : "0";
-  if (typeof value === "number") return formatWeakFloat(value);
-  if (typeof value === "bigint") return value.toString();
-  return undefined;
-};
-
-const unsupportedTypeName = (value: unknown): string | undefined => {
-  if (value instanceof TomlDate) {
-    if (value.isDate()) return "local date";
-    if (value.isTime()) return "local time";
-    return value.isLocal() ? "local date-time" : "offset date-time";
-  }
-  if (Array.isArray(value)) return "array";
-  return typeof value === "object" && value !== null ? "table" : undefined;
-};
-
-const isEmptyTable = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  !(value instanceof TomlDate) &&
-  Object.keys(value).length === 0;
-
-const globEntries = (value: unknown): ReadonlyArray<unknown> | undefined => {
-  if (typeof value === "string") return undefined;
-  if (Array.isArray(value)) return value;
-  return isEmptyTable(value) ? [] : [value];
-};
+  schemas: commaListSchemas,
+});
 
 /**
  * A glob list that decodes weakly: a bare string is comma-split, a scalar or an array entry that
  * is a number or bool becomes its text, and an empty table is the empty list. Nested lists, tables
  * and datetimes are invalid.
  */
-export const globListCodec: CliConfigCodec<ReadonlyArray<string>> = {
-  ...commaListCodec,
-  fromConfig: (value) => {
-    if (typeof value === "string") return parseStringList(value);
-    const entries = globEntries(value) ?? [];
-    const decoded = entries.map(weakGlobEntry);
-    return decoded.every((entry) => entry !== undefined) ? decoded : undefined;
-  },
+export const globListCodec = codecFromSchemas({
+  kind: "commaList",
+  expected: "a comma-separated list",
+  schemas: globListSchemas,
   issues: (path, value) =>
     (globEntries(value) ?? []).flatMap((entry, index) => {
       const type = unsupportedTypeName(entry);
       return type === undefined ? [] : [`${path}[${index}]: expected a string, got ${type}`];
     }),
-};
+});
 
-export const literalCodec = <const T extends string>(
-  values: ReadonlyArray<T>,
-): CliConfigCodec<T> => {
-  const find = (candidate: unknown): T | undefined =>
-    typeof candidate === "string" ? values.find((value) => value === candidate) : undefined;
-  return {
+export const literalCodec = <const T extends string>(values: ReadonlyArray<T>): CliConfigCodec<T> =>
+  codecFromSchemas({
     kind: "literal",
     literals: values,
-    parse: find,
-    fromConfig: find,
     expected: `one of ${quoted(values)}`,
-  };
-};
+    schemas: literalSchemas(values),
+  });
 
 export interface CliConfigKeySpec<X, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
   readonly path: string;

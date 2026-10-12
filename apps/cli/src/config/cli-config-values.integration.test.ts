@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
@@ -15,9 +15,14 @@ import {
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { loadStackConfig } from "../command-internal/stack-config.ts";
+import { CliEnvNameSource } from "../shared/config/cli-config-provider.layer.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import type { CliConfigFlagAssignment } from "./cli-config-flags.ts";
+import {
+  CliConfigFlagInputs,
+  makeCliConfigFlagInputs,
+  type CliConfigFlagAssignment,
+} from "./cli-config-flags.ts";
 import { CLI_CONFIG_FAMILIES, type CliConfigFamilyId } from "./cli-config-key-annotations.ts";
 import {
   CliConfigKeys,
@@ -25,10 +30,14 @@ import {
   cliConfigFamilyKey,
   cliConfigRegistry,
 } from "./cli-config-keys.ts";
+import { cliConfigValuesLayer } from "./cli-config-values.layer.ts";
 import { CliConfigValues } from "./cli-config-values.service.ts";
 
 const LINKED = "abcdefghijklmnopqrst";
 const OTHER = "tsrqponmlkjihgfedcba";
+const CIPHERTEXT =
+  "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 
 const familyKey = (id: CliConfigFamilyId, name: string, field: string) => {
   const family = CLI_CONFIG_FAMILIES.find((candidate) => candidate.id === id);
@@ -569,9 +578,6 @@ describe("CliConfigValues memoisation", () => {
 });
 
 describe("CliConfigValues secrets", () => {
-  const CIPHERTEXT =
-    "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-  const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
   const captcha = (secret: string) =>
     `project_id = "secrets"\n[auth.captcha]\nenabled = true\nprovider = "hcaptcha"\nsecret = "${secret}"\n`;
 
@@ -1773,4 +1779,60 @@ secret = "b"
       Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())),
     );
   });
+});
+
+describe("CliConfigValues over a lookup-only provider", () => {
+  const shell: Readonly<Record<string, string>> = {
+    SUPABASE_DB_PORT: "54400",
+    CUSTOM_SITE: "https://custom.example",
+    SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID: "family-client",
+    SUPABASE_REMOTES_STAGING_PROJECT_ID: LINKED,
+    DOTENV_PRIVATE_KEY_2026: PRIVATE_KEY,
+  };
+  const lookupOnly = ConfigProvider.make((path) => {
+    const value = shell[path.join("_")];
+    return Effect.succeed(value === undefined ? undefined : ConfigProvider.makeValue(value));
+  });
+
+  it.live("resolves registry, env() reference, family, remote id and dotenvx names by name", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "lookup"
+[auth]
+site_url = "env(CUSTOM_SITE)"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "${CIPHERTEXT}"
+
+[remotes.staging]
+project_id = "${OTHER}"
+`);
+      const layer = cliConfigValuesLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
+            ConfigProvider.layer(lookupOnly),
+            Layer.succeed(CliEnvNameSource, () => ["DOTENV_PRIVATE_KEY_2026"]),
+          ),
+        ),
+      );
+
+      const resolvedConfig = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+      ).pipe(Effect.provide(layer));
+
+      expect(yield* resolvedConfig.get(CliConfigKeys.db.port)).toMatchObject({
+        value: 54400,
+        origin: { tier: "shell" },
+      });
+      expect(resolvedConfig.materialized.config.auth.site_url).toBe("https://custom.example");
+      expect(
+        yield* resolvedConfig.get(familyKey("authExternal", "apple", "client_id")),
+      ).toMatchObject({ value: "family-client", origin: { tier: "shell" } });
+      expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
+      expect(resolvedConfig.materialized.config.auth.captcha?.secret).toBe("value");
+    }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+  );
 });

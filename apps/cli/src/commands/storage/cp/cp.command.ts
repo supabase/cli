@@ -10,7 +10,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
-import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
+import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
 import {
   StorageLinkedFlagDef,
   StorageLocalFlagDef,
