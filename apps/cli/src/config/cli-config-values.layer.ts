@@ -1,3 +1,4 @@
+import type { CliConfigValueOrigin } from "@supabase/config";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
@@ -107,7 +108,7 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
 const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
   key.codec.kind !== "string" && !sameDocumentValue(written, raw);
 
-/** An `env(NAME)` value, or a list holding one, is left for the decode to resolve, so its origin stays "from NAME". */
+/** An `env(NAME)` value, or a list holding one. */
 const isEnvReference = (raw: unknown): boolean =>
   Array.isArray(raw)
     ? raw.some(isEnvReference)
@@ -125,7 +126,7 @@ const declaredWrite = (
     case "projectEnv":
       return written;
     case "config":
-      return key.secret === true || (!isEnvReference(raw) && needsCoercion(key, written, raw))
+      return key.secret === true || isEnvReference(raw) || needsCoercion(key, written, raw)
         ? written
         : undefined;
     case "default":
@@ -136,12 +137,41 @@ const declaredWrite = (
 /** The coerced config-tier value a file-only view needs, or `undefined` when the file value decodes as written. */
 const fileWrite = (key: AnyCliConfigKey, sources: CliConfigSources): unknown => {
   const raw = sources.config(key.segments)?.value;
-  if (raw === undefined || key.secret === true || isEnvReference(raw)) return undefined;
+  if (raw === undefined || key.secret === true) return undefined;
   const picked = pickCliConfigKey(key, sources, { configOnly: true });
   if (Result.isFailure(picked) || picked.success.origin.tier !== "config") return undefined;
   const written = key.toDocument(picked.success.unnormalized ?? picked.success.value);
-  return needsCoercion(key, written, raw) ? written : undefined;
+  return isEnvReference(raw) || needsCoercion(key, written, raw) ? written : undefined;
 };
+
+/** The origin the decode would record for a resolved `env()` reference, which a pre-resolved path no longer gets. */
+const envOrigin = (
+  key: AnyCliConfigKey,
+  raw: unknown,
+  lookup: (name: string) => string | undefined,
+): CliConfigValueOrigin | undefined => {
+  const names = new Set<string>();
+  for (const item of Array.isArray(raw) ? raw : [raw]) {
+    const name = typeof item === "string" ? ENV_CAPTURE_REGEX.exec(item)?.[1] : undefined;
+    if (name !== undefined && lookup(name) !== undefined) names.add(name);
+  }
+  return names.size === 0
+    ? undefined
+    : { path: [...key.segments], source: "environment", envVariables: [...names] };
+};
+
+const withEnvOrigins = <T extends { readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin> }>(
+  loaded: T,
+  injected: ReadonlyArray<CliConfigValueOrigin>,
+): T =>
+  injected.length === 0
+    ? loaded
+    : {
+        ...loaded,
+        valueOrigins: loaded.valueOrigins?.map(
+          (origin) => injected.find((env) => sameDocumentValue(env.path, origin.path)) ?? origin,
+        ),
+      };
 
 const materializedWrite = (
   key: AnyCliConfigKey,
@@ -361,11 +391,17 @@ export const cliConfigValuesLayer = Layer.effect(
       const declaredResolved: Array<ReadonlyArray<string>> = [];
       const materializedResolved: Array<ReadonlyArray<string>> = [];
       const fileResolved: Array<ReadonlyArray<string>> = [];
+      const declaredEnvOrigins: Array<CliConfigValueOrigin> = [];
+      const materializedEnvOrigins: Array<CliConfigValueOrigin> = [];
+      const fileEnvOrigins: Array<CliConfigValueOrigin> = [];
       for (const key of enumerated.values()) {
+        const raw = sources.config(key.segments)?.value;
+        const configOrigin = envOrigin(key, raw, lookupEnv);
         const fileValue = fileWrite(key, sources);
         if (fileValue !== undefined) {
           setDocumentValue(fileDraft, key.segments, fileValue);
           fileResolved.push(key.segments);
+          if (configOrigin !== undefined) fileEnvOrigins.push(configOrigin);
         }
         const picked = pickCliConfigKey(key, sources);
         if (Result.isFailure(picked)) {
@@ -389,15 +425,18 @@ export const cliConfigValuesLayer = Layer.effect(
             );
           }
         }
-        const declared = declaredWrite(key, picked.success, sources.config(key.segments)?.value);
+        const fromConfig = origin.tier === "config" ? configOrigin : undefined;
+        const declared = declaredWrite(key, picked.success, raw);
         if (declared !== undefined) {
           setDocumentValue(declaredDraft, key.segments, declared);
           declaredResolved.push(key.segments);
+          if (fromConfig !== undefined) declaredEnvOrigins.push(fromConfig);
         }
         const materialized = materializedWrite(key, picked.success, declared);
         if (materialized !== undefined) {
           setDocumentValue(materializedDraft, key.segments, materialized);
           materializedResolved.push(key.segments);
+          if (fromConfig !== undefined) materializedEnvOrigins.push(fromConfig);
         }
       }
       const [firstFailure] = entryFailures;
@@ -419,14 +458,17 @@ export const cliConfigValuesLayer = Layer.effect(
       }
 
       const mergedForDecode = merged ?? emptyMergedDocument(target.workdir, path.sep);
-      const loaded = yield* withPlatform(
-        decodeMergedCliConfig(mergedForDecode, {
-          envValues,
-          cliCompat: true,
-          document: declaredDraft,
-          resolvedPaths: declaredResolved,
-          onWarning: warnDeprecationOnce,
-        }),
+      const loaded = withEnvOrigins(
+        yield* withPlatform(
+          decodeMergedCliConfig(mergedForDecode, {
+            envValues,
+            cliCompat: true,
+            document: declaredDraft,
+            resolvedPaths: declaredResolved,
+            onWarning: warnDeprecationOnce,
+          }),
+        ),
+        declaredEnvOrigins,
       );
       const fileDeclared = withPlatform(
         decodeMergedCliConfig(mergedForDecode, {
@@ -436,15 +478,18 @@ export const cliConfigValuesLayer = Layer.effect(
           resolvedPaths: fileResolved,
           onWarning: warnDeprecationOnce,
         }),
-      );
-      const materializedLoaded = yield* withPlatform(
-        decodeMergedCliConfig(mergedForDecode, {
-          envValues,
-          cliCompat: true,
-          document: materializedDraft,
-          resolvedPaths: materializedResolved,
-          onWarning: warnDeprecationOnce,
-        }),
+      ).pipe(Effect.map((decoded) => withEnvOrigins(decoded, fileEnvOrigins)));
+      const materializedLoaded = withEnvOrigins(
+        yield* withPlatform(
+          decodeMergedCliConfig(mergedForDecode, {
+            envValues,
+            cliCompat: true,
+            document: materializedDraft,
+            resolvedPaths: materializedResolved,
+            onWarning: warnDeprecationOnce,
+          }),
+        ),
+        materializedEnvOrigins,
       );
 
       const materialized: CliConfigMaterialized = {

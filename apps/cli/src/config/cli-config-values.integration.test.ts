@@ -1535,6 +1535,137 @@ project_id = "${LINKED}"
     ),
   );
 
+  it.live("coerces the other entries of a list holding an env() reference", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "p"\n[db.seed]\nsql_paths = ["env(SEED_PATH)", 42, true]\n',
+      );
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const declared = yield* resolvedConfig.fileDeclared;
+      const got = yield* resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths);
+
+      expect(got.unnormalized).toEqual(["seed.sql", "42", "1"]);
+      expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["seed.sql", "42", "1"]);
+      expect(declared.config.db.seed.sql_paths).toEqual(["seed.sql", "42", "1"]);
+      expect(resolvedConfig.materialized.config.db.seed.sql_paths).toEqual(got.value);
+      const origin = {
+        path: ["db", "seed", "sql_paths"],
+        source: "environment",
+        envVariables: ["SEED_PATH"],
+      };
+      expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
+      expect(declared.valueOrigins).toContainEqual(origin);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SEED_PATH: "seed.sql" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("keeps an unset env() reference literal in a mixed list, with a local origin", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "p"\n[db.seed]\nsql_paths = ["env(SEED_PATH)", 42]\n',
+      );
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const got = yield* resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths);
+
+      expect(got.unnormalized).toEqual(["env(SEED_PATH)", "42"]);
+      expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["env(SEED_PATH)", "42"]);
+      expect(resolvedConfig.loaded.valueOrigins).toContainEqual({
+        path: ["db", "seed", "sql_paths"],
+        source: "local",
+      });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("coerces a mixed list with an env() reference in a matched remote block", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "p"
+[remotes.staging]
+project_id = "${LINKED}"
+
+[remotes.staging.db.seed]
+sql_paths = ["env(SEED_PATH)", 42]
+`,
+      );
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.some(LINKED)).pipe(Effect.provide(layer));
+      const declared = yield* resolvedConfig.fileDeclared;
+      const got = yield* resolvedConfig.get(CliConfigKeys.db.seed.sqlPaths);
+
+      expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
+      expect(got.unnormalized).toEqual(["seed.sql", "42"]);
+      expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["seed.sql", "42"]);
+      expect(declared.config.db.seed.sql_paths).toEqual(["seed.sql", "42"]);
+      expect(resolvedConfig.materialized.config.db.seed.sql_paths).toEqual(got.value);
+      expect(resolvedConfig.loaded.valueOrigins).toContainEqual({
+        path: ["db", "seed", "sql_paths"],
+        source: "environment",
+        envVariables: ["SEED_PATH"],
+      });
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SEED_PATH: "seed.sql" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  for (const [rows, expected] of [
+    ["010", 8],
+    ["1_000", 1000],
+  ] as const) {
+    it.live(`reads an env() reference to ${rows} on a numeric key the same in every view`, () =>
+      Effect.gen(function* () {
+        const root = yield* project('project_id = "p"\n[api]\nmax_rows = "env(ROWS)"\n');
+        const layer = configValuesLayer();
+
+        const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+        const declared = yield* resolvedConfig.fileDeclared;
+
+        expect((yield* resolvedConfig.get(CliConfigKeys.api.maxRows)).value).toBe(expected);
+        expect(resolvedConfig.loaded.config.api.max_rows).toBe(expected);
+        expect(resolvedConfig.materialized.config.api.max_rows).toBe(expected);
+        expect(declared.config.api.max_rows).toBe(expected);
+        const origin = { path: ["api", "max_rows"], source: "environment", envVariables: ["ROWS"] };
+        expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
+        expect(declared.valueOrigins).toContainEqual(origin);
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        (effect) => withShell({ ROWS: rows }, effect),
+        Effect.scoped,
+      ),
+    );
+  }
+
+  it.live(
+    "keeps the env variable as the origin of an env() reference in a config-tier secret",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* project('[auth]\njwt_secret = "env(JWT)"\n');
+        const layer = configValuesLayer();
+
+        const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+
+        expect(resolvedConfig.loaded.config.auth.jwt_secret).toBe("s3cret");
+        expect(resolvedConfig.loaded.valueOrigins).toContainEqual({
+          path: ["auth", "jwt_secret"],
+          source: "environment",
+          envVariables: ["JWT"],
+        });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        (effect) => withShell({ JWT: "s3cret" }, effect),
+        Effect.scoped,
+      ),
+  );
+
   it.live("declares in the file only what the file sets, ignoring a SUPABASE_* override", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "p"\n[api]\nmax_rows = 10\n');

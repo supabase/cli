@@ -1102,6 +1102,28 @@ describe("config pull integration", () => {
     },
   );
 
+  it.live("an env() reference on a numeric key is never replaced by the remote value", () => {
+    const before = ['project_id = "test"', "[api]", 'max_rows = "env(ROWS)"', ""].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "ROWS=010\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('max_rows = "env(ROWS)"');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+      const rowsChange = changes.find(
+        (change) => (change["path"] as Array<string>).join(".") === "api.max_rows",
+      );
+      expect(rowsChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(rowsChange?.["env_variables"]).toEqual(["ROWS"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("an env() reference inside an array is never replaced by the remote list", () => {
     const before = [
       'project_id = "test"',
