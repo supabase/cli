@@ -131,13 +131,16 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
   for (const dir of [path.join(workdir, "supabase"), workdir]) {
     for (const name of filenames) {
       const filePath = path.join(dir, name);
+      const displayPath = path.relative(workdir, filePath);
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
           error.reason._tag === "NotFound"
             ? Effect.succeed(Option.none<string>())
             : Effect.fail(
-                new CliConfigLoadError({ message: `failed to read environment file: ${name}` }),
+                new CliConfigLoadError({
+                  message: `failed to read environment file: ${displayPath}`,
+                }),
               ),
         ),
       );
@@ -145,7 +148,7 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
       const parsed = yield* Effect.try({
         try: () => parseDotEnv(content.value),
         catch: () =>
-          new CliConfigLoadError({ message: `failed to parse environment file: ${name}` }),
+          new CliConfigLoadError({ message: `failed to parse environment file: ${displayPath}` }),
       });
       for (const [key, value] of Object.entries(parsed)) {
         if (values[key] !== undefined) continue;

@@ -290,23 +290,25 @@ describe("project env loader", () => {
     ),
   );
 
-  it.effect("fails with the file name when a file is unreadable", () =>
+  it.effect("fails with the workdir-relative path when a file is unreadable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir.current, "supabase", ".env"), { recursive: true });
       const unreadable = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
-      expect(unreadable.message).toBe("failed to read environment file: .env");
+      expect(unreadable.message).toBe("failed to read environment file: supabase/.env");
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
   );
 
-  it.effect("fails with the file name on a malformed line", () =>
-    Effect.gen(function* () {
-      yield* write("supabase/.env.local", "not a valid line\n");
+  for (const file of ["supabase/.env.local", ".env.local"]) {
+    it.effect(`names ${file} on a malformed line without echoing its contents`, () =>
+      Effect.gen(function* () {
+        yield* write(file, "not a valid line\n");
 
-      const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
+        const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
 
-      expect(failure.message).toBe("failed to parse environment file: .env.local");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
-  );
+        expect(failure.message).toBe(`failed to parse environment file: ${file}`);
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    );
+  }
 });
