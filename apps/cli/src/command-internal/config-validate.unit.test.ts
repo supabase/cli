@@ -42,6 +42,8 @@ describe("parseBoolLiteral", () => {
   it("returns undefined for a value outside the accepted set", () => {
     expect(parseBoolLiteral("yes")).toBeUndefined();
     expect(parseBoolLiteral("2")).toBeUndefined();
+    expect(parseBoolLiteral("tRuE")).toBeUndefined();
+    expect(parseBoolLiteral("tRue")).toBeUndefined();
   });
 });
 

@@ -28,10 +28,10 @@
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                 | Required? |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_YES`                | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                         | no        |
-| `SUPABASE_EXPERIMENTAL_STACK` | when `1`, persist `[experimental] stack = true` and omit Docker-era default ports; `0`, unset, or empty writes the established template | no        |
+| Variable                      | Purpose                                                                                                                                                                            | Required? |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES`                | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                                                                    | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | when true (`1`, `t`, `T`, `TRUE`, `true`, `True`), persist `[experimental] stack = true` and omit Docker-era default ports; false, unset, or empty writes the established template | no        |
 
 ## Exit Codes
 
@@ -39,7 +39,7 @@
 | ---- | ------------------------------------------------------------------------------------ |
 | `0`  | success - prints "Finished supabase init."                                           |
 | `1`  | `supabase/config.toml` already exists and `--force` was not provided                 |
-| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1`             |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value that is not a boolean             |
 | `1`  | permission denied writing config file                                                |
 | `1`  | an existing `.vscode/settings.json` / `.vscode/extensions.json` is not valid JSON(C) |
 
