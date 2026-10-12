@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
+import { TestClock } from "effect/testing";
 
 import {
   mockAnalytics,
@@ -13,6 +14,7 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ProfileFlag } from "../../command-internal/global-flags.ts";
+import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
 import {
   VALID_TOKEN,
   buildTestRuntime,
@@ -26,6 +28,7 @@ import {
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { EventLoginCompleted } from "../../shared/telemetry/event-catalog.ts";
+import { LoginCrypto } from "./login-crypto.service.ts";
 import { login } from "./login.handler.ts";
 import type { LoginFlags } from "./login.command.ts";
 
@@ -203,6 +206,14 @@ describe("login integration", () => {
       expect(out.stdoutText).toContain("Token cli_test@host_123 created successfully.");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("the default token name ends in unix seconds from the clock", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_700_000_000_500);
+      const crypto = yield* LoginCrypto;
+      expect(yield* crypto.defaultTokenName).toMatch(/^cli_(.+@.+_)?1700000000$/);
+    }).pipe(Effect.provide(loginCryptoLayer)),
+  );
 
   it.live("retries verification on poll failure then succeeds", () => {
     const { layer, out, loginApi } = setupLogin({ isTTY: true, failTimes: 2 });
