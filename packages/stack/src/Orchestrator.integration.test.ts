@@ -793,12 +793,22 @@ describe("service composition", () => {
           const requestScope = yield* Scope.make();
           yield* orchestrator.acquire("rest").pipe(Scope.provide(requestScope));
 
+          const subscribed = yield* Deferred.make<void>();
+          const labelledRestart = yield* rest.observation.pipe(
+            Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+            Stream.filter((state) => state.currentOperation === "restart"),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(subscribed);
           yield* Deferred.succeed(
             crashed,
             Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
           );
           yield* Deferred.await(restRelaunched);
           yield* rest.ready;
+          yield* Fiber.join(labelledRestart);
 
           const recorded = yield* Ref.get(events);
           expect(recorded.filter((name) => name.endsWith(":rest"))).toEqual([

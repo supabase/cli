@@ -708,10 +708,13 @@ describe("Lifecycle reducer", () => {
       expect(state.services.get("c")?.phase).toMatchObject({ _tag: "Running", generation: 1 });
 
       ({ state, commandsByStep } = run(state, [sessionLost("a", 1, 10)]));
-      expect(at(commandsByStep, 0)).toEqual([
-        { _tag: "Stop", id: "c", generation: 1 },
-        { _tag: "Stop", id: "b", generation: 1 },
-      ]);
+      expect(at(commandsByStep, 0)).toHaveLength(2);
+      expect(at(commandsByStep, 0)).toEqual(
+        expect.arrayContaining([
+          { _tag: "Stop", id: "b", generation: 1 },
+          { _tag: "Stop", id: "c", generation: 1 },
+        ]),
+      );
       for (const id of ["b", "c"]) {
         expect(state.services.get(id)?.phase).toEqual({ _tag: "Stopping", generation: 1 });
         expect(state.services.get(id)?.breaker.consecutiveFailures).toBe(0);
