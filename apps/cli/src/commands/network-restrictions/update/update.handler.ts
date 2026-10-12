@@ -2,7 +2,7 @@ import type {
   V1PatchNetworkRestrictionsOutput,
   V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -51,13 +51,14 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
     // Validate every input before any I/O, so a malformed CIDR short-circuits without
     // resolving the ref or writing the linked-project cache.
     const validation = validateAndPartitionCidrs(flags.dbAllowCidr, flags.bypassCidrChecks);
-    if (!validation.ok) {
-      if (validation.kind === "invalid") {
-        return yield* new NetworkRestrictionsInvalidCidrError({ input: validation.input });
+    if (Result.isFailure(validation)) {
+      const { kind, input } = validation.failure;
+      if (kind === "invalid") {
+        return yield* new NetworkRestrictionsInvalidCidrError({ input });
       }
-      return yield* new NetworkRestrictionsPrivateIpError({ input: validation.input });
+      return yield* new NetworkRestrictionsPrivateIpError({ input });
     }
-    const { v4, v6 } = validation;
+    const { v4, v6 } = validation.success;
 
     const ref = yield* resolver.resolve(flags.projectRef);
 
