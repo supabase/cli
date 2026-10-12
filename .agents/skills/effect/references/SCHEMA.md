@@ -20,11 +20,25 @@ Guidance:
 
 - Add `.annotate({ identifier: "User" })` only when tooling consumes it: HTTP API, RPC, OpenAPI/JSON Schema, docs, diagnostics, or codegen.
 - Use `schema.make(...)` when construction is trusted.
-- Use `schema.makeEffect(...)` when construction failure should stay in the Effect error channel.
+- Use `schema.makeEffect(...)` when construction failure should stay in the Effect error channel. It validates typed constructor input and fails with `SchemaIssue.Issue`, not `Schema.SchemaError`.
+- Use `schema.makeOption(...)` when constructor validation details may be discarded.
 - Decode unknown input at boundaries with `Schema.decodeUnknownEffect(...)` by default.
 - Use `Schema.decodeUnknownSync(...)` only in scripts, tests, or startup paths where throwing is acceptable.
 - Use `Schema.decodeUnknownOption(...)` only when mismatch details are intentionally discarded.
 - Use `Schema.decodeUnknownResult(...)` for pure code that wants explicit success/failure without Effect.
+
+### Construction Versus Decoding
+
+`make` / `makeEffect` apply constructor defaults and type-side validation. They are
+not decoders for an unknown encoded representation. For example, decode a wire
+timestamp through its string-to-DateTime codec rather than passing the string to
+the decoded value's constructor.
+
+- `Schema.decodeUnknownEffect(schema)(input)` fails with `Schema.SchemaError`.
+- `SchemaParser.decodeUnknownEffect(schema)(input)` exposes the raw `SchemaIssue.Issue` for low-level parser composition.
+- `schema.makeEffect(input)` also exposes `SchemaIssue.Issue`; wrap it explicitly with `Effect.mapError((issue) => new Schema.SchemaError(issue))` if the boundary needs `SchemaError`.
+- `schema.make(input)` throws a plain `Error` with the issue in `cause` on validation failure; do not assume it throws `SchemaError`.
+- `Schema.NumberFromString` coerces with `Number(s)`: empty or whitespace-only strings decode to `0` and trailing junk to `NaN`. Use `Schema.FiniteFromString` to reject non-numeric input, and add a non-blank check when empty input must fail.
 
 ## Field And Contract Reuse
 
