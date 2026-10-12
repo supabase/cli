@@ -1102,6 +1102,33 @@ describe("config pull integration", () => {
     },
   );
 
+  it.live("an env() reference inside an array is never replaced by the remote list", () => {
+    const before = [
+      'project_id = "test"',
+      "[auth]",
+      'additional_redirect_urls = ["env(CALLBACK_URL)"]',
+      "",
+    ].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "CALLBACK_URL=https://local.example.com/callback\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('additional_redirect_urls = ["env(CALLBACK_URL)"]');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+      const redirectChange = changes.find(
+        (change) => (change["path"] as Array<string>).join(".") === "auth.additional_redirect_urls",
+      );
+      expect(redirectChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(redirectChange?.["env_variables"]).toEqual(["CALLBACK_URL"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("compares against the file's declared values, ignoring a SUPABASE_* override", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true });

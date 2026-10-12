@@ -1508,6 +1508,33 @@ project_id = "${LINKED}"
     ),
   );
 
+  it.live("keeps the env variable as the origin of an env() reference inside an array", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "p"\n[auth]\nadditional_redirect_urls = ["env(CALLBACK_URL)"]\n',
+      );
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const declared = yield* resolvedConfig.fileDeclared;
+
+      const origin = {
+        path: ["auth", "additional_redirect_urls"],
+        source: "environment",
+        envVariables: ["CALLBACK_URL"],
+      };
+      expect(resolvedConfig.loaded.config.auth.additional_redirect_urls).toEqual([
+        "https://cb.example.com",
+      ]);
+      expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
+      expect(declared.valueOrigins).toContainEqual(origin);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ CALLBACK_URL: "https://cb.example.com" }, effect),
+      Effect.scoped,
+    ),
+  );
+
   it.live("declares in the file only what the file sets, ignoring a SUPABASE_* override", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "p"\n[api]\nmax_rows = 10\n');

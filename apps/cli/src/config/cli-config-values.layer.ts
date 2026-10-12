@@ -107,9 +107,11 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
 const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
   key.codec.kind !== "string" && !sameDocumentValue(written, raw);
 
-/** An `env(NAME)` value is left for the decode to resolve, so its origin stays "from NAME". */
+/** An `env(NAME)` value, or a list holding one, is left for the decode to resolve, so its origin stays "from NAME". */
 const isEnvReference = (raw: unknown): boolean =>
-  typeof raw === "string" && ENV_CAPTURE_REGEX.test(raw);
+  Array.isArray(raw)
+    ? raw.some(isEnvReference)
+    : typeof raw === "string" && ENV_CAPTURE_REGEX.test(raw);
 
 const declaredWrite = (
   key: AnyCliConfigKey,
