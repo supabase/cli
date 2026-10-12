@@ -20,45 +20,57 @@ const eventLines = Effect.fn("EngineEvents.eventLines")((args: ReadonlyArray<str
   }),
 );
 
+const awaitPodmanContainerRemoved = Effect.fn("EngineEvents.awaitPodmanContainerRemoved")(
+  (id: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const wait = yield* spawner.spawn(
+          ChildProcess.make(
+            testEngine,
+            [...engineTarget.argv, "wait", "--condition", "removing", "--ignore", id],
+            { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+          ),
+        );
+        const [stderr, code] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(wait.stderr)), wait.exitCode],
+          { concurrency: "unbounded" },
+        );
+        if (Number(code) !== 0)
+          return yield* new EngineEventsError({ message: `podman wait failed: ${stderr}` });
+      }),
+    ),
+);
+
 /**
- * Completes when the engine reports the container removed, including a removal that happened
- * after `sinceSeconds` and before the stream attached. Docker names that event `destroy`; Podman
- * names it `remove`.
+ * Completes once the engine has removed the container, including a removal that finished before
+ * the call. Docker's event stream replays from `sinceSeconds` and names the event `destroy`.
+ * Podman's file event logger drops unread events when it rotates the shared log, so Podman waits
+ * on the container itself, which also returns for a container that no longer exists.
  */
 export const awaitContainerRemoved = (id: string, sinceSeconds: number) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const lines = yield* eventLines(
-        testEngine === "docker"
-          ? [
-              "--since",
-              String(sinceSeconds),
-              "--filter",
-              `container=${id}`,
-              "--filter",
-              "event=destroy",
-              "--format",
-              "{{.Actor.ID}}",
-            ]
-          : [
-              "--since",
-              String(sinceSeconds),
-              "--filter",
-              `container=${id}`,
-              "--filter",
-              "event=remove",
-              "--format",
-              "{{.ID}}",
-            ],
+  testEngine === "podman"
+    ? awaitPodmanContainerRemoved(id)
+    : Effect.scoped(
+        Effect.gen(function* () {
+          const lines = yield* eventLines([
+            "--since",
+            String(sinceSeconds),
+            "--filter",
+            `container=${id}`,
+            "--filter",
+            "event=destroy",
+            "--format",
+            "{{.Actor.ID}}",
+          ]);
+          const removed = yield* lines.pipe(
+            Stream.filter((line) => line.trim() === id),
+            Stream.runHead,
+          );
+          if (Option.isNone(removed))
+            return yield* new EngineEventsError({ message: `${testEngine} event stream ended` });
+        }),
       );
-      const removed = yield* lines.pipe(
-        Stream.filter((line) => line.trim() === id),
-        Stream.runHead,
-      );
-      if (Option.isNone(removed))
-        return yield* new EngineEventsError({ message: `${testEngine} event stream ended` });
-    }),
-  );
 
 /**
  * What the engine reports for a container stopped with SIGINT that exits cleanly. Docker's stop
