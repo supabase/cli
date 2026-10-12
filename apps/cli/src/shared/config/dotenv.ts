@@ -7,7 +7,7 @@ const EXPORT_PREFIX = /^\s*export\s+/;
  * empty or contains an invalid character.
  */
 export function parseDotEnv(contents: string): Record<string, string> {
-  const result: Record<string, string> = {};
+  const result: Record<string, string> = Object.create(null);
   // Normalize CRLF→LF and scan the whole buffer with a cursor (not line-by-line), so a quoted
   // value can span newlines (e.g. a PEM block).
   let src = contents.replaceAll("\r\n", "\n");

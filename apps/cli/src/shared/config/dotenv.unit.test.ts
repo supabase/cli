@@ -114,4 +114,10 @@ describe("parseDotEnv", () => {
       expect(parseDotEnv("foo=bar\nA=$foo")).toEqual({ foo: "bar", A: "$foo" });
     });
   });
+  it("keeps a __proto__ name as its own variable", () => {
+    const parsed = parseDotEnv("__proto__=x\nconstructor=y");
+    expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+    expect(parsed["__proto__"]).toBe("x");
+    expect(parsed["constructor"]).toBe("y");
+  });
 });

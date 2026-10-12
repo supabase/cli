@@ -465,7 +465,10 @@ export const cliConfigValuesLayer = Layer.effect(
         declares: (configPath) => configAt(configPath) !== undefined,
         withheldEnv,
         dotenvPrivateKeys,
-        projectEnvValues: { ...projectEnv.values },
+        projectEnvValues: Object.assign<Record<string, string>, Record<string, string>>(
+          Object.create(null),
+          projectEnv.values,
+        ),
         envValues: (names) => {
           const wanted = [...new Set(names)];
           return shell.load(wanted).pipe(
