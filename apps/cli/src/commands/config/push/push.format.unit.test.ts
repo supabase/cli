@@ -901,14 +901,14 @@ describe("pushPayload", () => {
       authWriteRan: true,
       secretsSent: [sentAndEncoded.path],
     });
-    const buckets = payload["secrets"] as Readonly<
-      Record<string, ReadonlyArray<ReadonlyArray<string>>>
-    >;
-    const bucketPaths = Object.values(buckets)
-      .flat()
-      .map((path) => path.join("."));
-    const declaredPaths = secrets.map((secret) => secret.path.join(".")).sort();
-    expect(bucketPaths.sort()).toEqual(declaredPaths);
+    expect(payload["secrets"]).toEqual({
+      sent: [sentAndEncoded.path],
+      unchanged: [UNCHANGED_SECRET.path],
+      not_set: [NOT_SET_SECRET.path],
+      gated: [GATED_SECRET.path],
+      unencodable: [sentButDropped.path],
+      skipped: [],
+    });
   });
 
   test("empty arrays round-trip as empty arrays, not omitted keys", () => {
