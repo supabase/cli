@@ -38,8 +38,7 @@ interface CommandSettingsShape {
   readonly workdir: string;
   /**
    * Whether {@link workdir} came from an explicit `--workdir`/`SUPABASE_WORKDIR` rather than
-   * the default ancestor walk-up. Config loads use it to decide whether to search ancestor
-   * directories; see `shouldSearchAncestors` in `command-internal/workdir-search.ts`.
+   * the default walk-up to the nearest `supabase/config.{json,toml}`.
    */
   readonly explicitWorkdir: boolean;
   /** Raw `SUPABASE_WORKDIR` value; `Some("")` differs from an absent variable and is used verbatim. */

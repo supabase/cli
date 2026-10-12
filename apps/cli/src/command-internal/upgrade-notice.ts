@@ -160,7 +160,12 @@ function resolveNoticeBaseDir(
   }
   let current = cwd;
   while (true) {
-    if (existsSync(join(current, "supabase", "config.toml"))) return current;
+    if (
+      existsSync(join(current, "supabase", "config.json")) ||
+      existsSync(join(current, "supabase", "config.toml"))
+    ) {
+      return current;
+    }
     const parent = dirname(current);
     if (parent === current) return cwd;
     current = parent;

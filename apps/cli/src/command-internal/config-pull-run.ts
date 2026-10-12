@@ -33,11 +33,7 @@ import {
   configIsRecord,
   configPathKey,
 } from "../commands/config/config.paths.ts";
-import {
-  loadDeclaredFileConfig,
-  relativeConfigPath,
-  resolveConfigProjectRoot,
-} from "../commands/config/config.load.ts";
+import { loadDeclaredFileConfig, relativeConfigPath } from "../commands/config/config.load.ts";
 import {
   CONFIG_CLASS_LABELS,
   configApiScope,
@@ -558,14 +554,8 @@ export interface ConfigPullSource {
  */
 export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function* () {
   const cliSettings = yield* CommandSettings;
-  const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
 
-  const { loaded } = yield* loadDeclaredFileConfig(
-    cliSettings,
-    projectRoot,
-    Option.none(),
-    makeLoadError,
-  );
+  const { loaded } = yield* loadDeclaredFileConfig(cliSettings, Option.none(), makeLoadError);
 
   if (loaded.rawText === undefined) {
     // The loader guarantees `rawText` for any file it parsed off disk; treat this like a
@@ -625,13 +615,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   // A brand-new block has nothing to overlay yet.
   let loaded = request.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
-    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
-    ({ loaded } = yield* loadDeclaredFileConfig(
-      cliSettings,
-      projectRoot,
-      Option.some(ref),
-      makeLoadError,
-    ));
+    ({ loaded } = yield* loadDeclaredFileConfig(cliSettings, Option.some(ref), makeLoadError));
   }
 
   const context: ConfigPullContext = {

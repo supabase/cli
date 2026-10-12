@@ -1,4 +1,4 @@
-import { CliConfigParseError, findCliProjectRoot } from "@supabase/config/effect";
+import { CliConfigParseError } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 
 import { isDocumentRecord } from "../../config/cli-config-document.ts";
@@ -10,7 +10,6 @@ import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
 } from "../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 
 export { relativeConfigPath };
 
@@ -18,14 +17,6 @@ interface ConfigWorkdir {
   readonly workdir: string;
   readonly explicitWorkdir: boolean;
 }
-
-/** The directory holding `supabase/`; only a defaulted workdir climbs to an ancestor's project. */
-export const resolveConfigProjectRoot = Effect.fnUntraced(function* (cliSettings: ConfigWorkdir) {
-  const root = yield* findCliProjectRoot(cliSettings.workdir, {
-    search: shouldSearchAncestors(cliSettings),
-  });
-  return root ?? cliSettings.workdir;
-});
 
 const describeLoadFailure = (
   cliSettings: ConfigWorkdir,
@@ -59,13 +50,12 @@ export const mapConfigLoadError =
  */
 export const loadResolvedConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
-  projectRoot: string,
   projectRef: Option.Option<string>,
   makeError: (message: string) => E,
 ) {
   const values = yield* CliConfigValues;
   const resolvedConfig = yield* values
-    .load({ workdir: projectRoot, projectRef, tolerateUnreadableLinkedRef: true })
+    .load({ workdir: cliSettings.workdir, projectRef, tolerateUnreadableLinkedRef: true })
     .pipe(mapConfigLoadError(cliSettings, makeError));
   if (!resolvedConfig.hasConfigFile) {
     return yield* Effect.fail(makeError(yield* missingProjectConfigMessageEffect(cliSettings)));
@@ -84,7 +74,6 @@ export const loadResolvedConfig = Effect.fnUntraced(function* <E>(
  */
 export const loadTargetResolvedConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
-  projectRoot: string,
   early: ResolvedCliConfig,
   ref: string,
   makeError: (message: string) => E,
@@ -95,17 +84,16 @@ export const loadTargetResolvedConfig = Effect.fnUntraced(function* <E>(
   const selected = selectCliConfigRemote(remotes, Option.some(ref), (name) => overrides[name]);
   return selected === undefined
     ? early
-    : yield* loadResolvedConfig(cliSettings, projectRoot, Option.some(ref), makeError);
+    : yield* loadResolvedConfig(cliSettings, Option.some(ref), makeError);
 });
 
 /** What the config file itself declares; `config pull` compares against it because it rewrites the file. */
 export const loadDeclaredFileConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,
-  projectRoot: string,
   projectRef: Option.Option<string>,
   makeError: (message: string) => E,
 ) {
-  const resolvedConfig = yield* loadResolvedConfig(cliSettings, projectRoot, projectRef, makeError);
+  const resolvedConfig = yield* loadResolvedConfig(cliSettings, projectRef, makeError);
   const loaded = yield* resolvedConfig.fileDeclared.pipe(
     mapConfigLoadError(cliSettings, makeError),
   );

@@ -58,12 +58,9 @@ export const readExperimentalFeatureConfig = (input: {
       explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
       Option.fromNullishOr(yield* readEnv("SUPABASE_WORKDIR")),
       input.cwd,
-      (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
       path,
     );
-    const project = yield* findCliProjectPaths(resolvedWorkdir.workdir, {
-      search: !resolvedWorkdir.explicit,
-    });
+    const project = yield* findCliProjectPaths(resolvedWorkdir.workdir, { search: false });
     if (project === null) return undefined;
     const content = yield* fs.readFileString(project.configPath);
     const document = project.configPath.endsWith(".json")

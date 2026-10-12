@@ -34,7 +34,7 @@ import {
 } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { mapConfigLoadError, resolveConfigProjectRoot } from "../config.load.ts";
+import { mapConfigLoadError } from "../config.load.ts";
 import {
   configApiScope,
   configEnvOriginLookup,
@@ -158,13 +158,12 @@ function toSecretReport(decision: PushSecretDecision) {
 /** Loads the resolved config once per push, so the load-time deprecation warnings print once. */
 const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
-  projectRoot: string,
   ref: string,
 ) {
   const configValues = yield* CliConfigValues;
   const resolvedConfig = yield* configValues
     .load({
-      workdir: projectRoot,
+      workdir: cliSettings.workdir,
       projectRef: Option.some(ref),
       tolerateUnreadableLinkedRef: true,
     })
@@ -188,7 +187,7 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
     dotenvPrivateKeys: resolvedConfig.dotenvPrivateKeys,
     projectEnv,
     originFor: configEnvOriginLookup(resolvedConfig.origins, (file) =>
-      relativeConfigPath(projectRoot, file),
+      relativeConfigPath(cliSettings.workdir, file),
     ),
   };
 });
@@ -233,11 +232,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
     );
 
-    // The project root climbs only when `--workdir` was defaulted; an explicit
-    // `--workdir ../other` pushes that directory's own config.toml without climbing to another
-    // root's linked project.
-    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
-
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
     // config-less directory with no linked project, it instead fails with step 1's not-linked
@@ -271,7 +265,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // `db-config.toml-read.ts` subtree reader does not produce.
     const { loaded, lookup, dotenvPrivateKeys, projectEnv, originFor } = yield* loadPushConfig(
       cliSettings,
-      projectRoot,
       ref,
     );
     // `SUPABASE_YES` set only in `supabase/.env` auto-confirms, not just the flag and shell env.
@@ -308,7 +301,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
     // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
     // silently push empty content over a real hosted customization.
-    const authEmailContent = yield* loadAuthEmailContent(projectRoot, config.auth.email);
+    const authEmailContent = yield* loadAuthEmailContent(cliSettings.workdir, config.auth.email);
 
     // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
     // confirmation before any further network call. A target resolved from an explicit

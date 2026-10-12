@@ -1,3 +1,4 @@
+import { findCliProjectRoot } from "@supabase/config/effect";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../shared/cli/flag-groups.ts";
@@ -69,14 +70,13 @@ function resolveProfile(
  * string (e.g. `.`), but downstream readers such as the project-id cwd-basename fallback need
  * a real directory name, not a relative fragment that would sanitize to an empty project id.
  *
- * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
- * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
+ * `explicit` is true only when the flag/env value was used verbatim. Otherwise the nearest
+ * ancestor holding `supabase/config.json` or `supabase/config.toml` wins, falling back to `cwd`.
  */
 export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(function* (
   flagValue: Option.Option<string>,
   envValue: Option.Option<string>,
   cwd: string,
-  configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
 ) {
   if (Option.isSome(flagValue) && flagValue.value.length > 0) {
@@ -85,18 +85,8 @@ export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(functi
   if (Option.isSome(envValue) && envValue.value.length > 0) {
     return { workdir: path.resolve(cwd, envValue.value), explicit: true };
   }
-  let current = cwd;
-  while (true) {
-    const candidate = path.join(current, "supabase", "config.toml");
-    if (yield* configTomlExists(candidate)) {
-      return { workdir: current, explicit: false };
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return { workdir: cwd, explicit: false };
-    }
-    current = parent;
-  }
+  const projectRoot = yield* findCliProjectRoot(cwd);
+  return { workdir: projectRoot ?? cwd, explicit: false };
 });
 
 export const commandSettingsLayer = Layer.unwrap(
@@ -163,7 +153,6 @@ export const commandSettingsLayer = Layer.unwrap(
           workdirFlag,
           workdirEnvValue,
           runtimeInfo.cwd,
-          (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
         );
 

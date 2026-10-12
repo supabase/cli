@@ -494,8 +494,6 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe("/flag/workdir");
-      // An explicit --workdir is used verbatim, letting `shouldSearchAncestors` skip the
-      // second ancestor climb inside the config load.
       expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(
@@ -585,6 +583,51 @@ describe("commandSettingsLayer", () => {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe(projectRoot);
       expect(config.explicitWorkdir).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ cwd: nested })));
+  });
+
+  it.effect("walks up from CWD to a project that only has supabase/config.json", () => {
+    const projectRoot = join(tempRoot, "json-project");
+    const nested = join(projectRoot, "apps", "web");
+    mkdirSync(join(projectRoot, "supabase"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(projectRoot, "supabase", "config.json"), '{"project_id":"x"}\n');
+
+    return Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.workdir).toBe(projectRoot);
+      expect(config.explicitWorkdir).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ cwd: nested })));
+  });
+
+  it.effect("uses an explicit --workdir below a config.json project verbatim", () => {
+    const projectRoot = join(tempRoot, "json-project");
+    const below = join(projectRoot, "apps", "web");
+    mkdirSync(join(projectRoot, "supabase"), { recursive: true });
+    mkdirSync(below, { recursive: true });
+    writeFileSync(join(projectRoot, "supabase", "config.json"), '{"project_id":"x"}\n');
+
+    return Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.workdir).toBe(below);
+      expect(config.explicitWorkdir).toBe(true);
+    }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some(below), cwd: projectRoot })));
+  });
+
+  it.effect("picks the directory holding both config files over an enclosing project", () => {
+    const outer = join(tempRoot, "outer");
+    const inner = join(outer, "packages", "inner");
+    const nested = join(inner, "src");
+    mkdirSync(join(outer, "supabase"), { recursive: true });
+    mkdirSync(join(inner, "supabase"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(outer, "supabase", "config.json"), '{"project_id":"outer"}\n');
+    writeFileSync(join(inner, "supabase", "config.json"), '{"project_id":"inner"}\n');
+    writeFileSync(join(inner, "supabase", "config.toml"), 'project_id = "inner"\n');
+
+    return Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.workdir).toBe(inner);
     }).pipe(Effect.provide(makeLayer({ cwd: nested })));
   });
 

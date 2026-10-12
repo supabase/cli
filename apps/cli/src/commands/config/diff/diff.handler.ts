@@ -29,7 +29,6 @@ import {
   loadResolvedConfig,
   loadTargetResolvedConfig,
   relativeConfigPath,
-  resolveConfigProjectRoot,
 } from "../config.load.ts";
 import { configApiScope, configEnvOriginLookup, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
@@ -105,14 +104,11 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       Effect.mapError((error) => new ConfigDiffWorkdirError({ message: error.message })),
     );
 
-    // The project root climbs only for a defaulted workdir, so `--workdir ../other` compares that
-    // directory's own config against its own linked project. The config loads before target
-    // resolution so a missing file points at `supabase init` rather than a not-linked error, and
-    // a malformed document doesn't burn a branch-resolution round trip.
-    const projectRoot = yield* resolveConfigProjectRoot(cliSettings);
+    // The config loads before target resolution so a missing file points at `supabase init`
+    // rather than a not-linked error, and a malformed document doesn't burn a
+    // branch-resolution round trip.
     const earlyResolvedConfig = yield* loadResolvedConfig(
       cliSettings,
-      projectRoot,
       Option.none(),
       makeLoadError,
     );
@@ -132,14 +128,13 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     // The view `config push` sends: the `[remotes.*]` block matched to `ref` and the env overlay.
     const resolvedConfig = yield* loadTargetResolvedConfig(
       cliSettings,
-      projectRoot,
       earlyResolvedConfig,
       ref,
       makeLoadError,
     );
     const loaded = resolvedConfig.loaded;
     const originFor = configEnvOriginLookup(resolvedConfig.origins, (file) =>
-      relativeConfigPath(projectRoot, file),
+      relativeConfigPath(cliSettings.workdir, file),
     );
 
     const context: ConfigDiffContext = {

@@ -114,7 +114,7 @@ describe("resolveComputeEnabled", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps default workdir selection aligned with the TOML command reader", () => {
+  it.effect("prefers a nested project's config.json over an enclosing config.toml project", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -125,7 +125,7 @@ describe("resolveComputeEnabled", () => {
         path.join(child, "supabase/config.json"),
         '{"experimental":{"compute":true}}',
       );
-      expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(false);
+      expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(true);
       expect(yield* resolve({ args: ["compute", "--workdir", child], cwd: root, env: {} })).toBe(
         true,
       );

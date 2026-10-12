@@ -41,6 +41,7 @@ import {
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
@@ -994,17 +995,21 @@ max_rows = 1000
     ).pipe(Effect.provide(layer));
   });
 
-  it.live("loads config-push env from the project root when --workdir names a subdirectory", () =>
+  it.live("loads config-push env from the project root when invoked from a subdirectory", () =>
     withEnvVar(
       "SUPABASE_YES",
       undefined,
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const sub = yield* makeWorkdirDirectory("nested", "dir");
+        yield* writeWorkdirFile(["supabase", "config.toml"], 'project_id = "test"\n');
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, api } = setup({
           toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
           stdinIsTty: false,
           pipedAnswers: ["n"],
-          workdir: sub,
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
         });
         yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_YES=true\n");
         yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));

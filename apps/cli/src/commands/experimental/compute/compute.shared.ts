@@ -2,7 +2,6 @@ import { findCliProjectPaths } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import {
   readComputeSection,
   type ComputeEntry,
@@ -38,16 +37,19 @@ export interface ComputeProject {
   readonly computeDir: string;
 }
 
-const loadComputeProjectWith = Effect.fnUntraced(function* (options: { readonly search: boolean }) {
+/**
+ * The project as a reader sees it, following the loader's normal JSON-over-TOML selection.
+ *
+ * A command that only reads `[compute.*]` still has to honour `config.json`, or a JSON project
+ * deploys with a guessed runtime and default size/instance counts instead of the ones it
+ * configured.
+ */
+export const loadComputeProject = Effect.gen(function* () {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
   const configValues = yield* CliConfigValues;
 
-  // `projectRoot` comes from the ancestor search, not `settings.workdir`, so a climb takes
-  // `configPath` with it; otherwise a discovered ancestor's `[compute.*]` entries would resolve
-  // `source` against the wrong directory.
-  const paths = yield* findCliProjectPaths(settings.workdir, { search: options.search });
-  const projectRoot = paths?.projectRoot ?? settings.workdir;
+  const projectRoot = settings.workdir;
   const supabaseDir = path.join(projectRoot, "supabase");
 
   const resolvedConfig = yield* configValues.load({
@@ -67,18 +69,6 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: { readonly 
 });
 
 /**
- * The project as a reader sees it, following the loader's normal JSON-over-TOML selection.
- *
- * A command that only reads `[compute.*]` still has to honour `config.json`, or a JSON project
- * deploys with a guessed runtime and default size/instance counts instead of the ones it
- * configured.
- */
-export const loadComputeProject = Effect.gen(function* () {
-  const settings = yield* CommandSettings;
-  return yield* loadComputeProjectWith({ search: shouldSearchAncestors(settings) });
-});
-
-/**
  * As {@link loadComputeProject}, for the `[compute.<name>]` entry writer.
  *
  * `commitComputeEntry` is a TOML text editor, so a JSON project is rejected: appending a
@@ -87,16 +77,14 @@ export const loadComputeProject = Effect.gen(function* () {
 export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
-  const paths = yield* findCliProjectPaths(settings.workdir, {
-    search: shouldSearchAncestors(settings),
-  });
+  const paths = yield* findCliProjectPaths(settings.workdir, { search: false });
   if (paths !== null && path.basename(paths.configPath) === "config.json") {
     return yield* new ComputeJsonConfigUnsupportedError({
       detail: `This project is configured by ${paths.configPath}, which the compute new command cannot edit safely.`,
       suggestion: `Create the source files manually and add the compute entry to ${paths.configPath}, or convert the whole project configuration to TOML before scaffolding it.`,
     });
   }
-  return yield* loadComputeProjectWith({ search: false });
+  return yield* loadComputeProject;
 });
 
 /**

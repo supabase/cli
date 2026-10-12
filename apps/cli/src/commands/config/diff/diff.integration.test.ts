@@ -24,6 +24,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { configDiffHandler } from "./diff.command.ts";
@@ -752,7 +753,11 @@ describe("config diff integration", () => {
         yield* writeProjectFile("config.json", yield* jsonText({ project_id: "test" }));
         const sub = path.join(tempRoot.current, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
-        const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
+        const { layer, api } = setup({
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
+        });
         yield* configDiff(noFlags).pipe(Effect.provide(layer));
         expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
         expect(api.requests).not.toHaveLength(0);
