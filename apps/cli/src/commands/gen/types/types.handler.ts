@@ -510,10 +510,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     });
 
-  const assertLocalDbRunning = (
-    projectId: string,
-    projectEnvValues?: Readonly<Record<string, string>>,
-  ) =>
+  const assertLocalDbRunning = (projectId: string) =>
     Effect.scoped(
       Effect.gen(function* () {
         // Only the exit code and stderr matter; discard stdout so the inspect JSON can't
@@ -525,8 +522,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
-            env: projectEnvValues === undefined ? undefined : { ...projectEnvValues },
-            extendEnv: true,
           },
         );
         const [exitCode, stderr] = yield* Effect.all([
@@ -625,11 +620,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         "stack.backend": backend.kind,
       });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
-      const projectEnvValues = Object.fromEntries(
-        Object.entries(config.projectEnv).filter(
-          ([key]) => !CliConfigKeys.linkedDb.password.env.includes(key),
-        ),
-      );
       const projectId = config.projectId;
 
       const paths = tempPaths(path, cliSettings.workdir);
@@ -659,10 +649,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         return;
       }
 
-      yield* assertLocalDbRunning(projectId, projectEnvValues);
+      yield* assertLocalDbRunning(projectId);
       yield* runGenerate({
         conn: {
-          host: yield* getHostname(projectEnvValues),
+          host: yield* getHostname(
+            yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
+          ),
           port: config.port,
           user: "postgres",
           password: config.password,

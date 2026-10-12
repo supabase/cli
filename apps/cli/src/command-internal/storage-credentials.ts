@@ -114,11 +114,11 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { config, projectEnvValues } = yield* loadLocalStorageConfig(cliSettings.workdir);
+  const { config, resolvedConfig } = yield* loadLocalStorageConfig(cliSettings.workdir);
   const api = yield* resolveLocalApiConfig(config.api);
   const baseUrl = resolveApiExternalUrl(
     api,
-    yield* getHostname(projectEnvValues).pipe(
+    yield* getHostname(resolvedConfig).pipe(
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ),
   );

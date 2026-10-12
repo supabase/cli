@@ -243,8 +243,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             case "local": {
               const backend = yield* currentStackBackend;
               if (backend.kind !== "stack") {
+                const hostConfig = yield* configValues.load({
+                  workdir: cliSettings.workdir,
+                  projectRef: Option.fromNullishOr(mergedLinkedRef),
+                });
                 const connection = {
-                  host: yield* getHostname(),
+                  host: yield* getHostname(hostConfig),
                   port: cfg.port,
                   user: "postgres",
                   password: cfg.password,

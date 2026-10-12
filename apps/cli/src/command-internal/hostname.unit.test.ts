@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
+import type { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   configureLoopbackProxyBypass,
@@ -29,6 +30,20 @@ const runtimeLayer = Layer.succeed(
 );
 
 type HostnameServices = RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto;
+
+/** A resolved config whose env-tier lookup yields `env`; the real tier order is covered by the config service tests. */
+const resolvedConfigWith = (env: Readonly<Record<string, string>> = {}) => ({
+  envValues: (names: Iterable<string>) =>
+    Effect.succeed(
+      Object.fromEntries(
+        [...names].flatMap((name) => {
+          const value = env[name];
+          return value === undefined || value === "" ? [] : [[name, value]];
+        }),
+      ),
+    ),
+});
+const noConfig = resolvedConfigWith();
 
 function configLayer(env: Readonly<Record<string, string | undefined>>) {
   return Layer.mergeAll(
@@ -64,8 +79,8 @@ function writeDockerConfigDir(options: {
 function withDockerConfig<A>(
   options: Parameters<typeof writeDockerConfigDir>[0],
   env: Readonly<Record<string, string | undefined>>,
-  run: () => Effect.Effect<A, Config.ConfigError, HostnameServices>,
-): Effect.Effect<A, Config.ConfigError> {
+  run: () => Effect.Effect<A, Config.ConfigError | CliConfigLoadError, HostnameServices>,
+): Effect.Effect<A, Config.ConfigError | CliConfigLoadError> {
   return Effect.acquireUseRelease(
     Effect.sync(() => writeDockerConfigDir(options)),
     (configDir) => run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
@@ -74,29 +89,35 @@ function withDockerConfig<A>(
 }
 
 describe("getHostname", () => {
-  it.effect("prefers a project override and preserves an explicit empty value", () =>
+  it.effect("uses the resolved SUPABASE_SERVICES_HOSTNAME and ignores an empty one", () =>
     Effect.gen(function* () {
-      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
-      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
+      expect(
+        yield* getHostname(resolvedConfigWith({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })),
+      ).toBe("db.internal");
+      expect(yield* getHostname(resolvedConfigWith({ SUPABASE_SERVICES_HOSTNAME: "" }))).toBe(
+        "127.0.0.1",
+      );
     }).pipe(Effect.provide(configLayer({}))),
   );
 
-  it.effect("reads ambient DOCKER_HOST and extracts IPv4 and IPv6 hosts", () =>
+  it.effect("prefers the resolved hostname over a tcp DOCKER_HOST", () =>
     Effect.gen(function* () {
-      expect(yield* getHostname()).toBe("docker-host");
-      expect(yield* getHostname({})).toBe("docker-host");
-      expect(yield* getHostname({ DOCKER_HOST: "tcp://[::1]:2375" })).toBe("::1");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BunServices.layer,
-          runtimeLayer,
-          ConfigProvider.layer(
-            ConfigProvider.fromEnvRecord({ DOCKER_HOST: "tcp://docker-host:2375" }),
-          ),
-        ),
-      ),
-    ),
+      expect(
+        yield* getHostname(resolvedConfigWith({ SUPABASE_SERVICES_HOSTNAME: "override" })),
+      ).toBe("override");
+    }).pipe(Effect.provide(configLayer({ DOCKER_HOST: "tcp://docker-host:2375" }))),
+  );
+
+  it.effect("extracts the host from an ambient tcp DOCKER_HOST", () =>
+    Effect.gen(function* () {
+      expect(yield* getHostname(noConfig)).toBe("docker-host");
+    }).pipe(Effect.provide(configLayer({ DOCKER_HOST: "tcp://docker-host:2375" }))),
+  );
+
+  it.effect("extracts an IPv6 host from an ambient tcp DOCKER_HOST", () =>
+    Effect.gen(function* () {
+      expect(yield* getHostname(noConfig)).toBe("::1");
+    }).pipe(Effect.provide(configLayer({ DOCKER_HOST: "tcp://[::1]:2375" }))),
   );
 
   it.effect("uses currentContext from Docker config", () =>
@@ -105,7 +126,7 @@ describe("getHostname", () => {
       {},
       () =>
         Effect.gen(function* () {
-          expect(yield* getHostname()).toBe("remote-host");
+          expect(yield* getHostname(noConfig)).toBe("remote-host");
         }),
     ),
   );
@@ -119,7 +140,7 @@ describe("getHostname", () => {
       { DOCKER_CONTEXT: "envctx" },
       () =>
         Effect.gen(function* () {
-          expect(yield* getHostname()).toBe("envctx-host");
+          expect(yield* getHostname(noConfig)).toBe("envctx-host");
         }),
     ),
   );
@@ -130,7 +151,7 @@ describe("getHostname", () => {
       {},
       () =>
         Effect.gen(function* () {
-          expect(yield* getHostname()).toBe("::1");
+          expect(yield* getHostname(noConfig)).toBe("::1");
         }),
     ),
   );
@@ -141,7 +162,7 @@ describe("getHostname", () => {
       {},
       () =>
         Effect.gen(function* () {
-          expect(yield* getHostname()).toBe("127.0.0.1");
+          expect(yield* getHostname(noConfig)).toBe("127.0.0.1");
         }),
     ),
   );
@@ -150,7 +171,7 @@ describe("getHostname", () => {
     withDockerConfig({ currentContext: "ghost" }, {}, () =>
       Effect.gen(function* () {
         expect(yield* resolveDockerDaemonEndpoint()).toEqual(Option.none());
-        expect(yield* getHostname()).toBe("127.0.0.1");
+        expect(yield* getHostname(noConfig)).toBe("127.0.0.1");
       }),
     ),
   );
@@ -158,7 +179,7 @@ describe("getHostname", () => {
   it.effect("falls back to the default context when Docker config is missing", () =>
     withDockerConfig({}, {}, () =>
       Effect.gen(function* () {
-        expect(yield* getHostname()).toBe("127.0.0.1");
+        expect(yield* getHostname(noConfig)).toBe("127.0.0.1");
       }),
     ),
   );
@@ -172,7 +193,7 @@ describe("getHostname", () => {
           expect(yield* resolveDockerDaemonEndpoint()).toEqual(
             Option.some("unix:///var/run/docker.sock"),
           );
-          expect(yield* getHostname()).toBe("127.0.0.1");
+          expect(yield* getHostname(noConfig)).toBe("127.0.0.1");
         }),
     ),
   );
@@ -183,7 +204,7 @@ describe("getHostname", () => {
       { DOCKER_HOST: "tcp://direct-host:2375" },
       () =>
         Effect.gen(function* () {
-          expect(yield* getHostname()).toBe("direct-host");
+          expect(yield* getHostname(noConfig)).toBe("direct-host");
         }),
     ),
   );
@@ -203,7 +224,7 @@ describe("getHostname", () => {
 
   it.effect("returns loopback for an absent or non-tcp endpoint", () =>
     Effect.gen(function* () {
-      expect(yield* getHostname()).toBe("127.0.0.1");
+      expect(yield* getHostname(noConfig)).toBe("127.0.0.1");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -221,13 +242,16 @@ describe("getHostname", () => {
 describe("resolveDockerDaemonEndpoint", () => {
   it.effect("returns DOCKER_HOST verbatim, including non-tcp schemes", () =>
     Effect.gen(function* () {
-      expect(
-        yield* resolveDockerDaemonEndpoint({ DOCKER_HOST: "unix:///custom/engine.sock" }),
-      ).toEqual(Option.some("unix:///custom/engine.sock"));
-      expect(yield* resolveDockerDaemonEndpoint({ DOCKER_HOST: "tcp://docker-host:2375" })).toEqual(
-        Option.some("tcp://docker-host:2375"),
+      expect(yield* resolveDockerDaemonEndpoint()).toEqual(
+        Option.some("unix:///custom/engine.sock"),
       );
-    }).pipe(Effect.provide(configLayer({}))),
+    }).pipe(Effect.provide(configLayer({ DOCKER_HOST: "unix:///custom/engine.sock" }))),
+  );
+
+  it.effect("returns a tcp DOCKER_HOST verbatim", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveDockerDaemonEndpoint()).toEqual(Option.some("tcp://docker-host:2375"));
+    }).pipe(Effect.provide(configLayer({ DOCKER_HOST: "tcp://docker-host:2375" }))),
   );
 
   it.effect("maps the default context to the platform default daemon endpoint", () =>

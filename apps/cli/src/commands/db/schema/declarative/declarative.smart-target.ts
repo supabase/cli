@@ -6,6 +6,8 @@ import {
 } from "../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/project-ref.service.ts";
 import { currentStackBackend } from "../../../../command-internal/stack-backend.ts";
@@ -48,8 +50,13 @@ export interface SmartTargetFlags {
 
 const localConnection = Effect.fnUntraced(function* (local: LocalConn) {
   // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1.
+  const { workdir } = yield* CommandSettings;
+  const resolvedConfig = yield* (yield* CliConfigValues).load({
+    workdir,
+    projectRef: Option.none(),
+  });
   return {
-    host: yield* getHostname(),
+    host: yield* getHostname(resolvedConfig),
     port: local.port,
     user: "postgres",
     password: local.password,

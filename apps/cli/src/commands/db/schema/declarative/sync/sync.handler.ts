@@ -8,6 +8,7 @@ import {
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
+import { CliConfigValues } from "../../../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
@@ -90,6 +91,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const telemetryState = yield* TelemetryState;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
@@ -581,7 +583,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             ),
           )
         : {
-            host: yield* getHostname(),
+            host: yield* getHostname(
+              yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
+            ),
             port: toml.port,
             password: toml.password,
           };

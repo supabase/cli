@@ -535,11 +535,23 @@ export const dbConfigResolverLayer = Layer.effect(
         // `--db-url`/`--local` read base config, since neither merges a remote block.
         // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
-        const localHost = yield* getHostname().pipe(
+        // Only env feeds the hostname, so the config file stays unread here.
+        const hostConfig = yield* configValues
+          .load({
+            workdir: cliSettings.workdir,
+            projectRef: Option.none(),
+            ignoreConfigFile: true,
+            tolerateInvalid: true,
+          })
+          .pipe(Effect.mapError(loadFailureToDbConfigError));
+        const localHost = yield* getHostname(hostConfig).pipe(
           Effect.provideService(RuntimeInfo, runtimeInfo),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.provideService(Crypto.Crypto, crypto),
+          Effect.catchTag("CliConfigLoadError", (error) =>
+            Effect.fail(new Errors.DbConfigLoadError({ message: error.message })),
+          ),
         );
 
         // --db-url (direct) takes precedence.

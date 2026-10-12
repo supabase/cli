@@ -39,7 +39,7 @@ export interface LocalResolvedConfigContext extends ResolvedConfigContext {
 export const loadLocalResolvedConfigContext = Effect.fn("LocalResolvedConfigContext.load")(
   function* (workdir: string, projectRef: Option.Option<string> = Option.none()) {
     const context = yield* loadResolvedConfigContext(workdir, projectRef);
-    const hostname = yield* getHostname().pipe(
+    const hostname = yield* getHostname(context.resolvedConfig).pipe(
       Effect.mapError(
         (cause) =>
           new CliConfigLoadError({ message: `failed to resolve hostname: ${cause.message}` }),

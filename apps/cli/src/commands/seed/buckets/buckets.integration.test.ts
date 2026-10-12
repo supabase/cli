@@ -1235,6 +1235,29 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
+  it.live("prefers a shell SUPABASE_SERVICES_HOSTNAME over supabase/.env", () =>
+    seedScenario(
+      withEnvVar(
+        "SUPABASE_SERVICES_HOSTNAME",
+        "shell-host",
+        Effect.gen(function* () {
+          const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+            toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+            files: { "supabase/.env": "SUPABASE_SERVICES_HOSTNAME=dotenv-host\n" },
+            routes: [
+              { method: "GET", match: "/storage/v1/bucket", body: [] },
+              { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+            ],
+          });
+          const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(requests.length).toBeGreaterThan(0);
+          expect(requests.every((r) => r.url.startsWith("http://shell-host:54321"))).toBe(true);
+        }),
+      ),
+    ),
+  );
+
   it.live("switches the gateway to https when SUPABASE_API_TLS_ENABLED overrides the config", () =>
     Effect.gen(function* () {
       const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
