@@ -382,10 +382,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const resolvedConfig = yield* loadDbTomlResolvedConfig(workdir, ref, ignoreConfigFile);
-  const withheldNames = new Set(resolvedConfig.withheldEnv.map((held) => held.envName));
-  const projectEnv = Object.fromEntries(
-    Object.entries(resolvedConfig.projectEnvValues).filter(([name]) => !withheldNames.has(name)),
-  );
+  const projectEnv = resolvedConfig.projectEnvValues;
   const { config } = resolvedConfig.materialized;
   const fail = (message: string) => Effect.fail(new DbConfigLoadError({ message }));
   const getKey = <A, X, F extends CliConfigFlagDeclaration>(key: CliConfigKey<A, X, F>) =>
