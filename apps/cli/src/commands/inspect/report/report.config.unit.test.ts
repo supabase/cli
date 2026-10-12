@@ -132,17 +132,6 @@ describe("readInspectRules", () => {
     }),
   );
 
-  it.effect("fails when a rule field is not a string", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        readRules({
-          configToml: '[[experimental.inspect.rules]]\nquery = 123\nname = "r"\n',
-        }),
-      );
-      expect(error._tag).toBe("CliConfigParseError");
-    }),
-  );
-
   it.effect(
     "fails on a single [experimental.inspect.rules] table instead of an array of tables",
     () =>
@@ -177,6 +166,7 @@ describe("readInspectRules", () => {
             '[[experimental.inspect.rules]]\nquery = "SELECT 1"\nname = "r"\npass = true\n',
         }),
       );
+      expect(numeric._tag).toBe("CliConfigParseError");
       expect(causeText(numeric)).toContain('["rules"][0]["query"]');
       expect(causeText(boolean)).toContain('["rules"][0]["pass"]');
     }),
