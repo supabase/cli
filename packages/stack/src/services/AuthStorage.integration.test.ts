@@ -277,8 +277,9 @@ describe("service catalog", () => {
 
           yield* signupBatch("second");
           const afterSecond = yield* authBackends;
-          const firstPids = new Set(afterFirst.map((backend) => backend.pid));
-          expect(afterSecond.filter((backend) => !firstPids.has(backend.pid))).toEqual([]);
+          const secondPids = new Set(afterSecond.map((backend) => backend.pid));
+          const idleAfterFirst = afterFirst.filter((backend) => backend.state === "idle");
+          expect(idleAfterFirst.filter((backend) => !secondPids.has(backend.pid))).toEqual([]);
 
           yield* auth.stop;
           yield* database.stop;

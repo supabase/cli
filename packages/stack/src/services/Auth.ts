@@ -89,9 +89,10 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         GOTRUE_DB_DATABASE_URL: databaseUrl,
         DATABASE_URL: databaseUrl,
         GOTRUE_DB_DRIVER: "postgres",
-        // GoTrue keeps no idle connections unless an idle pool size is set.
-        GOTRUE_DB_MAX_POOL_SIZE: "10",
-        GOTRUE_DB_MAX_IDLE_POOL_SIZE: "10",
+        // Idle connections spare Auth a reconnect per request; a connection Postgres closes while Auth runs
+        // fails one Auth request before it is replaced.
+        GOTRUE_DB_MAX_POOL_SIZE: "2",
+        GOTRUE_DB_MAX_IDLE_POOL_SIZE: "2",
         GOTRUE_SITE_URL: creation.config.siteUrl ?? "http://localhost:3000",
         GOTRUE_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
         GOTRUE_JWT_KEYS: creation.config.gotrueJwtKeys ?? defaultJwtKeys,
