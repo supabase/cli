@@ -34,6 +34,11 @@ const rule = (fail: string) =>
     "",
   ].join("\n");
 
+const causeText = (error: object) => {
+  const cause: unknown = Reflect.get(error, "cause");
+  return cause instanceof Error ? cause.message : String(cause);
+};
+
 const readRules = (options: {
   readonly configToml?: string;
   readonly dotEnv?: string;
@@ -135,6 +140,45 @@ describe("readInspectRules", () => {
         }),
       );
       expect(error._tag).toBe("CliConfigParseError");
+    }),
+  );
+
+  it.effect(
+    "fails on a single [experimental.inspect.rules] table instead of an array of tables",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          readRules({
+            configToml: [
+              "[experimental.inspect.rules]",
+              'query = "SELECT 1"',
+              'name = "solo"',
+              'pass = "ok"',
+              'fail = "bad"',
+              "",
+            ].join("\n"),
+          }),
+        );
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(causeText(error)).toContain('["experimental"]["inspect"]["rules"]');
+      }),
+  );
+
+  it.effect("fails on a numeric or boolean rule field and names the field", () =>
+    Effect.gen(function* () {
+      const numeric = yield* Effect.flip(
+        readRules({
+          configToml: '[[experimental.inspect.rules]]\nquery = 123\nname = "r"\n',
+        }),
+      );
+      const boolean = yield* Effect.flip(
+        readRules({
+          configToml:
+            '[[experimental.inspect.rules]]\nquery = "SELECT 1"\nname = "r"\npass = true\n',
+        }),
+      );
+      expect(causeText(numeric)).toContain('["rules"][0]["query"]');
+      expect(causeText(boolean)).toContain('["rules"][0]["pass"]');
     }),
   );
 
