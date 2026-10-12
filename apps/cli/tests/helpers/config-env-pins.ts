@@ -1,4 +1,4 @@
-import { ConfigProvider, Context, Effect, Layer } from "effect";
+import { ConfigProvider, Context, Effect } from "effect";
 
 /** Env values a test pinned; the test config layers build their shell tier from these alone. */
 export const ConfigEnvPins = Context.Reference<Readonly<Record<string, string>>>(
@@ -16,12 +16,6 @@ export const definedEnv = (
       value === undefined ? [] : [[name, value]],
     ),
   );
-
-/** Pins `process.env` as of layer build, for suites that set variables on it themselves. */
-export const processEnvPinsLayer: Layer.Layer<never> = Layer.effect(
-  ConfigEnvPins,
-  Effect.sync(() => definedEnv(process.env)),
-);
 
 /** A provider over `explicit` plus the current pins, never the ambient `process.env`. */
 export const pinnedConfigProvider = (

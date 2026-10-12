@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -67,7 +67,7 @@ const query = Effect.fn("PgDeltaNextShadowStackTest.query")(function* (
   url: string,
   sql: string,
 ) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
   return yield* session.query(sql);
@@ -116,7 +116,6 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(BunServices.layer),
         );
         const services = Layer.mergeAll(
-          BunServices.layer,
           FetchHttpClient.layer,
           stackBackendLayer("stack"),
           apiLayer,
@@ -129,7 +128,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.succeed(NetworkIdFlag, Option.none()),
           Layer.succeed(CliArgs, { args: [] }),
           shadowLayer,
-        );
+        ).pipe(Layer.provideMerge(BunServices.layer));
 
         const urls = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -168,7 +167,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         expect(api).toEqual([]);
       }).pipe(
         Effect.scoped,
-        (body) => withEnvVar("SUPABASE_SHADOW_CACHE", "1", body),
+        (body) => withConfigEnv({ SUPABASE_SHADOW_CACHE: "1" }, body),
         Effect.provide(BunServices.layer),
       ),
     180_000,

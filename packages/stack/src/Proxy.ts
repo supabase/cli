@@ -1,6 +1,6 @@
 import { NodeSink, NodeStream } from "@effect/platform-node";
 import { Data, Effect, Exit, FiberSet, Scope, Stream } from "effect";
-import type { SocketServer } from "effect/unstable/socket";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Net from "node:net";
 import { PortError } from "./Ports.ts";
 
@@ -17,7 +17,7 @@ const proxyError = (cause: unknown) =>
   new ProxyError({ message: cause instanceof Error ? cause.message : String(cause), cause });
 
 export interface TcpListener {
-  readonly address: SocketServer.Address;
+  readonly address: NetAddress.SocketAddress;
   /** Installs the per-connection handler; keeps the listener alive until interrupted. */
   readonly run: <R, E, _>(
     handler: (socket: Net.Socket) => Effect.Effect<_, E, R>,
@@ -85,10 +85,17 @@ export const bindTcp = (
     const bound = server.address();
     if (bound === null)
       return yield* new PortError({ key: "tcp", message: "TCP listener has no address" });
-    const address: SocketServer.Address =
+    const address =
       typeof bound === "string"
-        ? { _tag: "UnixAddress", path: bound }
-        : { _tag: "TcpAddress", hostname: bound.address, port: bound.port };
+        ? NetAddress.unixPathAddress(bound)
+        : yield* Effect.fromResult(
+            NetAddress.inetAddressFromIpString(bound.address, bound.port),
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PortError({ key: "tcp", message: "TCP listener has no address", cause }),
+            ),
+          );
 
     const run = <R, E, _>(
       handler: (socket: Net.Socket) => Effect.Effect<_, E, R>,

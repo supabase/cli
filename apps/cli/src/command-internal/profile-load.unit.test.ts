@@ -1,15 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
-import { afterAll, describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { loadProfile, type ProfileLoadError } from "./profile-load.ts";
-
-const tempRoot = mkdtempSync(join(tmpdir(), "supabase-profile-load-"));
-afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 
 const load = (token: string) =>
   Effect.gen(function* () {
@@ -23,11 +16,21 @@ const loadError = (token: string) =>
     Effect.map((error: ProfileLoadError) => error.message),
   );
 
-const writeProfile = (name: string, content: string): string => {
-  const filePath = join(tempRoot, name);
-  writeFileSync(filePath, content);
-  return filePath;
-};
+/** A path named `name` in a fresh temp directory, removed when the test ends. */
+const tempPath = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return path.join(yield* fs.makeTempDirectoryScoped({ prefix: "supabase-profile-load-" }), name);
+  });
+
+const writeProfile = (name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const filePath = yield* tempPath(name);
+    yield* fs.writeFileString(filePath, content);
+    return filePath;
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("loadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively", () =>
@@ -59,10 +62,11 @@ describe("loadProfile", () => {
 
   it.effect("treats dot-files as having an extension (`.yml` IS extension `yml`)", () =>
     Effect.gen(function* () {
-      expect(yield* loadError(join(tempRoot, ".yml"))).toBe(
-        `failed to read profile: open ${join(tempRoot, ".yml")}: no such file or directory`,
+      const missing = yield* tempPath(".yml");
+      expect(yield* loadError(missing)).toBe(
+        `failed to read profile: open ${missing}: no such file or directory`,
       );
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("fails on a missing file with the open error", () =>
@@ -75,15 +79,16 @@ describe("loadProfile", () => {
 
   it.effect("fails on a directory with the read error", () =>
     Effect.gen(function* () {
-      const dir = join(tempRoot, "dir.yml");
-      mkdirSync(dir, { recursive: true });
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* tempPath("dir.yml");
+      yield* fs.makeDirectory(dir);
       expect(yield* loadError(dir)).toBe(`failed to read profile: read ${dir}: is a directory`);
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("resolves a valid YAML profile to its api_url", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "valid.yml",
         [
           "name: harness",
@@ -99,7 +104,7 @@ describe("loadProfile", () => {
   it.effect("accepts mixed-case keys case-insensitively", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "mixed-case.yml",
         [
           "Name: harness",
@@ -123,7 +128,7 @@ describe("loadProfile", () => {
       expect(builtin.dashboardUrl).toBe("https://supabase.green/dashboard");
       // pooler_host is omitted below; it's optional and stays empty (disables the MITM
       // assertion).
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "endpoints.yml",
         [
           "name: harness",
@@ -141,7 +146,7 @@ describe("loadProfile", () => {
 
   it.effect("reports unknown keys LOWERCASED", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "bogus-upper.yml",
         [
           "name: harness",
@@ -159,7 +164,7 @@ describe("loadProfile", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "named.yml",
         [
           "name: harness",
@@ -174,7 +179,7 @@ describe("loadProfile", () => {
 
   it.effect("rejects unknown keys with a sorted unknown-keys line", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "extra-keys.yml",
         [
           "name: extra",
@@ -193,7 +198,7 @@ describe("loadProfile", () => {
 
   it.effect("reports missing required fields one per line, in field order", () =>
     Effect.gen(function* () {
-      const file = writeProfile("incomplete.yml", "name: incomplete\n");
+      const file = yield* writeProfile("incomplete.yml", "name: incomplete\n");
       expect(yield* loadError(file)).toBe(
         [
           "invalid profile:",
@@ -207,7 +212,7 @@ describe("loadProfile", () => {
 
   it.effect("reports a missing name (only) — required covers empty strings", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "noname.yml",
         [
           "api_url: http://127.0.0.1:44444",
@@ -221,7 +226,7 @@ describe("loadProfile", () => {
 
   it.effect("weakly stringifies scalars, so `api_url: 123` fails http_url, not decoding", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "typebad.yml",
         [
           "name: t",
@@ -236,7 +241,7 @@ describe("loadProfile", () => {
 
   it.effect("validates the hostname_rfc1123 and http_url format tags", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "badhost.yml",
         [
           "name: t",
@@ -257,7 +262,7 @@ describe("loadProfile", () => {
 
   it.effect("fails a malformed YAML file closed with the parse-error prefix", () =>
     Effect.gen(function* () {
-      const file = writeProfile("malformed.yml", "name: [broken\n  api_url");
+      const file = yield* writeProfile("malformed.yml", "name: [broken\n  api_url");
       const message = yield* loadError(file);
       expect(message).toMatch(/^failed to read profile: invalid config file: /);
     }),
@@ -265,7 +270,7 @@ describe("loadProfile", () => {
 
   it.effect("fails closed on non-scalar values (array on a string field)", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "arrayval.yml",
         [
           "name: t",

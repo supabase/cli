@@ -7,7 +7,7 @@ import {
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../config/cli-config-subtree.ts";
@@ -27,6 +27,7 @@ import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { stackDatabaseVersion } from "./stack-database-version.ts";
 
 import {
   resolveJwtSecret,
@@ -135,7 +136,11 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
+  ...(["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const).map((key) => ({
+    path: `experimental.${key}`,
+    // Legacy Compose forwards these to OrioleDB; the stack does not, so fail rather than drop them.
+    active: (config: CliConfig) => (config.db.orioledb_version ?? "") !== "",
+  })),
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -248,6 +253,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
+      const databaseVersion = yield* Effect.fromResult(
+        stackDatabaseVersion(validatedConfig.db),
+      ).pipe(Effect.mapError((message) => new StackConfigError({ message })));
 
       const externalProviders = yield* Effect.try({
         try: () =>
@@ -477,7 +485,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             {
               service: "database",
               config: {
-                version: String(validatedConfig.db.major_version),
+                version: databaseVersion,
                 ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,

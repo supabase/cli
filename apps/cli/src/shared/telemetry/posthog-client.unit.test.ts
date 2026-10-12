@@ -7,7 +7,7 @@ import {
   HttpClientError,
   type HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { PostHog } from "posthog-node";
 import { makePosthogFetch, scopedPosthogClient } from "./posthog-client.ts";
 

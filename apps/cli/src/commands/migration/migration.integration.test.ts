@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Predicate } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";

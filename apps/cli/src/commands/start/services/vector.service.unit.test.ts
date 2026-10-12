@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "@effect/vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   buildVectorContainerSpec,

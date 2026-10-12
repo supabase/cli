@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Path, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { watch } from "node:fs"; // oxlint-disable-line effecttsgo/node-builtin-import -- synchronous watcher subscription must precede child spawn.
 import { stripVTControlCharacters } from "node:util";
 import { fileURLToPath } from "node:url";

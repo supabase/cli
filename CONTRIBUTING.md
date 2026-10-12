@@ -52,17 +52,19 @@ mise install
 
 `mise install` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-| Tool    | Version source                                      |
-| ------- | --------------------------------------------------- |
-| Bun     | `.bun-version`                                      |
-| Node.js | `.node-version`                                     |
-| pnpm    | `devEngines.packageManager` field in `package.json` |
+| Tool        | Version source                                      |
+| ----------- | --------------------------------------------------- |
+| Bun         | `.bun-version`                                      |
+| Node.js     | `.node-version`                                     |
+| pnpm        | `devEngines.packageManager` field in `package.json` |
+| jactionlint | `mise.toml`                                         |
+| shellcheck  | `mise.toml`                                         |
 
 Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, and pnpm installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, and `package.json`.
+`mise` is not required. If you already have Bun, Node, pnpm, jactionlint, and shellcheck installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, and `package.json`. `pnpm check:all` runs jactionlint, which only checks workflow `run:` scripts when shellcheck is on `PATH`.
 
 ### Install dependencies
 

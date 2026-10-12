@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { ambientEnvironment } from "../shared/config/cli-config-provider.layer.ts";
+import { type Cause, Effect, FileSystem, Option, Path } from "effect";
 
 /**
  * libpq `.pgpass` password lookup: when a connection string omits the password, this reads
@@ -75,9 +73,8 @@ export function findPgpassPassword(
   return "";
 }
 
-/** Environment lookup for `PGPASSFILE`/`APPDATA`; defaults to the ambient environment. */
-type PassfileEnv = (name: string) => string | undefined;
-const processEnv: PassfileEnv = (name) => ambientEnvironment()[name];
+/** Environment lookup for `PGPASSFILE`/`APPDATA`. */
+type PassfileEnv = (name: "APPDATA" | "PGPASSFILE") => string | undefined;
 
 /**
  * Resolves the passfile path with libpq precedence: an explicit `passfile=`
@@ -88,7 +85,11 @@ const processEnv: PassfileEnv = (name) => ambientEnvironment()[name];
  * no usable passfile (`undefined`) rather than falling back to `PGPASSFILE`/the default. Only
  * an *absent* (`undefined`) setting falls through.
  */
-function pgpassFilePath(env: PassfileEnv, passfile: string | undefined): string | undefined {
+const pgpassFilePath = Effect.fnUntraced(function* (
+  env: PassfileEnv,
+  passfile: string | undefined,
+): Effect.fn.Return<string | undefined, Cause.UnknownError, Path.Path> {
+  const path = yield* Path.Path;
   if (passfile !== undefined) {
     return passfile.length > 0 ? passfile : undefined;
   }
@@ -99,39 +100,38 @@ function pgpassFilePath(env: PassfileEnv, passfile: string | undefined): string 
   if (process.platform === "win32") {
     const appData = env("APPDATA");
     return appData !== undefined && appData.length > 0
-      ? join(appData, "postgresql", "pgpass.conf")
+      ? path.join(appData, "postgresql", "pgpass.conf")
       : undefined;
   }
-  const home = homedir();
-  return home.length > 0 ? join(home, ".pgpass") : undefined;
-}
+  const home = yield* Effect.try(() => homedir());
+  return home.length > 0 ? path.join(home, ".pgpass") : undefined;
+});
 
 /**
  * Resolves a password from the `.pgpass` file for the given connection, or `""` when the
  * file is absent/unreadable or has no matching entry. A unix-socket host (a path) matches
  * `localhost`.
  *
- * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to the ambient environment); `passfile` is an
+ * `env` supplies `PGPASSFILE`/`APPDATA`; `passfile` is an
  * explicit connection-string `passfile=` setting that takes precedence.
  */
-export function pgpassPassword(
+export const pgpassPassword = Effect.fnUntraced(function* (
   host: string,
   port: number,
   database: string,
   username: string,
-  env: PassfileEnv = processEnv,
+  env: PassfileEnv,
   passfile?: string,
-): string {
-  const path = pgpassFilePath(env, passfile);
+): Effect.fn.Return<string, Cause.UnknownError, FileSystem.FileSystem | Path.Path> {
+  const path = yield* pgpassFilePath(env, passfile);
   if (path === undefined) {
     return "";
   }
-  let contents: string;
-  try {
-    contents = readFileSync(path, "utf8");
-  } catch {
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* fs.readFileString(path).pipe(Effect.option);
+  if (Option.isNone(contents)) {
     return "";
   }
   const matchHost = host.startsWith("/") ? "localhost" : host;
-  return findPgpassPassword(contents, matchHost, String(port), database, username);
-}
+  return findPgpassPassword(contents.value, matchHost, String(port), database, username);
+});

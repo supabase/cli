@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";

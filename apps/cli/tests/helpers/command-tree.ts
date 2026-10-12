@@ -1,5 +1,5 @@
 import { Context, Option } from "effect";
-import type { Command, Param } from "effect/unstable/cli";
+import type { Command, Param } from "effect/cli";
 
 import { unwrapParam } from "../../src/command-internal/param-introspection.ts";
 import { commandInternals, flattenSubcommands } from "../../src/docs/docs-introspection.ts";

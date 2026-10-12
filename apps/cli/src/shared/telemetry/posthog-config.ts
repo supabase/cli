@@ -20,7 +20,7 @@ function readNonEmptyString(
   provider: ConfigProvider.ConfigProvider,
   name: string,
 ): Effect.Effect<Option.Option<string>, Config.ConfigError> {
-  return Config.option(Config.string(name))
+  return Config.option(Config.String(name))
     .parse(provider)
     .pipe(Effect.map(Option.flatMap(nonEmptyString)));
 }

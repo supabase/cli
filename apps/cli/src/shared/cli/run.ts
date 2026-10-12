@@ -16,9 +16,9 @@ import {
   Scope,
   Stdio,
 } from "effect";
-import { CliError, CliOutput, Command } from "effect/unstable/cli";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliError, CliOutput, Command } from "effect/cli";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";

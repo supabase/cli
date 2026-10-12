@@ -67,9 +67,10 @@ Keep the local feedback loop fast; full CI runs for ready PRs targeting `develop
 Use `pnpm test` only when its scope fits the change; the CLI's aggregate script includes full E2E,
 so use `pnpm run test:unit` and `pnpm run test:integration` with affected test files locally.
 When repo-wide validation is warranted, use root `pnpm check:all` or `pnpm fix:all`. These are the
-repo-wide quality entrypoints: `check:all` runs generic and Effect lint, format, knip, and type
-checks; `fix:all` applies generic and Effect lint, format, and knip fixes. Do not use production
-`as` casts to silence type errors.
+repo-wide quality entrypoints: `check:all` runs generic and Effect lint, format, knip, type, and
+GitHub Actions workflow checks (jactionlint and shellcheck, installed by mise); `fix:all` applies
+generic and Effect lint, format, and knip fixes. Do not use production `as` casts to silence type
+errors.
 
 Use root Turbo entrypoints for live and auxiliary workflows:
 
@@ -135,8 +136,10 @@ Non-breaking PRs target `develop`. Breaking PRs target `next` with a `type(scope
 title lint rejects `!` titles on any other base. `v*.x` maintenance branches take only security
 fixes and fixes for fundamentally broken behaviour, through `hotfix/*` or `backport/*` PRs. If a
 change touches release infrastructure and a `v*.x` branch exists, flag that it needs a cherry-pick
-to each active `v*.x`; the paths are listed in the runbook. For any release, major cut, or
-maintenance task, follow [the release process](apps/cli/docs/release-process.md).
+to each active `v*.x`; the paths are listed in the runbook. A stable fix that cannot wait for the
+weekly deploy is a `hotfix/*` PR into `main` titled `fix`, `perf`, or `revert`; there is no
+rollback. For any release, hotfix, major cut, or maintenance task, follow
+[the release process](apps/cli/docs/release-process.md).
 
 ## Refactoring
 

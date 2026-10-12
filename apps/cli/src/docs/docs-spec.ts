@@ -1,7 +1,7 @@
 import { Option } from "effect";
 import { stringify } from "yaml";
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param } from "effect/unstable/cli";
+import { GlobalFlag } from "effect/cli";
+import type { Command, Param } from "effect/cli";
 import {
   choiceKeysOf,
   commandInternals,
@@ -148,9 +148,9 @@ function docsPrimitiveVarname(
   switch (single.primitiveType._tag) {
     case "Boolean":
       return undefined;
-    case "Integer":
+    case "Int":
       return "int";
-    case "Float":
+    case "Finite":
       return "float";
     case "Date":
       return "time";
@@ -165,7 +165,7 @@ function docsTypeDefault(
 ): string {
   if (single.primitiveType._tag === "Boolean") return "false";
   if (isVariadic) return "[]";
-  if (single.primitiveType._tag === "Integer" || single.primitiveType._tag === "Float") return "0";
+  if (single.primitiveType._tag === "Int" || single.primitiveType._tag === "Finite") return "0";
   return "";
 }
 

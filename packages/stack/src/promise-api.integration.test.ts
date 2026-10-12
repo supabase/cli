@@ -1,6 +1,7 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Redacted, Schema } from "effect";
+import * as NetAddress from "effect/net/NetAddress";
 import { discover, StackError, type LogRecord, type Observation } from "./index.ts";
 import { createTestStack } from "./testing.ts";
 
@@ -57,7 +58,7 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-promise-failure-" });
       const occupied = yield* NodeSocketServer.make({ host: "127.0.0.1", port: 0 });
-      if (occupied.address._tag !== "TcpAddress") return yield* Effect.die("Expected TCP");
+      if (!NetAddress.isInetAddress(occupied.address)) return yield* Effect.die("Expected TCP");
       const port = occupied.address.port;
 
       const failure = yield* Effect.promise(() =>

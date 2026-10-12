@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import {
   AgentFlag,
@@ -349,7 +349,7 @@ describe("withCommandTelemetry", () => {
     () => {
       const analytics = mockContextualAnalytics();
       const config = {
-        service: Flag.choice("service", ["database"] as const),
+        service: Flag.Literals("service", ["database"] as const),
       };
 
       return Effect.void.pipe(
@@ -573,10 +573,10 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("passes Flag.choice values through verbatim", () => {
+  it.live("passes Flag.Literals values through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {
-      lang: Flag.choice("lang", ["typescript", "go", "python"] as const),
+      lang: Flag.Literals("lang", ["typescript", "go", "python"] as const),
     };
 
     return Effect.void.pipe(
@@ -601,12 +601,12 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live(
-    "passes a Flag.withDefault-wrapped Flag.choice value through verbatim (Map(Optional(Single)))",
+    "passes a Flag.withDefault-wrapped Flag.Literals value through verbatim (Map(Optional(Single)))",
     () => {
       const analytics = mockContextualAnalytics();
       // `.pipe(Flag.withDefault(...))` composes as `Map(Optional(Single))`.
       const config = {
-        algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(
+        algorithm: Flag.Literals("algorithm", ["RS256", "ES256"] as const).pipe(
           Flag.withDefault("ES256" as const),
         ),
       };
@@ -635,10 +635,10 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  it.live("resolves a Flag.choice's shorthand alias to its canonical name", () => {
+  it.live("resolves a Flag.Literals's shorthand alias to its canonical name", () => {
     const analytics = mockContextualAnalytics();
     const config = {
-      type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+      type: Flag.Literals("type", ["saml"] as const).pipe(Flag.withAlias("t")),
     };
 
     return Effect.void.pipe(
@@ -661,10 +661,10 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("passes an Optional-wrapped Flag.choice value through verbatim", () => {
+  it.live("passes an Optional-wrapped Flag.Literals value through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {
-      algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(Flag.optional),
+      algorithm: Flag.Literals("algorithm", ["RS256", "ES256"] as const).pipe(Flag.optional),
     };
 
     return Effect.void.pipe(
@@ -693,8 +693,8 @@ describe("withCommandTelemetry", () => {
   it.live("still redacts non-choice string flags even when config is provided", () => {
     const analytics = mockContextualAnalytics();
     const config = {
-      lang: Flag.choice("lang", ["typescript", "go"] as const),
-      schema: Flag.string("schema"),
+      lang: Flag.Literals("lang", ["typescript", "go"] as const),
+      schema: Flag.String("schema"),
     };
 
     return Effect.void.pipe(
@@ -1472,8 +1472,8 @@ describe("withCommandTelemetry", () => {
   it.live(
     "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output)",
     () => {
-      // `db diff` declares its own local `output: Flag.string("output")` (a file path) rather
-      // than a `Flag.choice`. Simulated here: `output` is in the handler's own `flags` record
+      // `db diff` declares its own local `output: Flag.String("output")` (a file path) rather
+      // than a `Flag.Literals`. Simulated here: `output` is in the handler's own `flags` record
       // (so `isFromHandler` is true) but absent from `config`, so it must not inherit safety from
       // `GLOBAL_CHOICE_FLAG_NAMES` just because the CLI name collides with the global flag.
       const analytics = mockContextualAnalytics();

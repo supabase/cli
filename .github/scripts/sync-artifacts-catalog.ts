@@ -98,11 +98,50 @@ function workflowCommand(kind: "error" | "warning", message: string): string {
   return `::${kind} ::${encoded}`;
 }
 
-/** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
-function releaseLine(version: string): string {
+/**
+ * Upstream suffixes of engine variants whose data is tied to one build, so each build is its own
+ * line beside the stock major: postgres `17.11.0.002-orioledb` is on line `17.11.0.002-orioledb`,
+ * and a newer OrioleDB build is added rather than replacing a pin existing projects still use.
+ */
+const LINE_VARIANTS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  postgres: ["-orioledb"],
+};
+
+function lineVariant(service: string, version: string): string | undefined {
+  return LINE_VARIANTS[service]?.find((suffix) => version.endsWith(suffix));
+}
+
+/** `version` without its engine-variant suffix, so versions on one variant line compare. */
+function withoutVariant(service: string, version: string): string {
+  const variant = lineVariant(service, version);
+  return variant === undefined ? version : version.slice(0, -variant.length);
+}
+
+/**
+ * Leading numeric component, `v` stripped; an engine-variant build is its own line. Only postgres
+ * carries more than one line.
+ */
+function releaseLine(service: string, version: string): string {
+  if (lineVariant(service, version) !== undefined) return version;
   const withoutPrefix = version.replace(/^[vV]/, "");
   const separator = withoutPrefix.indexOf(".");
   return separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
+}
+
+/** Whether `service` assigns release tags to lines rather than accepting any newer upstream. */
+function hasReleaseLines(service: string, additional: ReadonlyArray<unknown>): boolean {
+  return additional.length > 0 || LINE_VARIANTS[service] !== undefined;
+}
+
+/**
+ * Whether an uncarried `line` may be added on first publish: an engine-variant build whose stock
+ * major the catalog already carries.
+ */
+function isAddableLine(service: string, line: string, carried: (line: string) => boolean): boolean {
+  return (
+    lineVariant(service, line) !== undefined &&
+    carried(releaseLine(service, withoutVariant(service, line)))
+  );
 }
 
 /**
@@ -119,8 +158,8 @@ function releaseTagPattern(service: string, upstream?: string): RegExp {
 
 /**
  * Strips a leading `v`/`V` and one trailing `-sha-<hex>`, then parses the remainder as dot-
- * separated integers. Returns undefined when the remainder isn't `^\d+(\.\d+)*$` — a version that
- * isn't comparable this way, such as an OrioleDB-style suffix.
+ * separated integers. Returns undefined when the remainder isn't `^\d+(\.\d+)*$`; callers strip an
+ * engine-variant suffix with `withoutVariant` first.
  */
 function comparableVersion(version: string): ReadonlyArray<number> | undefined {
   const stripped = version.replace(/^[vV]/, "").replace(/-sha-[0-9a-f]+$/i, "");
@@ -150,7 +189,8 @@ export interface CatalogPinUpdate {
   readonly service: string;
   readonly version: string;
   readonly revision: number;
-  readonly previousVersion: string;
+  /** Absent when this update adds the line. */
+  readonly previousVersion?: string;
   readonly target: "default" | "additional";
 }
 
@@ -572,13 +612,16 @@ function collectServicePins(source: string, service: string): ServicePins | unde
 
 type SelectedEntry =
   | { readonly kind: "default" | "additional"; readonly version: string; readonly span: PinSpan }
+  /** An addable line with no pin yet; its pin is inserted after the last additional pin. */
+  | { readonly kind: "new-line"; readonly version: string; readonly insertAt: number }
   | { readonly kind: "unmodelled-service" }
   | { readonly kind: "unmodelled-release-line"; readonly known: ReadonlyArray<string> };
 
 /**
  * Locates `service`'s pin expression in `source`: the `definition("<service>", <pin>, ...)`
  * default pin, and, when `version` is given, whichever pin (default or additional) sits on its
- * release line. With no `version`, returns the default pin unconditionally.
+ * release line, or where an addable line's first pin goes. With no `version`, returns the default
+ * pin unconditionally.
  */
 function selectEntry(source: string, service: string, version: string | undefined): SelectedEntry {
   const pins = collectServicePins(source, service);
@@ -589,19 +632,26 @@ function selectEntry(source: string, service: string, version: string | undefine
     return { kind: "default", version: defaultPin.version, span: defaultPin };
   }
 
+  const line = releaseLine(service, version);
   const bumpsDefault =
-    additional.length === 0 || releaseLine(version) === releaseLine(defaultPin.version);
+    !hasReleaseLines(service, additional) || line === releaseLine(service, defaultPin.version);
   if (bumpsDefault) {
     return { kind: "default", version: defaultPin.version, span: defaultPin };
   }
-  const sameLine = additional.find((pin) => releaseLine(pin.version) === releaseLine(version));
-  if (sameLine === undefined) {
-    return {
-      kind: "unmodelled-release-line",
-      known: [defaultPin.version, ...additional.map((pin) => pin.version)],
-    };
+  const sameLine = additional.find((pin) => releaseLine(service, pin.version) === line);
+  if (sameLine !== undefined) {
+    return { kind: "additional", version: sameLine.version, span: sameLine };
   }
-  return { kind: "additional", version: sameLine.version, span: sameLine };
+  const lastAdditional = additional.at(-1);
+  const carried = (candidate: string) =>
+    [defaultPin, ...additional].some((pin) => releaseLine(service, pin.version) === candidate);
+  if (lastAdditional !== undefined && isAddableLine(service, line, carried)) {
+    return { kind: "new-line", version, insertAt: lastAdditional.end };
+  }
+  return {
+    kind: "unmodelled-release-line",
+    known: [defaultPin.version, ...additional.map((pin) => pin.version)],
+  };
 }
 
 /** The `{service, upstream_version, revision, release_version}` payload a `slim-release-published` dispatch carries. */
@@ -691,18 +741,18 @@ function writePin(
 }
 
 /**
- * One hotfix or upgrade a `slim-release-published` run should apply, on one of `service`'s
- * release lines. `line` is the leading numeric component (`releaseLine`), present only when the
- * service carries more than one line (only postgres does today) — it's already folded into
- * `branch`, so a caller never needs to consume it separately.
+ * One hotfix, upgrade, or line addition a `slim-release-published` run should apply, on one of
+ * `service`'s release lines. `line` is the `releaseLine` key, present only when the service
+ * carries more than one line (only postgres does today) — it's already folded into `branch`, so a
+ * caller never needs to consume it separately.
  */
 export interface SlimUpdate {
-  readonly kind: "hotfix" | "upgrade";
+  readonly kind: "hotfix" | "upgrade" | "add";
   readonly line?: string;
   readonly branch: string;
   readonly title: string;
-  /** The release version pinned before this update, e.g. `v2.195.0-r0`. */
-  readonly fromRelease: string;
+  /** The release version pinned before this update, e.g. `v2.195.0-r0`; absent for `add`. */
+  readonly fromRelease?: string;
   readonly toUpstream: string;
   /** The release version this update pins, e.g. `v2.195.0-r1`. */
   readonly toRelease: string;
@@ -716,13 +766,14 @@ export interface SlimUpdate {
  * catalog itself (`fromRelease`'s upstream), not only to values freshly parsed from a tag.
  */
 function buildUpdate(
-  kind: "hotfix" | "upgrade",
+  kind: "hotfix" | "upgrade" | "add",
   service: string,
   line: string,
   hasLines: boolean,
-  pinned: { readonly upstream: string; readonly revision: number },
+  pinned: { readonly upstream: string; readonly revision: number } | undefined,
   toUpstream: string,
   toRevision: number,
+  branchLine = line,
 ): SlimUpdate {
   if (!SERVICE_NAME_PATTERN.test(service)) {
     throw new InvalidPayloadError(`invalid service: ${JSON.stringify(service)}`);
@@ -734,21 +785,22 @@ function buildUpdate(
   if (!RELEASE_VERSION_PATTERN.test(toRelease)) {
     throw new InvalidPayloadError(`invalid release version: ${JSON.stringify(toRelease)}`);
   }
-  const fromRelease = `${pinned.upstream}-r${pinned.revision}`;
-  const suffix = hasLines ? `-${line}` : "";
+  const suffix = hasLines ? `-${branchLine}` : "";
   const branch =
     kind === "hotfix" ? `slim-hotfix/${service}${suffix}` : `slim-bump/${service}${suffix}`;
   const title =
     kind === "hotfix"
       ? `chore(stack): pin ${service} ${toRelease}`
-      : `chore(stack): bump ${service} to ${toRelease}`;
+      : kind === "add"
+        ? `chore(stack): add ${service} ${toRelease}`
+        : `chore(stack): bump ${service} to ${toRelease}`;
 
   return {
     kind,
     line: hasLines ? line : undefined,
     branch,
     title,
-    fromRelease,
+    ...(pinned === undefined ? {} : { fromRelease: `${pinned.upstream}-r${pinned.revision}` }),
     toUpstream,
     toRelease,
   };
@@ -787,11 +839,13 @@ export function planSlimUpdates(
   }
 
   const allPins = [pins.defaultPin, ...pins.additional];
-  const hasLines = pins.additional.length > 0;
+  const hasLines = hasReleaseLines(service, pins.additional);
+  const compareOnLine = (a: string, b: string) =>
+    compareVersions(withoutVariant(service, a), withoutVariant(service, b));
 
   const pinnedByLine = new Map<string, { readonly upstream: string; readonly revision: number }>();
   for (const span of allPins) {
-    const line = hasLines ? releaseLine(span.version) : SINGLE_LINE_KEY;
+    const line = hasLines ? releaseLine(service, span.version) : SINGLE_LINE_KEY;
     const text = catalog.slice(span.start, span.end);
     const revisionMatch = PIN_REVISION.exec(text);
     if (revisionMatch === null) {
@@ -801,6 +855,7 @@ export function planSlimUpdates(
     }
     pinnedByLine.set(line, { upstream: span.version, revision: Number(revisionMatch[1]) });
   }
+  const carried = (line: string) => pinnedByLine.has(line);
 
   const tagPattern = releaseTagPattern(service);
   const candidatesByLine = new Map<string, Array<{ upstream: string; revision: number }>>();
@@ -811,8 +866,10 @@ export function planSlimUpdates(
     const revision = Number(match[2]);
     let line: string;
     if (hasLines) {
-      line = releaseLine(upstream);
-      if (!pinnedByLine.has(line)) {
+      line = releaseLine(service, upstream);
+      // `selectEntry` inserts a new line after the last additional pin, so it needs one.
+      const addable = pins.additional.length > 0 && isAddableLine(service, line, carried);
+      if (!carried(line) && !addable) {
         warnings.push(
           workflowCommand(
             "warning",
@@ -829,6 +886,36 @@ export function planSlimUpdates(
     candidatesByLine.set(line, list);
   }
 
+  /** The newest comparable upstream among `candidates` and its highest committed revision. */
+  const newest = (
+    candidates: ReadonlyArray<{ readonly upstream: string; readonly revision: number }>,
+    isComparable: (upstream: string) => boolean,
+  ) => {
+    const highestRevisionByUpstream = new Map<string, number>();
+    for (const candidate of candidates) {
+      const current = highestRevisionByUpstream.get(candidate.upstream);
+      if (current === undefined || candidate.revision > current) {
+        highestRevisionByUpstream.set(candidate.upstream, candidate.revision);
+      }
+    }
+    let best: { upstream: string; revision: number } | undefined;
+    for (const [upstream, revision] of highestRevisionByUpstream) {
+      if (!isComparable(upstream)) {
+        warnings.push(
+          workflowCommand(
+            "warning",
+            `${service} ${upstream} is not a comparable version; ignoring.`,
+          ),
+        );
+        continue;
+      }
+      if (best === undefined || (compareOnLine(upstream, best.upstream) ?? 0) > 0) {
+        best = { upstream, revision };
+      }
+    }
+    return best;
+  };
+
   const updates: SlimUpdate[] = [];
   for (const [line, pinned] of pinnedByLine) {
     const candidates = candidatesByLine.get(line) ?? [];
@@ -839,40 +926,21 @@ export function planSlimUpdates(
     const hotfixRevision =
       sameUpstreamRevisions.length > 0 ? Math.max(...sameUpstreamRevisions) : undefined;
 
-    const highestRevisionByUpstream = new Map<string, number>();
-    for (const candidate of candidates) {
-      const current = highestRevisionByUpstream.get(candidate.upstream);
-      if (current === undefined || candidate.revision > current) {
-        highestRevisionByUpstream.set(candidate.upstream, candidate.revision);
-      }
-    }
+    const best = newest(
+      candidates,
+      (upstream) => compareOnLine(upstream, pinned.upstream) !== undefined,
+    );
 
-    let bestUpstream: string | undefined;
-    for (const upstream of highestRevisionByUpstream.keys()) {
-      const comparedToPinned = compareVersions(upstream, pinned.upstream);
-      if (comparedToPinned === undefined) {
-        warnings.push(
-          workflowCommand(
-            "warning",
-            `${service} ${upstream} is not a comparable version; ignoring.`,
-          ),
-        );
-        continue;
-      }
-      if (bestUpstream === undefined || (compareVersions(upstream, bestUpstream) ?? 0) > 0) {
-        bestUpstream = upstream;
-      }
-    }
-
-    if (bestUpstream !== undefined && compareVersions(bestUpstream, pinned.upstream) === 1) {
-      const revision = highestRevisionByUpstream.get(bestUpstream) as number;
-      updates.push(buildUpdate("upgrade", service, line, hasLines, pinned, bestUpstream, revision));
+    if (best !== undefined && compareOnLine(best.upstream, pinned.upstream) === 1) {
+      updates.push(
+        buildUpdate("upgrade", service, line, hasLines, pinned, best.upstream, best.revision),
+      );
       if (hotfixRevision !== undefined && hotfixRevision > pinned.revision) {
         const skippedRelease = `${pinned.upstream}-r${hotfixRevision}`;
         warnings.push(
           workflowCommand(
             "warning",
-            `${service} ${skippedRelease} hotfix skipped because this line is upgrading to ${bestUpstream}-r${revision}; run --service ${service} --release ${skippedRelease} to pin the hotfix alone.`,
+            `${service} ${skippedRelease} hotfix skipped because this line is upgrading to ${best.upstream}-r${best.revision}; run --service ${service} --release ${skippedRelease} to pin the hotfix alone.`,
           ),
         );
       }
@@ -881,6 +949,41 @@ export function planSlimUpdates(
         buildUpdate("hotfix", service, line, hasLines, pinned, pinned.upstream, hotfixRevision),
       );
     }
+  }
+
+  // Each variant family (e.g. `17-orioledb`) adds only its newest build, and only past every
+  // carried one: builds no shipped CLI pinned are never backfilled.
+  const variantFamily = (line: string) =>
+    `${releaseLine(service, withoutVariant(service, line))}${lineVariant(service, line) ?? ""}`;
+  const newLinesByFamily = new Map<string, ReadonlyArray<string>>();
+  for (const line of [...candidatesByLine.keys()].filter((line) => !carried(line))) {
+    const family = variantFamily(line);
+    newLinesByFamily.set(family, [...(newLinesByFamily.get(family) ?? []), line]);
+  }
+  for (const family of [...newLinesByFamily.keys()].sort()) {
+    const best = newest(
+      (newLinesByFamily.get(family) ?? []).flatMap((line) => candidatesByLine.get(line) ?? []),
+      (upstream) => comparableVersion(withoutVariant(service, upstream)) !== undefined,
+    );
+    if (best === undefined) continue;
+    const superseded = [...pinnedByLine].some(
+      ([line, pinned]) =>
+        variantFamily(line) === family && (compareOnLine(pinned.upstream, best.upstream) ?? 0) >= 0,
+    );
+    if (superseded) continue;
+    // One add branch per family, so a newer build rewrites a still-pending add PR.
+    updates.push(
+      buildUpdate(
+        "add",
+        service,
+        releaseLine(service, best.upstream),
+        hasLines,
+        undefined,
+        best.upstream,
+        best.revision,
+        family,
+      ),
+    );
   }
 
   return { updates, warnings };
@@ -1005,6 +1108,20 @@ export async function refreshCatalogPin(input: {
       input.io,
     ),
   };
+  if (entry.kind === "new-line") {
+    return {
+      source:
+        input.catalog.slice(0, entry.insertAt) +
+        `, ${JSON.stringify(pin.upstreamVersion)}: ${serializePin(pin)}` +
+        input.catalog.slice(entry.insertAt),
+      update: {
+        service: input.service,
+        version: resolvedUpstream,
+        revision: resolution.pin.revision,
+        target: "additional",
+      },
+    };
+  }
   const written = writePin(input.catalog, entry, pin);
   if (!written.changed) return { source: input.catalog };
   return {
@@ -1173,21 +1290,27 @@ async function runManual(argv: ReadonlyArray<string>): Promise<void> {
   }
   await Bun.write(catalogPath, result.source);
   console.log(
-    `Pinned ${service} ${result.update.target} ${result.update.previousVersion} -> ${result.update.version} r${result.update.revision}.`,
+    result.update.previousVersion === undefined
+      ? `Added ${service} ${result.update.target} ${result.update.version} r${result.update.revision}.`
+      : `Pinned ${service} ${result.update.target} ${result.update.previousVersion} -> ${result.update.version} r${result.update.revision}.`,
   );
 }
 
 /**
  * Line-oriented encoding of one `SlimUpdate`, for a bash loop: `kind`, `branch`, `title` and
  * `release` (the loop's four required fields, driving the checkout/pin/commit/PR steps) plus
- * `from` (the release replaced, for the PR body's "from -> to"). Every field is guaranteed
- * non-empty by construction. `\x1f` (unit separator) is the delimiter, not a tab: a title can
- * carry ordinary whitespace, and `IFS=$'\t' read` would collapse it.
+ * `from` (the release replaced, for the PR body's "from -> to"; empty for `add`). Every other
+ * field is guaranteed non-empty by construction. `\x1f` (unit separator) is the delimiter, not a
+ * tab: a title can carry ordinary whitespace, and `IFS=$'\t' read` would collapse it.
  */
 function updateLine(update: SlimUpdate): string {
-  return [update.kind, update.branch, update.title, update.toRelease, update.fromRelease].join(
-    "\x1f",
-  );
+  return [
+    update.kind,
+    update.branch,
+    update.title,
+    update.toRelease,
+    update.fromRelease ?? "",
+  ].join("\x1f");
 }
 
 /**

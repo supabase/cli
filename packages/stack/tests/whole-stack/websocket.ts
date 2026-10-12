@@ -1,6 +1,6 @@
-import { Deferred, Effect, Queue, Schedule, Schema, Scope } from "effect";
+import { Effect, Queue, Schedule, Schema, Scope } from "effect";
 import { NodeSocket } from "@effect/platform-node";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 class RealtimeProbeError extends Schema.TaggedError<RealtimeProbeError>()("RealtimeProbeError", {
   message: Schema.String,
@@ -52,33 +52,22 @@ export const openWebSocket = Effect.fn("WholeStack.openWebSocket")(
   (url: string): Effect.Effect<WebSocketChannel, WebSocketChannelError, Scope.Scope> =>
     Effect.gen(function* () {
       const messages = yield* Queue.unbounded<string, WebSocketChannelError>();
-      const ready = yield* Deferred.make<void, Socket.SocketError>();
       const socket = yield* Socket.makeWebSocket(url, { openTimeout: "60 seconds" }).pipe(
         Effect.provide(NodeSocket.layerWebSocketConstructorWS),
       );
-      yield* socket
-        .runString((message) => Queue.offer(messages, message), {
-          onOpen: Deferred.succeed(ready, undefined),
-        })
-        .pipe(
-          Effect.catch((cause: Socket.SocketError) =>
-            Effect.all([
-              Deferred.fail(ready, cause),
-              Queue.fail(messages, channelError(cause)),
-            ]).pipe(Effect.asVoid),
-          ),
-          Effect.andThen(
-            Queue.fail(messages, new WebSocketChannelError({ message: "WebSocket closed" })).pipe(
-              Effect.asVoid,
-            ),
-          ),
-          Effect.forkScoped,
-        );
-      yield* Deferred.await(ready).pipe(Effect.mapError(channelError));
+      const pull = yield* Socket.readerString(socket).pipe(Effect.mapError(channelError));
+      yield* pull.pipe(
+        Effect.flatMap((frames) => Queue.offerAll(messages, frames)),
+        Effect.forever,
+        Effect.catch((cause: Socket.SocketError) =>
+          Queue.fail(messages, channelError(cause)).pipe(Effect.asVoid),
+        ),
+        Effect.forkScoped,
+      );
       const writer = yield* socket.writer;
       return {
         messages,
-        send: (message) => writer(message).pipe(Effect.mapError(channelError)),
+        send: (message) => writer.write(message).pipe(Effect.mapError(channelError)),
       };
     }),
 );

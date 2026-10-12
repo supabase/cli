@@ -7,10 +7,10 @@ import type {
   V1GetPoolerConfigOutput,
   V1GetProjectOutput,
 } from "@supabase/api/effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import {
   Cause,
   ConfigProvider,

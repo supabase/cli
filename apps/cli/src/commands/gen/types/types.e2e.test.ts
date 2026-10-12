@@ -361,9 +361,9 @@ describe("gen types e2e", () => {
   // An unset or empty variable reads as `Option.none()`.
   const remote = Effect.runSync(
     Effect.all({
-      projectRef: Config.option(Config.string(REMOTE_PROJECT_REF_ENV)),
-      accessToken: Config.option(Config.string("SUPABASE_ACCESS_TOKEN")),
-      enabled: Config.option(Config.string(REMOTE_E2E_FLAG)),
+      projectRef: Config.option(Config.String(REMOTE_PROJECT_REF_ENV)),
+      accessToken: Config.option(Config.String("SUPABASE_ACCESS_TOKEN")),
+      enabled: Config.option(Config.String(REMOTE_E2E_FLAG)),
     }),
   );
   const remoteEnabled = Option.getOrElse(remote.enabled, () => "") === "1";

@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Duration, Effect, Layer } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/process/ChildProcessSpawner";
 
 import { makeDockerImageResolver } from "../../src/command-internal/docker-image-resolve.ts";
 

@@ -16,9 +16,9 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { vi } from "vitest";
 
 import {
@@ -34,6 +34,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
@@ -47,6 +49,7 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
+import { bindMountSpecSource } from "../../command-internal/docker-bind-classify.ts";
 import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
@@ -1495,6 +1498,80 @@ describe("start integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.live("starts Studio in a fresh project on Podman, which rejects missing bind sources", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const snippetsDir = path.join(tempRoot.current, "supabase", "snippets");
+        const route = defaultRoute();
+        const { layer, child } = yield* setup({
+          route: (args) =>
+            Effect.gen(function* () {
+              const sources = args.flatMap((arg, index) =>
+                args[0] === "create" && arg === "-v"
+                  ? [bindMountSpecSource(args[index + 1] ?? "")]
+                  : [],
+              );
+              for (const source of sources.filter((s) => s.startsWith(tempRoot.current)))
+                if (!(yield* fs.exists(source)))
+                  return {
+                    exitCode: 125,
+                    stderr: [`Error: statfs ${source}: no such file or directory`],
+                  };
+              return route(args);
+            }),
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        expect(createdContainerNames(child.spawned).some((name) => name.includes("_studio_"))).toBe(
+          true,
+        );
+        expect(yield* fs.exists(snippetsDir)).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("leaves supabase/snippets uncreated when Studio is excluded", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const { layer } = yield* setup();
+
+        yield* start(flags({ exclude: ["studio"] })).pipe(Effect.provide(layer));
+
+        expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "snippets"))).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("fails before creating anything when a file blocks supabase/snippets", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "snippets"), "");
+        const { layer, child } = yield* setup();
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StartSnippetsDirectoryError");
+          expect(Cause.pretty(exit.cause)).toContain(
+            "Unable to create the Studio snippets directory",
+          );
+          expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+            error_kind: "unknown",
+            error_fingerprint: "tag:StartSnippetsDirectoryError:platform_error",
+          });
+        }
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "create" || (s.args[0] === "network" && s.args[1] === "create"),
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.live("emits a machine status payload in json mode instead of the pretty table", () =>
       Effect.gen(function* () {
         const { layer, out } = yield* setup({ format: "json" });
@@ -2555,7 +2632,7 @@ content_path = "./supabase/templates/custom_notice.html"
             yield* start(flags({ exclude: ["edge-runtime"] }));
             expect(http.vectorListCalls).toBe(1);
             expect(http.deletedVectorBuckets).toHaveLength(0);
-          }).pipe(Effect.provide(layer)),
+          }).pipe(Effect.provide(layer), withEmptyConfigEnv),
         );
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2579,7 +2656,7 @@ content_path = "./supabase/templates/custom_notice.html"
             Effect.gen(function* () {
               yield* start(flags({ exclude: ["edge-runtime"] }));
               expect(out.stderrText).not.toContain("Do you want to overwrite its properties?");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2606,7 +2683,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(http.deletedVectorBuckets).toHaveLength(0);
               expect(out.stderrText).not.toContain("Do you want to prune it?");
               expect(out.stderrText).toContain("Keeping vector bucket");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -2620,9 +2697,8 @@ content_path = "./supabase/templates/custom_notice.html"
           route: freshVolumeRoute(defaultRoute()),
           httpClientLayer: http.layer,
         });
-        return yield* withEnvVar(
-          "SUPABASE_YES",
-          "1",
+        return yield* withConfigEnv(
+          { SUPABASE_YES: "1" },
           Effect.gen(function* () {
             yield* start(flags({ exclude: ["edge-runtime"] }));
             expect(http.deletedVectorBuckets).toHaveLength(1);
@@ -3492,7 +3568,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(out.stderrText).toContain("Keeping vector bucket");
               expect(out.stderrText).toContain("stale-vec");
               expect(out.stderrText).not.toContain("Do you want to prune it?");
-            }).pipe(Effect.provide(layer)),
+            }).pipe(Effect.provide(layer), withEmptyConfigEnv),
           );
         }).pipe(
           Effect.provideService(HealthCheckTimeoutSeconds, 0),
@@ -3651,9 +3727,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
     it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () =>
       // See `start.handler.ts`'s doc comment on this resolution for the full precedence.
-      withEnvVar(
-        "SUPABASE_NETWORK_ID",
-        "env-net",
+      withConfigEnv(
+        { SUPABASE_NETWORK_ID: "env-net" },
         Effect.gen(function* () {
           const { layer, child } = yield* setup();
 
@@ -5245,7 +5320,9 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
           }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer), (body) =>
+          withConfigEnv({ PASSKEY_ENABLED: "true" }, body),
+        ),
     );
 
     it.live(

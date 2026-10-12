@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliOutput, Command } from "effect/cli";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   mockAnalytics,
@@ -20,7 +20,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   withConfigEnv,
-  withEnvVar,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
@@ -755,9 +755,8 @@ describe("gen signing-key integration", () => {
 
   it.live("honors SUPABASE_YES and overwrites even when a piped 'n' is present", () => {
     const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
         yield* writeSigningKeys("[]\n");
@@ -775,9 +774,7 @@ describe("gen signing-key integration", () => {
     () => {
       const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
       // Clears any shell SUPABASE_YES so this proves the project-.env source specifically.
-      return withEnvVar(
-        "SUPABASE_YES",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -803,9 +800,8 @@ describe("gen signing-key integration", () => {
       pipedAnswer: "n",
       cliArgs: ["gen", "signing-key", "--yes=false"],
     });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
         yield* writeSigningKeys("[]\n");

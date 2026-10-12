@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { inspectDbIndexSizes } from "./index-sizes.handler.ts";
 import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";

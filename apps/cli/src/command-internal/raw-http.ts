@@ -1,5 +1,5 @@
 import { Option, type Redacted } from "effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 /**
  * Applies the Management API auth + identification headers to a raw `HttpClientRequest`:

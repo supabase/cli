@@ -13,7 +13,7 @@ import {
   Redacted,
   Stdio,
 } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";

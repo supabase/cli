@@ -4,10 +4,14 @@ Use this when writing outgoing HTTP calls, Effect HttpClient adapters, status cl
 
 Use Effect HTTP client modules for outgoing HTTP in app/provider code:
 
-- `effect/unstable/http/HttpClient`
-- `effect/unstable/http/HttpClientRequest`
-- `effect/unstable/http/HttpClientResponse`
-- `effect/unstable/http/HttpClientError`
+- `effect/http/HttpClient`
+- `effect/http/HttpClientRequest`
+- `effect/http/HttpClientResponse`
+- `effect/http/HttpClientError`
+
+The grouped import is `import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"`.
+Current v4 exports no longer include the prerelease `effect/unstable/http` path.
+Individual APIs may still carry an `@stability unstable` annotation; import placement is not a stability guarantee.
 
 Prefer Effect HttpClient in Effect application and provider code when its typed errors, layers, and transforms are useful. Raw `fetch` remains reasonable for browser or edge constraints, small adapters, platform transports, and libraries that intentionally avoid unstable Effect HTTP APIs.
 
@@ -39,7 +43,7 @@ Useful APIs:
 - `HttpClient.filterStatusOk` / `HttpClientResponse.filterStatusOk` before decoding when non-2xx responses are failures.
 - `HttpClientResponse.schemaBodyJson(...)` for body-only decoding, `schemaJson(...)` for status/headers/body decoding, and `schemaNoBody(...)` for status/headers decoding.
 - `HttpClient.retryTransient(...)` for common transient HTTP failures.
-- `HttpClient.withRateLimiter(...)` for proactive pacing and learning from rate-limit headers. It requires a `RateLimiter` plus initial window, limit, and key options; it adds `RateLimiterError` to the error channel and retries `429` responses by default.
+- `HttpClient.withRateLimiter(...)` for proactive pacing and learning from rate-limit headers. It requires a `RateLimiter` plus initial window, limit, and key options; it adds `RateLimiterError` to the error channel and retries `429` responses by default. Set `times` to bound those retries (`0` disables them); the default is unlimited.
 
 ## Retry And Rate Limits
 

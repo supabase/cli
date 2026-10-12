@@ -5,8 +5,8 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { rawFunctionConfigRecord } from "../../shared/functions/deploy.ts";
@@ -111,6 +111,7 @@ import type { StartFlags } from "./start.command.ts";
 import {
   StartConfigLoadError,
   StartInvalidConfigError,
+  StartSnippetsDirectoryError,
   StartWorkdirError,
 } from "./start.errors.ts";
 import { partitionStartExcludeFlags } from "./start.exclude.ts";
@@ -765,6 +766,19 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           projectEnvValues,
         )
       : new Set<string>();
+    /* Docker creates a missing bind source, but `podman create -v` rejects it. */
+    if (gates.studio)
+      yield* fs
+        .makeDirectory(path.join(cliSettings.workdir, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new StartSnippetsDirectoryError({
+                message: `Unable to create the Studio snippets directory: ${error.message}`,
+                cause: error,
+              }),
+          ),
+        );
 
     // `--network-id` wins over the generated `supabase_network_<project>` fallback, falling back
     // to `SUPABASE_NETWORK_ID` only when the flag was never passed. See

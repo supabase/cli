@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
@@ -9,30 +9,30 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { init } from "./init.handler.ts";
 
 const config = {
-  interactive: Flag.boolean("interactive").pipe(
+  interactive: Flag.Boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode to configure IDE settings."),
     Flag.withAlias("i"),
     Flag.withDefault(false),
   ),
-  useOrioledb: Flag.boolean("use-orioledb").pipe(
+  useOrioledb: Flag.Boolean("use-orioledb").pipe(
     Flag.withDescription("Use OrioleDB storage engine for Postgres."),
     Flag.withDefault(false),
   ),
-  force: Flag.boolean("force").pipe(
+  force: Flag.Boolean("force").pipe(
     Flag.withDescription("Overwrite existing supabase/config.toml."),
     Flag.withDefault(false),
   ),
-  withVscodeWorkspace: Flag.boolean("with-vscode-workspace").pipe(
+  withVscodeWorkspace: Flag.Boolean("with-vscode-workspace").pipe(
     Flag.withDescription("Generate VS Code workspace."),
     Flag.withHidden,
     Flag.withDefault(false),
   ),
-  withVscodeSettings: Flag.boolean("with-vscode-settings").pipe(
+  withVscodeSettings: Flag.Boolean("with-vscode-settings").pipe(
     Flag.withDescription("Generate VS Code settings for Deno."),
     Flag.withHidden,
     Flag.withDefault(false),
   ),
-  withIntellijSettings: Flag.boolean("with-intellij-settings").pipe(
+  withIntellijSettings: Flag.Boolean("with-intellij-settings").pipe(
     Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
     Flag.withHidden,
     Flag.withDefault(false),

@@ -1,4 +1,4 @@
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { removedCommand } from "../../../../command-internal/removed-command.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
@@ -8,16 +8,16 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),

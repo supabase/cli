@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
-import type * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeDockerImageResolver } from "./docker-image-resolve.ts";

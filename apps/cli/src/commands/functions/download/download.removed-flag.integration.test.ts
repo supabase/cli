@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Stdio } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { AccessTokenRequiredError } from "../../../auth/errors.ts";
 import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";

@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 import { StorageGatewayStatusError } from "./storage-gateway.errors.ts";

@@ -1,5 +1,9 @@
 name: Check Deploy
 
+# Always reports a result so it can be a required check on `main`, and so the
+# promotion's head SHA carries a success for the release App's direct push.
+# Stays on pull_request: the check must attach to the PR head SHA, and only
+# same-repository heads are accepted. See apps/cli/docs/release-process.md.
 on:
   pull_request:
     types:
@@ -15,9 +19,37 @@ permissions:
 
 jobs:
   check:
-    if: github.head_ref != 'develop' && !startsWith(github.head_ref, 'hotfix/')
+    name: Check deploy
     runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      BASE_REPO: ${{ github.repository }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
-      - run: |
-          echo "Pull requests to main branch are only allowed from develop or hotfix/* branches."
+      - name: Verify head branch and title
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REF" = "develop" ] && [ "$HEAD_REPO" = "$BASE_REPO" ]; then
+            echo "Head branch is develop: scheduled promotion, nothing to check."
+            exit 0
+          fi
+          case "$HEAD_REF" in
+            hotfix/*) ;;
+            *)
+              echo "::error ::Pull requests into main are only allowed from this repository's develop branch or hotfix/* branches, got '$HEAD_REPO:$HEAD_REF'. Rename the branch (git branch -m hotfix/<name>) and reopen the PR, or target develop instead."
+              exit 1
+              ;;
+          esac
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error ::Hotfixes must come from a hotfix/* branch in this repository, not a fork ('$HEAD_REPO'). Push the branch here and reopen the PR."
+            exit 1
+          fi
+          # semantic-release publishes a patch only for fix, perf, and revert.
+          # A `!` before the colon would publish a major.
+          if printf '%s' "$PR_TITLE" | grep -Eq '^(fix|perf|revert)(\([^)]*\))?: '; then
+            echo "Hotfix title '$PR_TITLE' publishes a patch release."
+            exit 0
+          fi
+          echo "::error ::Hotfix title '$PR_TITLE' would not publish a patch release. Start it with fix, perf, or revert, with an optional (scope) and no '!' before the colon, for example 'fix(cli): …'. Edit the PR title and this check re-runs."
           exit 1

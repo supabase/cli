@@ -2,10 +2,10 @@ import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { resolveAccessToken } from "./resolve-token.ts";

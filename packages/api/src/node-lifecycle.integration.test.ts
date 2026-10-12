@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { Socket } from "node:net";
 import { describe, expect, test } from "vitest";
 import { Effect } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { createApiClient as createNodeApiClient } from "./node.ts";
 
 async function startApiServer() {

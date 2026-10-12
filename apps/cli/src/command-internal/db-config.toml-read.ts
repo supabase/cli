@@ -449,13 +449,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const buckets = config.storage.buckets ?? {};
   for (const [bucketName, bucket] of Object.entries(buckets)) {
-    try {
-      ramInBytes(bucket.file_size_limit);
-    } catch {
-      return yield* fail(
-        `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
-      );
-    }
+    yield* Effect.try({
+      try: () => ramInBytes(bucket.file_size_limit),
+      catch: () =>
+        new DbConfigLoadError({
+          message: `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
+        }),
+    });
   }
 
   const authEnabled = config.auth.enabled;
@@ -483,15 +483,18 @@ const readDbTomlCore = Effect.fnUntraced(function* (
           ),
         );
       yield* Effect.try({
-        try: () => {
-          const parsed: unknown = JSON.parse(keysJson);
-          if (!Array.isArray(parsed)) {
-            throw new Error("signing keys must be a JSON array of JWKs");
-          }
-          return parsed;
-        },
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+        try: (): unknown => JSON.parse(keysJson),
         catch: (cause) => new DbConfigLoadError({ message: signingKeysDecodeErrorMessage(cause) }),
-      });
+      }).pipe(
+        Effect.filterOrFail(
+          Array.isArray,
+          () =>
+            new DbConfigLoadError({
+              message: signingKeysDecodeErrorMessage("signing keys must be a JSON array of JWKs"),
+            }),
+        ),
+      );
     }
 
     let passkeyInput: PasskeyInput | undefined;

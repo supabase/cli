@@ -21,6 +21,8 @@ import {
   FAKE_EMPTY_TAR,
   FAKE_UNSTAMPED_PGDATA_TAR,
   fakePgDataTar,
+  withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
   mockDockerDaemonCliSpawner,
   useTempWorkdir,
@@ -52,7 +54,9 @@ const defaultConfig: CliConfig = decodeConfig({});
 const tempRoot = useTempWorkdir("shadow-cache-");
 
 const withShadowCacheEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-  withEnvVar(SHADOW_CACHE_ENV, value, body);
+  value === undefined
+    ? withEmptyConfigEnv(body)
+    : withConfigEnv({ [SHADOW_CACHE_ENV]: value }, body);
 
 /**
  * Isolates the global shadow-baseline cache under a per-test `SUPABASE_HOME` so tests never
@@ -62,10 +66,9 @@ const withShadowCacheHome = <A, E, R>(
   value: string | undefined,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  withEnvVar(
-    "SUPABASE_HOME",
-    join(tempRoot.current, "_supabase_home"),
-    withShadowCacheEnv(value, body),
+  withShadowCacheEnv(
+    value,
+    withEnvVar("SUPABASE_HOME", join(tempRoot.current, "_supabase_home"), body),
   );
 
 function fakeCluster(opts: { readonly failConnect?: boolean } = {}) {
@@ -183,8 +186,11 @@ describe("acquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const peek = yield* peekShadowBaseline(shadowInput(fs, path));
         expect(peek).toEqual({ state: "uncachable" });
-      }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configProvider)),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
+      }),
+    ).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+      Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)),
+    );
   });
 
   it.live("is today's bare create when the cache is explicitly disabled", () => {

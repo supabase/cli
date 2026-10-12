@@ -14,8 +14,8 @@ import {
   Path,
 } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -25,8 +25,9 @@ import {
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
+  withEmptyConfigEnv,
   withEnvVar,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -376,6 +377,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     mockRuntimeInfo(),
+    shadowCacheDisabledLayer,
   );
 
   const layer =
@@ -465,7 +467,6 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 };
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 describe("migration squash", () => {
   describe("flag surface & ordering", () => {
@@ -838,7 +839,7 @@ describe("migration squash", () => {
           // Reverted once the command's scope closes; never leaks into a later command in
           // the same process.
           const ambient = yield* Config.option(
-            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+            Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
           ).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
@@ -866,7 +867,7 @@ describe("migration squash", () => {
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
           }
-        }).pipe(Effect.provide(s.layer), (body) =>
+        }).pipe(Effect.provide(s.layer), withEmptyConfigEnv, (body) =>
           withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
         );
       },

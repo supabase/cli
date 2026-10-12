@@ -23,7 +23,7 @@ jobs:
         run: |
           docker run --rm -a STDOUT supabase/pg_prove:builder pg_prove --version \
           | tr ' ' '=' \
-          >> $GITHUB_OUTPUT
+          >> "$GITHUB_OUTPUT"
         shell: bash
 
   build_image:
@@ -83,6 +83,10 @@ jobs:
     needs:
       - settings
       - merge_manifest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     # Call workflow explicitly because events from actions cannot trigger more actions
     uses: ./.github/workflows/mirror-image.yml
     with:

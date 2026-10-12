@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
@@ -18,11 +18,11 @@ import {
 import { storageLs } from "./ls.handler.ts";
 
 const config = {
-  path: Argument.string("path").pipe(
+  path: Argument.String("path").pipe(
     Argument.withDescription("Storage path to list (e.g. ss:///bucket/docs)."),
     Argument.optional,
   ),
-  recursive: Flag.boolean("recursive").pipe(
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively list a directory."),
     Flag.withDefault(false),

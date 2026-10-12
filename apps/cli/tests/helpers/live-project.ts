@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
 import { Cause, Data, Effect, Exit, Schedule, Schema } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { getDomain } from "tldts";
 
 import {

@@ -39,7 +39,7 @@ const firstExplicitLongFlagValue = (
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
 const readEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
     Effect.map(Option.getOrUndefined),
   );

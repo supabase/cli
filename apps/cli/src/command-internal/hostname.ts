@@ -11,7 +11,7 @@ const DEFAULT_CONTEXT_NAME = "default";
 
 // The docker client only sees the shell env, so daemon discovery never reads a project `.env*`.
 const shellOption = (name: string): Effect.Effect<Option.Option<string>, Config.ConfigError> =>
-  Config.option(Config.string(name));
+  Config.option(Config.String(name));
 
 const dockerConfigDir = (): Effect.Effect<string, Config.ConfigError, RuntimeInfo | Path.Path> =>
   Effect.gen(function* () {
@@ -117,21 +117,20 @@ export function platformDefaultDockerHost(platform: NodeJS.Platform): string {
 }
 
 /** Resolves the daemon endpoint selected by the Docker CLI. */
-export const resolveDockerDaemonEndpoint = (): Effect.Effect<
+export const resolveDockerDaemonEndpoint = Effect.fnUntraced(function* (): Effect.fn.Return<
   Option.Option<string>,
   Config.ConfigError,
   RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto
-> =>
-  Effect.gen(function* () {
-    const runtime = yield* RuntimeInfo;
-    const dockerHost = yield* shellOption("DOCKER_HOST");
-    if (Option.isSome(dockerHost) && dockerHost.value.length > 0) return dockerHost;
-    const contextName = yield* currentDockerContextName();
-    if (contextName === DEFAULT_CONTEXT_NAME) {
-      return Option.some(platformDefaultDockerHost(runtime.platform));
-    }
-    return yield* dockerContextEndpointHost(contextName);
-  });
+> {
+  const runtime = yield* RuntimeInfo;
+  const dockerHost = yield* shellOption("DOCKER_HOST");
+  if (Option.isSome(dockerHost) && dockerHost.value.length > 0) return dockerHost;
+  const contextName = yield* currentDockerContextName();
+  if (contextName === DEFAULT_CONTEXT_NAME) {
+    return Option.some(platformDefaultDockerHost(runtime.platform));
+  }
+  return yield* dockerContextEndpointHost(contextName);
+});
 
 /** Resolves the hostname for local service connections: `SUPABASE_SERVICES_HOSTNAME` (shell, then project `.env*`), else the shell-selected Docker daemon's tcp host. */
 export const getHostname = (

@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";

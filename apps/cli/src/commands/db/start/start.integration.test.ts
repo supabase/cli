@@ -13,9 +13,9 @@ import {
   Stream,
   Redacted,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { vi } from "vitest";
 
 import {
@@ -31,7 +31,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
-  withEnvVar,
+  withConfigEnv,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -743,7 +744,7 @@ describe("db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
       }).pipe(
-        (body) => withEnvVar("SUPABASE_DEBUG", undefined, body),
+        withEmptyConfigEnv,
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.process.stderr.write = originalWrite;
@@ -850,7 +851,7 @@ describe("db start", () => {
       const args = createArgs(child.spawned);
       const networkIndex = args?.indexOf("--network") ?? -1;
       expect(args?.[networkIndex + 1]).toBe("env-network");
-    }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
+    }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
   });
 
   it.live(
@@ -870,7 +871,7 @@ describe("db start", () => {
         const args = createArgs(child.spawned);
         const networkIndex = args?.indexOf("--network") ?? -1;
         expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
-      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+      }).pipe(withEmptyConfigEnv);
     },
   );
 
@@ -1690,6 +1691,7 @@ describe("db start stack backend", () => {
                           member: members.includes(database),
                           change: "incompatible" as const,
                           paths: ["config.version"],
+                          endpointsOnly: false,
                         },
                   ]
                 : [],
@@ -1710,6 +1712,7 @@ describe("db start stack backend", () => {
         stop: Effect.succeed([]),
         restart: Effect.succeed([]),
       },
+      startupEndpointChanges: Effect.succeed([]),
       stop: Effect.void,
       destroy: Effect.void,
       gateway: unusedGateway,

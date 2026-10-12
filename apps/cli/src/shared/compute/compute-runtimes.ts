@@ -27,7 +27,7 @@ function isComputeRuntime(value: string): value is ComputeRuntime {
 /**
  * Parses a config-file `[compute.<name>] runtime` value case-insensitively (hand-written casing
  * like `Runtime = "Node"` should still mean `node`). Not used for `--runtime`, which validates
- * through a `Flag.choice` over the same catalog instead.
+ * through a `Flag.Literals` over the same catalog instead.
  */
 export function parseComputeRuntime(value: string): ComputeRuntime | undefined {
   const canonical = value.trim().toLowerCase();

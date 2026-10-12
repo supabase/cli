@@ -15,9 +15,9 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { Rpc, RpcClient, RpcGroup, RpcSerialization } from "effect/unstable/rpc";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { Rpc, RpcClient, RpcGroup, RpcSerialization } from "effect/rpc";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -268,9 +268,15 @@ it.live("preserves composition outcomes over RPC", () =>
 
       expect("outcomes" in error).toBe(true);
       if (!("outcomes" in error)) return yield* Effect.die("Missing composition outcomes");
+      expect(error.kind).toBe("port-conflict");
       expect(error.outcomes).toEqual([
         { id: lazy.id, succeeded: true },
-        { id: blocked.id, succeeded: false, error: expect.stringContaining(String(port)) },
+        {
+          id: blocked.id,
+          succeeded: false,
+          error: expect.stringContaining(String(port)),
+          kind: "port-conflict",
+        },
       ]);
       yield* shutdownOwner(runtime.access, true);
     }),
@@ -500,7 +506,7 @@ it.live(
         expect(identity.status).toBe(200);
         const client = yield* ownerClient(access);
         const permissiveClient = yield* permissiveCommandClientFor(access);
-        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+        for (const override of ["args", "env", "pgProve", "stdin", "constructor"] as const) {
           const rejected = yield* permissiveClient
             .runCommand({
               attachmentId: `invalid-${override}`,
@@ -512,7 +518,7 @@ it.live(
           if (Exit.isFailure(rejected))
             expect(Cause.pretty(rejected.cause)).toContain("Expected no excess property");
         }
-        for (const override of ["args", "env", "pgProve", "stdin"] as const) {
+        for (const override of ["args", "env", "pgProve", "stdin", "constructor"] as const) {
           const rejected = yield* permissiveClient
             .runCommand({
               attachmentId: `invalid-command-${override}`,

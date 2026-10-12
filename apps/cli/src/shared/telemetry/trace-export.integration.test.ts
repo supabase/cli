@@ -354,7 +354,7 @@ describe("withTraceExport around a command handler", () => {
 
       expect(roots.map((span) => span.name)).toEqual(["cli.run"]);
       expect(spans.filter((span) => !ids.has(span.parentSpanId ?? span.spanId))).toEqual([]);
-      expect(spans.some((span) => span.name.startsWith("http.client"))).toBe(true);
+      expect(spans.some((span) => span.name === "GET")).toBe(true);
       expect(spans.length).toBeLessThanOrEqual(2000);
       expect(Math.max(...counts.values())).toBeLessThanOrEqual(200);
       expect(raw).not.toContain(VALID_TOKEN);

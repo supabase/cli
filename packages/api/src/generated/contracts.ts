@@ -120,6 +120,7 @@ export const BranchResponse_Output = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -244,7 +245,7 @@ export const FunctionResponse_Output = Schema.Struct({
 export const OrganizationResponseV1_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -253,10 +254,14 @@ export const OrganizationResponseV1_Output = Schema.Struct({
 export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -264,7 +269,7 @@ export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -313,6 +318,7 @@ export const ThirdPartyAuth_Output = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -358,11 +364,13 @@ export const BinaryInput = Schema.Union([
 // operation schemas
 export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -372,6 +380,7 @@ export const V1AcceptInviteExternalJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -388,6 +397,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -410,6 +420,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -426,6 +437,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -443,11 +455,13 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
 });
 export const V1ActivateCustomHostnameInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -501,16 +515,18 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
 });
 export const V1ActivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   vanity_subdomain: Schema.String.check(
-    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+    Schema.isMaxCodePoints(63).annotate({ expected: "a string with at most 63 code points" }),
   ),
 });
 export const V1ActivateVanitySubdomainConfigOutput = Schema.Struct({
@@ -518,11 +534,13 @@ export const V1ActivateVanitySubdomainConfigOutput = Schema.Struct({
 });
 export const V1ApplyAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -535,11 +553,13 @@ export const V1ApplyAMigrationInput = Schema.Struct({
 });
 export const V1ApplyProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -581,11 +601,13 @@ export const V1ApplyProjectAddonInput = Schema.Struct({
 });
 export const V1AuthorizeJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -597,6 +619,7 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -607,6 +630,7 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -621,6 +645,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -643,6 +668,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -659,6 +685,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -678,6 +705,7 @@ export const V1AuthorizeUserInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -693,7 +721,7 @@ export const V1AuthorizeUserInput = Schema.Struct({
   code_challenge_method: Schema.optionalKey(Schema.Literals(["plain", "sha256", "S256"])),
   organization_slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[\\w-]+$",
       }),
     ),
@@ -703,11 +731,13 @@ export const V1AuthorizeUserInput = Schema.Struct({
 });
 export const V1BulkCreateSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -717,26 +747,32 @@ export const V1BulkCreateSecretsInput = Schema.Struct({
         description: "Secret name must not start with the SUPABASE_ prefix.",
       })
         .check(
-          Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+          Schema.isMaxCodePoints(256).annotate({
+            expected: "a string with at most 256 code points",
+          }),
         )
         .check(
-          Schema.isPattern(new RegExp("^(?!SUPABASE_).*")).annotate({
+          Schema.isPattern(new RegExp("^(?!SUPABASE_).*", "u")).annotate({
             expected: "a string matching the RegExp ^(?!SUPABASE_).*",
           }),
         ),
       value: Schema.String.check(
-        Schema.isMaxLength(24576).annotate({ expected: "a value with a length of at most 24576" }),
+        Schema.isMaxCodePoints(24576).annotate({
+          expected: "a string with at most 24576 code points",
+        }),
       ),
     }),
   ).check(Schema.isMaxLength(100).annotate({ expected: "a value with a length of at most 100" })),
 });
 export const V1BulkDeleteSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -744,11 +780,13 @@ export const V1BulkDeleteSecretsInput = Schema.Struct({
 });
 export const V1BulkUpdateFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -756,7 +794,7 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       slug: Schema.String.check(
-        Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+        Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$", "u")).annotate({
           expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
         }),
       ),
@@ -847,27 +885,31 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
 });
 export const V1CancelAProjectRestorationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1CheckVanitySubdomainAvailabilityInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   vanity_subdomain: Schema.String.check(
-    Schema.isMaxLength(63).annotate({ expected: "a value with a length of at most 63" }),
+    Schema.isMaxCodePoints(63).annotate({ expected: "a string with at most 63 code points" }),
   ),
 });
 export const V1CheckVanitySubdomainAvailabilityOutput = Schema.Struct({
@@ -875,7 +917,7 @@ export const V1CheckVanitySubdomainAvailabilityOutput = Schema.Struct({
 });
 export const V1ClaimProjectForOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -883,22 +925,26 @@ export const V1ClaimProjectForOrganizationInput = Schema.Struct({
 });
 export const V1CountActionRunsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1CreateABranchInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -957,6 +1003,7 @@ export const V1CreateABranchOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1026,17 +1073,19 @@ export const V1CreateABranchOutput = Schema.Struct({
 });
 export const V1CreateAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
       }),
     ),
@@ -1098,13 +1147,13 @@ export const V1CreateAFunctionOutput = Schema.Struct({
 export const V1CreateAProjectInput = Schema.Struct({
   db_pass: Schema.String.annotate({ description: "Database password" }),
   name: Schema.String.annotate({ description: "Name of your project" }).check(
-    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
   ),
   organization_id: Schema.optionalKey(
     Schema.String.annotate({ description: "Deprecated: Use `organization_slug` instead." }),
   ),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -1236,10 +1285,14 @@ export const V1CreateAProjectInput = Schema.Struct({
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1247,7 +1300,7 @@ export const V1CreateAProjectOutput = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -1274,11 +1327,13 @@ export const V1CreateAProjectOutput = Schema.Struct({
 });
 export const V1CreateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1354,13 +1409,13 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
 });
 export const V1CreateAnOrganizationInput = Schema.Struct({
   name: Schema.String.check(
-    Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" }),
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
   ),
 });
 export const V1CreateAnOrganizationOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -1368,11 +1423,13 @@ export const V1CreateAnOrganizationOutput = Schema.Struct({
 });
 export const V1CreateLegacySigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1382,6 +1439,7 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1396,11 +1454,13 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
 });
 export const V1CreateLoginRoleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1426,22 +1486,26 @@ export const V1CreateLoginRoleOutput = Schema.Struct({
 });
 export const V1CreateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   type: Schema.Literals(["publishable", "secret"]),
   name: Schema.String.check(
-    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+    Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
   )
-    .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+      Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
       }),
     ),
@@ -1478,11 +1542,13 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1496,6 +1562,7 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1505,11 +1572,13 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
 });
 export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1524,6 +1593,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1559,6 +1629,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1590,6 +1661,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1620,6 +1692,7 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
               Schema.isPattern(
                 new RegExp(
                   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "u",
                 ),
               ).annotate({
                 expected:
@@ -1641,7 +1714,9 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           kty: Schema.Literal("oct"),
           alg: Schema.optionalKey(Schema.Literal("HS256")),
           k: Schema.String.check(
-            Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }),
+            Schema.isMinCodePoints(16).annotate({
+              expected: "a string with at least 16 code points",
+            }),
           ),
         }),
       ],
@@ -1654,6 +1729,7 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1668,11 +1744,13 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
 });
 export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1685,6 +1763,7 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1702,16 +1781,18 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1CreateRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+    Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
   ),
 });
 export const V1CreateRestorePointOutput = Schema.Struct({
@@ -1721,22 +1802,26 @@ export const V1CreateRestorePointOutput = Schema.Struct({
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DeleteHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1745,10 +1830,14 @@ export const V1DeleteHostnameConfigInput = Schema.Struct({
 export const V1DeleteABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -1756,6 +1845,7 @@ export const V1DeleteABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -1768,27 +1858,31 @@ export const V1DeleteABranchInput = Schema.Struct({
 export const V1DeleteABranchOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
 });
 export const V1DeleteAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1810,11 +1904,13 @@ export const V1DeleteAProjectOutput = Schema.Struct({
 });
 export const V1DeleteASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1822,6 +1918,7 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1875,11 +1972,13 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
 });
 export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1887,6 +1986,7 @@ export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1896,11 +1996,13 @@ export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
 });
 export const V1DeleteJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1908,6 +2010,7 @@ export const V1DeleteJitAccessInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1917,11 +2020,13 @@ export const V1DeleteJitAccessInput = Schema.Struct({
 });
 export const V1DeleteLoginRolesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1929,11 +2034,13 @@ export const V1DeleteLoginRolesInput = Schema.Struct({
 export const V1DeleteLoginRolesOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1DeleteNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1949,11 +2056,13 @@ export const V1DeleteNetworkBansInput = Schema.Struct({
 });
 export const V1DeleteProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -1961,6 +2070,7 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -1996,22 +2106,26 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2019,6 +2133,7 @@ export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2031,6 +2146,7 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2048,17 +2164,19 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1DeployAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z][A-Za-z0-9_-]*$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z][A-Za-z0-9_-]*$",
       }),
     ),
@@ -2128,10 +2246,14 @@ export const V1DeployAFunctionOutput = Schema.Struct({
 export const V1DiffABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -2139,6 +2261,7 @@ export const V1DiffABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -2152,33 +2275,39 @@ export const V1DiffABranchInput = Schema.Struct({
 export const V1DiffABranchOutput = Schema.String;
 export const V1DisablePreviewBranchingInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1DisableReadonlyModeTemporarilyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1EnableDatabaseWebhookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2197,6 +2326,7 @@ export const V1ExchangeOauthTokenInput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -2248,11 +2378,13 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
   included_schemas: Schema.optionalKey(Schema.String),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2260,11 +2392,13 @@ export const V1GenerateTypescriptTypesInput = Schema.Struct({
 export const V1GenerateTypescriptTypesOutput = Schema.Struct({ types: Schema.String });
 export const V1GetABranchInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2275,6 +2409,7 @@ export const V1GetABranchOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2345,10 +2480,14 @@ export const V1GetABranchOutput = Schema.Struct({
 export const V1GetABranchConfigInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -2356,6 +2495,7 @@ export const V1GetABranchConfigInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -2400,16 +2540,18 @@ export const V1GetABranchConfigOutput = Schema.Struct({
 });
 export const V1GetAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
@@ -2462,16 +2604,18 @@ export const V1GetAFunctionOutput = Schema.Struct({
 });
 export const V1GetAFunctionBodyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
@@ -2479,16 +2623,18 @@ export const V1GetAFunctionBodyInput = Schema.Struct({
 export const V1GetAFunctionBodyOutput = Schema.Record(Schema.String, Schema.Never);
 export const V1GetAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   version: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
@@ -2506,6 +2652,7 @@ export const V1GetASnippetInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2546,11 +2693,13 @@ export const V1GetASnippetOutput = Schema.Struct({
 });
 export const V1GetASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2558,6 +2707,7 @@ export const V1GetASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -2611,11 +2761,13 @@ export const V1GetASsoProviderOutput = Schema.Struct({
 });
 export const V1GetActionRunInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2651,11 +2803,13 @@ export const V1GetActionRunOutput = Schema.Struct({
 });
 export const V1GetActionRunLogsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -2664,7 +2818,7 @@ export const V1GetActionRunLogsInput = Schema.Struct({
 export const V1GetActionRunLogsOutput = Schema.String;
 export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -2794,7 +2948,7 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
 });
 export const V1GetAnOrganizationInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -2816,11 +2970,13 @@ export const V1GetAnOrganizationOutput = Schema.Struct({
 });
 export const V1GetAuthServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3342,6 +3498,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -3491,11 +3648,13 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
 });
 export const V1GetBackupScheduleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3505,7 +3664,7 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -3518,11 +3677,13 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
 });
 export const V1GetDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3577,11 +3738,13 @@ export const V1GetDatabaseDiskOutput = Schema.Struct({
 });
 export const V1GetDatabaseMetadataInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3596,11 +3759,13 @@ export const V1GetDatabaseMetadataOutput = Schema.Struct({
 });
 export const V1GetDatabaseOpenapiInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3612,11 +3777,13 @@ export const V1GetDatabaseOpenapiOutput = Schema.Record(
 );
 export const V1GetDiskUtilizationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3633,11 +3800,13 @@ export const V1GetDiskUtilizationOutput = Schema.Struct({
 });
 export const V1GetHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3691,11 +3860,13 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
 });
 export const V1GetJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3706,6 +3877,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -3728,6 +3900,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -3744,6 +3917,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -3761,11 +3935,13 @@ export const V1GetJitAccessOutput = Schema.Struct({
 });
 export const V1GetJitAccessConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3790,11 +3966,13 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
 );
 export const V1GetLegacySigningKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3804,6 +3982,7 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -3818,11 +3997,13 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
 });
 export const V1GetNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -3851,7 +4032,7 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
 });
 export const V1GetOrganizationEntitlementsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -3945,7 +4126,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
 });
 export const V1GetOrganizationProjectClaimInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -3976,6 +4157,7 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -3985,11 +4167,13 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4081,11 +4265,13 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4097,11 +4283,13 @@ export const V1GetPgsodiumConfigOutput = Schema.Struct({
 });
 export const V1GetPoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4109,11 +4297,13 @@ export const V1GetPoolerConfigInput = Schema.Struct({
 export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse_Output);
 export const V1GetPostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4164,7 +4354,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4178,7 +4368,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4324,7 +4514,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4333,7 +4523,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4341,7 +4531,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -4350,11 +4540,13 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
 });
 export const V1GetPostgresUpgradeEligibilityInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4449,11 +4641,13 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
 });
 export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4500,11 +4694,13 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
 });
 export const V1GetPostgrestServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4567,11 +4763,13 @@ export const V1GetProfileOutput = Schema.Struct({
 });
 export const V1GetProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4579,10 +4777,14 @@ export const V1GetProjectInput = Schema.Struct({
 export const V1GetProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
-    .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+    )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4590,7 +4792,7 @@ export const V1GetProjectOutput = Schema.Struct({
     description: "Deprecated: Use `organization_slug` instead.",
   }),
   organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -4623,11 +4825,13 @@ export const V1GetProjectOutput = Schema.Struct({
 });
 export const V1GetProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4635,6 +4839,7 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4668,11 +4873,13 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4681,11 +4888,13 @@ export const V1GetProjectApiKeysInput = Schema.Struct({
 export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse_Output);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4698,6 +4907,7 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4707,11 +4917,13 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
 });
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4753,11 +4965,13 @@ export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
 });
 export const V1GetProjectFunctionCombinedStatsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4788,11 +5002,13 @@ export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
 });
 export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4800,11 +5016,13 @@ export const V1GetProjectLegacyApiKeysInput = Schema.Struct({
 export const V1GetProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1GetProjectLogsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4836,22 +5054,26 @@ export const V1GetProjectLogsOutput = Schema.Struct({
 });
 export const V1GetProjectLogsAllInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4944,6 +5166,7 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4951,11 +5174,13 @@ export const V1GetProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4965,6 +5190,7 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -4979,11 +5205,13 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
 });
 export const V1GetProjectSigningKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -4995,6 +5223,7 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -5011,11 +5240,13 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
 });
 export const V1GetProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5023,6 +5254,7 @@ export const V1GetProjectTpaIntegrationInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5035,6 +5267,7 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5052,11 +5285,13 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
 });
 export const V1GetProjectUsageApiCountInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5106,11 +5341,13 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
 });
 export const V1GetProjectUsageRequestCountInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5145,11 +5382,13 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
 });
 export const V1GetReadonlyModeStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5161,11 +5400,13 @@ export const V1GetReadonlyModeStatusOutput = Schema.Struct({
 });
 export const V1GetRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5332,17 +5573,19 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
 });
 export const V1GetRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
     ),
   ),
 });
@@ -5353,11 +5596,13 @@ export const V1GetRestorePointOutput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5450,11 +5695,13 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
 });
 export const V1GetServicesHealthInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5493,11 +5740,13 @@ export const V1GetServicesHealthInput = Schema.Struct({
 export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse_Output);
 export const V1GetSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5508,11 +5757,13 @@ export const V1GetSslEnforcementConfigOutput = Schema.Struct({
 });
 export const V1GetStorageConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5606,11 +5857,13 @@ export const V1GetStorageConfigOutput = Schema.Struct({
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5625,11 +5878,13 @@ export const V1GetVanitySubdomainConfigOutput = Schema.Struct({
 });
 export const V1InviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5639,6 +5894,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -5662,6 +5918,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5678,6 +5935,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5698,6 +5956,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5708,6 +5967,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -5729,6 +5989,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5745,6 +6006,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -5762,11 +6024,13 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
 });
 export const V1ListActionRunsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5823,11 +6087,13 @@ export const V1ListActionRunsOutput = Schema.Array(
 );
 export const V1ListAllBackupsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5892,11 +6158,13 @@ export const V1ListAllBackupsOutput = Schema.Struct({
 });
 export const V1ListAllBranchesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5904,11 +6172,13 @@ export const V1ListAllBranchesInput = Schema.Struct({
 export const V1ListAllBranchesOutput = Schema.Array(BranchResponse_Output);
 export const V1ListAllBucketsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5916,11 +6186,13 @@ export const V1ListAllBucketsInput = Schema.Struct({
 export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse_Output);
 export const V1ListAllFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5928,11 +6200,13 @@ export const V1ListAllFunctionsInput = Schema.Struct({
 export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse_Output);
 export const V1ListAllNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5942,11 +6216,13 @@ export const V1ListAllNetworkBansOutput = Schema.Struct({
 });
 export const V1ListAllNetworkBansEnrichedInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5966,11 +6242,13 @@ export const V1ListAllProjectsInput = Schema.Record(Schema.String, Schema.Never)
 export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse_Output);
 export const V1ListAllSecretsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -5979,11 +6257,13 @@ export const V1ListAllSecretsOutput = Schema.Array(SecretResponse_Output);
 export const V1ListAllSnippetsInput = Schema.Struct({
   project_ref: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+      Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
     )
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6022,11 +6302,13 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
 });
 export const V1ListAllSsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6081,11 +6363,13 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
 });
 export const V1ListAvailableRestoreVersionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6101,11 +6385,13 @@ export const V1ListAvailableRestoreVersionsOutput = Schema.Struct({
 });
 export const V1ListJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6118,6 +6404,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -6142,6 +6429,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6158,6 +6446,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6180,6 +6469,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -6202,6 +6492,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6218,6 +6509,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
                         Schema.isPattern(
                           new RegExp(
                             "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                            "u",
                           ),
                         ).annotate({
                           expected:
@@ -6238,11 +6530,13 @@ export const V1ListJitAccessOutput = Schema.Struct({
 });
 export const V1ListMigrationHistoryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6252,7 +6546,7 @@ export const V1ListMigrationHistoryOutput = Schema.Array(
 );
 export const V1ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -6260,11 +6554,13 @@ export const V1ListOrganizationMembersInput = Schema.Struct({
 export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse_Output);
 export const V1ListProjectAddonsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6384,11 +6680,13 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
 });
 export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6397,10 +6695,14 @@ export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth_Ou
 export const V1MergeABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6408,6 +6710,7 @@ export const V1MergeABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6423,11 +6726,13 @@ export const V1MergeABranchOutput = Schema.Struct({
 });
 export const V1ModifyDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6482,11 +6787,13 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
 });
 export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
   project_ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6494,6 +6801,7 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6509,16 +6817,18 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
 });
 export const V1PatchAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   version: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
@@ -6527,11 +6837,13 @@ export const V1PatchAMigrationInput = Schema.Struct({
 });
 export const V1PatchNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6576,11 +6888,13 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
 });
 export const V1PauseAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6588,10 +6902,14 @@ export const V1PauseAProjectInput = Schema.Struct({
 export const V1PushABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6599,6 +6917,7 @@ export const V1PushABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6614,11 +6933,13 @@ export const V1PushABranchOutput = Schema.Struct({
 });
 export const V1ReadOnlyQueryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6629,11 +6950,13 @@ export const V1ReadOnlyQueryInput = Schema.Struct({
 });
 export const V1RemoveAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6641,11 +6964,13 @@ export const V1RemoveAReadReplicaInput = Schema.Struct({
 });
 export const V1RemoveProjectAddonInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6680,6 +7005,7 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6687,11 +7013,13 @@ export const V1RemoveProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6701,6 +7029,7 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6716,10 +7045,14 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
 export const V1ResetABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6727,6 +7060,7 @@ export const V1ResetABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6742,11 +7076,13 @@ export const V1ResetABranchOutput = Schema.Struct({
 });
 export const V1RestartAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6754,10 +7090,14 @@ export const V1RestartAProjectInput = Schema.Struct({
 export const V1RestoreABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6765,6 +7105,7 @@ export const V1RestoreABranchInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6778,22 +7119,26 @@ export const V1RestoreABranchOutput = Schema.Struct({
 });
 export const V1RestoreAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1RestorePhysicalBackupInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6811,11 +7156,13 @@ export const V1RestorePhysicalBackupInput = Schema.Struct({
 });
 export const V1RestorePitrBackupInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6835,6 +7182,7 @@ export const V1RevokeTokenInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -6846,27 +7194,31 @@ export const V1RevokeTokenInput = Schema.Struct({
 });
 export const V1RollbackMigrationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   gte: Schema.String.check(
-    Schema.isPattern(new RegExp("^\\d+$")).annotate({
+    Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
       expected: "a string matching the RegExp ^\\d+$",
     }),
   ),
 });
 export const V1RunAQueryInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6878,11 +7230,13 @@ export const V1RunAQueryInput = Schema.Struct({
 });
 export const V1ScrapeProjectMetricsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6890,11 +7244,13 @@ export const V1ScrapeProjectMetricsInput = Schema.Struct({
 export const V1ScrapeProjectMetricsOutput = Schema.String;
 export const V1SetupAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -6921,36 +7277,44 @@ export const V1SetupAReadReplicaInput = Schema.Struct({
 });
 export const V1ShutdownRealtimeInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
 });
 export const V1UndoInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+    Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
   ),
 });
 export const V1UpdateABranchConfigInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
-      .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
-      .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z]+$",
         }),
       ),
@@ -6958,6 +7322,7 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -6997,6 +7362,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -7066,22 +7432,24 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
 });
 export const V1UpdateAFunctionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   function_slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
     }),
   ),
   slug: Schema.optionalKey(
     Schema.String.check(
-      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$")).annotate({
+      Schema.isPattern(new RegExp("^[A-Za-z0-9_-]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[A-Za-z0-9_-]+$",
       }),
     ),
@@ -7142,17 +7510,21 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
 });
 export const V1UpdateAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ).check(Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" })),
+  ).check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ),
 });
 export const V1UpdateAProjectOutput = Schema.Struct({
   id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -7171,11 +7543,13 @@ export const V1UpdateAProjectOutput = Schema.Struct({
 });
 export const V1UpdateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -7183,6 +7557,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -7260,11 +7635,13 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
 });
 export const V1UpdateActionRunStatusInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -7294,18 +7671,20 @@ export const V1UpdateActionRunStatusInput = Schema.Struct({
 export const V1UpdateActionRunStatusOutput = Schema.Struct({ message: Schema.Literal("ok") });
 export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   site_url: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+        Schema.isPattern(new RegExp("^[^,]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[^,]+$",
         }),
       ),
@@ -7335,6 +7714,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -7476,7 +7856,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   saml_external_url: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^[^,]+$")).annotate({
+        Schema.isPattern(new RegExp("^[^,]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[^,]+$",
         }),
       ),
@@ -7524,7 +7904,10 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([
       Schema.String.check(
         Schema.isPattern(
-          new RegExp("^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$"),
+          new RegExp(
+            "^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
+            "u",
+          ),
         ).annotate({
           expected:
             "a string matching the RegExp ^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
@@ -7793,7 +8176,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([
       Schema.String.check(
         Schema.isPattern(
-          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$"),
+          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$", "u"),
         ).annotate({
           expected:
             "a string matching the RegExp ^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$",
@@ -8557,6 +8940,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8605,11 +8989,13 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
 });
 export const V1UpdateBackupScheduleInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8617,7 +9003,7 @@ export const V1UpdateBackupScheduleInput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -8629,7 +9015,7 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
     description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
   }).check(
     Schema.isPattern(
-      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$"),
+      new RegExp("^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$", "u"),
     ).annotate({
       expected:
         "a string matching the RegExp ^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?$",
@@ -8642,32 +9028,38 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
 });
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   password: Schema.String.check(
-    Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+    Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
   ),
 });
 export const V1UpdateDatabasePasswordOutput = Schema.Struct({ message: Schema.String });
 export const V1UpdateHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   custom_hostname: Schema.String.check(
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ).check(Schema.isMaxLength(253).annotate({ expected: "a value with a length of at most 253" })),
+  ).check(
+    Schema.isMaxCodePoints(253).annotate({ expected: "a string with at most 253 code points" }),
+  ),
 });
 export const V1UpdateHostnameConfigOutput = Schema.Struct({
   status: Schema.optionalKey(
@@ -8718,11 +9110,13 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
 });
 export const V1UpdateJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8732,6 +9126,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8755,6 +9150,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8771,6 +9167,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8792,6 +9189,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -8814,6 +9212,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\/([0-9]|[1-2][0-9]|3[0-2])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8830,6 +9229,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
                   Schema.isPattern(
                     new RegExp(
                       "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                      "u",
                     ),
                   ).annotate({
                     expected:
@@ -8847,11 +9247,13 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
 });
 export const V1UpdateJitAccessConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8877,11 +9279,13 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
 );
 export const V1UpdateNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8912,11 +9316,13 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
 });
 export const V1UpdatePgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8931,11 +9337,13 @@ export const V1UpdatePgsodiumConfigOutput = Schema.Struct({
 });
 export const V1UpdatePoolerConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -8980,11 +9388,13 @@ export const V1UpdatePoolerConfigOutput = Schema.Struct({
 });
 export const V1UpdatePostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9033,7 +9443,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9047,7 +9457,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9193,7 +9603,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9202,7 +9612,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9210,7 +9620,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9264,7 +9674,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   "cron.log_statement": Schema.optionalKey(Schema.Boolean),
   log_autovacuum_min_duration: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9278,7 +9688,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   log_replication_commands: Schema.optionalKey(Schema.Boolean),
   log_startup_progress_interval: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9424,7 +9834,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   shared_buffers: Schema.optionalKey(Schema.String),
   statement_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9433,7 +9843,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: ms" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9441,7 +9851,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   work_mem: Schema.optionalKey(Schema.String),
   checkpoint_timeout: Schema.optionalKey(
     Schema.String.annotate({ description: "Default unit: s" }).check(
-      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate({
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
         expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
       }),
     ),
@@ -9450,11 +9860,13 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
 });
 export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9549,11 +9961,13 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
 });
 export const V1UpdateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9561,6 +9975,7 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -9570,11 +9985,13 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
   name: Schema.optionalKey(
     Schema.String.check(
-      Schema.isMinLength(4).annotate({ expected: "a value with a length of at least 4" }),
+      Schema.isMinCodePoints(4).annotate({ expected: "a string with at least 4 code points" }),
     )
-      .check(Schema.isMaxLength(64).annotate({ expected: "a value with a length of at most 64" }))
       .check(
-        Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$")).annotate({
+        Schema.isMaxCodePoints(64).annotate({ expected: "a string with at most 64 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$", "u")).annotate({
           expected: "a string matching the RegExp ^[a-z_][a-z0-9_]+$",
         }),
       ),
@@ -9612,11 +10029,13 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9628,6 +10047,7 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -9635,11 +10055,13 @@ export const V1UpdateProjectSigningKeyInput = Schema.Struct({
     }),
   ),
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9650,6 +10072,7 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -9664,11 +10087,13 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
 });
 export const V1UpdateRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9817,11 +10242,13 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
 });
 export const V1UpdateSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9833,11 +10260,13 @@ export const V1UpdateSslEnforcementConfigOutput = Schema.Struct({
 });
 export const V1UpdateStorageConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9933,11 +10362,13 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
 });
 export const V1UpgradePostgresVersionInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9949,11 +10380,13 @@ export const V1UpgradePostgresVersionInput = Schema.Struct({
 export const V1UpgradePostgresVersionOutput = Schema.Struct({ tracking_id: Schema.String });
 export const V1UpsertAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -9966,11 +10399,13 @@ export const V1UpsertAMigrationInput = Schema.Struct({
 });
 export const V1VerifyDnsConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10024,7 +10459,7 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
 });
 export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -10032,6 +10467,7 @@ export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -10083,11 +10519,13 @@ export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
 });
 export const V2CreateABranchInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10181,6 +10619,7 @@ export const V2CreateABranchOutput = Schema.Struct({
       Schema.isPattern(
         new RegExp(
           "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
       ).annotate({
         expected:
@@ -10227,16 +10666,18 @@ export const V2CreateABranchOutput = Schema.Struct({
 });
 export const V2CreateComputeInstanceUploadInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
@@ -10262,11 +10703,13 @@ export const V2CreateComputeInstanceUploadOutput = Schema.Struct({
 });
 export const V2CreateLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10473,11 +10916,13 @@ export const V2CreateLogDrainOutput = Schema.Struct({
 });
 export const V2CreateNotebookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -10487,12 +10932,12 @@ export const V2CreateNotebookInput = Schema.Struct({
       name: Schema.String.check(
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ).check(
-        Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+        Schema.isMaxCodePoints(255).annotate({ expected: "a string with at most 255 code points" }),
       ),
       description: Schema.optionalKey(
         Schema.String.check(
-          Schema.isMaxLength(10000).annotate({
-            expected: "a value with a length of at most 10000",
+          Schema.isMaxCodePoints(10000).annotate({
+            expected: "a string with at most 10000 code points",
           }),
         ),
       ),
@@ -10823,7 +11268,7 @@ export const V2CreateNotebookOutput = Schema.Struct({
 });
 export const V2CreateOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -10838,6 +11283,7 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -10969,6 +11415,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
                 Schema.isPattern(
                   new RegExp(
                     "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                    "u",
                   ),
                 ).annotate({
                   expected:
@@ -10992,6 +11439,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11004,11 +11452,13 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
 });
 export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11019,11 +11469,15 @@ export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
         description: "The AWS account ID to add to the project PrivateLink share.",
       })
         .check(
-          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+          Schema.isMinCodePoints(12).annotate({
+            expected: "a string with at least 12 code points",
+          }),
         )
-        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
         .check(
-          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+          Schema.isMaxCodePoints(12).annotate({ expected: "a string with at most 12 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
             expected: "a string matching the RegExp ^\\d{12}$",
           }),
         ),
@@ -11031,7 +11485,9 @@ export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
         Schema.String.annotate({
           description: "Optional human-readable name for the AWS account.",
         }).check(
-          Schema.isMaxLength(128).annotate({ expected: "a value with a length of at most 128" }),
+          Schema.isMaxCodePoints(128).annotate({
+            expected: "a string with at most 128 code points",
+          }),
         ),
       ),
       database_identifier: Schema.optionalKey(
@@ -11052,11 +11508,15 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         description: "The AWS account ID this PrivateLink share is associated with.",
       })
         .check(
-          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+          Schema.isMinCodePoints(12).annotate({
+            expected: "a string with at least 12 code points",
+          }),
         )
-        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
         .check(
-          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+          Schema.isMaxCodePoints(12).annotate({ expected: "a string with at most 12 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
             expected: "a string matching the RegExp ^\\d{12}$",
           }),
         ),
@@ -11117,27 +11577,31 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
 });
 export const V2DeleteAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
 });
 export const V2DeleteLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11145,6 +11609,7 @@ export const V2DeleteLogDrainInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -11154,11 +11619,13 @@ export const V2DeleteLogDrainInput = Schema.Struct({
 });
 export const V2DeleteNotebookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11166,6 +11633,7 @@ export const V2DeleteNotebookInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -11175,7 +11643,7 @@ export const V2DeleteNotebookInput = Schema.Struct({
 });
 export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -11190,6 +11658,7 @@ export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11214,6 +11683,7 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -11226,11 +11696,13 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
 });
 export const V2DeletePrivateLinkAssociationInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11238,11 +11710,13 @@ export const V2DeletePrivateLinkAssociationInput = Schema.Struct({
 });
 export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11251,16 +11725,18 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
 });
 export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
@@ -11372,16 +11848,18 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
 });
 export const V2GetAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
   name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
     }),
   ),
@@ -11466,11 +11944,13 @@ export const V2GetAComputeInstanceOutput = Schema.Struct({
 });
 export const V2GetNotebookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11478,6 +11958,7 @@ export const V2GetNotebookInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -11626,11 +12107,13 @@ export const V2GetNotebookOutput = Schema.Struct({
 });
 export const V2GetProjectConfigInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -11689,12 +12172,12 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           autovacuum_work_mem: Schema.optionalKey(Schema.String),
           log_autovacuum_min_duration: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           log_checkpoints: Schema.optionalKey(Schema.Boolean),
@@ -11706,12 +12189,12 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           log_replication_commands: Schema.optionalKey(Schema.Boolean),
           log_startup_progress_interval: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           log_temp_files: Schema.optionalKey(Schema.String),
@@ -11857,35 +12340,35 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           shared_buffers: Schema.optionalKey(Schema.String),
           statement_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
           wal_keep_size: Schema.optionalKey(Schema.String),
           wal_sender_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: ms" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           work_mem: Schema.optionalKey(Schema.String),
           checkpoint_timeout: Schema.optionalKey(
             Schema.String.annotate({ description: "Default unit: s" }).check(
-              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
-                {
-                  expected:
-                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                },
-              ),
+              Schema.isPattern(
+                new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u"),
+              ).annotate({
+                expected:
+                  "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+              }),
             ),
           ),
           hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
@@ -12276,11 +12759,13 @@ export const V2GetProjectConfigOutput = Schema.Struct({
 });
 export const V2ListAllComputeInstancesInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12367,11 +12852,13 @@ export const V2ListAllComputeInstancesOutput = Schema.Struct({
 });
 export const V2ListLogDrainsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12480,11 +12967,13 @@ export const V2ListLogDrainsOutput = Schema.Struct({
 });
 export const V2ListNotebooksInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -12579,7 +13068,7 @@ export const V2ListNotebooksOutput = Schema.Struct({
 });
 export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -12601,13 +13090,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       after: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -12615,13 +13108,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       before: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -12633,13 +13130,17 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
       project_ref: Schema.optionalKey(
         Schema.String.annotate({ description: "Project ref" })
           .check(
-            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
               expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
@@ -12674,13 +13175,17 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
           id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ref: Schema.String.annotate({ description: "Project ref" })
             .check(
-              Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+              Schema.isMinCodePoints(20).annotate({
+                expected: "a string with at least 20 code points",
+              }),
             )
             .check(
-              Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+              Schema.isMaxCodePoints(20).annotate({
+                expected: "a string with at most 20 code points",
+              }),
             )
             .check(
-              Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+              Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
                 expected: "a string matching the RegExp ^[a-z]+$",
               }),
             ),
@@ -12726,7 +13231,7 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
 });
 export const V2ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -12750,6 +13255,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -12762,6 +13268,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -12779,6 +13286,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "u",
             ),
           ).annotate({
             expected:
@@ -12797,6 +13305,7 @@ export const V2ListOrganizationMembersOutput = Schema.Struct({
         Schema.isPattern(
           new RegExp(
             "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+            "u",
           ),
         ).annotate({
           expected:
@@ -12869,7 +13378,7 @@ export const V2ListOrganizationMembersOutput = Schema.Struct({
 });
 export const V2ListOrganizationProjectsInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -12913,11 +13422,15 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
       type: Schema.Literal("project").annotate({ description: "Resource type." }),
       id: Schema.String.annotate({ description: "Project ref" })
         .check(
-          Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+          Schema.isMinCodePoints(20).annotate({
+            expected: "a string with at least 20 code points",
+          }),
         )
-        .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
         .check(
-          Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+          Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
             expected: "a string matching the RegExp ^[a-z]+$",
           }),
         ),
@@ -13029,7 +13542,7 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
 });
 export const V2ListOrganizationRolesInput = Schema.Struct({
   slug: Schema.String.check(
-    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
@@ -13044,11 +13557,13 @@ export const V2ListOrganizationRolesOutput = Schema.Struct({
 });
 export const V2ListPrivateLinkAssociationsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13063,13 +13578,17 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           description: "The AWS account ID this PrivateLink share is associated with.",
         })
           .check(
-            Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+            Schema.isMinCodePoints(12).annotate({
+              expected: "a string with at least 12 code points",
+            }),
           )
           .check(
-            Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }),
+            Schema.isMaxCodePoints(12).annotate({
+              expected: "a string with at most 12 code points",
+            }),
           )
           .check(
-            Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+            Schema.isPattern(new RegExp("^\\d{12}$", "u")).annotate({
               expected: "a string matching the RegExp ^\\d{12}$",
             }),
           ),
@@ -13131,11 +13650,13 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
 });
 export const V2PreviewAProjectTransferInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13157,11 +13678,13 @@ export const V2PreviewAProjectTransferOutput = Schema.Struct({
 });
 export const V2RunProjectAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13318,11 +13841,13 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
 });
 export const V2TransferAProjectInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13333,11 +13858,13 @@ export const V2TransferAProjectInput = Schema.Struct({
 });
 export const V2UpdateLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13345,6 +13872,7 @@ export const V2UpdateLogDrainInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -13556,11 +14084,13 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
 });
 export const V2UpdateNotebookInput = Schema.Struct({
   ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
     .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
@@ -13568,6 +14098,7 @@ export const V2UpdateNotebookInput = Schema.Struct({
     Schema.isPattern(
       new RegExp(
         "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "u",
       ),
     ).annotate({
       expected:
@@ -13581,13 +14112,15 @@ export const V2UpdateNotebookInput = Schema.Struct({
         Schema.String.check(
           Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
         ).check(
-          Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+          Schema.isMaxCodePoints(255).annotate({
+            expected: "a string with at most 255 code points",
+          }),
         ),
       ),
       description: Schema.optionalKey(
         Schema.String.check(
-          Schema.isMaxLength(10000).annotate({
-            expected: "a value with a length of at most 10000",
+          Schema.isMaxCodePoints(10000).annotate({
+            expected: "a string with at most 10000 code points",
           }),
         ),
       ),

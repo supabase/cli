@@ -154,7 +154,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         { concurrency: "unbounded", discard: true },
       );
 
-      const connection = parseConnectionString(hostDatabaseUrl);
+      const connection = yield* parseConnectionString(hostDatabaseUrl);
       if (connection === undefined)
         return yield* new StackCatalogSetupError({
           message: "failed to parse database URL for catalog overlay",

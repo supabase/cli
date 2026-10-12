@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
@@ -23,18 +23,18 @@ export const postgresConfigUpdateConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   config: postgresConfigUpdateConfigFlag,
-  replaceExistingOverrides: Flag.boolean("replace-existing-overrides").pipe(
+  replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
       "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
     ),
     Flag.withDefault(false),
   ),
-  noRestart: Flag.boolean("no-restart").pipe(
+  noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after updating config."),
     Flag.withDefault(false),
   ),

@@ -22,7 +22,7 @@ import {
   TestDbNoTestsError,
   TestDbRunError,
 } from "./test-db.errors.ts";
-import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import {
   rewriteDumpHostForToolContainer,
@@ -78,15 +78,10 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local stack primary service is not a database.",
     });
-  const major =
-    status.config.config.version === "15"
-      ? 15
-      : status.config.config.version === "17"
-        ? 17
-        : undefined;
+  const major = pgProveMajor(status.config.config.version);
   if (major === undefined)
     return yield* new LocalDbRunningError({
-      message: `The local database major version ${status.config.config.version} is not supported by pg_prove.`,
+      message: `The local database version ${status.config.config.version} is not supported by pg_prove.`,
     });
   const credentials = yield* database.credentials({ from: "runtime" }).pipe(
     Effect.mapError(
@@ -101,7 +96,7 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local database did not provide runtime credentials.",
     });
-  const connection = parseConnectionString(databaseUrl);
+  const connection = yield* parseConnectionString(databaseUrl);
   if (connection === undefined)
     return yield* new LocalDbRunningError({
       message: "The local database returned malformed runtime credentials.",
@@ -297,7 +292,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             })
             .pipe(
               Effect.mapError(
-                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+                (cause) =>
+                  new TestDbRunError({ message: `pg_prove run failed: ${cause.message}`, cause }),
               ),
             );
         }

@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { Cause, Crypto, Effect, Exit } from "effect";
-import type { KeyValue, AnyValue } from "effect/unstable/observability/OtlpResource";
-import type { ScopeSpan, TraceData } from "effect/unstable/observability/OtlpTracer";
+import type { KeyValue, AnyValue } from "effect/observability/OtlpResource";
+import type { ScopeSpan, TraceData } from "effect/observability/OtlpTracer";
 
 const MAX_STRING_LENGTH = 2048;
 const REDACTED = "<redacted>";

@@ -1,4 +1,4 @@
-import { Data, Effect, FileSystem } from "effect";
+import { Data, Effect, FileSystem, Schema } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -71,7 +71,10 @@ export function loadProfile(
 
     const ext = fileExtension(token);
     if (!PROFILE_FILE_EXTS.has(ext)) {
-      return yield* failRead(`unsupported config file type ${JSON.stringify(ext)}`);
+      const quoted = yield* quoteJsonString(ext).pipe(
+        Effect.mapError((error) => readError(error.message)),
+      );
+      return yield* failRead(`unsupported config file type ${quoted}`);
     }
 
     const content = yield* fs
@@ -90,12 +93,10 @@ export function loadProfile(
         ),
       );
 
-    let parsed: unknown;
-    try {
-      parsed = parseYaml(content);
-    } catch (cause) {
-      return yield* failRead(`invalid config file: ${parseDetail(cause)}`);
-    }
+    let parsed = yield* Effect.try({
+      try: (): unknown => parseYaml(content),
+      catch: (cause) => readError(`invalid config file: ${parseDetail(cause)}`),
+    });
     if (parsed === null || parsed === undefined) {
       parsed = {};
     }
@@ -126,9 +127,10 @@ export function loadProfile(
       const raw = config[field.key];
       const weak = weakString(raw);
       if (weak === undefined) {
-        decodeErrors.push(
-          `${field.key}: expected a string, got ${valueTypeName(raw)}: ${JSON.stringify(raw)}`,
+        const shown = yield* encodeJsonValue(raw).pipe(
+          Effect.mapError((error) => readError(error.message)),
         );
+        decodeErrors.push(`${field.key}: expected a string, got ${valueTypeName(raw)}: ${shown}`);
         continue;
       }
       values.set(field.key, weak);
@@ -162,7 +164,15 @@ export function loadProfile(
 
 const fail = (message: string) => Effect.fail(new ProfileLoadError({ message }));
 
-const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
+const readError = (detail: string) =>
+  new ProfileLoadError({ message: `failed to read profile: ${detail}` });
+
+const failRead = (detail: string) => Effect.fail(readError(detail));
+
+const quoteJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+/** JSON rendering of a non-string profile value for decode-error messages. */
+const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Aggregate decode-error template: multiple failing fields render as one block. */
 const failDecode = (detail: string) => fail(`failed to parse profile:\n${detail}`);

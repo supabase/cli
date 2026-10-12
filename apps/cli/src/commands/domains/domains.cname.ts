@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { DomainsCnameError } from "./domains.errors.ts";
 

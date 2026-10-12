@@ -203,6 +203,7 @@ export interface FastForwardIo {
   git: GitRunner;
   getPullRequest(): Promise<PullRequest>;
   listCheckRuns(sha: string): Promise<CheckRun[]>;
+  findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
   comment(body: string): Promise<void>;
 }
 
@@ -545,11 +546,15 @@ export async function runFastForward(
     if (promotion.kind === "sync") {
       return resyncSyncBranch(io, input, promotion, headSha, pullRequest.head.ref, movedBranch);
     }
+    const recovery =
+      promotion.kind === "deploy"
+        ? await describeMissingBackMerge(io)
+        : "Update the branch and re-approve.";
     return refuse(
       io,
       input,
       `${promotion.target} moved since approval`,
-      `\`${promotion.target}\` moved since approval, so it can no longer be fast-forwarded to \`${short(headSha)}\`. Update the branch and re-approve.`,
+      `\`${promotion.target}\` moved since approval, so it can no longer be fast-forwarded to \`${short(headSha)}\`. ${recovery}`,
     );
   }
 
@@ -562,7 +567,23 @@ export async function runFastForward(
   return { status: "fast-forwarded", sha: headSha };
 }
 
+// A deploy head is develop's tip, so main moving means develop lacks main, usually after a hotfix.
+async function describeMissingBackMerge(io: FastForwardIo): Promise<string> {
+  let syncPullRequest: number | undefined;
+  try {
+    syncPullRequest = await io.findOpenPullRequest("develop", "sync/main-into-develop");
+  } catch (error) {
+    // The refusal comment matters more than naming the sync pull request.
+    console.log(`::warning::Could not look up the sync pull request: ${String(error)}`);
+  }
+  if (syncPullRequest !== undefined) {
+    return `\`main\` has commits that \`develop\` does not, usually a hotfix, and the back-merge is waiting in #${syncPullRequest}. Resolve and approve that pull request, then re-approve this one once \`develop\` contains \`main\`.`;
+  }
+  return "`main` has commits that `develop` does not, usually a hotfix. `Sync branches` merges `main` into `develop` after a stable release; if it has not run, dispatch it with `gh workflow run sync-branches.yml -f pair=main-into-develop`, then re-approve once `develop` contains `main`.";
+}
+
 function makeIo(token: string, repository: string, prNumber: number): FastForwardIo {
+  const owner = repository.split("/")[0] ?? "";
   return {
     git: makeGit(process.cwd()),
     getPullRequest: () =>
@@ -574,6 +595,14 @@ function makeIo(token: string, repository: string, prNumber: number): FastForwar
         prNumber,
         sha,
       ),
+    async findOpenPullRequest(base, head) {
+      const query = new URLSearchParams({ state: "open", base, head: `${owner}:${head}` });
+      const pulls = await githubRequest<{ number: number }[]>(
+        token,
+        `/repos/${repository}/pulls?${query}`,
+      );
+      return pulls[0]?.number;
+    },
     async comment(body) {
       await githubRequest(token, `/repos/${repository}/issues/${prNumber}/comments`, {
         body,

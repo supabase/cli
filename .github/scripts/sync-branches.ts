@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+
 import {
   type GitRunner,
   MAX_PUSH_ATTEMPTS,
@@ -161,6 +163,13 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
   throw new Error(`${pair.target} kept moving; gave up after ${MAX_PUSH_ATTEMPTS} attempts`);
 }
 
+function appendOutput(name: string, value: string): void {
+  const file = process.env.GITHUB_OUTPUT;
+  if (file) {
+    appendFileSync(file, `${name}=${value}\n`);
+  }
+}
+
 function makeIo(token: string, repository: string): SyncIo {
   const owner = repository.split("/")[0] ?? "";
   return {
@@ -223,6 +232,7 @@ async function main(): Promise<void> {
       console.log(
         `::warning::Opened PR #${outcome.pullRequest} for conflicts in ${outcome.files.join(", ")}.`,
       );
+      appendOutput("conflict_pr", String(outcome.pullRequest));
       break;
   }
 }

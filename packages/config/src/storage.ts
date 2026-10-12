@@ -30,6 +30,13 @@ const defaultMaxBuckets = 10;
 const defaultMaxIndexes = 5;
 const defaultVectorBuckets = {};
 
+// Keeps the published `anyOf` object/array rendering of a bucket table; `Schema.Struct({})`
+// exports as `not: { type: "null" }` since effect 4.0.
+const emptyTable = Schema.Union([
+  Schema.Record(Schema.String, Schema.Unknown),
+  Schema.Array(Schema.Unknown),
+]);
+
 // Accepts a human-readable string (`"50MiB"`) or a bare byte count (`5000000`); a numeric
 // value is normalized to its decimal string so the decoded type is always a `string`.
 const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
@@ -139,9 +146,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxCatalogs))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
-        Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets })),
-      ),
+      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets }))),
     )
       .annotate({
         default: defaultAnalyticsBuckets,
@@ -171,9 +176,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxIndexes))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
-        Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets })),
-      ),
+      emptyTable.pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets }))),
     )
       .annotate({
         default: defaultVectorBuckets,

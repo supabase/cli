@@ -1,5 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Path, Result } from "effect";
@@ -206,15 +204,15 @@ describe("db toml reader precedence goldens", () => {
       Effect.gen(function* () {
         const workdir = tempRoot.current;
         const shell = fixture.shellEnv ?? {};
-        mkdirSync(join(workdir, "supabase"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", "config.toml"), fixture.config);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), fixture.config);
         if (fixture.dotenv !== undefined) {
-          writeFileSync(join(workdir, "supabase", ".env"), fixture.dotenv);
+          yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), fixture.dotenv);
         }
         pinShellEnv(shell);
 
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const outcome = yield* checkDbToml(fs, path, workdir, fixture.ref).pipe(
           Effect.provide(cliConfigValuesTestLayer),
           Effect.provideService(ConfigEnvPins, shell),

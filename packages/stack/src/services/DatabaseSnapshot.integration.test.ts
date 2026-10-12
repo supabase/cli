@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";

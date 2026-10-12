@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 import { Effect, Option } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { withChildTraceEnv, withProcessSpan } from "../shared/telemetry/spans.ts";
 import { collectText } from "./container-cli.ts";

@@ -19,7 +19,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { homedir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";

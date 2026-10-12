@@ -13,7 +13,7 @@ import {
   Queue,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
@@ -174,12 +174,14 @@ it.live.skipIf(process.platform === "win32")(
         yield* state.save(saved(nextId, `${rootA}/next`, testEngine, "detached"));
 
         const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
+        const pending = new Set(["orphan", "deleted stack", "session stack", "dead owner record"]);
+        const done = (name: string) => Effect.tap(Effect.sync(() => pending.delete(name)));
         const swept = yield* Effect.all(
           [
-            awaitContainerRemoved(orphan, since),
-            awaitContainerRemoved(deleted, since),
-            awaitRemoval(rootA, sessionId),
-            awaitRemoval(path.join(rootA, deadId), "owner.json"),
+            awaitContainerRemoved(orphan, since).pipe(done("orphan")),
+            awaitContainerRemoved(deleted, since).pipe(done("deleted stack")),
+            awaitRemoval(rootA, sessionId).pipe(done("session stack")),
+            awaitRemoval(path.join(rootA, deadId), "owner.json").pipe(done("dead owner record")),
           ],
           { concurrency: "unbounded" },
         ).pipe(Effect.forkChild({ startImmediately: true }));
@@ -191,7 +193,11 @@ it.live.skipIf(process.platform === "win32")(
           Effect.timeoutOrElse({
             duration: "1 minute",
             orElse: () =>
-              Effect.fail(new SweepTestError({ message: "The next owner did not sweep orphans" })),
+              Effect.fail(
+                new SweepTestError({
+                  message: `The next owner did not sweep orphans; pending: ${[...pending].join(", ")}`,
+                }),
+              ),
           }),
         );
 

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { FileSystem, Path, PlatformError } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigParseError } from "@supabase/config";
@@ -21,7 +21,7 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { beforeEach, vi } from "vitest";
 
 import {
@@ -30,6 +30,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
@@ -542,7 +543,6 @@ const decodeFunctionsContainerConfig = Schema.decodeEffect(
       }),
     ),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 const decodeJwks = Schema.decodeEffect(
@@ -553,7 +553,6 @@ const decodeJwks = Schema.decodeEffect(
       ),
     }),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 beforeEach(() => {
@@ -3863,7 +3862,10 @@ describe("functions serve integration", () => {
           projectId: "root-env-project",
         },
       ]);
-    }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_ENV", "development", body),
+      (body) => withConfigEnv({ SUPABASE_ENV: "development" }, body),
+    );
   });
 
   it.live(
@@ -3918,7 +3920,10 @@ describe("functions serve integration", () => {
 
         const envs = yield* extractDockerEnvEntries(dockerRun);
         expect(envs).toContain("SUPABASE_INTERNAL_HOST_PORT=5544");
-      }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
+      }).pipe(
+        (body) => withEnvVar("SUPABASE_ENV", "development", body),
+        (body) => withConfigEnv({ SUPABASE_ENV: "development" }, body),
+      );
     },
   );
 
@@ -4320,7 +4325,7 @@ describe("functions serve integration", () => {
             (call) => call.command === "docker" && call.args[0] === "create",
           );
           expect(dockerRun?.args).toContain("env-network");
-        }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
+        }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
       },
     );
 
@@ -4361,7 +4366,7 @@ describe("functions serve integration", () => {
         );
         expect(dockerRun?.args).toContain("flag-network");
         expect(dockerRun?.args).not.toContain("env-network");
-      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
+      }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
     });
   });
 

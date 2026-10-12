@@ -1,7 +1,7 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   VALID_REF,

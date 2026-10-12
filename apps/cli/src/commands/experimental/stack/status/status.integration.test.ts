@@ -172,6 +172,7 @@ const makeStack = (
     stop: Effect.die("unused"),
     restart: Effect.die("unused"),
   },
+  startupEndpointChanges: Effect.die("unused"),
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
   gateway: unusedGateway,
@@ -453,6 +454,7 @@ it.live("reports the planned differences of composition members as drift", () =>
             member: true,
             change: "incompatible",
             paths: ["endpoints.sql.port"],
+            endpointsOnly: true,
           },
           {
             id: "standalone-rest",

@@ -1,5 +1,5 @@
 import { Context, Option } from "effect";
-import { Command, Flag, type Param } from "effect/unstable/cli";
+import { Command, Flag, type Param } from "effect/cli";
 
 import { sameDocumentValue } from "./cli-config-document.ts";
 import type { CliConfigCodec, CliConfigKey } from "./cli-config-key.ts";
@@ -84,16 +84,16 @@ const baseFlag = <X>(
 ): Flag.Flag<Option.Option<X>> => {
   switch (codec.kind) {
     case "bool":
-      return parsedFlag(Flag.boolean(name), codec, name, path);
+      return parsedFlag(Flag.Boolean(name), codec, name, path);
     case "uint":
     case "port":
-      return parsedFlag(Flag.integer(name), codec, name, path);
+      return parsedFlag(Flag.Int(name), codec, name, path);
     case "literal":
-      return parsedFlag(Flag.choice(name, codec.literals ?? []), codec, name, path);
+      return parsedFlag(Flag.Literals(name, codec.literals ?? []), codec, name, path);
     case "string":
-      return parsedFlag(Flag.string(name), codec, name, path);
+      return parsedFlag(Flag.String(name), codec, name, path);
     case "commaList":
-      return Flag.string(name).pipe(
+      return Flag.String(name).pipe(
         Flag.atLeast(0),
         Flag.optional,
         Flag.map((values) =>

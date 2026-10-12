@@ -24,6 +24,7 @@ import {
   probeVacant,
   reserveNativePort,
 } from "./Ports.ts";
+import { failureKind } from "./FailureKind.ts";
 import { systemError } from "effect/PlatformError";
 import { bindTcp } from "./Proxy.ts";
 import { CONTAINER_ENV_DIRNAME } from "./namespace/Paths.ts";
@@ -197,6 +198,7 @@ it.live(
           .pipe(Effect.flip);
         if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
         expect(failure.conflict?.holder).toBe("foreign");
+        expect(failureKind(failure)).toBe("port-conflict");
       }),
     ).pipe(
       Effect.provide(
@@ -254,7 +256,7 @@ it.live(
 );
 
 it.live(
-  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, releases it",
+  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, frees its port for another stack",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -327,16 +329,26 @@ it.live(
           yield* Layer.build(PortReservations.layer),
           PortReservations.Service,
         );
-        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+        const mailPort = yield* portReservations.find(realStateRoot, id, `${mail.id}:http`);
+        if (mailPort === undefined) return yield* Effect.die("mail's port was not reserved");
 
         yield* fs.makeDirectory(scratch, { recursive: true });
         const firstAttempt = yield* owner.namespace.destroy.pipe(Effect.exit);
         expect(firstAttempt._tag).toBe("Failure");
         // Retained: the row survives a destroy that could not confirm nothing remains.
-        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBe(mailPort);
 
         resolved = true;
         yield* owner.namespace.destroy;
+        // The destroy's release is best-effort; the removed registration is what frees the port.
+        const other = `defer-destroy-other-${randomUUID()}`;
+        yield* saveStack(state, root, other);
+        const ports = yield* makePorts(state);
+        const taken = yield* ports.acquire(
+          { stackId: other, key: "mail:http", host: "127.0.0.1", port: mailPort },
+          (_host, bound) => Effect.succeed(bound),
+        );
+        expect(taken.port).toBe(mailPort);
         expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeUndefined();
       }),
     ).pipe(
@@ -535,6 +547,33 @@ it.live("a stopped stack's pinned port is free for another project's stack", () 
   ).pipe(withRegistry),
 );
 
+it.live("a stopped stack's own auto port taken by another process is the stack's allocation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, a } = yield* twoProjects;
+      const request = { stackId: a, key: "api", host: "127.0.0.1", port: "auto" as const };
+      const first = yield* Effect.scoped(
+        ports.acquire(request, (_host, bound) => Effect.succeed(bound)),
+      );
+
+      const failure = yield* ports
+        .acquire(request, (_host, port) =>
+          Effect.fail(
+            new PortError({
+              key: "api",
+              message: `Port ${port} is already in use`,
+              conflict: { port, endpoint: "api", holder: "foreign" },
+            }),
+          ),
+        )
+        .pipe(Effect.flip);
+
+      expect(failure.message).toContain(String(first.port));
+      expect(failureKind(failure)).toBe("port-allocation");
+    }),
+  ).pipe(withRegistry),
+);
+
 it.live("a running stack's pinned port conflict names the port, its project, and the fix", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -554,6 +593,7 @@ it.live("a running stack's pinned port conflict names the port, its project, and
       expect(failure.message).not.toContain("destroy");
       if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
       expect(failure.conflict?.holder).toMatchObject({ stackId: a });
+      expect(failureKind(failure)).toBe("port-conflict");
     }),
   ).pipe(withRegistry),
 );
@@ -631,13 +671,14 @@ it.live("a pinned port that fails to bind is not left reserved", () =>
       const { ports, registry, stateRoot, a } = yield* twoProjects;
       const port = pinnedPort();
 
-      yield* ports
+      const failure = yield* ports
         .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, () =>
           Effect.fail(new PortError({ key: "db:sql", message: "bind failed" })),
         )
         .pipe(Effect.flip);
 
       expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+      expect(failureKind(failure)).toBe("configuration");
     }),
   ).pipe(withRegistry),
 );

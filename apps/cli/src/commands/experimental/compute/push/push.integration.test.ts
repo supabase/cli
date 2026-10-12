@@ -59,7 +59,7 @@ const deployRequest = Schema.Struct({
   }),
 });
 const decodeDeploy = (body: string) =>
-  Schema.decodeEffect(Schema.fromJsonString(deployRequest))(body, { onExcessProperty: "preserve" });
+  Schema.decodeEffect(Schema.fromJsonString(deployRequest))(body);
 
 function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
   return {

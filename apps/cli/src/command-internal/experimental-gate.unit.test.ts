@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 
 import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -34,7 +34,7 @@ describe("requireExperimental", () => {
         "1",
         requireExperimental.pipe(Effect.provide(withFlag(false)), Effect.exit),
       );
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 
@@ -64,7 +64,7 @@ describe("requireExperimental", () => {
             Effect.exit,
           ),
         );
-        expect(exit._tag).toBe("Success");
+        expect(Exit.isSuccess(exit)).toBe(true);
       }),
   );
 
@@ -76,7 +76,7 @@ describe("requireExperimental", () => {
         ),
         Effect.exit,
       );
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 
@@ -98,7 +98,7 @@ describe("requireExperimental", () => {
         Effect.provide(withFlag(false, ["db", "pull", "--experimental=false", "--experimental"])),
         Effect.exit,
       );
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 });

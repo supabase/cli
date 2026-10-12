@@ -15,7 +15,7 @@ const withShell = (shell: Record<string, string>) =>
 describe("ambient ConfigProvider", () => {
   it.effect("yields Some('') for a set-but-empty variable when empty strings are preserved", () =>
     Effect.gen(function* () {
-      const value = yield* Config.option(Config.string("SUPABASE_EMPTY"));
+      const value = yield* Config.option(Config.String("SUPABASE_EMPTY"));
 
       expect(value).toEqual(Option.some(""));
     }).pipe(Effect.provide(withShell({ SUPABASE_EMPTY: "" }))),

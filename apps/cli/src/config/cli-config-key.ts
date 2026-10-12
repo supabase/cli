@@ -1,7 +1,7 @@
 import type { CliConfigValueOrigin } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
 import { Option, Result, type Path } from "effect";
-import type { Flag } from "effect/unstable/cli";
+import type { Flag } from "effect/cli";
 import { TomlDate } from "smol-toml";
 
 import { parseBoolLiteral } from "../shared/config/config-bool.ts";

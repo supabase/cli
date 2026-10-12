@@ -1,4 +1,4 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
@@ -9,29 +9,29 @@ import { migrationRepair } from "./repair.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
-  versions: Argument.string("version").pipe(
+  versions: Argument.String("version").pipe(
     Argument.withDescription("Migration version(s) to repair."),
     Argument.variadic(),
   ),
-  status: Flag.choice("status", ["applied", "reverted"] as const).pipe(
+  status: Flag.Literals("status", ["applied", "reverted"] as const).pipe(
     Flag.withDescription("Version status to update."),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Repairs migrations of the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Repairs the migration history of the linked project."),
     Flag.withDefault(true),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Repairs the migration history of the local database."),
     Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

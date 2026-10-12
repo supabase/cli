@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";

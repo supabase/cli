@@ -1,6 +1,6 @@
 import { describe, expect, test } from "@effect/vitest";
 import { Console, Effect, Layer, Option } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { emptyEnv, fakeConsole, mockOutput } from "../../tests/helpers/mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../shared/output/text-formatter.ts";

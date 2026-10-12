@@ -1,15 +1,15 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
@@ -117,8 +117,6 @@ function fakeShadowSetupDocker() {
   return { layer };
 }
 
-useShadowCacheDisabled();
-
 const tmp = useTempWorkdir("pgdelta-seam-");
 
 function setup(
@@ -183,6 +181,7 @@ function setup(
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     seam,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 

@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { completionBashCommand } from "./bash/bash.command.ts";
 import { completionFishCommand } from "./fish/fish.command.ts";
 import { completionPowershellCommand } from "./powershell/powershell.command.ts";

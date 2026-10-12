@@ -535,6 +535,7 @@ StackStorageUnavailableError
 StartBackupVolumeExistsError
 StartConfigLoadError
 StartInvalidConfigError
+StartSnippetsDirectoryError
 StartWorkdirError
 StatusConfigLoadError
 StatusDbInspectError

@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";

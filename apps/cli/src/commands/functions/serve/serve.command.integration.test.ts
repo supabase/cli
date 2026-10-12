@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { functionsServeCommand } from "./serve.command.ts";
 

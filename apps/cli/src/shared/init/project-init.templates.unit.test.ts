@@ -2,6 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -39,7 +41,12 @@ const renderExpectedInitOutput = readVendoredTemplate("config.toml").pipe(
   Effect.map((template) =>
     resolveTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Db.OrioleDBVersion }}", "17.11.0.002")
+      // The version is catalog data, checked by the pinned-version test below.
+      .replace(
+        "{{ .Db.OrioleDBVersion }}",
+        /^orioledb_version = "(.*)"$/m.exec(renderCliConfigTemplate("demo-project", true))?.[1] ??
+          "",
+      )
       // supabase init always opts new projects into pg-delta; the template
       // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true"),
@@ -95,6 +102,17 @@ describe("project init templates", () => {
       'template = "Your code is {{ .Code }}"',
       'template = "Your code is {{ .Code }}"',
     ]);
+  });
+
+  it("pins init's OrioleDB version to the newest OrioleDB 17 build the catalog publishes", () => {
+    const pinned = orioledbVersions().filter((version) => postgresMajor(version) === "17");
+    for (const experimentalStack of [false, true]) {
+      const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
+      const version = /^orioledb_version = "(.+)"$/m.exec(rendered)?.[1] ?? "";
+      expect(pinned).toContain(version);
+      for (const other of pinned)
+        expect(postgresVersionCompare(version, other)).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("enables pg-delta by default in the generated config", () => {

@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";

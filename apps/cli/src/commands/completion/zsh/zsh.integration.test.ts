@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";

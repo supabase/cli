@@ -20,7 +20,8 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { StackFailureKind } from "../FailureKind.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
 import { identifyContainer } from "./ContainerName.ts";
@@ -29,6 +30,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly kind?: StackFailureKind;
 }> {}
 
 interface ContainerSpec {
@@ -91,12 +93,48 @@ export interface ContainerRuntime {
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
 
-const errorFor = (operation: string, cause: unknown): ContainerError =>
-  new ContainerError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  });
+/** The engine picks published host ports (`127.0.0.1::port`), so a refusal is its own allocation. */
+const portAllocated = (message: string) =>
+  /port is already allocated|address already in use|listen failed for host tcp port[^\n]*address in use/iu.test(
+    message,
+  );
+
+/** Podman releases the host port it picks at create before pasta binds it at start, so another listener can take it. */
+const PORT_COLLISION_ATTEMPTS = 3;
+
+/** A refused registry connection also reads "connection refused", so a pull needs the daemon named. */
+const pullEngineUnreachable = (cause: unknown, message: string) =>
+  (cause instanceof Object &&
+    "cause" in cause &&
+    cause.cause instanceof PlatformError.PlatformError &&
+    cause.cause.reason._tag === "NotFound" &&
+    cause.cause.reason.method === "spawn") ||
+  /cannot connect to the docker daemon|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified|connection refused)|unable to connect to podman socket:[^\n]*(?:the system cannot find the file specified|connection refused)/iu.test(
+    message,
+  );
+
+const engineKind = (
+  operation: string,
+  cause: unknown,
+  message: string,
+): StackFailureKind | undefined =>
+  cause instanceof ContainerError
+    ? cause.kind
+    : Cause.isTimeoutError(cause)
+      ? operation === "pull"
+        ? "image-pull"
+        : "engine-timeout"
+      : (operation === "pull" ? pullEngineUnreachable(cause, message) : engineUnreachable(cause))
+        ? "engine-unavailable"
+        : portAllocated(message)
+          ? "port-allocation"
+          : undefined;
+
+const errorFor = (operation: string, cause: unknown): ContainerError => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const kind = engineKind(operation, cause, message);
+  return new ContainerError({ operation, message, cause, ...(kind === undefined ? {} : { kind }) });
+};
 
 /** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
@@ -205,7 +243,7 @@ const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Se
   });
 
 const nonEmptyEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.map(Option.filter((value) => value.length > 0)),
     Effect.orElseSucceed(() => Option.none<string>()),
   );
@@ -683,10 +721,10 @@ export const makeContainerRuntime = (options: {
         ? hostGateway.prefetch(hostGatewayProbe(image, spec)).pipe(Effect.as("host-gateway"))
         : hostGateway.resolve(hostGatewayProbe(image, spec));
 
-    const launch = Effect.fn("Container.launch")(function* (
+    const launchOnce = Effect.fnUntraced(function* (
       spec: ContainerSpec,
-      interactive = false,
-      oneOff = false,
+      interactive: boolean,
+      oneOff: boolean,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -829,10 +867,11 @@ export const makeContainerRuntime = (options: {
                     yield* run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(
                       Effect.ignore,
                     );
-                    return yield* errorFor(
-                      "create",
-                      `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
-                    );
+                    return yield* new ContainerError({
+                      operation: "create",
+                      message: `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
+                      kind: "engine-timeout",
+                    });
                   }),
                 ),
               ),
@@ -1080,6 +1119,45 @@ export const makeContainerRuntime = (options: {
           ).pipe(Effect.mapError(wrapFailure));
         }),
       );
+    });
+    const launchWithRetry = (
+      spec: ContainerSpec,
+      interactive: boolean,
+      oneOff: boolean,
+      owner: Scope.Scope,
+      attempt: number,
+    ): ReturnType<ContainerRuntime["launch"]> =>
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ "retry.attempt_count": attempt });
+        const attemptScope = yield* Scope.fork(owner);
+        return yield* launchOnce(spec, interactive, oneOff).pipe(
+          Effect.provideService(Scope.Scope, attemptScope),
+          Effect.catchTag("ContainerLaunchError", (error) =>
+            attempt >= PORT_COLLISION_ATTEMPTS || error.failure.kind !== "port-allocation"
+              ? Effect.fail(error)
+              : Effect.logDebug(`Retrying container launch: ${error.failure.message}`).pipe(
+                  Effect.andThen(
+                    error.process.remove.pipe(
+                      Effect.tapError((cause) =>
+                        Effect.logWarning(
+                          `Failed to remove collided container ${error.process.id}: ${cause.message}`,
+                        ),
+                      ),
+                      Effect.mapError(() => error),
+                    ),
+                  ),
+                  Effect.andThen(Scope.close(attemptScope, Exit.void)),
+                  Effect.andThen(launchWithRetry(spec, interactive, oneOff, owner, attempt + 1)),
+                ),
+          ),
+        );
+      });
+    const launch = Effect.fn("Container.launch")(function* (
+      spec: ContainerSpec,
+      interactive = false,
+      oneOff = false,
+    ) {
+      return yield* launchWithRetry(spec, interactive, oneOff, yield* Scope.Scope, 1);
     });
     return {
       prepare,

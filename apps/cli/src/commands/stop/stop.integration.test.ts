@@ -13,7 +13,7 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { vi } from "vitest";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";

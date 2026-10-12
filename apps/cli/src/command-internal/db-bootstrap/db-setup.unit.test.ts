@@ -18,7 +18,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";

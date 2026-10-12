@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type {
   Observation,
@@ -107,6 +107,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
       stop: Effect.die("unused"),
       restart: Effect.die("unused"),
     },
+    startupEndpointChanges: Effect.die("unused"),
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
     gateway: unusedGateway,

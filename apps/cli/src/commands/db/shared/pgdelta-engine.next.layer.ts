@@ -112,7 +112,7 @@ export function parsePgDeltaNextEndpoint(
 ) {
   return Effect.gen(function* () {
     if (endpoint.connection !== undefined) return endpoint.connection;
-    const parsed = parseConnectionString(endpoint.ref, layeredParseEnv(projectEnv));
+    const parsed = yield* parseConnectionString(endpoint.ref, yield* layeredParseEnv(projectEnv));
     if (parsed !== undefined) return parsed;
     return yield* new PgDeltaEngineError({
       message: "failed to parse Postgres connection string for pg-delta",
@@ -268,7 +268,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                 if (shadow === undefined) {
                   return yield* Effect.die("missing pg-delta migrations shadow");
                 }
-                const connection = parseConnectionString(shadow.migrationsUrl);
+                const connection = yield* parseConnectionString(shadow.migrationsUrl);
                 if (connection === undefined) {
                   return yield* new PgDeltaEngineError({
                     message: "failed to parse pg-delta migrations shadow URL",
@@ -287,6 +287,8 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             return yield* diffPools(input, sourcePool, desiredPool);
           }),
         ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.mapError(pgDeltaNextEngineError),
           Effect.withSpan("PgDeltaNextEngine.diffExplicit"),
         ),
@@ -298,6 +300,8 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             return yield* diffPools(input, migrationsPool, desiredPool);
           }),
         ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.mapError(pgDeltaNextEngineError),
           Effect.withSpan("PgDeltaNextEngine.diffDatabase"),
         ),
@@ -331,6 +335,8 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             return { files: result.files, manifest: result.manifest };
           }),
         ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.mapError(pgDeltaNextEngineError),
           Effect.withSpan("PgDeltaNextEngine.exportDeclarativeSchema"),
         ),
@@ -343,8 +349,8 @@ export const pgDeltaNextEngineLayer = Layer.effect(
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
               ...(input.noCache ? { bypassCache: true } : {}),
             });
-            const migrations = parseConnectionString(shadow.migrationsUrl);
-            const declarative = parseConnectionString(shadow.declarativeUrl);
+            const migrations = yield* parseConnectionString(shadow.migrationsUrl);
+            const declarative = yield* parseConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {
               return yield* new PgDeltaEngineError({
                 message: "failed to parse pg-delta next shadow database URL",
@@ -390,6 +396,8 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             };
           }),
         ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.mapError(pgDeltaNextEngineError),
           Effect.withSpan("PgDeltaNextEngine.planDeclarativeSchema"),
         ),

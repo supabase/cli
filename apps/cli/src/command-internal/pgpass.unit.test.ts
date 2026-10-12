@@ -1,7 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { findPgpassPassword, pgpassPassword } from "./pgpass.ts";
 
@@ -37,34 +36,40 @@ describe("findPgpassPassword", () => {
 });
 
 describe("pgpassPassword (passfile + injected env precedence)", () => {
-  let tmp: string;
-  let explicitPath: string;
-  let envPath: string;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgpass-fn-"));
-    explicitPath = join(tmp, "explicit");
-    envPath = join(tmp, "env");
-    writeFileSync(explicitPath, "h:5432:d:u:explicit-secret\n");
-    writeFileSync(envPath, "h:5432:d:u:env-secret\n");
+  const passfiles = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tmp = yield* fs.makeTempDirectoryScoped({ prefix: "pgpass-fn-" });
+    const explicitPath = path.join(tmp, "explicit");
+    const envPath = path.join(tmp, "env");
+    yield* fs.writeFileString(explicitPath, "h:5432:d:u:explicit-secret\n");
+    yield* fs.writeFileString(envPath, "h:5432:d:u:env-secret\n");
+    return { path, tmp, explicitPath, envPath };
   });
 
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  it.effect("prefers an explicit passfile over PGPASSFILE from the injected env", () =>
+    Effect.gen(function* () {
+      const { explicitPath, envPath } = yield* passfiles;
+      const env = (name: string): string | undefined =>
+        name === "PGPASSFILE" ? envPath : undefined;
+      expect(yield* pgpassPassword("h", 5432, "d", "u", env, explicitPath)).toBe("explicit-secret");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it("prefers an explicit passfile over PGPASSFILE from the injected env", () => {
-    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
-    expect(pgpassPassword("h", 5432, "d", "u", env, explicitPath)).toBe("explicit-secret");
-  });
+  it.effect("falls back to PGPASSFILE from the injected env when no explicit passfile", () =>
+    Effect.gen(function* () {
+      const { envPath } = yield* passfiles;
+      const env = (name: string): string | undefined =>
+        name === "PGPASSFILE" ? envPath : undefined;
+      expect(yield* pgpassPassword("h", 5432, "d", "u", env)).toBe("env-secret");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it("falls back to PGPASSFILE from the injected env when no explicit passfile", () => {
-    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
-    expect(pgpassPassword("h", 5432, "d", "u", env)).toBe("env-secret");
-  });
-
-  it("returns empty string when the resolved passfile is unreadable", () => {
-    const env = (): string | undefined => undefined;
-    expect(pgpassPassword("h", 5432, "d", "u", env, join(tmp, "missing"))).toBe("");
-  });
+  it.effect("returns empty string when the resolved passfile is unreadable", () =>
+    Effect.gen(function* () {
+      const { path, tmp } = yield* passfiles;
+      const env = (): string | undefined => undefined;
+      expect(yield* pgpassPassword("h", 5432, "d", "u", env, path.join(tmp, "missing"))).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

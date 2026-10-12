@@ -34,7 +34,7 @@ const databaseConn = Effect.fn("StackBootstrap.databaseConnection")(function* (
   database: DatabaseInstance,
 ) {
   const credentials = yield* database.credentials({ from: "host" });
-  const conn = parseConnectionString(credentials.databaseUrl ?? "");
+  const conn = yield* parseConnectionString(credentials.databaseUrl ?? "");
   if (conn === undefined)
     return yield* new StackBootstrapError({
       reason: "unavailable",

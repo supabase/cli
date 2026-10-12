@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { commandCredentialsLayer } from "../auth/command-credentials.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-factory.layer.ts";

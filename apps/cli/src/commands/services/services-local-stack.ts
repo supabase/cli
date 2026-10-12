@@ -9,6 +9,7 @@ import {
   describeConfigLoadFailure,
   loadResolvedConfigContext,
 } from "../../command-internal/resolved-config-context.ts";
+import { stackDatabaseVersion } from "../../command-internal/stack-database-version.ts";
 import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
@@ -26,23 +27,27 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
 ) {
   const context = yield* loadResolvedConfigContext(workdir).pipe(Effect.result);
   let configError: string | undefined;
-  let major: number | undefined;
+  let databaseVersion: string | undefined;
   if (Result.isFailure(context)) {
     if (isConfigValueFailure(context.failure)) return yield* context.failure;
     configError = describeConfigLoadFailure(context.failure);
   } else {
-    const value = context.success.config.db.major_version;
-    if (value !== 15 && value !== 17)
-      configError = `unsupported PostgreSQL major version: ${value}`;
-    else major = value;
+    const { db } = context.success.config;
+    if (db.major_version !== 15 && db.major_version !== 17) {
+      configError = `unsupported PostgreSQL major version: ${db.major_version}`;
+    } else {
+      const resolved = stackDatabaseVersion(db);
+      if (Result.isFailure(resolved)) configError = resolved.failure;
+      else databaseVersion = resolved.success;
+    }
   }
   yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
   return yield* Effect.forEach(artifactServiceKinds(), (service) =>
     Effect.gen(function* () {
       const artifact = yield* resolveArtifact({
         service,
-        ...(service === "database" && major !== undefined
-          ? { version: postgresVersion(String(major)) }
+        ...(service === "database" && databaseVersion !== undefined
+          ? { version: postgresVersion(databaseVersion) }
           : {}),
       });
       const name = artifact.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? artifact.image;

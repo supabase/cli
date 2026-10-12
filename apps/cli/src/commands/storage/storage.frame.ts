@@ -1,6 +1,6 @@
 import { findCliProjectPaths, type CliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Option } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import {
   describeConfigLoadFailure,

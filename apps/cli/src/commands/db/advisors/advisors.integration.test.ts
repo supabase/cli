@@ -12,7 +12,7 @@ import {
   mockTelemetryStateTracked,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";

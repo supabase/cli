@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { LoginApi, type LoginApiSessionResponse } from "../commands/login/login-api.service.ts";
@@ -36,12 +36,10 @@ export const loginApiLayer = Layer.effect(
           const response = yield* httpClient.execute(request);
           if (response.status !== 200) {
             const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-            return yield* Effect.fail(
-              new LoginVerificationError({
-                message: `Error status ${response.status}: ${body}`,
-                statusCode: response.status,
-              }),
-            );
+            return yield* new LoginVerificationError({
+              message: `Error status ${response.status}: ${body}`,
+              statusCode: response.status,
+            });
           }
           const body = yield* response.json;
           const session: LoginApiSessionResponse = {

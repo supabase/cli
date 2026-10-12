@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import {
   mockCommandSettings,
@@ -53,7 +53,6 @@ const failureMessage = (exit: Exit.Exit<unknown, unknown>): string => {
 
 const testLayer = (root: string) =>
   Layer.mergeAll(
-    BunServices.layer,
     FetchHttpClient.layer,
     liveStackApi,
     mockCommandSettings({ workdir: root, supabaseHome: root }),
@@ -100,7 +99,7 @@ const testLayer = (root: string) =>
     stackCatalogSetupLayer,
     stackBackendLayer("stack"),
     cliConfigValuesTestLayer,
-  );
+  ).pipe(Layer.provideMerge(BunServices.layer));
 
 describe("managed migration squash", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {

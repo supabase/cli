@@ -9,9 +9,9 @@
  */
 
 import { Crypto, Effect, FileSystem, Option, Path } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import type { GlobalFlag } from "effect/unstable/cli";
+import { HttpClient } from "effect/http";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import type { GlobalFlag } from "effect/cli";
 
 import type { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";

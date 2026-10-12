@@ -408,7 +408,7 @@ describe("config precedence guard rules", () => {
       'process.env["SUPABASE_DB_PASSWORD"]',
       "process.env.SUPABASE_API_PORT",
       'Bun.env["SUPABASE_PROJECT_ID"]',
-      'Config.string("SUPABASE_DB_PORT")',
+      'Config.String("SUPABASE_DB_PORT")',
       'envOption("SUPABASE_AUTH_SITE_URL")',
       'envValue("SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET")',
       'ambientEnvironment()["SUPABASE_REMOTES_STAGING_PROJECT_ID"]',
@@ -494,9 +494,9 @@ describe("config precedence guard rules", () => {
 
   it("flags raw declarations of registry-backed flags", () => {
     for (const name of declaredConfigFlagNames) {
-      expect(findRawConfigFlags(`Flag.string("${name}")`)).toHaveLength(1);
+      expect(findRawConfigFlags(`Flag.String("${name}")`)).toHaveLength(1);
     }
-    expect(findRawConfigFlags('Flag.string("project-id")')).toEqual([]);
+    expect(findRawConfigFlags('Flag.String("project-id")')).toEqual([]);
   });
 
   it("flags package config loader imports", () => {

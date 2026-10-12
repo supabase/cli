@@ -10,8 +10,8 @@
  */
 
 import { Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {

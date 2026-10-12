@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
@@ -23,12 +23,12 @@ export const postgresConfigDeleteConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   config: postgresConfigDeleteConfigFlag,
-  noRestart: Flag.boolean("no-restart").pipe(
+  noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
     Flag.withDefault(false),
   ),

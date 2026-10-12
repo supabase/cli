@@ -1,4 +1,4 @@
-import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { SupabaseApiInputError } from "@supabase/api/effect";
 import { Data, Effect } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpBody from "effect/http/HttpBody";
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 
 import { sanitizeInlineName, mapHttpError, unexpectedStatusMessage } from "./http-errors.ts";

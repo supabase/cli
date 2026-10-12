@@ -1,5 +1,5 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
@@ -10,21 +10,21 @@ import { dbResetRuntimeLayer } from "./reset.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Resets the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Resets the linked project with local migrations."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Resets the local database with local migrations."),
     Flag.withDefault(false),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
@@ -39,11 +39,11 @@ const config = {
       "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
     also: [[CliConfigKeys.db.seed.enabled, true]],
   }),
-  version: Flag.string("version").pipe(
+  version: Flag.String("version").pipe(
     Flag.withDescription("Reset up to the specified version."),
     Flag.optional,
   ),
-  last: Flag.integer("last").pipe(
+  last: Flag.Int("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.optional,
   ),

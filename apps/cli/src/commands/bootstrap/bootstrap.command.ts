@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Argument, Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
@@ -12,7 +12,7 @@ import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 
 const config = {
-  template: Argument.string("template").pipe(
+  template: Argument.String("template").pipe(
     Argument.withDescription("Name of the starter template to bootstrap from."),
     Argument.optional,
   ),

@@ -1,5 +1,5 @@
 import { Context, DateTime, Effect, Layer, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { sweepTimeout } from "./HostProcess.ts";
 import { StackIdSchema } from "./identity/StackId.ts";
 import * as Owner from "./Owner.ts";

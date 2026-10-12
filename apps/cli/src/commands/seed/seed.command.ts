@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import { bucketsCommand } from "./buckets/buckets.command.ts";
 import { SeedLinkedFlag, SeedLocalFlag } from "./seed.flags.ts";

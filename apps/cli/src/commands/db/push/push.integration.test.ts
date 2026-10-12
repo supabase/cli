@@ -13,6 +13,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -1271,7 +1272,10 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-    }).pipe((body) => withEnvVar("SEED_ENABLED", "true", body));
+    }).pipe(
+      (body) => withEnvVar("SEED_ENABLED", "true", body),
+      (body) => withConfigEnv({ SEED_ENABLED: "true" }, body),
+    );
   });
 
   it.live("the shell env override beats a matched remote block's migrations.enabled", () => {

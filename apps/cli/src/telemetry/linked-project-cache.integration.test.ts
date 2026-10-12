@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
 import {

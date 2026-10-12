@@ -10,7 +10,11 @@
 // The `--check` mode is what CI runs (as a `render-service-dockerfile.unit.test.ts` assertion) to
 // catch a hand-edited generated line, or a catalog change that hasn't been regenerated yet.
 import { fileURLToPath } from "node:url";
-import { catalogPins, type ArtifactPin } from "@supabase/stack/internal/artifacts";
+import {
+  catalogPins,
+  isOrioledbVersion,
+  type ArtifactPin,
+} from "@supabase/stack/internal/artifacts";
 
 // Resolved from this module's own URL, so both the CLI invocation (cwd = repo root) and the
 // vitest unit test (cwd = apps/cli) read the same files.
@@ -33,7 +37,10 @@ const REPOSITORY_OVERRIDES: Readonly<Record<string, string>> = {
 
 interface SlimAliasSpec {
   readonly sourceService: string;
-  /** Selects the catalog's default pin (every alias but `pg15`) or its lone additional pin. */
+  /**
+   * Selects the catalog's default pin (every alias but `pg15`) or its lone additional stock pin;
+   * OrioleDB pins have no Dockerfile alias.
+   */
   readonly wantDefault: boolean;
 }
 
@@ -61,7 +68,10 @@ function selectPin(
   pins: ReadonlyArray<CatalogEntry>,
 ): ArtifactPin {
   const candidates = pins.filter(
-    (entry) => entry.sourceService === spec.sourceService && entry.isDefault === spec.wantDefault,
+    (entry) =>
+      entry.sourceService === spec.sourceService &&
+      entry.isDefault === spec.wantDefault &&
+      !isOrioledbVersion(entry.pin.upstreamVersion),
   );
   if (candidates.length !== 1) {
     throw new Error(

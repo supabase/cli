@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Console, Context, Effect, Layer, Option } from "effect";
-import { CliOutput, Command, Flag } from "effect/unstable/cli";
+import { CliOutput, Command, Flag } from "effect/cli";
 
 import { fakeConsole } from "../../tests/helpers/mocks.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
@@ -48,7 +48,7 @@ const config = {
     description: "Use pg-delta.",
     hidden: true,
   }),
-  unrelated: Flag.string("unrelated").pipe(Flag.optional),
+  unrelated: Flag.String("unrelated").pipe(Flag.optional),
 } as const;
 
 const runInputs = (args: ReadonlyArray<string>) =>

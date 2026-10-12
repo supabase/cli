@@ -13,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import * as StackNamespace from "../StackNamespace.ts";
 import type { SavedStack } from "../StackNamespace.ts";
@@ -26,9 +26,9 @@ import {
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const cacheRoot = testArtifactCacheRoot;
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
-const FIXED_STUDIO_PORT = 24_391;
-const FIXED_MAIL_PORT = 24_392;
+// Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
+// test's auto allocation nor an outbound socket can already hold it.
+const FIXED_STUDIO_PORT = 9_391;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -569,14 +569,17 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const fixedPort = FIXED_MAIL_PORT;
         const standaloneMail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
-          endpoints: { http: { port: fixedPort } },
+          endpoints: { http: { port: "auto" } },
         });
         yield* owner.rpc.startService({ id: standaloneMail.id });
         yield* owner.rpc.readyService({ id: standaloneMail.id });
+        const mailPort = (yield* owner.rpc.status({ id: standaloneMail.id })).endpoints.find(
+          (endpoint) => endpoint.name === "http",
+        )?.port;
+        if (mailPort === undefined) return yield* Effect.die("Missing mail http endpoint");
         const database = {
           service: "database" as const,
           config: {
@@ -591,7 +594,7 @@ it.live(
           .supabaseComposition({
             services: [
               database,
-              { service: "mail", config: {}, endpoints: { http: { port: fixedPort } } },
+              { service: "mail", config: {}, endpoints: { http: { port: mailPort } } },
             ],
           })
           .pipe(Effect.flip);

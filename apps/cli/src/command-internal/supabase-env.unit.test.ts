@@ -1,7 +1,6 @@
-import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect } from "effect";
 
-import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import {
   supabaseEnvBool,
   supabaseEnvBoolWithProjectFallback,
@@ -11,94 +10,167 @@ import {
 const KEY = "SUPABASE_TEST_ENV_BOOL";
 const STRING_KEY = "SUPABASE_TEST_ENV_STRING";
 
-const run = <A>(key: string, shell: string | undefined, effect: Effect.Effect<A>): A =>
-  Effect.runSync(withConfigEnv(shell === undefined ? {} : { [key]: shell }, effect));
+const withShellEnv = (env: Readonly<Record<string, string>>) =>
+  Effect.provide(
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+  );
 
 describe("supabaseEnvBool", () => {
-  it("is true only for the boolean true set", () => {
-    for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(run(KEY, value, supabaseEnvBool(KEY))).toBe(true);
-    }
-  });
+  it.effect("is true only for the boolean true set", () =>
+    Effect.gen(function* () {
+      for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
+        expect(yield* supabaseEnvBool(KEY).pipe(withShellEnv({ [KEY]: value }))).toBe(true);
+      }
+    }),
+  );
 
-  it("is false for the false set and any unrecognized value", () => {
-    for (const value of ["0", "f", "F", "FALSE", "false", "False", "yes", "on", "", "nope"]) {
-      expect(run(KEY, value, supabaseEnvBool(KEY))).toBe(false);
-    }
-  });
+  it.effect("is false for the false set and any unrecognized value", () =>
+    Effect.gen(function* () {
+      for (const value of ["0", "f", "F", "FALSE", "false", "False", "yes", "on", "", "nope"]) {
+        expect(yield* supabaseEnvBool(KEY).pipe(withShellEnv({ [KEY]: value }))).toBe(false);
+      }
+    }),
+  );
 
-  it("is false when the env var is absent", () => {
-    expect(run(KEY, undefined, supabaseEnvBool(KEY))).toBe(false);
-  });
+  it.effect("is false when the env var is absent", () =>
+    Effect.gen(function* () {
+      expect(yield* supabaseEnvBool(KEY).pipe(withShellEnv({}))).toBe(false);
+    }),
+  );
 });
 
 describe("supabaseEnvBoolWithProjectFallback", () => {
-  it("falls back to the project value only when the shell var is absent", () => {
-    expect(run(KEY, undefined, supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }))).toBe(
-      true,
-    );
-    expect(run(KEY, undefined, supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }))).toBe(
-      false,
-    );
-    expect(run(KEY, undefined, supabaseEnvBoolWithProjectFallback(KEY, {}))).toBe(false);
-  });
+  it.effect("falls back to the project value only when the shell var is absent", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }).pipe(withShellEnv({})),
+      ).toBe(true);
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }).pipe(withShellEnv({})),
+      ).toBe(false);
+      expect(yield* supabaseEnvBoolWithProjectFallback(KEY, {}).pipe(withShellEnv({}))).toBe(false);
+    }),
+  );
 
-  it("keeps a false shell override even when the project .env says true", () => {
-    expect(run(KEY, "false", supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }))).toBe(
-      false,
-    );
-  });
+  it.effect("keeps a false shell override even when the project .env says true", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }).pipe(
+          withShellEnv({ [KEY]: "false" }),
+        ),
+      ).toBe(false);
+    }),
+  );
 
-  it("treats an empty shell value as present (blocks the project value) and false", () => {
-    expect(run(KEY, "", supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }))).toBe(false);
-  });
+  it.effect("treats an empty shell value as present (blocks the project value) and false", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }).pipe(
+          withShellEnv({ [KEY]: "" }),
+        ),
+      ).toBe(false);
+    }),
+  );
 
-  it("treats an unparsable shell value as present and false", () => {
-    expect(run(KEY, "banana", supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }))).toBe(
-      false,
-    );
-  });
+  it.effect("treats an unparsable shell value as present and false", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }).pipe(
+          withShellEnv({ [KEY]: "banana" }),
+        ),
+      ).toBe(false);
+    }),
+  );
 
-  it("keeps a true shell value over a false project value", () => {
-    expect(run(KEY, "true", supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }))).toBe(
-      true,
-    );
-  });
+  it.effect("keeps a true shell value over a false project value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }).pipe(
+          withShellEnv({ [KEY]: "true" }),
+        ),
+      ).toBe(true);
+    }),
+  );
 
-  it("whenUnset: true resolves a key absent from both envs to true (opt-out gate default)", () => {
-    expect(
-      run(KEY, undefined, supabaseEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true })),
-    ).toBe(true);
-  });
+  it.effect(
+    "whenUnset: true resolves a key absent from both envs to true (opt-out gate default)",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* supabaseEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true }).pipe(
+            withShellEnv({}),
+          ),
+        ).toBe(true);
+      }),
+  );
 
-  it("whenUnset: true still yields false for any present non-true value", () => {
-    const gate = (shell: string | undefined, project: Record<string, string>) =>
-      run(KEY, shell, supabaseEnvBoolWithProjectFallback(KEY, project, { whenUnset: true }));
-    expect(gate("0", {})).toBe(false);
-    expect(gate("", { [KEY]: "true" })).toBe(false);
-    expect(gate("banana", {})).toBe(false);
-    expect(gate(undefined, { [KEY]: "false" })).toBe(false);
-  });
+  it.effect("whenUnset: true still yields false for any present non-true value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true }).pipe(
+          withShellEnv({ [KEY]: "0" }),
+        ),
+      ).toBe(false);
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }, { whenUnset: true }).pipe(
+          withShellEnv({ [KEY]: "" }),
+        ),
+      ).toBe(false);
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true }).pipe(
+          withShellEnv({ [KEY]: "banana" }),
+        ),
+      ).toBe(false);
+      expect(
+        yield* supabaseEnvBoolWithProjectFallback(
+          KEY,
+          { [KEY]: "false" },
+          { whenUnset: true },
+        ).pipe(withShellEnv({})),
+      ).toBe(false);
+    }),
+  );
 });
 
 describe("supabaseEnvStringWithProjectFallback", () => {
-  const read = (shell: string | undefined, project: Record<string, string>) =>
-    run(STRING_KEY, shell, supabaseEnvStringWithProjectFallback(STRING_KEY, project));
+  it.effect("falls back to the project value only when the shell var is absent", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }).pipe(withShellEnv({})),
+      ).toBe("project-value");
+      expect(
+        yield* supabaseEnvStringWithProjectFallback(STRING_KEY, {}).pipe(withShellEnv({})),
+      ).toBe("");
+    }),
+  );
 
-  it("falls back to the project value only when the shell var is absent", () => {
-    expect(read(undefined, { [STRING_KEY]: "project-value" })).toBe("project-value");
-    expect(read(undefined, {})).toBe("");
-  });
+  it.effect("keeps the shell value over a project value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }).pipe(withShellEnv({ [STRING_KEY]: "shell-value" })),
+      ).toBe("shell-value");
+    }),
+  );
 
-  it("keeps the shell value over a project value", () => {
-    expect(read("shell-value", { [STRING_KEY]: "project-value" })).toBe("shell-value");
-  });
+  it.effect("treats an empty shell value as present (blocks the project value)", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }).pipe(withShellEnv({ [STRING_KEY]: "" })),
+      ).toBe("");
+    }),
+  );
 
-  it("treats an empty shell value as present (blocks the project value)", () => {
-    expect(read("", { [STRING_KEY]: "project-value" })).toBe("");
-  });
-
-  it("returns an empty string (not undefined) when absent from both", () => {
-    expect(read(undefined, {})).toBe("");
-  });
+  it.effect("returns an empty string (not undefined) when absent from both", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* supabaseEnvStringWithProjectFallback(STRING_KEY, {}).pipe(withShellEnv({})),
+      ).toBe("");
+    }),
+  );
 });

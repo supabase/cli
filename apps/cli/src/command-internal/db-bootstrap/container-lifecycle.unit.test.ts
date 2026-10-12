@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { afterEach, beforeEach } from "vitest";
 
 import {

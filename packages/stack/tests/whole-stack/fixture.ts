@@ -1,5 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
+  ByteSize,
   Cause,
   Crypto,
   Effect,
@@ -14,7 +15,7 @@ import {
 } from "effect";
 import { postgres } from "../../src/Commands.ts";
 import { homedir } from "node:os";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { create, type Stack } from "../../src/effect.ts";
 import type { ContainerEngine } from "../../src/runtime/Container.ts";
 import type { Observation } from "../../src/Rpc.ts";
@@ -98,10 +99,10 @@ const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
     Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fs.open(path.join(stateRoot, stackId, "owner.log"));
-        const size = (yield* file.stat).size;
+        const size = ByteSize.toBigInt((yield* file.stat).size);
         const length = size < 4096n ? size : 4096n;
         yield* file.seek(size - length, "start");
-        const bytes = yield* file.readAlloc(length);
+        const bytes = yield* file.readAlloc(Number(length));
         const content = Option.match(bytes, {
           onNone: () => "",
           onSome: (buffer) => new TextDecoder().decode(buffer),

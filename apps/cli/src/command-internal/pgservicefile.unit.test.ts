@@ -1,7 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { pgServiceSettings, parseServicefile } from "./pgservicefile.ts";
 
@@ -41,40 +40,51 @@ describe("parseServicefile", () => {
 });
 
 describe("pgServiceSettings", () => {
-  let tmp: string;
-  let path: string;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgservice-"));
-    path = join(tmp, "pg_service.conf");
-    writeFileSync(path, "[prod]\nhost=db.example.com\nport=6543\ndbname=appdb\nuser=alice\n");
+  const serviceFile = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const tmp = yield* fs.makeTempDirectoryScoped({ prefix: "pgservice-" });
+    const path = pathService.join(tmp, "pg_service.conf");
+    yield* fs.writeFileString(
+      path,
+      "[prod]\nhost=db.example.com\nport=6543\ndbname=appdb\nuser=alice\n",
+    );
+    return { fs, pathService, tmp, path };
   });
 
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  it.effect("returns the named section's settings, remapping dbname → database", () =>
+    Effect.gen(function* () {
+      const { path } = yield* serviceFile;
+      const settings = yield* pgServiceSettings("prod", path);
+      expect(settings).toBeDefined();
+      expect(Object.fromEntries(settings!)).toEqual({
+        host: "db.example.com",
+        port: "6543",
+        database: "appdb",
+        user: "alice",
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it("returns the named section's settings, remapping dbname → database", () => {
-    const settings = pgServiceSettings("prod", path);
-    expect(settings).toBeDefined();
-    expect(Object.fromEntries(settings!)).toEqual({
-      host: "db.example.com",
-      port: "6543",
-      database: "appdb",
-      user: "alice",
-    });
-  });
+  it.effect("returns undefined for an unknown service", () =>
+    Effect.gen(function* () {
+      const { path } = yield* serviceFile;
+      expect(yield* pgServiceSettings("missing", path)).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it("returns undefined for an unknown service", () => {
-    expect(pgServiceSettings("missing", path)).toBeUndefined();
-  });
+  it.effect("returns undefined when the service file is unreadable", () =>
+    Effect.gen(function* () {
+      const { pathService, tmp } = yield* serviceFile;
+      expect(yield* pgServiceSettings("prod", pathService.join(tmp, "nope.conf"))).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it("returns undefined when the service file is unreadable", () => {
-    expect(pgServiceSettings("prod", join(tmp, "nope.conf"))).toBeUndefined();
-  });
-
-  it("returns undefined when the file is malformed", () => {
-    writeFileSync(path, "host=orphan\n");
-    expect(pgServiceSettings("prod", path)).toBeUndefined();
-  });
+  it.effect("returns undefined when the file is malformed", () =>
+    Effect.gen(function* () {
+      const { fs, path } = yield* serviceFile;
+      yield* fs.writeFileString(path, "host=orphan\n");
+      expect(yield* pgServiceSettings("prod", path)).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

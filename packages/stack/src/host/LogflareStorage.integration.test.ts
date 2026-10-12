@@ -50,14 +50,16 @@ const analyticsDatabase = Effect.gen(function* () {
   yield* Effect.scoped(
     Effect.gen(function* () {
       const services = yield* Layer.build(PgClient.layer({ url: Redacted.make(database.url) }));
-      yield* Context.get(services, PgClient.PgClient).unsafe(`
-        CREATE SCHEMA IF NOT EXISTS _analytics;
-        CREATE TABLE _analytics.sources (name text NOT NULL, token uuid NOT NULL);
-        INSERT INTO _analytics.sources VALUES
-          ('postgres.logs', '${sourceToken}'), ('auth.logs', '${uncreatedToken}');
-        CREATE TABLE _analytics."log_events_${sourceToken.replaceAll("-", "_")}" (id uuid PRIMARY KEY);
-        INSERT INTO _analytics."log_events_${sourceToken.replaceAll("-", "_")}" VALUES ('${storedId}');
-      `);
+      const client = Context.get(services, PgClient.PgClient);
+      const eventsTable = `_analytics."log_events_${sourceToken.replaceAll("-", "_")}"`;
+      for (const statement of [
+        "CREATE SCHEMA IF NOT EXISTS _analytics",
+        "CREATE TABLE _analytics.sources (name text NOT NULL, token uuid NOT NULL)",
+        `INSERT INTO _analytics.sources VALUES ('postgres.logs', '${sourceToken}'), ('auth.logs', '${uncreatedToken}')`,
+        `CREATE TABLE ${eventsTable} (id uuid PRIMARY KEY)`,
+        `INSERT INTO ${eventsTable} VALUES ('${storedId}')`,
+      ])
+        yield* client.unsafe(statement);
     }),
   );
   return { database, socket: `${endpoint.path}/.s.PGSQL.${endpoint.port}` };

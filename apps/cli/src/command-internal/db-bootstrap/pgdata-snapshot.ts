@@ -13,7 +13,7 @@
  */
 
 import { Effect, Option, Stream, type FileSystem } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { collectText, describeContainerCliFailure, spawnContainerCli } from "../container-cli.ts";
 import { dockerCopyArchiveIntoContainer } from "./container-lifecycle.ts";

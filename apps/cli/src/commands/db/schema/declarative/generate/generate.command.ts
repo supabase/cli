@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
@@ -15,24 +15,24 @@ import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 
 const config = {
-  overwrite: Flag.boolean("overwrite").pipe(
+  overwrite: Flag.Boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
   ),
   // Not named `--output`/`-o`: that's reserved for the global machine-format flag
   // (`OutputFlag`), and a leaf string flag would shadow it — `generate -o json` would write a
   // directory literally named `json` instead of requesting JSON output.
-  outputDir: Flag.string("output-dir").pipe(
+  outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription(
       "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
     ),
     Flag.optional,
   ),
-  reset: Flag.boolean("reset").pipe(
+  reset: Flag.Boolean("reset").pipe(
     Flag.withDescription("Reset local database before generating (local data will be lost)."),
     Flag.withDefault(false),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -43,7 +43,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Generates declarative schema from the database specified by the connection string (must be percent-encoded).",
     ),
@@ -51,11 +51,11 @@ const config = {
   ),
   // Explicit-target selection keys off presence, not the bool value, so model `--linked`/
   // `--local` as `Option` (like `--db-url`) so `--linked=false` still takes the explicit path.
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Generates declarative schema from the linked project."),
     Flag.optional,
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Generates declarative schema from the local database."),
     Flag.optional,
   ),
