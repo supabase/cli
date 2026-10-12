@@ -64,7 +64,8 @@ export const promptBranchId = Effect.fnUntraced(function* (
   const branches = yield* api.v1
     .listAllBranches({ ref: projectRef })
     .pipe(Effect.catch(mapListError));
-  if (branches.length === 0) {
+  const [firstBranch] = branches;
+  if (firstBranch === undefined) {
     return yield* new BranchesBranchingDisabledError({
       message: "branching is disabled",
       // Cyan matches the established color for the suggested command.
@@ -80,7 +81,7 @@ export const promptBranchId = Effect.fnUntraced(function* (
 
   const choice = yield* output
     .promptSelect("Select a branch:", options)
-    .pipe(Effect.orElseSucceed(() => options[0]!.value));
+    .pipe(Effect.orElseSucceed(() => firstBranch.project_ref));
 
   if (output.format === "text") {
     yield* output.raw(`Selected branch ID: ${choice}\n`, "stderr");

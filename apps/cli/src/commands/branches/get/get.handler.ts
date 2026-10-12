@@ -13,7 +13,6 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
   encodeEnv,
   encodeGoJson,
@@ -81,7 +80,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const cliSettings = yield* CommandSettings;
-  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
