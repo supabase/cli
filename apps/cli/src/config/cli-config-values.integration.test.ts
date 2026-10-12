@@ -1005,6 +1005,26 @@ describe("CliConfigValues dynamic family names", () => {
     );
   }
 
+  it.live("keeps a shell override for a bare __proto__ template name as an own key", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "proto"\n[auth.email.template.__proto__]\nsubject = "file"\n',
+      );
+
+      const decoded = yield* templates(root);
+
+      expect(Object.hasOwn(decoded, "__proto__")).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(decoded, "__proto__")?.value?.subject).toBe(
+        "override",
+      );
+      expect(Object.hasOwn(Object.prototype, "subject")).toBe(false);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_AUTH_EMAIL_TEMPLATE___PROTO___SUBJECT: "override" }, effect),
+      Effect.scoped,
+    ),
+  );
+
   it.live("applies an override to a dotted template name without creating a phantom table", () =>
     Effect.gen(function* () {
       const root = yield* project(

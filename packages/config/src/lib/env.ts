@@ -234,12 +234,12 @@ function walk(
   }
 
   if (typeof document === "object" && document !== null) {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(document)) {
-      const child = ast === null ? null : descendAst(ast, key);
-      result[key] = walk(value, env, child, cliCompat, [...path, key], onResolvedEnv);
-    }
-    return result;
+    return Object.fromEntries(
+      Object.entries(document).map(([key, value]) => {
+        const child = ast === null ? null : descendAst(ast, key);
+        return [key, walk(value, env, child, cliCompat, [...path, key], onResolvedEnv)];
+      }),
+    );
   }
 
   if (typeof document === "string") {

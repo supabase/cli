@@ -48,3 +48,15 @@ describe("resolveCliConfigSubtree", () => {
     }
   });
 });
+
+describe("own-key handling", () => {
+  test("a __proto__ table name survives resolution as an own key", () => {
+    const document = JSON.parse('{"__proto__":{"subject":"env(FOO)"}}');
+
+    const resolved = resolveCliConfigSubtree(document, { values: { FOO: "bar" } }, "auth");
+
+    expect(Object.getOwnPropertyDescriptor(resolved, "__proto__")?.value).toEqual({
+      subject: "bar",
+    });
+  });
+});

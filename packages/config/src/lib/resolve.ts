@@ -64,13 +64,9 @@ function interpolateValue(
   }
 
   if (typeof value === "object" && value !== null) {
-    const result: Record<string, unknown> = {};
-
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = interpolateValue(child, env, cliCompat);
-    }
-
-    return result;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, interpolateValue(child, env, cliCompat)]),
+    );
   }
 
   if (typeof value === "string") {
@@ -86,13 +82,12 @@ function redactValue(value: unknown, path: ReadonlyArray<string>, cliCompat: boo
   }
 
   if (typeof value === "object" && value !== null) {
-    const result: Record<string, unknown> = {};
-
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = redactValue(child, [...path, key], cliCompat);
-    }
-
-    return result;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        redactValue(child, [...path, key], cliCompat),
+      ]),
+    );
   }
 
   if (typeof value === "string" && isSecretPath(path) && !isEnvReference(value, cliCompat)) {
