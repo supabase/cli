@@ -31,6 +31,15 @@ describe("operation-table", () => {
     expect(unscoped?.oauthScope).toBeUndefined();
   });
 
+  it("reads x-fga-permissions when the spec declares them and leaves them undefined when it doesn't", () => {
+    const withFga = OPERATIONS.get("v1-list-all-secrets");
+    const withoutFga = OPERATIONS.get("v1-get-profile");
+    expect(withFga).toBeDefined();
+    expect(withoutFga).toBeDefined();
+    expect(withFga?.fga).toEqual([["edge_functions_secrets_read"]]);
+    expect(withoutFga?.fga).toBeUndefined();
+  });
+
   it("treats an absolute request to another origin as out of scope, even on a /v2/ path", () => {
     expect(
       matchOperation("GET", "https://registry.example.com/v2/org/image/manifests/latest"),

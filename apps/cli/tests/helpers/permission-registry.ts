@@ -1,15 +1,31 @@
 import { Option } from "effect";
 
-import { rootCommandForFeatures } from "../../cli/root.ts";
-import { findCommand } from "../../shared/cli/command-docs.ts";
-import { readPermissions } from "./command-permissions.annotation.ts";
-import type { CommandPermissions, FlagCondition, OperationEntry } from "./model.ts";
+import { rootCommandForFeatures } from "../../src/cli/root.ts";
+import { readPermissions } from "../../src/command-internal/command-permissions/command-permissions.annotation.ts";
+import type {
+  CommandPermissions,
+  FlagCondition,
+  OperationEntry,
+} from "../../src/command-internal/command-permissions/model.ts";
+import { findCommand } from "../../src/shared/cli/command-docs.ts";
 
 /** Which command tree to resolve against: `start`/`status`/`stop` differ by stack backend. */
 export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 
-function conditionHolds(condition: FlagCondition, activeFlags: ReadonlyArray<string>): boolean {
-  return activeFlags.includes(condition.flag) === (condition.present ?? true);
+/**
+ * The flags one run uses, keyed by name without the leading `--`: a flag's effective value
+ * (its default included) where a value condition checks it, otherwise `true`.
+ */
+export type ActiveFlags = Readonly<Record<string, true | string>>;
+
+function conditionHolds(condition: FlagCondition, activeFlags: ActiveFlags): boolean {
+  const value = Object.hasOwn(activeFlags, condition.flag)
+    ? activeFlags[condition.flag]
+    : undefined;
+  if (condition.oneOf !== undefined) {
+    return typeof value === "string" && condition.oneOf.includes(value);
+  }
+  return (value !== undefined) === (condition.present ?? true);
 }
 
 /** Higher wins a dedupe conflict: a required check with no `context` must never lose to one that has one. */
@@ -37,7 +53,7 @@ type MappedCommandPermissions = Extract<CommandPermissions, { status: "mapped" }
 /** The entries of `permissions` that apply under `activeFlags`, deduped by `operationId`. */
 export function applicableOperations(
   permissions: MappedCommandPermissions,
-  activeFlags: ReadonlyArray<string>,
+  activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
   const applicable = permissions.operations.filter(
     (entry) =>

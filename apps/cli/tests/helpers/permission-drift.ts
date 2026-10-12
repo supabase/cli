@@ -1,12 +1,10 @@
-import {
-  applicableOperations,
-  declaredPermissions,
-} from "../../src/command-internal/command-permissions/registry.ts";
+import { applicableOperations, declaredPermissions } from "./permission-registry.ts";
 import type {
+  ActiveFlags,
   DeclaredPermissionsLookup,
   PermissionVariant,
-} from "../../src/command-internal/command-permissions/registry.ts";
-import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../src/command-internal/command-permissions/global-flags.ts";
+} from "./permission-registry.ts";
+import { GLOBAL_NO_API_EFFECT_FLAGS } from "./permission-global-flags.ts";
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
@@ -19,8 +17,8 @@ export interface RecordedMethodUrl {
 export interface DriftCheckOptions {
   /** The declared command path, e.g. `"secrets list"`. */
   readonly command: string;
-  /** Flags active in this test run (without the leading `--`), e.g. `["linked"]`. */
-  readonly activeFlags?: ReadonlyArray<string>;
+  /** Flags this test run uses, e.g. `{ linked: true, type: "security" }` (see {@link ActiveFlags}). */
+  readonly activeFlags?: ActiveFlags;
   readonly requests: ReadonlyArray<RecordedMethodUrl>;
   /** The flags `command` really accepts (its own, inherited and root globals); when set, every active flag must be among them. */
   readonly acceptedFlags?: ReadonlySet<string>;
@@ -37,6 +35,13 @@ export interface DriftCheckOptions {
 export interface AssertPermissionDriftOptions extends DriftCheckOptions {
   /** The command tree to look `command` up in; defaults to the default root (`start`/`status`/`stop` differ by stack backend). */
   readonly variant?: PermissionVariant;
+}
+
+function describeActiveFlags(activeFlags: ActiveFlags): string {
+  const entries = Object.entries(activeFlags).map(([flag, value]) =>
+    value === true ? flag : `${flag}=${value}`,
+  );
+  return `[${entries.join(", ")}]`;
 }
 
 /** Every flag name `command`'s declaration classifies anywhere — a global, a no-effect flag, or a `when` condition. */
@@ -70,7 +75,7 @@ export function assertDriftAgainst(
   options: DriftCheckOptions & { readonly variant?: PermissionVariant },
 ): void {
   const { command, requests, exact = false } = options;
-  const activeFlags = options.activeFlags ?? [];
+  const activeFlags = options.activeFlags ?? {};
   if (lookup._tag === "NotFound") {
     throw new Error(
       `assertPermissionDrift: command "${command}" is not in the ${JSON.stringify(options.variant ?? "default")} command tree — pass \`variant\` if it only exists under a feature option (e.g. stack, compute).`,
@@ -88,7 +93,7 @@ export function assertDriftAgainst(
     );
   }
 
-  for (const flag of activeFlags) {
+  for (const flag of Object.keys(activeFlags)) {
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) {
       throw new Error(
         `assertPermissionDrift: "${command}": activeFlags names "${flag}", but this command does not accept --${flag} — a shared building block may mention it without the command having it.`,
@@ -97,10 +102,20 @@ export function assertDriftAgainst(
   }
 
   const known = knownFlagNames(declared);
-  for (const flag of activeFlags) {
+  const valueChecked = new Set(
+    declared.operations.flatMap((entry) =>
+      (entry.when ?? []).flatMap((cond) => (cond.oneOf === undefined ? [] : [cond.flag])),
+    ),
+  );
+  for (const [flag, value] of Object.entries(activeFlags)) {
     if (!known.has(flag)) {
       throw new Error(
         `assertPermissionDrift: "${command}": activeFlags names "${flag}", which this command's declaration never classifies — check for a typo.`,
+      );
+    }
+    if (value === true && valueChecked.has(flag)) {
+      throw new Error(
+        `assertPermissionDrift: "${command}": activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
       );
     }
   }
@@ -122,11 +137,11 @@ export function assertDriftAgainst(
     if (activeIds.has(match.operation.operationId)) continue;
     if (allDeclaredIds.has(match.operation.operationId)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this command but whose \`when\` condition doesn't hold for activeFlags=[${activeFlags.join(",")}] — check that activeFlags matches what this test run actually exercises.`,
+        `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this command but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
       );
     }
     throw new Error(
-      `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this command at all (activeFlags=[${activeFlags.join(",")}]).`,
+      `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this command at all (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 
@@ -140,7 +155,7 @@ export function assertDriftAgainst(
   );
   if (missingRequired.length > 0) {
     throw new Error(
-      `assertPermissionDrift: "${command}": exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=[${activeFlags.join(",")}]).`,
+      `assertPermissionDrift: "${command}": exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 }

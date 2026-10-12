@@ -7,10 +7,10 @@ import { commandTreeFor, flagNames } from "../../../tests/helpers/command-flags.
 import type { TreeNode } from "../../../tests/helpers/command-flags.ts";
 import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
-import { GLOBAL_NO_API_EFFECT_FLAGS } from "./global-flags.ts";
+import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
 import type { CommandPermissions, FlagCondition, OperationEntry } from "./model.ts";
-import { PENDING_COMMANDS } from "./pending-commands.ts";
-import type { PermissionVariant } from "./registry.ts";
+import { PENDING_COMMANDS } from "../../../tests/helpers/permission-pending-commands.ts";
+import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
 /**
  * Whole-command Go delegation, per `docs/go-cli-porting-status.md`. Flag-gated delegation
@@ -25,6 +25,13 @@ const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
   "db remote changes",
   "gen keys",
 ]);
+
+/**
+ * Operations a declaration may reference although the spec gives them no `x-fga-permissions`,
+ * keyed by `operationId` with the reason. A missing extension otherwise fails the test, since it
+ * doesn't say whether a scoped token can call the operation.
+ */
+const OPERATIONS_WITHOUT_FGA: ReadonlyMap<string, string> = new Map<string, string>([]);
 
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },
@@ -127,29 +134,50 @@ describe("command permission mapping completeness", () => {
           }
           for (const entry of permissions.operations) {
             for (const cond of entry.when ?? []) {
-              // A command's own entry must name one of its own flags. An entry a building block
-              // contributed (`entry.source` set) only has to name a real flag somewhere in the CLI:
-              // a command can include a block without accepting every flag its conditions mention.
-              // On such a command a presence condition is false and an absence condition holds
-              // (see `model.ts`'s `block`).
-              const validNames = entry.source === undefined ? node.flags : everyRealFlag;
+              // A condition a building block wrote (`cond.source` set) only has to name a real flag
+              // somewhere in the CLI: a command can include a block without accepting every flag
+              // its conditions mention. On such a command a presence condition is false and an
+              // absence condition holds. Every other condition must name this command's own flag.
+              const validNames = cond.source === undefined ? node.flags : everyRealFlag;
               expect(
                 validNames.has(cond.flag),
-                `"${path}"'s \`when\` condition on "${entry.operationId}" names "--${cond.flag}", which doesn't exist${entry.source === undefined ? "" : ` (from building block "${entry.source}")`}`,
+                `"${path}"'s \`when\` condition on "${entry.operationId}" names "--${cond.flag}", which doesn't exist${cond.source === undefined ? "" : ` (from building block "${cond.source}")`}`,
               ).toBe(true);
+              const info = node.flagInfo.get(cond.flag);
+              if (cond.oneOf === undefined || info === undefined) continue;
+              const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
+              expect(
+                cond.oneOf.length,
+                `${where} lists no values for --${cond.flag}`,
+              ).toBeGreaterThan(0);
+              expect(
+                info.isBoolean,
+                `${where} checks the value of --${cond.flag}, a switch with no value — use \`present\``,
+              ).toBe(false);
+              for (const value of cond.oneOf) {
+                expect(
+                  info.choices === undefined || info.choices.includes(value),
+                  `${where} lists "${value}", which --${cond.flag} doesn't accept (${info.choices?.join(", ")})`,
+                ).toBe(true);
+              }
             }
           }
         }
       });
 
-      it("references only operationIds that exist in the bundled spec", () => {
+      it("references only operationIds that exist in the bundled spec and declare FGA permissions", () => {
         for (const [path, node] of leaves) {
           const permissions = declarationOf(node);
           if (permissions?.status !== "mapped") continue;
           for (const entry of permissions.operations) {
+            const operation = OPERATIONS.get(entry.operationId);
             expect(
-              OPERATIONS.has(entry.operationId),
+              operation,
               `"${path}" declares operationId "${entry.operationId}", which the bundled spec does not have`,
+            ).toBeDefined();
+            expect(
+              operation?.fga !== undefined || OPERATIONS_WITHOUT_FGA.has(entry.operationId),
+              `"${path}" declares "${entry.operationId}", which has no x-fga-permissions in the bundled spec — add it to OPERATIONS_WITHOUT_FGA with the reason`,
             ).toBe(true);
           }
         }
@@ -167,6 +195,17 @@ describe("command permission mapping completeness", () => {
       });
     });
   }
+
+  it("acknowledges only operations that really lack x-fga-permissions in the bundled spec", () => {
+    for (const operationId of OPERATIONS_WITHOUT_FGA.keys()) {
+      const operation = OPERATIONS.get(operationId);
+      expect(operation, `OPERATIONS_WITHOUT_FGA names unknown "${operationId}"`).toBeDefined();
+      expect(
+        operation?.fga,
+        `"${operationId}" now has x-fga-permissions — remove it from OPERATIONS_WITHOUT_FGA`,
+      ).toBeUndefined();
+    }
+  });
 
   it("matches the global flag table against the root command's actual global flags exactly", () => {
     expect(new Set(GLOBAL_NO_API_EFFECT_FLAGS)).toEqual(rootGlobalFlagIds());

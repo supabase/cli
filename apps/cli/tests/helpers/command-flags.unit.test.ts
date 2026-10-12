@@ -16,6 +16,19 @@ describe("commandTreeFor", () => {
     expect(tree.get("db query")?.flags).not.toContain("password");
   });
 
+  it("describes each flag's accepted values, a leaf's own flag winning over a global of the same name", () => {
+    expect(tree.get("db advisors")?.flagInfo.get("type")).toEqual({
+      isBoolean: false,
+      choices: ["all", "security", "performance"],
+    });
+    expect(tree.get("db advisors")?.flagInfo.get("linked")?.isBoolean).toBe(true);
+    expect(tree.get("db query")?.flagInfo.get("output")?.choices).toBeDefined();
+    expect(tree.get("db diff")?.flagInfo.get("output")).toEqual({
+      isBoolean: false,
+      choices: undefined,
+    });
+  });
+
   it("marks a group as a non-leaf and its subcommand as a leaf", () => {
     expect(tree.get("db")?.isLeaf).toBe(false);
     expect(tree.get("db query")?.isLeaf).toBe(true);

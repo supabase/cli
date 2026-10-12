@@ -10,8 +10,11 @@ export interface Operation {
   readonly operationId: string;
   readonly method: string;
   readonly pathTemplate: string;
-  /** `x-fga-permissions`: any one of these sets satisfies the check; every id in a set is required. */
-  readonly fga: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * `x-fga-permissions`: any one of these sets satisfies the check; every id in a set is required.
+   * `undefined` when the spec declares none, which says nothing about what a scoped token needs.
+   */
+  readonly fga: ReadonlyArray<ReadonlyArray<string>> | undefined;
   /** `x-oauth-scope`, e.g. `"secrets:read"`; `undefined` when the spec declares none. */
   readonly oauthScope: string | undefined;
 }
@@ -39,7 +42,7 @@ function buildOperations(): ReadonlyMap<string, Operation> {
         operationId: op.operationId,
         method: method.toUpperCase(),
         pathTemplate,
-        fga: op["x-fga-permissions"] ?? [],
+        fga: op["x-fga-permissions"],
         oauthScope: op["x-oauth-scope"],
       });
     }

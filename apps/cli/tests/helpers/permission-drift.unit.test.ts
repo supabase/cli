@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
-import type { DeclaredPermissionsLookup } from "../../src/command-internal/command-permissions/registry.ts";
+import type { DeclaredPermissionsLookup } from "./permission-registry.ts";
 import { assertDriftAgainst } from "./permission-drift.ts";
 import { OPERATIONS } from "./operation-table.ts";
 
@@ -42,7 +42,7 @@ describe("assertDriftAgainst", () => {
     expect(() =>
       assertDriftAgainst(mappedCommand, {
         command: "secrets list",
-        activeFlags: ["linked"],
+        activeFlags: { linked: true },
         requests: [listSecrets, runQuery],
         exact: true,
       }),
@@ -89,10 +89,32 @@ describe("assertDriftAgainst", () => {
     expect(() =>
       assertDriftAgainst(mappedCommand, {
         command: "secrets list",
-        activeFlags: ["lnked"],
+        activeFlags: { lnked: true },
         requests: [],
       }),
     ).toThrow(/activeFlags names "lnked"/);
+  });
+
+  it("rejects an active flag given no value when a condition checks its value", () => {
+    const valueChecked = declared({
+      status: "mapped",
+      operations: [
+        { operationId: "v1-list-all-secrets", kind: "required" },
+        {
+          operationId: "v1-run-a-query",
+          kind: "required",
+          when: [{ flag: "type", oneOf: ["sql"] }],
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    expect(() =>
+      assertDriftAgainst(valueChecked, {
+        command: "secrets list",
+        activeFlags: { type: true },
+        requests: [listSecrets],
+      }),
+    ).toThrow(/gives "type" no value, but a `when` condition checks its value/);
   });
 
   it("rejects an active flag the command does not accept, even if a declaration condition names it", () => {
@@ -107,7 +129,7 @@ describe("assertDriftAgainst", () => {
     expect(() =>
       assertDriftAgainst(withBlockCondition, {
         command: "db query",
-        activeFlags: ["password"],
+        activeFlags: { password: true },
         acceptedFlags: new Set(["linked", "output"]),
         requests: [],
       }),
@@ -133,7 +155,7 @@ describe("assertDriftAgainst", () => {
     expect(() =>
       assertDriftAgainst(mappedCommand, {
         command: "secrets list",
-        activeFlags: [],
+        activeFlags: {},
         requests: [runQuery],
       }),
     ).toThrow(/"v1-run-a-query", which is declared for this command but whose `when` condition/);
@@ -155,7 +177,7 @@ describe("assertDriftAgainst", () => {
       expect(() =>
         assertDriftAgainst(mappedCommand, {
           command: "secrets list",
-          activeFlags: ["linked"],
+          activeFlags: { linked: true },
           requests: [listSecrets],
           exact: true,
         }),
@@ -166,7 +188,7 @@ describe("assertDriftAgainst", () => {
       expect(() =>
         assertDriftAgainst(mappedCommand, {
           command: "secrets list",
-          activeFlags: [],
+          activeFlags: {},
           requests: [listSecrets],
           exact: true,
         }),
