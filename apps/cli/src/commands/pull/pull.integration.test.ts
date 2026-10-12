@@ -37,7 +37,7 @@ import {
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
   transportFailure,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
@@ -75,7 +75,6 @@ import { pullHandler } from "./pull.command.ts";
  */
 
 const tempRoot = useTempWorkdir("supabase-pull-int-");
-useShadowCacheDisabled();
 
 const BRANCH_REF = "cccccccccccccccccccc";
 
@@ -709,6 +708,7 @@ function setupRuntime(
     // Listed after `buildTestRuntime` so it overrides the real spawner `BunServices.layer`
     // provides (last-wins).
     spawner.layer,
+    shadowCacheDisabledLayer,
   );
 
   return {

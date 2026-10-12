@@ -1018,7 +1018,7 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
     envOverride:
       projectEnvValues === undefined
         ? undefined
-        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+        : yield* viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 

@@ -30,6 +30,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -2182,7 +2183,7 @@ describe("functions download", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
         }).pipe(Effect.provide(layer), (body) =>
-          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+          withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body),
         );
       },
     );
@@ -2225,7 +2226,7 @@ describe("functions download", () => {
         expect(runCommand?.args).toContain("flag-network");
         expect(runCommand?.args).not.toContain("env-network");
       }).pipe(Effect.provide(layer), (body) =>
-        withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+        withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body),
       );
     });
 

@@ -32,9 +32,9 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
 ) {
   if (
     bypassCache ||
-    !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
+    !(yield* viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
       whenUnset: true,
-    })
+    }))
   )
     return undefined;
   const rolesSql = yield* readRoles(input);
