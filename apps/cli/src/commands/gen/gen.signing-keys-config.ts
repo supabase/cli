@@ -1,6 +1,6 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Config, Effect, FileSystem, Option, Path } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
 import { goJsonKindName } from "../../command-internal/go-json.ts";
 import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
@@ -28,17 +28,9 @@ interface GenSigningKeysConfigPaths {
   }>;
 }
 
-/**
- * Excludes arrays: `typeof value === "object"` is also `true` for `[]`, but an array-shaped
- * `signing_keys_path` entry must be rejected, not accepted as a JWK-shaped record.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Extends `goJsonKindName` to also name a bare object, needed when a JWK field holds `{}`. */
 function jwkFieldKindName(value: unknown): string {
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+  if (Predicate.isObject(value)) {
     return "object";
   }
   return goJsonKindName(value);
@@ -251,7 +243,7 @@ function findTopLevelObjectFieldOccurrences(
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     const keyStart = i;
     i = skipJsonValue(objectText, i);
-    const key = (JSON.parse(objectText.slice(keyStart, i)) as string).toLowerCase();
+    const key = String(JSON.parse(objectText.slice(keyStart, i))).toLowerCase();
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
     if (objectText[i] === ":") i++;
     while (i < objectText.length && /\s/.test(objectText[i] ?? "")) i++;
@@ -418,19 +410,20 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   // A `null` array element normalizes to `{}` (every field absent) rather than being
   // rejected here, matching `encoding/json`'s zero-value decoding of a `null` struct element.
   // Downstream signing may still fail on an all-absent key; this step never rejects it.
+  const records: Array<StoredSigningKeyJwk> = [];
   for (const item of decoded) {
-    if (item !== null && !isRecord(item)) {
+    if (item === null) {
+      records.push({});
+    } else if (Predicate.isObject(item)) {
+      records.push(item);
+    } else {
       return yield* Effect.fail(
         onDecodeError("failed to decode signing keys: expected a JSON array of objects"),
       );
     }
   }
   const elementTexts = splitJsonArrayElementTexts(raw);
-  const normalized: Array<Record<string, unknown>> = [];
-  for (const [index, item] of (
-    decoded as ReadonlyArray<Record<string, unknown> | null>
-  ).entries()) {
-    const record = item === null ? {} : item;
+  for (const [index, record] of records.entries()) {
     const elementText = elementTexts[index];
     yield* Effect.try({
       try: () => {
@@ -446,7 +439,6 @@ export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
           `failed to decode signing keys: failed to parse response body: ${cause instanceof Error ? cause.message : String(cause)}`,
         ),
     });
-    normalized.push(record);
   }
-  return normalized as ReadonlyArray<StoredSigningKeyJwk>;
+  return records;
 });

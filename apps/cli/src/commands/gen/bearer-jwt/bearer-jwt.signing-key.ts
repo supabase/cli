@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate } from "effect";
 import {
   assertNoMalformedDuplicateJwkField,
   readSigningKeysFile,
@@ -113,15 +113,14 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   if (parsed === null) {
     return normalizeStoredJwk({});
   }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     return yield* new GenBearerJwtKeyParseError({
       message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
     });
   }
-  const record = parsed as Record<string, unknown>;
   // Case-insensitive lookup: the `alg` allowlist check runs regardless of
   // the key's casing; see `resolveJwkFieldValue` in `gen.signing-keys-config.ts`.
-  const alg = resolveJwkFieldValue(record, "alg");
+  const alg = resolveJwkFieldValue(parsed, "alg");
   yield* Effect.try({
     try: () => assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined),
     catch: (cause) =>
@@ -130,14 +129,14 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
   });
   // `assertNoMalformedDuplicateJwkField` checks the raw `input` text, not
-  // `record`: `JSON.parse` already collapsed any duplicate top-level key to
+  // `parsed`: `JSON.parse` already collapsed any duplicate top-level key to
   // its last occurrence, silently discarding evidence (e.g. `{"kid":1,"kid":"k"}`
-  // parses to `record.kid === "k"` with no trace `1` was ever there) that
+  // parses to `parsed.kid === "k"` with no trace `1` was ever there) that
   // must still be rejected.
   return yield* Effect.try({
     try: () => {
       assertNoMalformedDuplicateJwkField(input);
-      return normalizeStoredJwk(record);
+      return normalizeStoredJwk(parsed);
     },
     catch: (cause) =>
       new GenBearerJwtKeyParseError({
@@ -170,8 +169,9 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     if (found !== undefined) {
       return found;
     }
-    if (kid.length === 0 && availableKeys.length > 0) {
-      return availableKeys[0]!;
+    const firstKey = availableKeys[0];
+    if (kid.length === 0 && firstKey !== undefined) {
+      return firstKey;
     }
     return yield* new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` });
   }
@@ -195,7 +195,10 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
       const chosen = yield* pickerOutput.promptSelect("Select a signing key:", options, {
         stream: "stderr",
       });
-      const chosenKey = availableKeys[Number(chosen)]!;
+      const chosenKey = availableKeys[Number(chosen)];
+      if (chosenKey === undefined) {
+        return yield* Effect.die(`selected signing key index out of range: ${chosen}`);
+      }
       // `output.raw`, not `output.info` (clack's `log.info` defaults to stdout).
       yield* pickerOutput.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
       return chosenKey;
