@@ -87,7 +87,7 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
-  # Claude resolves with file tools only, then the job runs the merged tree's own checks and lets Claude fix what fails.
+  # Claude resolves with file tools only, then the job runs the merged tree's quick checks and lets Claude fix them once.
   # That code is reviewed `develop` and `next` code plus Claude's edits, so this job holds no GitHub write token; the
   # publish job pushes the result from a fresh checkout. See
   # apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
@@ -98,8 +98,8 @@ jobs:
       needs.sync.outputs.conflict_pr != '' &&
       (github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair) == 'develop-into-next'
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    # Covers the resolve call, and up to three check runs and two fix calls after it.
-    timeout-minutes: 180
+    # Covers the resolve call, one quick check run, and one fix call.
+    timeout-minutes: 150
     permissions:
       contents: read
     outputs:

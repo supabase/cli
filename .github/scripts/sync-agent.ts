@@ -24,13 +24,11 @@ const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 const REPAIR_MARKER = "<!-- sync-agent repair";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
 const MAX_REPAIR_ROUNDS = 2;
-const MAX_FIX_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
-/** The same checks as the pull request's `Check code quality`, unit, and integration jobs. */
+/** The quick checks of the pull request's CI; integration and end-to-end tests are left to CI and `Sync repair`. */
 const CHECKS = [
   ["pnpm", "run", "check:all", "--continue"],
   ["pnpm", "run", "test:unit"],
-  ["pnpm", "run", "test:integration"],
 ];
 
 /** Author of the AI review's inline comments; GraphQL drops the `[bot]` suffix from bot logins. */
@@ -267,15 +265,15 @@ function runChecks(workDir: string): string[] {
 }
 
 /**
- * Runs the checks on the committed merge and lets Claude fix what fails, up to `MAX_FIX_ROUNDS` times. Returns the
- * fix summaries and the failures that remain.
+ * Runs the quick checks on the committed merge and lets Claude fix what fails, once. CI runs them again on the pull
+ * request. Returns the failures and Claude's fix summary.
  */
 function checkAndFix(git: GitRunner, workDir: string, outputDir: string) {
-  const contextDir = join(outputDir, "context");
-  mkdirSync(contextDir, { recursive: true });
-  const summaries: string[] = [];
-  let failures = runChecks(workDir);
-  for (let round = 1; failures.length > 0 && round <= MAX_FIX_ROUNDS; round += 1) {
+  const failures = runChecks(workDir);
+  let summary: string | undefined;
+  if (failures.length > 0) {
+    const contextDir = join(outputDir, "context");
+    mkdirSync(contextDir, { recursive: true });
     writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n"));
     writeFileSync(join(contextDir, "review-findings.md"), "No open review findings.\n");
     const output = runClaude(
@@ -284,17 +282,12 @@ function checkAndFix(git: GitRunner, workDir: string, outputDir: string) {
       workDir,
       contextDir,
     );
-    summaries.push(typeof output === "string" ? output : (output as Repair).summary);
-    if (gitOrThrow(git, ["status", "--porcelain"]) === "") {
-      break;
-    }
-    commit(git, "chore(repo): fix the develop-into-next merge");
-    failures = runChecks(workDir);
+    summary = typeof output === "string" ? output : (output as Repair).summary;
   }
   if (gitOrThrow(git, ["status", "--porcelain"]) !== "") {
-    commit(git, "chore(repo): format the develop-into-next merge");
+    commit(git, "chore(repo): fix the develop-into-next merge");
   }
-  return { summaries, failures };
+  return { failures, summary };
 }
 
 /** `git status` codes for unmerged paths; `HEAD` is `develop` and the merged side is `next`. */
@@ -408,10 +401,9 @@ function resolve(workDir: string, outputDir: string): void {
           "",
         ]
       : []),
-    ...checks.summaries.flatMap((summary, index) => [`**Check fix ${index + 1}.** ${summary}`, ""]),
     checks.failures.length > 0
-      ? `@supabase/cli These checks still fail on the merged tree: ${checks.failures.map((failure) => failure.split("\n")[0]?.replace(/^## /, "")).join(", ")}.`
-      : "The merged tree passes `check:all`, unit, and integration tests.",
+      ? `**Quick checks.** ${checks.failures.map((failure) => failure.split("\n")[0]?.replace(/^## /, "")).join(", ")} failed on the merged tree; Claude's fix: ${checks.summary} CI runs them again.`
+      : "**Quick checks.** The merged tree passes `check:all` and unit tests.",
     "",
     `Approve to fast-forward \`next\` once checks pass (${runLink()}).`,
     "",

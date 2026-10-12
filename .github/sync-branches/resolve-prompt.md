@@ -29,7 +29,7 @@ ancestor, `>>>>>>>` is `next`. Repository conventions live in `CLAUDE.md`, `AGEN
    behavior with `develop`'s fix ported onto it) and record it in `decisions`. Record every change
    under `.github/` as a decision too. Mechanical merges are not decisions.
 6. Never edit `.git/` or create scratch files. You cannot run commands; after you finish, the job
-   runs `check:all`, unit, and integration tests on the merged tree and asks you to fix failures.
+   runs `check:all` and unit tests on the merged tree and asks you to fix failures.
 
 If you cannot produce a correct resolution, return `status: "unresolved"` with the reason in
 `summary`; a maintainer resolves it by hand.
