@@ -256,7 +256,7 @@ it.live(
 );
 
 it.live(
-  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, releases it",
+  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, frees its port for another stack",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -329,16 +329,26 @@ it.live(
           yield* Layer.build(PortReservations.layer),
           PortReservations.Service,
         );
-        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+        const mailPort = yield* portReservations.find(realStateRoot, id, `${mail.id}:http`);
+        if (mailPort === undefined) return yield* Effect.die("mail's port was not reserved");
 
         yield* fs.makeDirectory(scratch, { recursive: true });
         const firstAttempt = yield* owner.namespace.destroy.pipe(Effect.exit);
         expect(firstAttempt._tag).toBe("Failure");
         // Retained: the row survives a destroy that could not confirm nothing remains.
-        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
+        expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBe(mailPort);
 
         resolved = true;
         yield* owner.namespace.destroy;
+        // The destroy's release is best-effort; the removed registration is what frees the port.
+        const other = `defer-destroy-other-${randomUUID()}`;
+        yield* saveStack(state, root, other);
+        const ports = yield* makePorts(state);
+        const taken = yield* ports.acquire(
+          { stackId: other, key: "mail:http", host: "127.0.0.1", port: mailPort },
+          (_host, bound) => Effect.succeed(bound),
+        );
+        expect(taken.port).toBe(mailPort);
         expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeUndefined();
       }),
     ).pipe(
