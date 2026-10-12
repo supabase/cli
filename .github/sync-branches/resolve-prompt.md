@@ -22,8 +22,9 @@ ancestor, `>>>>>>>` is `next`. Repository conventions live in `CLAUDE.md`, `AGEN
    including files that did not conflict and files that exist on only one side. For each such
    change, search the whole tree with `Grep` and update every remaining use, so the merged tree
    type-checks, lints, and passes `actionlint`. Edit unrelated files only for these uses.
-4. To delete a file (for example `next` removed it and `develop` only touched it), list it in
-   `deletedFiles` instead of editing it.
+4. To delete a conflicted file (for example `next` removed it and `develop` only touched it), list
+   it in `deletedFiles` instead of editing it. For `pnpm-lock.yaml`, keep `next`'s version; the job
+   regenerates it from the merged `package.json` files.
 5. When both behaviors cannot be kept, or both sides claim the same identifier (an ADR or
    migration number, a flag, an error code), pick the option you judge best (by default `next`'s
    behavior with `develop`'s fix ported onto it) and record it in `decisions`. Record every change

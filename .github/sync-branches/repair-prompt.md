@@ -26,8 +26,8 @@ fail. Repository conventions live in `CLAUDE.md`, `AGENTS.md`, and `docs/adr/`. 
 3. Keep both sides' intent: `develop`'s fixes and `next`'s breaking changes.
 4. Edit files under `.github/` only when a failure requires it; every such change is flagged for
    maintainer review because those workflows run with repository secrets.
-5. Never edit `.git/`, delete files, or create scratch files. You cannot run commands; the checks run
-   again after you finish.
+5. Never edit `.git/`, delete files, or create scratch files. You cannot run commands; CI runs
+   again on the pull request after you finish.
 
 Return JSON matching the provided schema. `summary` and each `reply` are posted on the pull
 request: one or two plain sentences each.

@@ -82,10 +82,14 @@ export function planRepair(state: {
   botComments: string[];
   runs: CheckRun[];
   threads: ReviewThread[];
+  reviewRunning: boolean;
 }): RepairPlan {
   const { head, botComments, threads } = state;
   if (!botComments.some((body) => body.includes(RESOLVE_MARKER))) {
     return { action: "skip", reason: "Claude did not resolve this pull request." };
+  }
+  if (botComments.some((body) => body.includes(EXHAUSTED_MARKER))) {
+    return { action: "skip", reason: "Already handed to a maintainer." };
   }
   const runs = latestRuns(state.runs.filter((run) => !isIgnoredCheck(run.name)));
   if (
@@ -93,6 +97,9 @@ export function planRepair(state: {
     runs.some((run) => run.status !== "completed")
   ) {
     return { action: "skip", reason: "Checks are still running." };
+  }
+  if (state.reviewRunning) {
+    return { action: "skip", reason: "The AI review is still running." };
   }
   const failures = runs.filter(
     (run) => run.conclusion === "failure" || run.conclusion === "timed_out",
@@ -103,9 +110,7 @@ export function planRepair(state: {
   const rounds = botComments.filter((body) => body.includes(REPAIR_MARKER)).length;
   const headRepaired = botComments.some((body) => body.includes(repairMarker(head)));
   if (rounds >= MAX_REPAIR_ROUNDS || (headRepaired && threads.length === 0)) {
-    return botComments.some((body) => body.includes(EXHAUSTED_MARKER))
-      ? { action: "skip", reason: "Already handed to a maintainer." }
-      : { action: "exhausted" };
+    return { action: "exhausted" };
   }
   return { action: "repair", failures, threads };
 }
@@ -224,13 +229,12 @@ function outputTail(text: string): string {
 }
 
 /**
- * Installs the merged tree's toolchain and dependencies, formats it, and runs its checks. Returns one report per
- * failing command; the API key is left out of their environment.
+ * Installs the merged tree's toolchain and dependencies, regenerating the lockfile, formats it, and runs its quick
+ * checks. Returns one report per failing command.
  */
 function runChecks(workDir: string): string[] {
   const env = {
     ...process.env,
-    ANTHROPIC_API_KEY: "",
     CI: "true",
     HUSKY: "0",
     MISE_TRUSTED_CONFIG_PATHS: workDir,
@@ -245,7 +249,7 @@ function runChecks(workDir: string): string[] {
       env,
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
-      timeout: 30 * 60 * 1000,
+      timeout: 20 * 60 * 1000,
     });
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
     console.log(outputTail(output));
@@ -256,7 +260,7 @@ function runChecks(workDir: string): string[] {
           `## \`${command.join(" ")}\` (${result.error?.message ?? `exit ${result.status}`})\n\n\`\`\`\`text\n${outputTail(output)}\n\`\`\`\`\n`,
         ];
   };
-  const setup = [...run(["mise", "install"]), ...run(["pnpm", "install", "--frozen-lockfile"])];
+  const setup = [...run(["mise", "install"]), ...run(["pnpm", "install", "--no-frozen-lockfile"])];
   if (setup.length > 0) {
     return setup;
   }
@@ -264,30 +268,71 @@ function runChecks(workDir: string): string[] {
   return CHECKS.flatMap(run);
 }
 
-/**
- * Runs the quick checks on the committed merge and lets Claude fix what fails, once. CI runs them again on the pull
- * request. Returns the failures and Claude's fix summary.
- */
-function checkAndFix(git: GitRunner, workDir: string, outputDir: string) {
+/** Runs the quick checks on the resolution, commits the formatter's and lockfile's changes, and writes the failures. */
+function check(workDir: string, outputDir: string): void {
+  const git = makeGit(workDir);
   const failures = runChecks(workDir);
-  let summary: string | undefined;
-  if (failures.length > 0) {
-    const contextDir = join(outputDir, "context");
-    mkdirSync(contextDir, { recursive: true });
-    writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n"));
-    writeFileSync(join(contextDir, "review-findings.md"), "No open review findings.\n");
-    const output = runClaude(
-      readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
-      "repair.schema.json",
-      workDir,
-      contextDir,
-    );
-    summary = typeof output === "string" ? output : (output as Repair).summary;
-  }
   if (gitOrThrow(git, ["status", "--porcelain"]) !== "") {
-    commit(git, "chore(repo): fix the develop-into-next merge");
+    commit(git, "chore(repo): format the develop-into-next merge");
   }
-  return { failures, summary };
+  setOutput("failed", String(failures.length > 0));
+  const contextDir = join(outputDir, "context");
+  mkdirSync(contextDir, { recursive: true });
+  writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n"));
+  writeFileSync(join(contextDir, "review-findings.md"), "No open review findings.\n");
+  appendFileSync(
+    join(outputDir, "comment.md"),
+    failures.length > 0
+      ? `**Quick checks.** ${failures.map((failure) => failure.split("\n")[0]?.replace(/^## /, "")).join(", ")} failed on the merged tree.\n\n`
+      : "**Quick checks.** The merged tree passes `check:all` and unit tests.\n\n",
+  );
+}
+
+/** Lets Claude fix the checked-out tree from the context files, and commits its edits only when it returned a result. */
+function claudeFix(workDir: string, contextDir: string, message: string) {
+  const output = runClaude(
+    readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
+    "repair.schema.json",
+    workDir,
+    contextDir,
+  );
+  const result = typeof output === "object" ? (output as Repair) : undefined;
+  const git = makeGit(workDir);
+  const changed = result !== undefined && gitOrThrow(git, ["status", "--porcelain"]) !== "";
+  if (changed) {
+    commit(git, message);
+  }
+  setOutput("changed", String(changed));
+  const workflowEdits = changed
+    ? gitOrThrow(git, ["diff", "--name-only", "HEAD~1", "HEAD", "--", ".github/"])
+        .split("\n")
+        .filter(Boolean)
+    : [];
+  return {
+    result,
+    summary:
+      result?.summary ??
+      `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
+    workflowNote:
+      workflowEdits.length > 0
+        ? `@supabase/cli Claude changed files under \`.github/\`, which run in this PR's CI: ${workflowEdits.map((path) => `\`${path}\``).join(", ")}.`
+        : undefined,
+  };
+}
+
+/** Lets Claude fix the quick checks that failed, once; CI runs them again on the pull request. */
+function fix(workDir: string, outputDir: string): void {
+  const { summary, workflowNote } = claudeFix(
+    workDir,
+    join(outputDir, "context"),
+    "chore(repo): fix the develop-into-next merge",
+  );
+  appendFileSync(
+    join(outputDir, "comment.md"),
+    [`**Claude's fix.** ${summary}`, "", ...(workflowNote ? [workflowNote, ""] : []), ""].join(
+      "\n",
+    ),
+  );
 }
 
 /** `git status` codes for unmerged paths; `HEAD` is `develop` and the merged side is `next`. */
@@ -348,8 +393,11 @@ function resolve(workDir: string, outputDir: string): void {
   const output =
     conflicts.length > 0 ? runClaude(prompt, "resolution.schema.json", workDir) : undefined;
   const result = typeof output === "object" ? (output as Resolution) : undefined;
-  for (const path of result?.deletedFiles ?? []) {
-    git(["rm", "--quiet", "--ignore-unmatch", "--", path]);
+  const deletions = (result?.deletedFiles ?? []).filter((path) =>
+    conflicts.some((conflict) => conflict.path === path),
+  );
+  for (const path of deletions) {
+    gitOrThrow(git, ["--literal-pathspecs", "rm", "--quiet", "--ignore-unmatch", "--", path]);
   }
   const leftovers = leftoverConflictMarkers(
     workDir,
@@ -374,7 +422,6 @@ function resolve(workDir: string, outputDir: string): void {
   }
 
   commit(git);
-  const checks = checkAndFix(git, workDir, outputDir);
   setOutput("resolved", "true");
   const lines = [
     RESOLVE_MARKER,
@@ -393,6 +440,9 @@ function resolve(workDir: string, outputDir: string): void {
           "",
         ]
       : []),
+    ...(deletions.length > 0
+      ? [`Deleted: ${deletions.map((path) => `\`${path}\``).join(", ")}.`, ""]
+      : []),
     ...(result?.decisions.length
       ? [
           "**Decisions for @supabase/cli.** Confirm them, or push a change to this branch:",
@@ -401,14 +451,8 @@ function resolve(workDir: string, outputDir: string): void {
           "",
         ]
       : []),
-    checks.failures.length > 0
-      ? `**Quick checks.** ${checks.failures.map((failure) => failure.split("\n")[0]?.replace(/^## /, "")).join(", ")} failed on the merged tree; Claude's fix: ${checks.summary} CI runs them again.`
-      : "**Quick checks.** The merged tree passes `check:all` and unit tests.",
-    "",
-    `Approve to fast-forward \`next\` once checks pass (${runLink()}).`,
-    "",
   ];
-  writeFileSync(join(outputDir, "comment.md"), lines.join("\n"));
+  writeFileSync(join(outputDir, "comment.md"), `${lines.join("\n")}\n`);
 }
 
 const THREADS_QUERY = `
@@ -495,6 +539,26 @@ async function logTail(token: string, repository: string, jobId: number): Promis
   return (await response.text()).split("\n").slice(-LOG_TAIL_LINES).join("\n");
 }
 
+/** Whether an `AI Review` run for this pull request is queued or running; its run name carries the PR number. */
+async function isReviewRunning(
+  token: string,
+  repository: string,
+  number: number,
+): Promise<boolean> {
+  for (const status of ["queued", "in_progress"]) {
+    const { workflow_runs: runs } = await githubRequest<{
+      workflow_runs: { display_title: string }[];
+    }>(
+      token,
+      `/repos/${repository}/actions/workflows/ai-review.yml/runs?status=${status}&per_page=100`,
+    );
+    if (runs.some((run) => run.display_title === `AI Review #${number}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Reads the sync pull request's state with the job's read-only token and writes the repair context. */
 async function collect(outputDir: string): Promise<void> {
   const token = requireEnv("GH_TOKEN");
@@ -526,6 +590,7 @@ async function collect(outputDir: string): Promise<void> {
       pull.head.sha,
     ),
     threads: await fetchOpenFindings(token, repository, pull.number),
+    reviewRunning: await isReviewRunning(token, repository, pull.number),
   });
   setOutput("action", plan.action);
   setOutput("pr", String(pull.number));
@@ -538,7 +603,7 @@ async function collect(outputDir: string): Promise<void> {
   if (plan.action === "exhausted") {
     writeFileSync(
       join(outputDir, "comment.md"),
-      `${EXHAUSTED_MARKER}\n@supabase/cli Claude ran ${MAX_REPAIR_ROUNDS} repair rounds and work remains; please take over (${runLink()}).\n`,
+      `${EXHAUSTED_MARKER}\n@supabase/cli Claude's repair rounds did not get this pull request green; please take over (${runLink()}).\n`,
     );
     return;
   }
@@ -574,26 +639,11 @@ function repair(workDir: string, outputDir: string, head: string): void {
   const threads = JSON.parse(
     readFileSync(join(outputDir, "threads.json"), "utf8"),
   ) as ReviewThread[];
-  const output = runClaude(
-    readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
-    "repair.schema.json",
+  const { result, summary, workflowNote } = claudeFix(
     workDir,
     join(outputDir, "context"),
+    "chore(repo): repair the develop-into-next sync",
   );
-  const result = typeof output === "object" ? (output as Repair) : undefined;
-
-  const git = makeGit(workDir);
-  const changed = result !== undefined && gitOrThrow(git, ["status", "--porcelain"]) !== "";
-  if (changed) {
-    commit(git, "chore(repo): repair the develop-into-next sync");
-  }
-  setOutput("changed", String(changed));
-  const workflowEdits = changed
-    ? gitOrThrow(git, ["diff", "--name-only", "HEAD~1", "HEAD", "--", ".github/"])
-        .split("\n")
-        .filter(Boolean)
-    : [];
-
   const replies = (result?.findings ?? []).flatMap(({ id, fixed, reply }) => {
     const thread = threads[id - 1];
     return thread
@@ -607,15 +657,9 @@ function repair(workDir: string, outputDir: string, head: string): void {
       repairMarker(head),
       "### Claude repair round",
       "",
-      result?.summary ??
-        `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
+      summary,
       "",
-      ...(workflowEdits.length > 0
-        ? [
-            `@supabase/cli this round changed files under \`.github/\`, which run in this PR's CI: ${workflowEdits.map((path) => `\`${path}\``).join(", ")}.`,
-            "",
-          ]
-        : []),
+      ...(workflowNote ? [workflowNote, ""] : []),
       `${replies.filter((reply) => reply.resolve).length} findings fixed, ${replies.filter((reply) => !reply.resolve).length} declined (${runLink()}).`,
       "",
     ].join("\n"),
@@ -629,6 +673,12 @@ if (import.meta.main) {
     case "resolve":
       resolve(requireEnv("WORK_DIR"), outputDir);
       break;
+    case "check":
+      check(requireEnv("WORK_DIR"), outputDir);
+      break;
+    case "fix":
+      fix(requireEnv("WORK_DIR"), outputDir);
+      break;
     case "collect":
       await collect(outputDir);
       break;
@@ -636,6 +686,6 @@ if (import.meta.main) {
       repair(requireEnv("WORK_DIR"), outputDir, requireEnv("HEAD_SHA"));
       break;
     default:
-      throw new Error("usage: sync-agent.ts resolve | collect | repair");
+      throw new Error("usage: sync-agent.ts resolve | check | fix | collect | repair");
   }
 }

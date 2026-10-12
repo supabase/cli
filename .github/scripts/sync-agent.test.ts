@@ -25,6 +25,7 @@ describe("planRepair", () => {
     const failed = run(99, "Check code quality", "failure");
     const plan = planRepair({
       head: HEAD,
+      reviewRunning: false,
       botComments: [RESOLVED],
       runs: [...green, failed, run(100, "Require fast-forward", "failure")],
       threads: [],
@@ -36,12 +37,14 @@ describe("planRepair", () => {
   test("waits while a check runs or a required check has not started", () => {
     const running = planRepair({
       head: HEAD,
+      reviewRunning: false,
       botComments: [RESOLVED],
       runs: [...green, run(99, "CodeQL", null)],
       threads: [finding],
     });
     const missing = planRepair({
       head: HEAD,
+      reviewRunning: false,
       botComments: [RESOLVED],
       runs: green.slice(1),
       threads: [finding],
@@ -52,7 +55,13 @@ describe("planRepair", () => {
   });
 
   test("leaves a hand-resolved pull request to the maintainer", () => {
-    const plan = planRepair({ head: HEAD, botComments: [], runs: green, threads: [finding] });
+    const plan = planRepair({
+      head: HEAD,
+      botComments: [],
+      runs: green,
+      threads: [finding],
+      reviewRunning: false,
+    });
 
     expect(plan.action).toBe("skip");
   });
@@ -60,6 +69,7 @@ describe("planRepair", () => {
   test("uses the latest attempt of a re-run job", () => {
     const plan = planRepair({
       head: HEAD,
+      reviewRunning: false,
       botComments: [RESOLVED],
       runs: [...green, run(-1, "Check code quality", "failure")],
       threads: [],
@@ -71,6 +81,7 @@ describe("planRepair", () => {
   test("hands a head a round left failing to a maintainer unless new findings arrive", () => {
     const state = {
       head: HEAD,
+      reviewRunning: false,
       botComments: [RESOLVED, repaired(HEAD)],
       runs: [...green, run(99, "Check code quality", "failure")],
     };
@@ -82,14 +93,36 @@ describe("planRepair", () => {
   test("hands the pull request to a maintainer once after the round limit", () => {
     const state = {
       head: HEAD,
+      reviewRunning: false,
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
     };
     const rounds = [RESOLVED, repaired("b".repeat(40)), repaired("c".repeat(40))];
 
     expect(planRepair({ ...state, botComments: rounds }).action).toBe("exhausted");
-    expect(
-      planRepair({ ...state, botComments: [...rounds, "<!-- sync-agent exhausted -->"] }).action,
-    ).toBe("skip");
+  });
+
+  test("stops repairing after the handoff, even on a maintainer's new head", () => {
+    const plan = planRepair({
+      head: "d".repeat(40),
+      reviewRunning: false,
+      botComments: [RESOLVED, repaired(HEAD), "<!-- sync-agent exhausted -->"],
+      runs: [...green, run(99, "Check code quality", "failure")],
+      threads: [finding],
+    });
+
+    expect(plan).toEqual({ action: "skip", reason: "Already handed to a maintainer." });
+  });
+
+  test("waits for this pull request's AI review to finish", () => {
+    const plan = planRepair({
+      head: HEAD,
+      reviewRunning: true,
+      botComments: [RESOLVED],
+      runs: [...green, run(99, "Check code quality", "failure")],
+      threads: [],
+    });
+
+    expect(plan).toEqual({ action: "skip", reason: "The AI review is still running." });
   });
 });
