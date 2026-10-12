@@ -23,6 +23,7 @@ const readRoles = (input: ShadowSetupInput<unknown>) =>
 
 export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(function* (
   input: ShadowSetupInput<unknown>,
+  databaseVersion: string,
   runtime: string,
   platform: string,
   arch: string,
@@ -39,7 +40,7 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
   const rolesSql = yield* readRoles(input);
   const postgres = yield* resolveArtifact({
     service: "database",
-    version: postgresVersion(String(input.setup.majorVersion)),
+    version: postgresVersion(databaseVersion),
   });
   const image = (service: "auth" | "storage" | "realtime", enabled: boolean) =>
     enabled ? resolveArtifact({ service }) : Effect.succeed({ image: "", version: "" });

@@ -1,8 +1,9 @@
 import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
-import { closeSync, writeSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor, and the startup payload file predates any service layer.
+import { closeSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { failureKind } from "../FailureKind.ts";
-import { SavedStack } from "../StackNamespace.ts";
+import { HostStartupPayload } from "../HostProcess.ts";
+import { findConflict } from "../Rpc.ts";
 import {
   RegistrationCheckInterval,
   runStackHost,
@@ -44,7 +45,7 @@ const options = (
   report: (value: unknown) => Effect.Effect<void, StackHostError>,
 ): Effect.Effect<StackHostOptions, StackHostError> =>
   Effect.gen(function* () {
-    const [stateRoot, cacheRoot, stackId, register, ...rest] = args;
+    const [stateRoot, cacheRoot, stackId, payloadFile, ...rest] = args;
     if (
       stateRoot === undefined ||
       cacheRoot === undefined ||
@@ -53,21 +54,42 @@ const options = (
     )
       return yield* new StackHostError({
         operation: "startup",
-        message: "Expected stateRoot, cacheRoot, stackId and an optional stack to register",
+        message: "Expected stateRoot, cacheRoot, stackId and an optional startup payload file",
       });
-    const registered =
-      register === undefined
+    // The file is deleted as soon as it is read so its secrets never outlive startup on disk.
+    const payload: HostStartupPayload | undefined =
+      payloadFile === undefined || payloadFile === ""
         ? undefined
-        : yield* Schema.decodeEffect(Schema.fromJsonString(SavedStack))(register).pipe(
-            Effect.mapError(
-              (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+        : yield* Effect.gen(function* () {
+            const text = yield* Effect.try({
+              try: () => readFileSync(payloadFile, "utf8"),
+              catch: (cause) =>
+                new StackHostError({ operation: "startup", message: String(cause) }),
+            });
+            return yield* Schema.decodeEffect(Schema.fromJsonString(HostStartupPayload))(text).pipe(
+              Effect.mapError(
+                (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+              ),
+            );
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                try {
+                  unlinkSync(payloadFile);
+                } catch {
+                  // The launcher may already have removed it.
+                }
+              }),
             ),
           );
     return {
       stateRoot,
       cacheRoot,
       stackId,
-      ...(registered === undefined ? {} : { register: registered }),
+      ...(payload?.register === undefined ? {} : { register: payload.register }),
+      ...(payload?.requestedCreations === undefined
+        ? {}
+        : { requestedCreations: payload.requestedCreations }),
       onReady: ({ endpoint, secret }) => report({ type: "ready", endpoint, secret }),
     };
   });
@@ -88,11 +110,13 @@ const program = (
     yield* runStackHost({ ...host, ...overrides }).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+        const conflict = findConflict(failure);
         const kind = failureKind(cause);
         return report({
           type: "error",
           message: failure?.message ?? Cause.pretty(cause),
           ...(failure?.reason === undefined ? {} : { reason: failure.reason }),
+          ...(conflict === undefined ? {} : { conflict }),
           ...(kind === undefined ? {} : { kind }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),

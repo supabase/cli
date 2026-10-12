@@ -60,20 +60,11 @@ export interface SlimCatalogPin {
   readonly version: string;
 }
 
-/** OrioleDB tags are docker.io-only; slim-services does not publish them. */
-function isOrioleImage(image: string): boolean {
-  const tag = imageTag(image);
-  return tag !== undefined && tag.toLowerCase().includes("orioledb");
-}
-
 /**
  * Slim service and tag for a Dockerfile alias. Absent when that alias has no
- * slim build (kong, the one-shot job images, and OrioleDB tags).
+ * slim build (kong and the one-shot job images).
  */
 export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | undefined {
-  if (isOrioleImage(image)) {
-    return undefined;
-  }
   const service = SLIM_SERVICE_LOOKUP[alias];
   if (service === undefined) {
     return undefined;
