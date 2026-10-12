@@ -139,7 +139,7 @@ function runClaude(prompt: string, schemaFile: string, workDir: string, contextD
       "--allowedTools",
       "Read,Grep,Glob",
       "--disallowedTools",
-      "Bash,WebFetch,WebSearch,Read(//proc/**),Edit(./.git/**),Write(./.git/**)",
+      "Bash,WebFetch,WebSearch,Read(//proc/**),Grep(//proc/**),Glob(//proc/**),Edit(./.git/**),Write(./.git/**)",
       ...(contextDir ? ["--add-dir", contextDir] : []),
       "--max-turns",
       "200",
