@@ -15,7 +15,7 @@ on:
         type: string
         default: 4cebcf8779ef8ba983f38632eb4c48a86c5e829e
       legacy_version:
-        description: Published CLI version used for the legacy baseline
+        description: Pinned published CLI release for legacy cases and all published-mode cases
         required: true
         type: string
         default: 2.117.0
@@ -28,7 +28,7 @@ on:
           - ghcr.io
         default: default
       case_set:
-        description: Benchmark all cases or a focused set of new or Docker stack cases
+        description: Benchmark all cases, a focused set, or all cases with the published CLI
         required: true
         type: choice
         options:
@@ -37,6 +37,7 @@ on:
           - docker-stack
           - new
           - legacy-stack
+          - published
         default: all
       samples:
         description: Independent samples per supported case
@@ -57,6 +58,7 @@ concurrency:
 
 jobs:
   build:
+    if: inputs.case_set != 'published'
     name: Build CLI (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -137,6 +139,7 @@ jobs:
   measure:
     name: ${{ matrix.platform }} · ${{ matrix.case }} · sample ${{ matrix.sample }}
     needs: build
+    if: always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ${{ matrix.platform == 'linux-x64' && 'ubuntu-22.04' || 'macos-15' }}
     timeout-minutes: 90
     strategy:
@@ -171,12 +174,14 @@ jobs:
           submodules: false
 
       - name: Download compiled CLI
+        if: inputs.case_set != 'published'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: compiled-cli-${{ matrix.platform }}
           path: ${{ runner.temp }}/compiled-cli
 
       - name: Install CLI binary and record runner metadata
+        if: inputs.case_set != 'published'
         env:
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
           BENCHMARK_RUNNER_LABEL: ${{ matrix.platform == 'linux-x64' && 'ubuntu-22.04' || 'macos-15' }}
@@ -243,20 +248,76 @@ jobs:
           brew install libpq
           echo "$(brew --prefix libpq)/bin" >> "$GITHUB_PATH"
 
-      - name: Install pinned legacy CLI
-        if: contains(matrix.case, 'legacy')
+      - name: Install pinned npm CLI release
+        if: inputs.case_set == 'published' || contains(matrix.case, 'legacy')
         env:
           LEGACY_VERSION: ${{ inputs.legacy_version || '2.117.0' }}
         run: |
           npm install --prefix "$RUNNER_TEMP/legacy-cli" --no-save "supabase@$LEGACY_VERSION"
           "$RUNNER_TEMP/legacy-cli/node_modules/.bin/supabase" --version
 
+      - name: Record published CLI metadata
+        if: inputs.case_set == 'published'
+        env:
+          BENCHMARK_PLATFORM: ${{ matrix.platform }}
+          BENCHMARK_CASE: ${{ matrix.case }}
+          BENCHMARK_SAMPLE: ${{ matrix.sample }}
+          LEGACY_VERSION: ${{ inputs.legacy_version || '2.117.0' }}
+          LEGACY_REGISTRY: ${{ inputs.legacy_registry || 'default' }}
+          SOURCE_SHA: ${{ inputs.source_sha || '4cebcf8779ef8ba983f38632eb4c48a86c5e829e' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+
+          npm_platform = {
+              "linux-x64": "linux-x64",
+              "macos-arm64": "darwin-arm64",
+          }[os.environ["BENCHMARK_PLATFORM"]]
+          binary = Path(os.environ["RUNNER_TEMP"]) / f"legacy-cli/node_modules/@supabase/cli-{npm_platform}/bin/supabase"
+          version = subprocess.check_output([str(binary), "--version"], text=True).strip()
+          cpu = platform.processor() or "unknown"
+          if platform.system() == "Linux":
+              for line in Path("/proc/cpuinfo").read_text().splitlines():
+                  if line.lower().startswith("model name"):
+                      cpu = line.split(":", 1)[1].strip()
+                      break
+          elif platform.system() == "Darwin":
+              cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], text=True, capture_output=True).stdout.strip() or cpu
+          memory = subprocess.run(["sysctl", "-n", "hw.memsize"], text=True, capture_output=True).stdout.strip() if platform.system() == "Darwin" else str(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+          metadata = {
+              "platform": os.environ["BENCHMARK_PLATFORM"],
+              "case": os.environ["BENCHMARK_CASE"],
+              "sample": int(os.environ["BENCHMARK_SAMPLE"]),
+              "runner_label": os.environ["BENCHMARK_PLATFORM"] == "linux-x64" and "ubuntu-22.04" or "macos-15",
+              "cli_source": "npm",
+              "cli_version": version,
+              "npm_package_version": os.environ["LEGACY_VERSION"],
+              "cli_release": f"supabase@{os.environ['LEGACY_VERSION']}",
+              "source_sha": os.environ["SOURCE_SHA"],
+              "legacy_cli_version": version,
+              "legacy_image_registry": os.environ["LEGACY_REGISTRY"],
+              "experimental_stack_enabled": os.environ["BENCHMARK_CASE"].startswith(("stack-new-", "schema-new-")),
+              "image_os": os.environ.get("ImageOS", "unknown"),
+              "image_version": os.environ.get("ImageVersion", "unknown"),
+              "architecture": platform.machine(),
+              "cpu_model": cpu,
+              "cpu_count": os.cpu_count(),
+              "memory_bytes": int(memory),
+              "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+          }
+          Path("benchmark-results").mkdir(exist_ok=True)
+          serialized = json.dumps(metadata, indent=2) + "\n"
+          Path("benchmark-results/runner.json").write_text(serialized)
+          Path("benchmark-results/build-runner.json").write_text(serialized)
+          PY
+
       - name: Capture case
         env:
           BENCHMARK_CASE: ${{ matrix.case }}
           BENCHMARK_SAMPLE: ${{ matrix.sample }}
           BENCHMARK_PLATFORM: ${{ matrix.platform }}
-          COMPILED_CLI: ${{ runner.temp }}/benchmark-bin/supabase
+          COMPILED_CLI: ${{ inputs.case_set == 'published' && format('{0}/legacy-cli/node_modules/.bin/supabase', runner.temp) || format('{0}/benchmark-bin/supabase', runner.temp) }}
           LEGACY_CLI: ${{ runner.temp }}/legacy-cli/node_modules/.bin/supabase
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ${{ contains(matrix.case, 'legacy') && inputs.legacy_registry == 'ghcr.io' && 'ghcr.io' || '' }}
         run: |
