@@ -46,7 +46,7 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   status?: number;
   network?: "fail";
-  response?: SnippetResponse;
+  response?: unknown;
 }
 
 const tempRoot = useTempWorkdir("supabase-snippets-download-int-");
@@ -79,7 +79,7 @@ function stringLeaves(value: unknown): Array<string> {
 }
 
 describe("snippets download integration", () => {
-  it.live("prints raw SQL with a trailing newline in text mode", () => {
+  it.effect("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
@@ -87,10 +87,20 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("prints only a newline in text mode when the snippet carries no SQL string", () => {
+    const { layer, out } = setup({
+      response: { ...SNIPPET_RESPONSE, content: { schema_version: "1.0.0" } },
+    });
+    return Effect.gen(function* () {
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      expect(out.stdoutText).toBe("\n");
+    }).pipe(Effect.provide(layer));
+  });
+
   // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
   // Guards against a future refactor adding branch-on-goOutput logic by
   // mistake — if the flag is consumed, this assertion diverges.
-  it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
+  it.effect("text mode is unaffected by any Go `--output` value (Go parity)", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();
@@ -110,31 +120,27 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with the full response under --output-format=json", () => {
+  it.effect("emits a success event with the full response under --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      const data = success?.data as SnippetResponse | undefined;
-      expect(data?.id).toBe(VALID_ID);
-      expect(data?.name).toBe("Create table");
-      expect(data?.content.sql).toBe(SQL);
+      expect(success?.data).toEqual(SNIPPET_RESPONSE);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event with the full response under --output-format=stream-json", () => {
+  it.effect("emits a result event with the full response under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      const data = success?.data as SnippetResponse | undefined;
-      expect(data?.content.sql).toBe(SQL);
+      expect(success?.data).toEqual(SNIPPET_RESPONSE);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "non-UUID input emits Go-format `invalid UUID length: N`, flushes telemetry+cache, skips API",
     () => {
       const { layer, api, telemetry, cache } = setup();
@@ -155,7 +161,7 @@ describe("snippets download integration", () => {
     },
   );
 
-  it.live("a 42-char input also produces the length error", () => {
+  it.effect("a 42-char input also produces the length error", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -169,7 +175,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 36-char input with wrong dash positions emits `invalid UUID format`", () => {
+  it.effect("a 36-char input with wrong dash positions emits `invalid UUID format`", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -192,7 +198,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("calls GET /v1/snippets/{id} with the validated UUID and no project_ref query", () => {
+  it.effect("calls GET /v1/snippets/{id} with the validated UUID and no project_ref query", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
@@ -203,7 +209,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL (Go parity)",
     () => {
       const { layer, api } = setup();
@@ -215,7 +221,7 @@ describe("snippets download integration", () => {
     },
   );
 
-  it.live("uses --project-ref flag value when resolving the linked-project cache", () => {
+  it.effect("uses --project-ref flag value when resolving the linked-project cache", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, cache } = setup();
     return Effect.gen(function* () {
@@ -226,7 +232,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SnippetsDownloadUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with SnippetsDownloadUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -241,7 +247,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SnippetsDownloadNetworkError on transport failure", () => {
+  it.effect("fails with SnippetsDownloadNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -256,7 +262,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
@@ -265,7 +271,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache even on API failure", () => {
+  it.effect("flushes telemetry and writes linked-project cache even on API failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }));
@@ -274,7 +280,7 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }).pipe(
