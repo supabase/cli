@@ -64,6 +64,35 @@ const EXPLORER_AGENT = {
   },
 };
 
+/** `text` in a code fence longer than any backtick run inside it, so the text cannot close the fence. */
+export function codeFence(text: string, language = ""): string[] {
+  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return [`${fence}${language}`, text, fence];
+}
+
+/**
+ * Runs `docker run` under a unique container name and kills the container if the client times out, since killing
+ * the client alone may leave the container running.
+ */
+export function runContainer(
+  args: string[],
+  options: { timeoutMinutes: number; env: NodeJS.ProcessEnv; inheritStderr?: boolean },
+): ReturnType<typeof spawnSync> & { stdout: string; stderr: string } {
+  const name = `sync-${randomUUID()}`;
+  const result = spawnSync("docker", ["run", "--rm", "--name", name, ...args], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", options.inheritStderr ? "inherit" : "pipe"],
+    timeout: options.timeoutMinutes * 60 * 1000,
+    env: options.env,
+  });
+  if (result.error) {
+    spawnSync("docker", ["kill", name], { stdio: "ignore" });
+  }
+  return { ...result, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -126,11 +155,8 @@ function runClaudeAgent<T>(
     home: mkdtempSync(join(tmpdir(), "sync-agent-home-")),
   };
   const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
-  const result = spawnSync(
-    "docker",
+  const result = runContainer(
     [
-      "run",
-      "--rm",
       "--user",
       user,
       "--env",
@@ -176,10 +202,8 @@ function runClaudeAgent<T>(
       options.maxBudgetUsd.toFixed(2),
     ],
     {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "inherit"],
-      timeout: options.timeoutMinutes * 60 * 1000,
+      inheritStderr: true,
+      timeoutMinutes: options.timeoutMinutes,
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",

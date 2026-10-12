@@ -15,6 +15,7 @@ const MAX_REPAIR_ROUNDS = 2;
 const AI_REVIEW_WAIT_MS = 2 * 60 * 60 * 1000;
 const ESCALATED_MARKER = "<!-- sync-escalated";
 const REPAIR_HEAD = /^<!-- sync-repair round=\d+ head=([0-9a-f]+) -->/;
+const RESOLVED_HEAD = /^### Resolution for `([0-9a-f]{7,})`/m;
 const FAILED_CONCLUSIONS = new Set([
   "failure",
   "timed_out",
@@ -48,7 +49,8 @@ export interface SettleState {
   comments: SettleComment[];
   /** The latest check run per name on the head commit. */
   checks: SettleCheck[];
-  aiReview: { submittedAt: string; body: string } | undefined;
+  /** The latest AI review and the commit it reviewed. */
+  aiReview: { submittedAt: string; body: string; commitId: string } | undefined;
   /** Unresolved AI review threads the bot has not replied to. */
   findings: RepairFinding[];
   now: number;
@@ -102,9 +104,13 @@ export function decideSettle(
   // A pull request a maintainer resolved by hand has no resolution record; its rounds count from the start.
   const lineage = lineageStart === -1 ? state.comments : state.comments.slice(lineageStart);
   const resolvedAt = lineageStart === -1 ? undefined : Date.parse(lineage[0]?.createdAt ?? "");
+  // The resolution record names the head it published, which is what that resolution's AI review covers.
+  const resolvedHead = RESOLVED_HEAD.exec(lineage[0]?.body ?? "")?.[1];
   const reviewed =
     state.aiReview !== undefined &&
-    (resolvedAt === undefined || Date.parse(state.aiReview.submittedAt) >= resolvedAt);
+    (resolvedHead !== undefined
+      ? state.aiReview.commitId.startsWith(resolvedHead)
+      : resolvedAt === undefined || Date.parse(state.aiReview.submittedAt) >= resolvedAt);
   if (!reviewed && resolvedAt !== undefined && state.now - resolvedAt < AI_REVIEW_WAIT_MS) {
     return { action: "wait", reason: "the AI review has not finished" };
   }
@@ -150,7 +156,7 @@ export function decideSettle(
         conclusion: conclusion ?? "unknown",
       })),
       findings: state.findings,
-      reviewBody: rounds.length === 0 ? (state.aiReview?.body ?? null) : null,
+      reviewBody: rounds.length === 0 && reviewed ? (state.aiReview?.body ?? null) : null,
     },
   };
 }
@@ -331,12 +337,17 @@ async function readState(
     user: { login: string } | null;
     body: string;
     submitted_at: string;
+    commit_id: string;
   }>(token, `${base}/pulls/${pull.number}/reviews`);
   const aiReview = reviews
     .filter(
       ({ user, body }) => user?.login === WORKFLOW_BOT_LOGIN && body.includes(AI_REVIEW_MARKER),
     )
-    .map(({ body, submitted_at }) => ({ body, submittedAt: submitted_at }))
+    .map(({ body, submitted_at, commit_id }) => ({
+      body,
+      submittedAt: submitted_at,
+      commitId: commit_id,
+    }))
     .at(-1);
 
   const threads: ReviewThread[] = [];
@@ -412,6 +423,14 @@ async function main(): Promise<void> {
       console.log(`Re-ran the failed jobs of ${decision.runIds.length} workflow run(s) once.`);
       break;
     case "escalate": {
+      const current = await githubRequest<{ head: { sha: string } }>(
+        readToken,
+        `${base}/pulls/${pullRequest}`,
+      );
+      if (current.head.sha !== state.pull?.headSha) {
+        console.log("The sync branch moved while settling; the next run decides again.");
+        break;
+      }
       const owner = repository.split("/")[0] ?? "";
       await githubRequest(token, `${base}/issues/${pullRequest}/comments`, {
         body: [

@@ -1,10 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type GitRunner, gitOrThrow } from "./promotion-shared.ts";
-import type { AgentDecision, AgentResolution } from "./sync-agent.ts";
+import { type AgentDecision, type AgentResolution, runContainer } from "./sync-agent.ts";
 
 /** Outcome of the quality checks on the merged tree, after at most one agent fix. */
 export interface CheckResult {
@@ -24,6 +23,7 @@ export type CheckFixer = (output: string) => Promise<AgentResolution | string>;
 
 const MAX_CHECK_OUTPUT = 20_000;
 const FORMATTED = "Formatted with the repository formatter.";
+const FIX_EDITED = "Changed while fixing the checks.";
 
 /** Stages the tracked-file changes a check made (the formatter's) and removes the files it generated. */
 function keepCheckChanges(git: GitRunner): void {
@@ -54,6 +54,7 @@ export async function checkAndFix(
   keepCheckChanges(git);
   let edits: AgentResolution["files"] = [];
   let decisions: AgentDecision[] = [];
+  let fixRan = false;
   if (!last.passed) {
     const outcome = await fix(last.output.slice(-MAX_CHECK_OUTPUT));
     if (
@@ -68,6 +69,7 @@ export async function checkAndFix(
       keepCheckChanges(git);
       edits = outcome.files;
       decisions = outcome.decisions;
+      fixRan = true;
     }
   }
 
@@ -88,7 +90,7 @@ export async function checkAndFix(
     ...edits.filter(({ path }) => changed.includes(path)),
     ...changed
       .filter((path) => !listed.has(path) && !stagedBefore.has(path))
-      .map((path) => ({ path, resolution: FORMATTED, precedent: null })),
+      .map((path) => ({ path, resolution: fixRan ? FIX_EDITED : FORMATTED, precedent: null })),
   ];
   return last.passed
     ? { passed: true, fixes, decisions }
@@ -129,11 +131,8 @@ export function runChecks(workDir: string, image: string): { passed: boolean; ou
     checkAllCommand(workDir),
   ].join(" && ");
   console.log("Running the quality checks on the merged tree…");
-  const result = spawnSync(
-    "docker",
+  const result = runContainer(
     [
-      "run",
-      "--rm",
       "--user",
       user,
       "--env",
@@ -161,12 +160,7 @@ export function runChecks(workDir: string, image: string): { passed: boolean; ou
       "-c",
       `mise install --quiet && mise exec -- sh -c '${steps}'`,
     ],
-    {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 20 * 60 * 1000,
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
-    },
+    { timeoutMinutes: 20, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" } },
   );
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   const passed = result.status === 0;

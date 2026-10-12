@@ -242,9 +242,16 @@ async function updateSyncPullRequest(
     return { status: "skipped-open-pr", pullRequest: pullRequest.number };
   }
 
-  const merges = [pair.target, pair.source]
-    .filter((ref) => !isAncestor(git, `refs/remotes/origin/${ref}`, syncHead))
-    .map((ref) => ({ ref, sha: gitOrThrow(git, ["rev-parse", `refs/remotes/origin/${ref}`]) }));
+  const target = `refs/remotes/origin/${pair.target}`;
+  const source = `refs/remotes/origin/${pair.source}`;
+  const mergeTarget = !isAncestor(git, target, syncHead);
+  // Merging the target already brings in a source it contains; a second merge of it would be a no-op.
+  const mergeSource =
+    !isAncestor(git, source, syncHead) && !(mergeTarget && isAncestor(git, source, target));
+  const merges = [
+    ...(mergeTarget ? [{ ref: pair.target, sha: gitOrThrow(git, ["rev-parse", target]) }] : []),
+    ...(mergeSource ? [{ ref: pair.source, sha: gitOrThrow(git, ["rev-parse", source]) }] : []),
+  ];
   if (merges.length === 0) {
     return { status: "up-to-date" };
   }

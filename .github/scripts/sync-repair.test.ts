@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("findingOrigins", () => {
-  test("names the branches that already have the commented line", () => {
+  test("names the branches that already have the commented line, or null when it cannot tell", () => {
     const repo = createTestRepo();
     repos.push(repo);
     for (const branch of ["develop", "next"]) {
@@ -29,7 +29,7 @@ describe("findingOrigins", () => {
     const head = repo.commit(
       repo.seed,
       "a.ts",
-      "const shared = 1;\nconst develop = 2;\nconst merged = develop + next;\n",
+      "const shared = 1;\nconst develop = 2;\nconst merged = develop + next;\n}\n",
       "Merge develop",
     );
     git(repo.seed, "push", "-q", "origin", "HEAD:refs/heads/sync/develop-into-next");
@@ -56,5 +56,7 @@ describe("findingOrigins", () => {
     expect(origins(1)).toEqual(["develop", "next"]);
     expect(origins(2)).toEqual(["develop"]);
     expect(origins(3)).toEqual([]);
+    expect(origins(4)).toBeNull();
+    expect(origins(9)).toBeNull();
   });
 });

@@ -330,6 +330,27 @@ describe("syncBranches with agent resolution", () => {
     expect(repo.remoteTip("sync/develop-into-next")).toBe(syncHead);
   });
 
+  test("plans only the next merge when next already contains the new develop commit", async () => {
+    const repo = setup();
+    const tips = divergedBranches(repo);
+    const syncHead = resolvedSyncBranch(repo, tips);
+    git(repo.seed, "switch", "develop");
+    const developTip = repo.commit(repo.seed, "other.txt", "other\n", "feat: unrelated");
+    git(repo.seed, "push", "origin", "develop");
+    git(repo.seed, "switch", "next");
+    git(repo.seed, "merge", "-q", "-s", "ours", "-m", "Merge develop into next", developTip);
+    git(repo.seed, "push", "origin", "next");
+    const nextTip = repo.remoteTip("next");
+    const { io } = fakeIo(repo.checkout(), { number: 7, draft: false });
+
+    const outcome = await syncBranches(io, nextPair);
+
+    expect(outcome).toMatchObject({
+      status: "needs-resolution",
+      plan: { base: syncHead, merges: [{ ref: "next", sha: nextTip }] },
+    });
+  });
+
   test.each([
     ["is a draft", true, true],
     ["still points at a develop commit", false, false],

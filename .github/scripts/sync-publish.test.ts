@@ -276,6 +276,7 @@ describe("publishResolution", () => {
 
   test("pauses the open pull request as a draft when a maintainer must resolve", async () => {
     const { repo, plan } = diverged();
+    git(repo.seed, "push", "-q", "origin", `${plan.base}:refs/heads/sync/develop-into-next`);
     const openPlan = {
       ...plan,
       merges: [{ ref: "next", sha: plan.base }, ...plan.merges],
@@ -301,7 +302,38 @@ describe("publishResolution", () => {
     expect(calls.drafts).toEqual([9]);
     expect(calls.comments[0]?.body).toContain("git merge origin/next");
     expect(calls.comments[0]?.body).toContain("git merge origin/develop");
-    expect(() => repo.remoteTip("sync/develop-into-next")).toThrow();
+    expect(repo.remoteTip("sync/develop-into-next")).toBe(plan.base);
+  });
+});
+
+describe("publishResolution with a stale manual result", () => {
+  test("leaves a sync pull request that moved since the plan alone", async () => {
+    const { repo, plan } = diverged();
+    git(
+      repo.seed,
+      "push",
+      "-q",
+      "origin",
+      `${plan.merges[0]?.sha}:refs/heads/sync/develop-into-next`,
+    );
+    const { io, calls } = fakeIo(repo.checkout());
+
+    const outcome = await publishResolution(
+      io,
+      { ...plan, pullRequest: 9, expectedSyncHead: plan.base },
+      {
+        status: "manual",
+        reason: "The agent left the conflicts unresolved.",
+        ref: "develop",
+        sha: plan.merges[0]?.sha ?? "",
+        files: ["shared.txt"],
+      },
+      options(""),
+    );
+
+    expect(outcome).toEqual({ status: "superseded" });
+    expect(calls.drafts).toHaveLength(0);
+    expect(calls.comments).toHaveLength(0);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   type AgentCaller,
   type AgentResolution,
   type AgentSession,
+  codeFence,
   createAgentCaller,
   loadSchema,
   parseResolution,
@@ -224,7 +225,7 @@ function capLines(text: string, max: number): string {
 }
 
 function fenced(text: string, language = ""): string {
-  return ["````" + language, text, "````"].join("\n");
+  return codeFence(text, language).join("\n");
 }
 
 export interface PrecedentCommit {

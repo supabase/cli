@@ -9,7 +9,13 @@ import {
   makeGit,
   requireEnv,
 } from "./promotion-shared.ts";
-import { type AgentDecision, createAgentCaller, isDecisionList, loadSchema } from "./sync-agent.ts";
+import {
+  type AgentDecision,
+  codeFence,
+  createAgentCaller,
+  isDecisionList,
+  loadSchema,
+} from "./sync-agent.ts";
 import { redactSecrets, redactSecretsDeep } from "./ai-review/post-review.ts";
 import { type ResolutionPlan, agentWrittenText } from "./sync-branches.ts";
 import {
@@ -102,21 +108,26 @@ export function parseRepairOutcome(value: unknown): RepairOutcome | undefined {
 }
 
 function fenced(text: string): string {
-  return ["````text", text, "````"].join("\n");
+  return codeFence(text, "text").join("\n");
 }
 
 /**
  * The branches whose version of the finding's file already has the commented line verbatim. A line that exists on
  * either side predates the merge, which keeps the repair from fixing issues the sync did not introduce.
  */
-export function findingOrigins(git: GitRunner, plan: RepairPlan, finding: RepairFinding): string[] {
+export function findingOrigins(
+  git: GitRunner,
+  plan: RepairPlan,
+  finding: RepairFinding,
+): string[] | null {
   if (finding.line === null) {
-    return [];
+    return null;
   }
   const file = git(["show", `${plan.head}:${finding.path}`]);
   const line = file.status === 0 ? file.stdout.split("\n")[finding.line - 1]?.trim() : undefined;
-  if (!line) {
-    return [];
+  // A line this short or without any word character (a brace, a blank) appears everywhere and proves nothing.
+  if (!line || line.length < 8 || !/\w/.test(line)) {
+    return null;
   }
   return [plan.source, plan.target].filter((branch) => {
     const side = git(["show", `refs/remotes/origin/${branch}:${finding.path}`]);
@@ -129,7 +140,7 @@ export function writeRepairContext(
   contextDir: string,
   plan: RepairPlan,
   failureDetails: Map<number, { annotations: string; log: string }>,
-  origins: Map<number, string[]>,
+  origins: Map<number, string[] | null>,
 ): void {
   const failures = plan.failures.flatMap((failure) => {
     const details = failureDetails.get(failure.jobId);
@@ -156,14 +167,16 @@ export function writeRepairContext(
   );
 
   const findings = plan.findings.flatMap((finding) => {
-    const branches = origins.get(finding.commentId) ?? [];
+    const branches = origins.get(finding.commentId) ?? null;
     return [
       "",
       `## Finding ${finding.commentId} on \`${finding.path}\`${finding.line === null ? "" : `:${finding.line}`}`,
       "",
-      branches.length > 0
-        ? `The commented line already exists on ${branches.map((branch) => `\`${branch}\``).join(" and ")}, so the issue likely predates the merge.`
-        : `The commented line is on neither \`${plan.source}\` nor \`${plan.target}\`; the merge or its fixes wrote it.`,
+      branches === null
+        ? "Where the commented line comes from could not be checked; judge it from the code."
+        : branches.length > 0
+          ? `The commented line already exists on ${branches.map((branch) => `\`${branch}\``).join(" and ")}, so the issue likely predates the merge.`
+          : `The commented line is on neither \`${plan.source}\` nor \`${plan.target}\`; the merge or its fixes wrote it.`,
       "",
       fenced(finding.body),
     ];

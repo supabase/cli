@@ -19,7 +19,7 @@ import {
   syncBranchName,
 } from "./sync-branches.ts";
 import { redactSecrets } from "./ai-review/post-review.ts";
-import type { AgentDecision } from "./sync-agent.ts";
+import { type AgentDecision, codeFence } from "./sync-agent.ts";
 import type { RepairPlan, RepairResult } from "./sync-repair.ts";
 import {
   type AgentResolution,
@@ -63,6 +63,7 @@ export interface PublishOptions {
 
 export type PublishOutcome =
   | { status: "rejected"; reason: string }
+  | { status: "superseded" }
   | { status: "published"; pullRequest: number; decisions: number }
   | { status: "needs-maintainer"; pullRequest: number };
 
@@ -78,13 +79,6 @@ function neutralize(text: string): string {
   return redactSecrets(text)
     .replace(/@(?=[\w-])/g, "@\u200b")
     .replace(/<!--/g, "&lt;!--");
-}
-
-/** Check output in a code fence longer than any backtick run inside it, so the output cannot close it. */
-function fencedOutput(text: string): string[] {
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(longest + 1);
-  return [`${fence}text`, text, fence];
 }
 
 /** An agent-reported path as inline code, unable to close its code span. */
@@ -320,7 +314,7 @@ function renderCheck(check: CheckResult): string[] {
     "",
     "<details><summary>Check output</summary>",
     "",
-    ...fencedOutput(redactSecrets((check.remaining ?? "").slice(-6000))),
+    ...codeFence(redactSecrets((check.remaining ?? "").slice(-6000)), "text"),
     "",
     "</details>",
   ];
@@ -431,6 +425,17 @@ export async function publishResolution(
   const branch = syncBranchName(plan);
 
   if (result.status === "manual") {
+    if (!plan.merges.some(({ sha }) => sha === result.sha)) {
+      return {
+        status: "rejected",
+        reason: `\`${short(result.sha)}\` is not a commit the plan merges.`,
+      };
+    }
+    // A sync or repair that moved the branch since this run planned owns the pull request now.
+    const remote = gitOrThrow(git, ["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
+    if ((remote.split("\t")[0] || null) !== plan.expectedSyncHead) {
+      return { status: "superseded" };
+    }
     if (plan.pullRequest !== null) {
       await io.comment(plan.pullRequest, renderManualComment(plan, result));
       await io.convertToDraft(plan.pullRequest);
@@ -760,6 +765,11 @@ async function main(): Promise<void> {
       break;
     case "needs-maintainer":
       console.log(`::warning::PR #${outcome.pullRequest} needs a maintainer to resolve the merge.`);
+      break;
+    case "superseded":
+      console.log(
+        "::notice::The sync branch moved since this run planned; a later run takes over.",
+      );
       break;
   }
 }

@@ -21,6 +21,8 @@ function check(name: string, overrides: Partial<SettleCheck> = {}): SettleCheck 
   };
 }
 
+const resolvedHead = "b".repeat(40);
+const resolution = `<!-- sync-resolution -->\n### Resolution for \`${resolvedHead.slice(0, 7)}\``;
 const finding = { threadId: "T1", commentId: 11, path: "a.ts", line: 3, body: "Lost a flag." };
 const bot = (body: string, createdAt = hours(0)) => ({ login: RELEASE_BOT_LOGIN, body, createdAt });
 
@@ -29,12 +31,16 @@ function state(overrides: Partial<SettleState> = {}): SettleState {
   return {
     pull: { number: 7, draft: false, headSha: head },
     syncRunning: false,
-    comments: [bot("<!-- sync-resolution -->\nResolved.")],
+    comments: [bot(resolution)],
     checks: [
       ...REQUIRED_CHECKS.map((name) => check(name)),
       check("Require fast-forward", { conclusion: "failure" }),
     ],
-    aiReview: { submittedAt: hours(1), body: "<!-- supabase-ai-review -->\nOne finding." },
+    aiReview: {
+      submittedAt: hours(1),
+      body: "<!-- supabase-ai-review -->\nOne finding.",
+      commitId: resolvedHead,
+    },
     findings: [],
     now: resolvedAt + 3 * 3_600_000,
     ...overrides,
@@ -69,6 +75,18 @@ describe("decideSettle", () => {
     ],
   ] as const)("waits when %s", (_, overrides) => {
     expect(decideSettle(state(overrides as Partial<SettleState>), pair).action).toBe("wait");
+  });
+
+  test("waits when the latest AI review covers an older resolution", () => {
+    const older = {
+      submittedAt: hours(1),
+      body: "<!-- supabase-ai-review -->",
+      commitId: "c".repeat(40),
+    };
+
+    expect(decideSettle(state({ aiReview: older, now: resolvedAt + 3_600_000 }), pair).action).toBe(
+      "wait",
+    );
   });
 
   test("is ready when only the branch-policy check fails and no finding is open", () => {
