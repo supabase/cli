@@ -166,6 +166,23 @@ describe("publishResolution", () => {
     expect(calls.aiReviews).toEqual([42]);
   });
 
+  test("lists files the resolution edited without reporting them", async () => {
+    const { repo, plan } = diverged();
+    const { result, bundlePath } = await resolveWith(repo, plan, (checkout) => {
+      writeFileSync(join(checkout, "shared.txt"), "next\ndevelop\n");
+      writeFileSync(join(checkout, "caller.txt"), "updated call site\n");
+    });
+    const { io, calls } = fakeIo(repo.checkout());
+
+    await publishResolution(io, plan, result, options(bundlePath));
+
+    const record = calls.comments[0]?.body ?? "";
+    expect(record).toContain("- `shared.txt`: Kept both lines. (follows #3)");
+    expect(record).toContain(
+      "- `caller.txt`: Edited during the resolution; the agent did not describe it.",
+    );
+  });
+
   test("updates the open pull request instead of opening another", async () => {
     const { repo, plan } = diverged();
     const openPlan = { ...plan, pullRequest: 9 };

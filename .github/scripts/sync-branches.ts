@@ -87,6 +87,21 @@ export function isProtectedPath(path: string): boolean {
   return path.startsWith(PROTECTED_PATH_PREFIX);
 }
 
+/** Every path a merge commit changes relative to git's own merge of its two parents: what the resolution edited. */
+export function resolutionEditedPaths(git: GitRunner, mergeCommit: string): string[] {
+  const tree =
+    git([
+      "merge-tree",
+      "--write-tree",
+      "--no-messages",
+      `${mergeCommit}^1`,
+      `${mergeCommit}^2`,
+    ]).stdout.split("\n")[0] ?? "";
+  return gitOrThrow(git, ["diff", "-z", "--name-only", tree, mergeCommit])
+    .split("\0")
+    .filter(Boolean);
+}
+
 /**
  * The lines the agent wrote between `base` and `head`: what each merge adds beyond git's own merge of its parents,
  * and what each plain commit adds.

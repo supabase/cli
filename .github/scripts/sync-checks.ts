@@ -16,13 +16,18 @@ export interface CheckResult {
   remaining?: string;
 }
 
-/** `infrastructure` marks a check that never ran to completion (a timeout or a container that failed to start). */
+/**
+ * `infrastructure` marks checks that never ran to completion, which no agent edit can fix: a timeout, a container that
+ * failed to start, or a frozen install that rejects the lockfile.
+ */
 export type Checker = () => { passed: boolean; output: string; infrastructure?: boolean };
 
 /** Returns the agent's fix for the failing check output, or the reason it produced none. */
 export type CheckFixer = (output: string) => Promise<AgentResolution | string>;
 
 const MAX_CHECK_OUTPUT = 20_000;
+/** Exit status the check container uses when the frozen install fails, which no file edit by the agent can fix. */
+const INSTALL_FAILED = 97;
 const FORMATTED = "Formatted with the repository formatter.";
 const FIX_EDITED = "Changed while fixing the checks.";
 
@@ -126,7 +131,7 @@ export function runChecks(workDir: string, image: string): ReturnType<Checker> {
   checkHome ??= mkdtempSync(join(tmpdir(), "sync-check-home-"));
   const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
   const steps = [
-    "pnpm install --frozen-lockfile --ignore-scripts --reporter=silent",
+    `(pnpm install --frozen-lockfile --ignore-scripts --reporter=silent || exit ${INSTALL_FAILED})`,
     "(pnpm exec effect-tsgo patch --no-typescript --oxlint >/dev/null 2>&1 || true)",
     "pnpm run --silent fmt:fix >/dev/null",
     checkAllCommand(workDir),
@@ -170,6 +175,14 @@ export function runChecks(workDir: string, image: string): ReturnType<Checker> {
     return {
       passed: false,
       output: `The checks did not complete: ${result.error.message}`,
+      infrastructure: true,
+    };
+  }
+  if (result.status === INSTALL_FAILED) {
+    console.log("The frozen install failed; the lockfile needs regenerating.");
+    return {
+      passed: false,
+      output: `pnpm install --frozen-lockfile failed, so no check ran. A maintainer regenerates the lockfile with \`pnpm install\` on the branch.\n\n${output}`,
       infrastructure: true,
     };
   }

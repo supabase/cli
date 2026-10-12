@@ -13,6 +13,7 @@ import {
   PROTECTED_PATH_PREFIX,
   type PullRequestDraft,
   agentWrittenText,
+  resolutionEditedPaths,
   type ResolutionPlan,
   protectedPathChanges,
   renderConflictPr,
@@ -144,7 +145,9 @@ export function validateResolvedHistory(
   git: GitRunner,
   plan: ResolutionPlan,
   head: string,
-): { error: string } | { protectedConflicts: string[][]; protectedEdits: string[] } {
+):
+  | { error: string }
+  | { protectedConflicts: string[][]; editedPaths: string[][]; protectedEdits: string[] } {
   const followUps: string[] = [];
   let commit = head;
   for (;;) {
@@ -159,6 +162,7 @@ export function validateResolvedHistory(
   }
 
   const protectedConflicts: string[][] = [];
+  const editedPaths: string[][] = [];
   for (const merge of [...plan.merges].reverse()) {
     const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
       .split(" ")
@@ -175,10 +179,11 @@ export function validateResolvedHistory(
       };
     }
     protectedConflicts.unshift(conflicted);
+    editedPaths.unshift(resolutionEditedPaths(git, commit));
     commit = parents[0] ?? "";
   }
   return commit === plan.base
-    ? { protectedConflicts, protectedEdits: changedProtectedPaths(git, followUps) }
+    ? { protectedConflicts, editedPaths, protectedEdits: changedProtectedPaths(git, followUps) }
     : { error: `The history does not start at \`${short(plan.base)}\`.` };
 }
 
@@ -205,6 +210,40 @@ const EDIT_QUESTION =
   "Claude changed this workflow file to fix the checks, and it runs with repository secrets. Is the change right?";
 
 /** Adds a decision for every protected path the merges resolved or the fix commits changed, whatever the agent reported. */
+/** Lists every path a merge's resolution actually edited, so edits the agent did not report still show up. */
+export function withUnreportedEdits(
+  result: Extract<ResolveResult, { status: "resolved" }>,
+  editedPaths: string[][],
+): Extract<ResolveResult, { status: "resolved" }> {
+  return {
+    ...result,
+    merges: result.merges.map((merge, index) => {
+      if (merge.resolution === null) {
+        return merge;
+      }
+      const reported = new Set([
+        ...merge.resolution.files.map(({ path }) => path),
+        ...merge.resolution.deletedFiles,
+      ]);
+      const unreported = (editedPaths[index] ?? []).filter((path) => !reported.has(path));
+      return {
+        ...merge,
+        resolution: {
+          ...merge.resolution,
+          files: [
+            ...merge.resolution.files,
+            ...unreported.map((path) => ({
+              path,
+              resolution: "Edited during the resolution; the agent did not describe it.",
+              precedent: null,
+            })),
+          ],
+        },
+      };
+    }),
+  };
+}
+
 export function withProtectedDecisions(
   result: Extract<ResolveResult, { status: "resolved" }>,
   protectedConflicts: string[][],
@@ -488,7 +527,7 @@ export async function publishResolution(
     return { status: "rejected", reason: "The agent's changes contain secret-shaped text." };
   }
   const reviewed = withProtectedDecisions(
-    result,
+    withUnreportedEdits(result, validation.editedPaths),
     validation.protectedConflicts,
     validation.protectedEdits,
   );
