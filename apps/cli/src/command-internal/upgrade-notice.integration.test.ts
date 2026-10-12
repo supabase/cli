@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { upgradeNoticeHook } from "./upgrade-notice.ts";
 
 describe("upgrade notice user-level cache", () => {
@@ -61,7 +62,7 @@ describe("upgrade notice user-level cache", () => {
             fetchCalls += 1;
             return Promise.resolve(latestTag);
           },
-        ),
+        ).pipe(Effect.provide(cliConfigProviderLayer)),
       );
     } finally {
       process.stderr.write = realWrite;

@@ -17,23 +17,14 @@ import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
+import { sanitizeProjectId } from "../config/project-id.ts";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
 }
 
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
 export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
+  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
 }
 
 /**
@@ -53,21 +44,21 @@ export function edgeRuntimeCacheVolume(projectId: string) {
 
 /**
  * Resolves the Docker network mode. `explicit` is tri-state: `undefined`
- * (never set) falls through to `envOverride`; `""` (explicitly cleared) and
- * any non-empty value both skip `envOverride` and resolve immediately.
+ * (never set) falls through to `envNetworkId`; `""` (explicitly cleared) and
+ * any non-empty value both skip `envNetworkId` and resolve immediately.
  * Callers must pass a flag reader that preserves this distinction — see
  * `lastExplicitLongFlagValue` (`shared/cli/flag-groups.ts`).
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
-  readonly envOverride: string | undefined;
+  readonly envNetworkId: string | undefined;
   readonly projectId: string;
 }): string {
   if (input.explicit !== undefined) {
     return input.explicit.length > 0 ? input.explicit : localDockerId("network", input.projectId);
   }
-  if (input.envOverride !== undefined && input.envOverride.length > 0) {
-    return input.envOverride;
+  if (input.envNetworkId !== undefined && input.envNetworkId.length > 0) {
+    return input.envNetworkId;
   }
   return localDockerId("network", input.projectId);
 }

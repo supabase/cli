@@ -25,4 +25,24 @@ describe("supabase link", () => {
       ),
     E2E_TIMEOUT_MS,
   );
+
+  it.live(
+    "warns that --password is ignored before the missing access token fails the command",
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
+            ["link", "--project-ref", "abcdefghijklmnopqrst", "--password", "hunter2"],
+            { home: home.dir },
+          );
+          expect(exitCode).toBe(1);
+          expect(`${stdout}${stderr}`).toContain(
+            "link ignores --password; remove it from your scripts.",
+          );
+          expect(stderr).toContain("Access token not provided");
+          expect(`${stdout}${stderr}`).not.toContain("hunter2");
+        }),
+      ),
+    E2E_TIMEOUT_MS,
+  );
 });

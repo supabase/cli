@@ -700,6 +700,18 @@ layer(parseTestLayer)("injected env lookup (project dotenv parity)", (it) => {
     }),
   );
 
+  it.effect("prefers a shell var over the project .env and falls back for unset names", () =>
+    withConfigEnv(
+      { PGHOST: "shell-host" },
+      Effect.gen(function* () {
+        const env = yield* layeredParseEnv({ PGHOST: "project-host", PGPORT: "6543" });
+        expect(env("PGHOST")).toBe("shell-host");
+        expect(env("PGPORT")).toBe("6543");
+        expect(env("PGUSER")).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("keeps a set-but-empty shell var ahead of the project .env (layeredParseEnv)", () =>
     withConfigEnv(
       { PGHOST: "" },

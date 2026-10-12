@@ -26,6 +26,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -649,6 +650,7 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    configValuesLayer({ output: finalOutputLayer }),
     buildTestRuntime({
       out: { layer: finalOutputLayer },
       api,

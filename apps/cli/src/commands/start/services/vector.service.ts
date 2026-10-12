@@ -22,6 +22,7 @@ import { withChildTraceEnv, withProcessSpanScoped } from "../../../shared/teleme
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
+import { ambientEnvironment } from "../../../shared/config/cli-config-provider.layer.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -207,7 +208,7 @@ function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, strin
  */
 export function resolveDockerDaemonHost(
   spawner: Spawner,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> = ambientEnvironment(),
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<string> {
   const fromEnv = env.DOCKER_HOST;

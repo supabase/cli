@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { describe, expect, it } from "vitest";
-import { Effect, Option, Tracer } from "effect";
+import { ConfigProvider, Effect, Option, Tracer } from "effect";
 
 import {
   type UpgradeNoticeDeps,
@@ -478,6 +478,15 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("a project dotenv with a byte-order mark still opts out", async () => {
+    const ctx = setup({});
+    writeFileSync(join(workdir, "supabase", ".env"), "\uFEFFSUPABASE_NO_UPDATE_NOTIFIER=1\n");
+    await runUpgradeNotice(ctx.deps);
+    expect(ctx.stderr).toBe("");
+    expect(ctx.fetchCalls).toBe(0);
+    ctx.cleanup();
+  });
+
   it("--help ignores the project dotenv opt-out — built-ins never load config", async () => {
     const ctx = setup({ args: ["--help"] });
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
@@ -680,6 +689,51 @@ describe("upgradeNoticeHook", () => {
     const span = (name: string) => spans.find((candidate) => candidate.name === name);
     return { stderr: stripVTControlCharacters(written.join("")), span };
   }
+
+  async function runHookWithProvider(shell: Record<string, string>) {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-provider-"));
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
+    const fetchedWith: Array<Readonly<Record<string, string | undefined>>> = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      await Effect.runPromise(
+        upgradeNoticeHook(
+          ["db", "branch", "list"],
+          {
+            cleanShowHelp: false,
+            workingDirectory: workdir,
+            isValueTakingFlagToken: () => false,
+          },
+          (env) => {
+            fetchedWith.push(env);
+            return Promise.resolve("v99.99.99");
+          },
+        ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(shell)))),
+      );
+    } finally {
+      process.stderr.write = realWrite;
+      rmSync(workdir, { recursive: true, force: true });
+    }
+    return fetchedWith;
+  }
+
+  it("passes the provider's GITHUB_TOKEN to the release fetch", async () => {
+    const fetchedWith = await runHookWithProvider({
+      SUPABASE_NO_UPDATE_NOTIFIER: "0",
+      GITHUB_TOKEN: "provider-token",
+    });
+    expect(fetchedWith.map((env) => env["GITHUB_TOKEN"])).toEqual(["provider-token"]);
+  });
+
+  it("skips the fetch when the provider sets SUPABASE_NO_UPDATE_NOTIFIER", async () => {
+    const fetchedWith = await runHookWithProvider({
+      SUPABASE_NO_UPDATE_NOTIFIER: "1",
+      GITHUB_TOKEN: "provider-token",
+    });
+    expect(fetchedWith).toEqual([]);
+  });
 
   it("prints the notice for a natively handled command", async () => {
     expect((await runHook({})).stderr).toContain(

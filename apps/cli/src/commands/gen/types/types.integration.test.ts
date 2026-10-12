@@ -27,6 +27,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -38,7 +39,9 @@ import {
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { toConnectError } from "../../../command-internal/db-connection.sql-pg.layer.ts";
@@ -491,6 +494,7 @@ const setup = Effect.fnUntraced(function* (
   });
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     runtime,
     BunServices.layer,
     child.layer,
@@ -674,20 +678,23 @@ describe("gen types", () => {
   );
 
   it.live(
-    "a defaulted workdir still picks up an ancestor project's configured api schemas from a subdirectory",
+    "a defaulted workdir picks up a config.json-only ancestor project's configured api schemas from a subdirectory",
     () =>
       Effect.gen(function* () {
-        const root = yield* makeWorkdir("supabase-gen-types-ancestor-");
-        yield* writeConfig(
-          root,
-          ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeWorkdir("supabase-gen-types-ancestor-json-");
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.json"),
+          '{"project_id":"demo","api":{"schemas":["ancestor_only"]}}',
         );
-        const sub = path.join(root, "nested", "dir");
+        const sub = path.join(root, "apps", "web");
         yield* makeDirectory(sub);
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, api } = yield* setup({
-          workdir: sub,
+          workdir: resolved.workdir,
           skipConfig: true,
-          explicitWorkdir: false,
+          explicitWorkdir: resolved.explicit,
           projectId: Option.some(VALID_REF),
           projectTypes: "ok",
         });
@@ -851,6 +858,82 @@ describe("gen types", () => {
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  describe("SUPABASE_API_SCHEMAS", () => {
+    const withApiSchemas = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+      withEnvVar("SUPABASE_API_SCHEMAS", "auth,storage", body);
+
+    it.live("selects the schemas for --linked ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-linked-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, api } = yield* setup({
+            workdir,
+            projectId: Option.some(VALID_REF),
+            projectTypes: "ok",
+          });
+          yield* genTypes(defaultFlags({ linked: true })).pipe(Effect.provide(layer));
+          expect(api.requests[0]).toEqual({
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
+          });
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --project-id without a project config", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const { layer, api } = yield* setup({ skipConfig: true, projectTypes: "ok" });
+          yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
+            Effect.provide(layer),
+          );
+          expect(api.requests[0]).toEqual({
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
+          });
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --local ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-local-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, generator } = yield* setup({ workdir });
+          yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --db-url ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-dburl-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, generator } = yield* setup({
+            workdir,
+            args: ["gen", "types", "--db-url", dbUrl],
+          });
+          yield* genTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(Effect.provide(layer));
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
 
   it.live("silently ignores --query-timeout for implicit linked TypeScript generation", () =>
     Effect.gen(function* () {
@@ -2206,7 +2289,7 @@ describe("gen types", () => {
           );
           yield* writeFile(
             path.join(workdir, "supabase", ".env"),
-            "DOCKER_HOST=project-daemon\nSUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io\nSUPABASE_USE_SLIM_IMAGES=1\nSUPABASE_DB_PASSWORD=dotenv-password\n",
+            "DOCKER_HOST=tcp://project-daemon:2375\nSUPABASE_DB_PASSWORD=dotenv-password\n",
           );
           const { layer, out, linkedProjectCache, child, generator } = yield* setup({ workdir });
           const configProvider = ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true });
@@ -2224,14 +2307,8 @@ describe("gen types", () => {
           expect(child.calls[0]).toMatchObject({
             command: "docker",
             args: ["container", "inspect", "supabase_db_demo"],
-            extendEnv: true,
           });
-          // Env forwarding from the config's `.env` excludes SUPABASE_DB_PASSWORD.
-          expect(child.calls[0]?.env).toEqual({
-            DOCKER_HOST: "project-daemon",
-            SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
-            SUPABASE_USE_SLIM_IMAGES: "1",
-          });
+          expect(child.calls[0]?.env).toBeUndefined();
           expect(generator.calls).toHaveLength(1);
           const call = generator.calls[0];
           expect(call?.conn).toEqual({
@@ -2280,7 +2357,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.live("uses sanitized local docker ids and env-backed local db passwords", () =>
+    it.live("uses sanitized local docker ids and the config.toml local db password", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-local-sanitized-");
         yield* writeConfig(
@@ -2293,6 +2370,7 @@ describe("gen types", () => {
             "",
             "[db]",
             "port = 54321",
+            'password = "config-password"',
           ].join("\n"),
         );
         const { layer, child, generator } = yield* setup({ workdir });
@@ -2300,7 +2378,7 @@ describe("gen types", () => {
           Effect.provide(layer),
           Effect.provideService(
             ConfigProvider.ConfigProvider,
-            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "secret-password" }),
+            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "ignored-env-password" }),
           ),
         );
 
@@ -2309,8 +2387,36 @@ describe("gen types", () => {
           "inspect",
           "supabase_db_demo_project_with_spaces",
         ]);
-        expect(generator.calls[0]?.conn.password).toBe("secret-password");
+        expect(generator.calls[0]?.conn.password).toBe("config-password");
         expect(generator.calls[0]?.conn.host).toBe("127.0.0.1");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("falls back to the default local db password and ignores SUPABASE_DB_PASSWORD", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-local-default-password-");
+        yield* writeConfig(
+          workdir,
+          [
+            'project_id = "demo"',
+            "",
+            "[api]",
+            'schemas = ["public"]',
+            "",
+            "[db]",
+            "port = 54321",
+          ].join("\n"),
+        );
+        const { layer, generator } = yield* setup({ workdir });
+        yield* genTypes(defaultFlags({ local: true })).pipe(
+          Effect.provide(layer),
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "ignored-env-password" }),
+          ),
+        );
+
+        expect(generator.calls[0]?.conn.password).toBe("postgres");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2598,9 +2704,7 @@ describe("gen types", () => {
           "inspect",
           localDbContainerId("configless-env-project"),
         ]);
-        expect(child.calls[0]?.env?.["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe(
-          "mirror.example.com",
-        );
+        expect(child.calls[0]?.env).toBeUndefined();
         expect(generator.calls[0]?.conn.host).toBe("host.docker.internal");
         expect(generator.calls[0]?.conn.port).toBe(55432);
         expect(generator.calls[0]?.includedSchemas).toEqual([
@@ -2609,6 +2713,25 @@ describe("gen types", () => {
           "graphql_public",
         ]);
         expect(out.stdoutText).toContain("generated");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("prefers a shell SUPABASE_SERVICES_HOSTNAME over supabase/.env", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-local-shell-hostname-");
+        yield* writeConfig(workdir, 'project_id = "demo"\n');
+        yield* writeFile(
+          path.join(workdir, "supabase", ".env"),
+          "SUPABASE_SERVICES_HOSTNAME=dotenv-host\n",
+        );
+        const { layer, generator } = yield* setup({ workdir });
+        yield* withEnvVar(
+          "SUPABASE_SERVICES_HOSTNAME",
+          "shell-host",
+          genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+        );
+
+        expect(generator.calls[0]?.conn.host).toBe("shell-host");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

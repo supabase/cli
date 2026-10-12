@@ -2,13 +2,15 @@ import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
-import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
+import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
 import {
   StorageLinkedFlagDef,
   StorageLocalFlagDef,
@@ -108,4 +110,6 @@ export const storageCpCommand = Command.make("cp", config).pipe(
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

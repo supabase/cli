@@ -75,10 +75,11 @@ an unrelated verb. CLI-2234 renamed all four to match.
 
 ## Overview
 
-There is no global, fully-resolved config snapshot. Most `env(NAME)` references inside `CliConfig`
-are substituted automatically when the file is loaded (see "Raw Config Loading" below). A narrow
-set of fields are deliberately left as literal `env(NAME)` strings through decode, and are resolved
-by a caller later, on demand (see "Lazy `env(NAME)` Resolution" below).
+The package itself has no global, fully-resolved resolved config. Most `env(NAME)` references
+inside `CliConfig` are substituted automatically when the file is loaded (see "Raw Config Loading"
+below). A narrow set of fields are deliberately left as literal `env(NAME)` strings through decode,
+and are resolved by a caller later, on demand (see "Lazy `env(NAME)` Resolution" below). The CLI
+builds its own per-command resolved config on top of the package stages (see "CLI value precedence").
 
 ## Project Discovery
 
@@ -159,8 +160,9 @@ config file already had. That key does not participate in runtime config semanti
 
 ## Env Loading and Precedence
 
-`loadCliProjectEnvironment()` (exported from `@supabase/config/effect`) loads project env in this
-order:
+`loadCliProjectEnvironment()` (exported from `@supabase/config/effect`) is the package's public env
+loader. The CLI does not call it; it uses its own loader, described under "CLI value precedence".
+The public loader loads project env in this order:
 
 1. `supabase/.env`
 2. `supabase/.env.local`
@@ -329,11 +331,12 @@ The CLI builds runtime state in two layers:
 `CliProjectContext` is the CLI's discovered-project runtime bundle. It contains:
 
 - `paths`: the discovered `CliProjectPaths`, when a project was found
-- `projectEnv`: the merged `CliProjectEnvironment`, when a project was found
+- `projectEnv`: `{ values }`, the project env files merged into one map (shell values excluded),
+  when a project was found
 
-It is built by calling `loadCliProjectEnvironment` for the nearest discovered project from `cwd`.
-If no `supabase/config.*` exists, both fields stay absent — `CliProjectContext` does not invent a
-project from `.supabase/` alone.
+It is built by `loadCliProjectEnvFiles` (see "CLI value precedence") for the nearest discovered
+project from `cwd`. If no `supabase/config.*` exists, both fields stay absent — `CliProjectContext`
+does not invent a project from `.supabase/` alone.
 
 ### `CliSettings`
 
@@ -349,10 +352,105 @@ project from `.supabase/` alone.
 Its values are derived from:
 
 - `CliProjectContext.projectEnv.values`, when a project exists
-- otherwise `process.env`
+- then the ambient shell environment
+
+`projectEnv.values` never contains a key the shell sets, so the shell still wins.
 
 This allows project-scoped env files to influence CLI behavior while keeping CLI runtime settings
 distinct from the `CliConfig` document.
+
+## CLI value precedence
+
+The CLI resolves every config value, whether from `CliConfig` or from a `SUPABASE_*` variable, with
+one order (ADR 0031):
+
+1. an explicit flag
+2. shell environment
+3. project `.env*` files
+4. config: `config.json` when present, else `config.toml`, with the matched `[remotes.*]` block
+   over the base document
+5. the default
+
+Tiers are named `flag`, `shell`, `projectEnv`, `config` and `default`. `pickCliConfigKey`
+(`apps/cli/src/config/cli-config-key.ts`) is the single implementation; commands read through the
+`CliConfigValues` service rather than calling it.
+
+### `env()` references and `SUPABASE_*` overrides
+
+These are different mechanisms and both apply:
+
+- `env(NAME)` inside a config value is substituted from the merged environment (shell over project
+  files) when the document is decoded. An empty variable leaves the literal untouched.
+- A `SUPABASE_<UPPER_SNAKE_PATH>` variable overrides the key at the env tier. An empty variable is
+  ignored and falls through to config. A value of the form `env(NAME)` in the variable expands once.
+  A shell variable, even an empty one, shadows the same name in a project `.env` file.
+
+An override is parsed with a codec derived from the schema type, so an unparsable value fails the
+command that loads config instead of falling back to the file.
+
+### `envRequiresSection`
+
+An env override for a key inside an optional section applies only when that section exists in the
+merged document: webhooks, `storage.image_transformation`, `db.ssl_enforcement`, `auth.captcha`,
+`auth.email.smtp`, hooks, SMS providers, passkey, WebAuthn and external providers other than
+Apple. `auth.sessions`, `db.settings` and `experimental.pgdelta` are exempt; `pgdelta.enabled`
+defaults to true, so its env rollback applies while the section is absent.
+
+### Remotes
+
+`[remotes.<name>]` is selected when its effective `project_id` equals the target project ref. The
+effective value is `SUPABASE_REMOTES_<UPPER(NAME)>_PROJECT_ID` when set and non-empty, else the
+TOML value. Duplicate effective ids and invalid ids fail every load, whether or not a remote
+matches. A matched block that does not declare `db.seed.enabled` seeds nothing; a flag or env value
+still wins.
+
+### Project env files
+
+The CLI's own loader (`shared/config/cli-config-env.ts`) reads `SUPABASE_ENV` (default
+`development`) and then, in each of `<workdir>/supabase` and `<workdir>`, `.env.<env>.local`,
+`.env.local` (skipped when the environment is `test`), `.env.<env>` and `.env`. The first writer
+of a key wins, and a key the shell sets is never taken from a file. This differs from the public
+`loadCliProjectEnvironment` described above.
+
+### The resolved config
+
+`CliConfigValues.load({ workdir, projectRef })` returns a resolved config memoised per workdir, project
+ref and flag set; `writeThrough` drops the memo around a write. The resolved config exposes:
+
+- `get(key)`: the value and its origin tier.
+- `loaded`: the document with every flag, env and secret winner written in, before defaults.
+- `fileDeclared`: what the config file alone declares, with `env()` resolved and no flag or
+  `SUPABASE_*` overlay. `config pull` compares against it.
+- `materialized`: `loaded` plus defaults and normalizers, with `originAt(path)`.
+- `origins`, `appliedRemote`, `hasConfigFile`, `declares(path)`, `familyNames(family)`,
+  `withheldEnv`, `dotenvPrivateKeys`.
+- `invalid`: values left out under the `tolerateInvalid` load option; empty otherwise.
+- `envValues(names)`: the non-empty value of each name, shell before project `.env*`, for
+  resolving `env(NAME)` references.
+- `projectEnvValues`: the raw project `.env*` record, for variables outside the registry such as
+  Docker, registry mirrors and `SUPABASE_NETWORK_ID`.
+
+Load-time warnings print once per runtime. Outside the foundation files the CLI never calls
+`loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment`; a guard test enforces it.
+
+### Local SMTP
+
+`auth.email.smtp.enabled` defaults to off in the schema. The CLI treats a present
+`[auth.email.smtp]` table that omits `enabled` as on, so a partial table, for example one holding
+only `pass = "env(SMTP_PASS)"`, still loads.
+
+### Pipeline stages from `./internal`
+
+`@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:
+
+1. `parseCliConfigDocumentFile` reads `config.json` or `config.toml` without decoding.
+2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
+3. The CLI overlays flag, env and default values onto the merged document.
+4. `decodeMergedCliConfig` expands `env()` references, strips deprecated external providers, then decodes and
+   validates the overlaid document.
+
+The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
+came from.
 
 ## CLI-owned Repo State
 

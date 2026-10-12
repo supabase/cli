@@ -8,6 +8,7 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -636,8 +637,6 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The default workdir resolution only probes config.toml, so a config.json-only
-  // project invoked from a subdirectory relies on this second climb to be found.
   it.live(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>
@@ -655,9 +654,10 @@ describe("compute list", () => {
         const sub = path.join(created.dir, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
 
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, out } = setupCompute({
-          workdir: sub,
-          explicitWorkdir: false,
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
           routes: { [listRoute]: { status: 200, body: { data: [] } } },
         });
 

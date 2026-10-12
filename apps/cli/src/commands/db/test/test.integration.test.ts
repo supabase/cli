@@ -22,6 +22,7 @@ import {
   mockTelemetryStateTracked,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
@@ -165,6 +166,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun({ exitCode: opts.exitCode, stdout: opts.stdout });
   const args = ["db", "test"];
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     unusedStackServices,
     out.layer,
     processControl.layer,
@@ -218,6 +220,7 @@ describe("db test (alias) integration", () => {
       const args = ["db", "test", "--local", "--linked"];
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         unusedStackServices,
         BunServices.layer,
         mockRuntimeInfo(),

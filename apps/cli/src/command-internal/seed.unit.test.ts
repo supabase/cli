@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import type { DbSession } from "./db-connection.service.ts";
 import { applySeedFiles } from "./seed.ts";
 
@@ -36,7 +37,7 @@ const run = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* applySeedFiles(session, fs, path, workdir, { enabled: true, sqlPaths });
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cliConfigProviderLayer)));
 
 describe("applySeedFiles seed glob", () => {
   it.effect("treats a backslash escape as a glob metacharacter (matches the real file)", () => {

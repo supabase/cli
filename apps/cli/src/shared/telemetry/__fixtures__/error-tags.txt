@@ -38,7 +38,10 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigFlagConflictError
+CliConfigLoadError
 CliConfigParseError
+CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
 CliProjectHomeNotDirectoryError
@@ -174,6 +177,7 @@ DbLintListSchemasError
 DbLintMalformedJsonError
 DbLintMutuallyExclusiveFlagsError
 DbLintQueryError
+DbPasswordFlagsError
 DbPullDumpError
 DbPullEngineConflictError
 DbPullInSyncError
@@ -352,7 +356,6 @@ MigrationLastZeroError
 MigrationMissingLocalError
 MigrationMissingRemoteError
 MigrationNewWriteError
-MigrationPasswordFlagsError
 MigrationRepairUpdateError
 MigrationSeedError
 MigrationSquashBaselineError
@@ -466,6 +469,7 @@ SecretsUnsetCancelledError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
+SeedConsentRequiredError
 SeedMissingProjectConfigError
 SeedMutuallyExclusiveFlagsError
 SeedWorkdirError

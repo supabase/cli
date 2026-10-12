@@ -10,9 +10,9 @@
 
 import { homedir } from "node:os";
 
-import type { Path } from "effect";
+import { Effect, type Path } from "effect";
 
-import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
+import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 
 /** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles. */
 export function pgDeltaTempPath(path: Path.Path, workdir: string): string {
@@ -22,14 +22,8 @@ export function pgDeltaTempPath(path: Path.Path, workdir: string): string {
 /**
  * Global shadow-baseline cache directory:
  * `${SUPABASE_HOME}/cache/shadow-baseline` (default `~/.supabase/cache/shadow-baseline`).
- *
- * Pure: callers may pass `env`/`homeDir` for tests; production uses `process.env` and
- * `os.homedir()`.
  */
-export function shadowBaselineCacheDir(
-  path: Path.Path,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  homeDir: string = homedir(),
-): string {
-  return path.join(resolveSupabaseHome(path, env, homeDir), "cache", "shadow-baseline");
-}
+export const shadowBaselineCacheDir = (path: Path.Path, homeDir: string = homedir()) =>
+  Effect.map(readSupabaseHome(path, homeDir), (home) =>
+    path.join(home, "cache", "shadow-baseline"),
+  );

@@ -8,6 +8,7 @@ import { Effect, Layer } from "effect";
 import { afterEach, beforeEach } from "vitest";
 
 import { mockAnalytics } from "../../tests/helpers/mocks.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../shared/telemetry/identity.ts";
 import {
@@ -16,6 +17,8 @@ import {
   setTelemetryEnabled,
 } from "./telemetry-state.layer.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
+
+const platformLayer = Layer.merge(BunServices.layer, cliConfigProviderLayer);
 
 let tempHome: string;
 let prevHome: string | undefined;
@@ -58,6 +61,7 @@ function makeLayer(
     Layer.provide(BunServices.layer),
     Layer.provide(analytics.layer),
     Layer.provide(runtime.layer),
+    Layer.provideMerge(cliConfigProviderLayer),
   );
 }
 
@@ -176,9 +180,9 @@ describe("telemetryStateLayer.stitchLogin / clearDistinctId", () => {
 describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-  const runLoad = () => loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer));
+  const runLoad = () => loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer));
   const runLoadAt = (now: Date) =>
-    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(BunServices.layer));
+    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(platformLayer));
 
   it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () => {
     writeFileSync(telemetryPath(), JSON.stringify({ enabled: false }));
@@ -791,7 +795,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
 });
 
 describe("exact int64 schema_version round-trip", () => {
-  const runLoad = () => loadOrCreateTelemetryState().pipe(Effect.provide(BunServices.layer));
+  const runLoad = () => loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer));
 
   // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
   // would round inside the test itself, hiding exactly the bug under test.
@@ -822,7 +826,7 @@ describe("exact int64 schema_version round-trip", () => {
   it.effect("setTelemetryEnabled's rewrite also preserves the exact token", () => {
     writeFileSync(telemetryPath(), fileWith("9007199254740993"));
     return Effect.gen(function* () {
-      yield* setTelemetryEnabled(true).pipe(Effect.provide(BunServices.layer));
+      yield* setTelemetryEnabled(true).pipe(Effect.provide(platformLayer));
       const written = readFileSync(telemetryPath(), "utf8");
       expect(written).toContain('"enabled":true');
       expect(written).toContain('"schema_version":9007199254740993');

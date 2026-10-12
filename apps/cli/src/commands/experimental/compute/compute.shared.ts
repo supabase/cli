@@ -1,7 +1,7 @@
-import { findCliProjectPaths, loadCliConfig } from "@supabase/config/effect";
+import { findCliProjectPaths } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import {
   readComputeSection,
   type ComputeEntry,
@@ -37,68 +37,54 @@ export interface ComputeProject {
   readonly computeDir: string;
 }
 
-const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
-  readonly tomlOnly: boolean;
-}) {
+/**
+ * The project as a reader sees it, following the loader's normal JSON-over-TOML selection.
+ *
+ * A command that only reads `[compute.*]` still has to honour `config.json`, or a JSON project
+ * deploys with a guessed runtime and default size/instance counts instead of the ones it
+ * configured.
+ */
+export const loadComputeProject = Effect.gen(function* () {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
+  const configValues = yield* CliConfigValues;
 
-  // `tomlOnly` skips the ancestor search (redundant with the default
-  // resolution); the JSON-capable read needs it so a config.json-only project
-  // run from a subdirectory is still found. `projectRoot` is derived from the
-  // same search, not `settings.workdir`, so a climb takes `configPath` with it
-  // — otherwise a discovered ancestor's `[compute.*]` entries would resolve
-  // `source` against the wrong directory.
-  const search = options.tomlOnly ? false : shouldSearchAncestors(settings);
-  const paths = yield* findCliProjectPaths(settings.workdir, { search });
-  const projectRoot = paths?.projectRoot ?? settings.workdir;
+  const projectRoot = settings.workdir;
   const supabaseDir = path.join(projectRoot, "supabase");
 
-  // `search: false`: the climb (if any) already happened above; reading
-  // `projectRoot`'s own config.toml again must never climb a second time.
-  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: options.tomlOnly, search: false });
-  const section = readComputeSection(loaded?.config.compute);
+  const resolvedConfig = yield* configValues.load({
+    workdir: projectRoot,
+    projectRef: Option.none(),
+  });
 
   return {
     projectRoot,
     supabaseDir,
-    configPath: loaded?.path ?? path.join(supabaseDir, "config.toml"),
-    section,
+    configPath: resolvedConfig.hasConfigFile
+      ? resolvedConfig.loaded.path
+      : path.join(supabaseDir, "config.toml"),
+    section: readComputeSection(resolvedConfig.materialized.config.compute),
     computeDir: computeRootDir(path, projectRoot),
   } satisfies ComputeProject;
 });
 
 /**
- * The project as a reader sees it, following the loader's normal
- * JSON-over-TOML selection.
+ * As {@link loadComputeProject}, for the `[compute.<name>]` entry writer.
  *
- * A command that only reads `[compute.*]` still has to honour `config.json`,
- * or a JSON project deploys with a guessed runtime and default size/instance
- * counts instead of the ones it configured.
- */
-export const loadComputeProject = loadComputeProjectWith({ tomlOnly: false });
-
-/**
- * The project as the `[compute.<name>]` entry writer needs to see it: TOML
- * only.
- *
- * `commitComputeEntry` is a TOML text editor; without `tomlOnly` a JSON
- * project's `configPath` would resolve to `config.json`, and appending a
- * `[compute.<name>]` table there would make the file unparseable.
+ * `commitComputeEntry` is a TOML text editor, so a JSON project is rejected: appending a
+ * `[compute.<name>]` table to `config.json` would make the file unparseable.
  */
 export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
-  const paths = yield* findCliProjectPaths(settings.workdir, {
-    search: shouldSearchAncestors(settings),
-  });
+  const paths = yield* findCliProjectPaths(settings.workdir, { search: false });
   if (paths !== null && path.basename(paths.configPath) === "config.json") {
     return yield* new ComputeJsonConfigUnsupportedError({
       detail: `This project is configured by ${paths.configPath}, which the compute new command cannot edit safely.`,
       suggestion: `Create the source files manually and add the compute entry to ${paths.configPath}, or convert the whole project configuration to TOML before scaffolding it.`,
     });
   }
-  return yield* loadComputeProjectWith({ tomlOnly: true });
+  return yield* loadComputeProject;
 });
 
 /**

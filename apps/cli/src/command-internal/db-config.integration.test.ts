@@ -40,6 +40,8 @@ import {
   mockTty,
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { pinnedConfigProvider } from "../../tests/helpers/config-env-pins.ts";
+import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-values-layer.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,
@@ -48,7 +50,10 @@ import {
   ProfileFlag,
   WorkdirFlag,
 } from "./global-flags.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
@@ -70,6 +75,15 @@ const mockDbConnection = Layer.succeed(DbConnection, {
   connect: () => Effect.die("unexpected connect() in --local/--db-url resolver test"),
 });
 
+const explicitEnv = (
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(env ?? {}).flatMap(([name, value]): Array<[string, string]> =>
+      value === undefined ? [] : [[name, value]],
+    ),
+  );
+
 function buildResolver(
   workdir: string,
   opts: {
@@ -78,9 +92,18 @@ function buildResolver(
     readonly dbConnection?: Layer.Layer<DbConnection>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
+    readonly flagPassword?: string;
   } = {},
 ) {
   const deps = Layer.mergeAll(
+    Layer.succeed(
+      CliConfigFlagInputs,
+      makeCliConfigFlagInputs(
+        opts.flagPassword === undefined
+          ? []
+          : [flagInput("linkedDb.password", "password", opts.flagPassword)],
+      ),
+    ),
     mockCommandSettings({
       workdir,
       projectHost: opts.projectHost ?? "supabase.co",
@@ -107,13 +130,18 @@ function buildResolver(
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
-    ConfigProvider.layer(
-      ConfigProvider.fromEnvRecord(opts.configEnv ?? {}, { preserveEmptyStrings: true }),
-    ),
+    Layer.effect(ConfigProvider.ConfigProvider, pinnedConfigProvider(explicitEnv(opts.configEnv))),
   );
+  const hermeticValues = Layer.effect(
+    CliConfigValues,
+    Effect.map(Effect.service(CliConfigValues), (real) =>
+      withHermeticShellTier(real, explicitEnv(opts.configEnv)),
+    ),
+  ).pipe(Layer.provide(cliConfigValuesLayer.pipe(Layer.provide(deps))));
+  const depsWithValues = Layer.merge(deps, hermeticValues);
   return opts.stackApi === undefined
-    ? dbConfigLayer.pipe(Layer.provide(deps))
-    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(deps, opts.stackApi)));
+    ? dbConfigLayer.pipe(Layer.provide(depsWithValues))
+    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(depsWithValues, opts.stackApi)));
 }
 
 function withWorkdir(toml?: string) {
@@ -139,9 +167,9 @@ const resolve = (
     return yield* resolver.resolve(flags);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
-    Effect.provideService(
+    Effect.provideServiceEffect(
       ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(opts?.configEnv ?? {}, { preserveEmptyStrings: true }),
+      pinnedConfigProvider(explicitEnv(opts?.configEnv)),
     ),
   );
 
@@ -155,9 +183,9 @@ const resolvePoolerFallback = (
     return yield* resolver.resolvePoolerFallback(flags);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
-    Effect.provideService(
+    Effect.provideServiceEffect(
       ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(opts?.configEnv ?? {}, { preserveEmptyStrings: true }),
+      pinnedConfigProvider(explicitEnv(opts?.configEnv)),
     ),
   );
 
@@ -412,6 +440,44 @@ describe("dbConfigResolver (local + db-url)", () => {
         Effect.provide(BunServices.layer),
       );
     },
+  );
+});
+
+describe("dbConfigResolver --password rejection", () => {
+  const failureTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
+    Exit.isFailure(exit) ? JSON.stringify(exit.cause) : "";
+
+  const targets: ReadonlyArray<readonly [string, DbConfigFlags]> = [
+    ["--db-url", dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres")],
+    ["--local", localFlags],
+    ["the default local target", { ...localFlags, connType: undefined }],
+  ];
+  for (const [label, flags] of targets) {
+    it.effect(`rejects --password with ${label}`, () =>
+      Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        return yield* resolve(dir, { ...flags, password: Option.some("pw") });
+      }).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(failureTag(exit)).toContain("DbPasswordFlagsError");
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      ),
+    );
+  }
+
+  it.effect("accepts an absent --password with --db-url", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      return yield* resolve(dir, {
+        ...dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres"),
+        password: Option.none(),
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });
 
@@ -1143,7 +1209,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const dbConnection = Layer.succeed(DbConnection, {
         connect: () =>
-          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+          Effect.die("unexpected connect() — the explicit password path never verify-connects"),
       });
       const fetchMock = Object.assign(
         (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -1319,6 +1385,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
           {
             projectHost: "invalid",
             dbConnection,
+            flagPassword: "flag-password",
             configEnv: {
               SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
               SUPABASE_DB_PASSWORD: "ambient-password",
@@ -1332,7 +1399,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               host: "aws-0-us-east-1.pooler.supabase.com",
               port: 5432,
               user: `postgres.${targetRef}`,
-              password: "ambient-password",
+              password: "flag-password",
               database: "postgres",
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",

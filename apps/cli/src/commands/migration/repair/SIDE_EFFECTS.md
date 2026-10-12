@@ -21,10 +21,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                 | Required?                                               |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode          | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DB_PASSWORD`           | password for direct database connection | no                                                      |
+| Variable                | Purpose                                                                          | Required?                                               |
+| ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`  | password for the linked database connection (`--password`/`-p` takes precedence) | no                                                      |
 
 ## Exit Codes
 
@@ -32,6 +32,7 @@
 | ---- | ------------------------------------------------------------------------ |
 | `0`  | success                                                                  |
 | `1`  | database connection failure                                              |
+| `1`  | `--password` with `--db-url` or `--local`                                |
 | `1`  | invalid or missing `--status` flag                                       |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
@@ -48,11 +49,10 @@ provisioned remote runs no provisioning DDL — supabase/cli#6393) followed by o
 repair transaction: (for repair-all) `TRUNCATE`, plus `applied` → per-version
 `UPSERT` from the local file, `reverted` → `DELETE ... WHERE version = ANY($1)`.
 
-> **Atomicity note:** the TRUNCATE/UPSERT/DELETE statements run inside an explicit
+> **Atomicity note:** the TRUNCATE/UPSERT/DELETE statements run in an explicit
 > `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure (e.g. TRUNCATE
-> succeeds but a later UPSERT fails) leaves the history table unchanged. This
-> handler keeps the transaction instead of using the migration apply path's batch
-> primitive.
+> succeeds but a later UPSERT fails) leaves the table unchanged. This handler keeps
+> that transaction instead of using the migration apply path's batch primitive.
 
 ### `--output-format json`
 
@@ -77,11 +77,15 @@ migration history table to match local migration files?` (default **NO**).
   repair-all.
 - In `applied` mode, reads the matching `supabase/migrations/<version>_*.sql` file
   for the name + statements; a missing file exits non-zero.
-- `--linked` (default true), `--local`, and `--db-url` are mutually exclusive, as
-  are `--db-url` and `--password`/`-p`.
+- `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
+- **`--password`** is rejected with `--db-url` (`--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`) and with `--local` (`--password can't be used with --local. The local database uses [db].password from supabase/config.toml.`),
+  exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
+  `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
+  (stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`), and a
+  temporary login role is minted instead (ADR 0031).
 - **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which is simply left unused on
+  `SUPABASE_PROJECT_ID`, which is simply unused on
   a non-linked target).

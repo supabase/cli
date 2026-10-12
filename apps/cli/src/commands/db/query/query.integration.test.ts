@@ -34,7 +34,7 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { ProjectRefReadError } from "../../../command-internal/temp-paths.ts";
+import { ProjectRefReadError } from "../../../shared/config/temp-paths.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigParseUrlError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";

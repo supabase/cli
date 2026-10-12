@@ -75,10 +75,10 @@ No Management API calls. Everything is local Docker + local `config.toml`.
 
 ## Environment Variables
 
-| Variable              | Purpose                                                                                            | Required?                                                         |
-| --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                |
-| `SUPABASE_WORKDIR`    | resolves `CommandSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml`) |
+| Variable              | Purpose                                                                                            | Required?                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                                          |
+| `SUPABASE_WORKDIR`    | resolves `CommandSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml` or `supabase/config.json`) |
 
 `docker`/`podman` must be resolvable on `PATH` (or reachable via the configured Docker
 context) — `spawnContainerCli` tries `docker` first and falls back to `podman`. When
@@ -88,17 +88,17 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 ## Exit Codes
 
-| Code | Condition                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------- |
-| `0`  | success — containers/volumes/networks pruned                                                       |
-| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                 |
-| `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error   |
-| `1`  | listing containers failed (`StopListError`)                                                        |
-| `1`  | stopping one or more containers failed (`StopContainerError`)                                      |
-| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                        |
-| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`) |
-| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                            |
-| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                    |
+| Code | Condition                                                                                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — containers/volumes/networks pruned                                                                                                                              |
+| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                                        |
+| `1`  | `config.toml` present but malformed (`StopConfigLoadError`), or a config value is invalid (`CliConfigValueError`, naming its source) — an **absent** file is not an error |
+| `1`  | listing containers failed (`StopListError`)                                                                                                                               |
+| `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                                             |
+| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                                                                                               |
+| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`)                                                                        |
+| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                                                                                                   |
+| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                                                                                           |
 
 ## Telemetry Events Fired
 

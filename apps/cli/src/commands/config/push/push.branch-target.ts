@@ -9,7 +9,7 @@ import {
   parseCachedLinkedProject,
 } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { readProjectRefFile, tempPaths } from "../../../command-internal/temp-paths.ts";
+import { readProjectRefFile, tempPaths } from "../../../shared/config/temp-paths.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**

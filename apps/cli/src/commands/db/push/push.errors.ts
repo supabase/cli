@@ -51,6 +51,7 @@ export class DbPushMissingRemoteError extends Data.TaggedError("DbPushMissingRem
  */
 export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.cancelled;

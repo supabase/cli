@@ -7,7 +7,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import {
   DELETE_OBJECTS_LIMIT,
@@ -78,7 +78,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     linkedRef = projectRef;
     // `.env` loads before the confirmation prompt, so a `SUPABASE_YES` set only in
     // `supabase/.env` also auto-confirms.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {

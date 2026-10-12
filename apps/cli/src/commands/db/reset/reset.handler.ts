@@ -7,15 +7,25 @@ import {
   resolveYesWithProjectEnv,
 } from "../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
+import {
+  SEED_CANCELLED_MESSAGE,
+  confirmSeedIntoMatchedRemote,
+  resolveDbSeedInput,
+  seedCancelledSuggestion,
+} from "../../../command-internal/seed-remote-consent.ts";
+import { sqlFilesGlob } from "../../../command-internal/sql-files-glob.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
-import { resolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  checkDbToml,
+  loadProjectEnvValues,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import {
   experimentalSchemaPathsIgnoredWarning,
@@ -43,6 +53,8 @@ import {
   DbResetVersionFlagsError,
 } from "./reset.errors.ts";
 
+const NO_SQL_PATHS: ReadonlyArray<string> = [];
+
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
 const applyError = (message: string, suggestion?: string) =>
@@ -69,11 +81,14 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* DnsResolverFlag;
+  const configValues = yield* CliConfigValues;
+  const noSeed = Option.getOrElse(flags.noSeed, () => false);
+  const sqlPaths = Option.getOrElse(flags.sqlPaths, () => NO_SQL_PATHS);
 
   const workdir = cliSettings.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
   // Load the project values before the `yes`/`experimental` gates are read.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
@@ -103,7 +118,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
 
     // `--no-seed` conflicts with `--sql-paths`, and each `--sql-paths` value
     // must be non-empty.
-    if (flags.noSeed && flags.sqlPaths.length > 0) {
+    if (noSeed && sqlPaths.length > 0) {
       return yield* new DbResetSeedFlagsError({
         message: "--no-seed cannot be used with --sql-paths",
         suggestion: `Use either ${aqua("--no-seed")} to skip seeding or ${aqua(
@@ -111,7 +126,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         )} to override seed files, not both.`,
       });
     }
-    if (flags.sqlPaths.some((p) => p.length === 0)) {
+    if (sqlPaths.some((p) => p.length === 0)) {
       return yield* new DbResetSeedFlagsError({
         message: "--sql-paths requires a non-empty path or glob pattern",
         suggestion: `Pass a non-empty file path or glob pattern to ${aqua("--sql-paths")}.`,
@@ -119,7 +134,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     }
     // A remote target flag + --sql-paths warns about the seed override.
     if (
-      flags.sqlPaths.length > 0 &&
+      sqlPaths.length > 0 &&
       (target.setFlags.includes("linked") || target.setFlags.includes("db-url"))
     ) {
       yield* output.raw(
@@ -201,10 +216,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // git-branch line) is hoisted into `resetLocalDatabase`, shared with `db schema declarative`'s
     // recovery reset; this call site keeps only version/seed-flags plumbing and the JSON envelope.
     if (cfg.isLocal) {
-      yield* resetLocalDatabase({
-        version: resolvedVersion,
-        seedFlags: { noSeed: flags.noSeed, sqlPaths: flags.sqlPaths },
-      });
+      yield* resetLocalDatabase({ version: resolvedVersion });
       if (output.format !== "text") {
         yield* output.success("Reset local database.", {
           target: "local",
@@ -228,6 +240,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
     const vaultSecrets = toml.vault;
+    const resolvedConfig = yield* configValues.load({
+      workdir,
+      projectRef: Option.fromNullishOr(configRef),
+    });
+    const seed = yield* resolveDbSeedInput(resolvedConfig, { workdir, ref: linkedRef ?? "" });
+    const seedEnabled = seed.enabled;
+    const seedSqlPaths = seed.sqlPaths;
     if (
       ignoresExperimentalSchemaPaths({
         experimental,
@@ -248,6 +267,23 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     );
     if (!shouldReset) {
       return yield* new DbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
+    }
+    if (seedEnabled && seed.consent !== undefined) {
+      const { files } = yield* sqlFilesGlob(fs, path, seedSqlPaths, workdir);
+      if (files.length > 0) {
+        const seedConsented = yield* confirmSeedIntoMatchedRemote({
+          command: "reset",
+          target: seed.consent,
+          files,
+          yes,
+        });
+        if (!seedConsented) {
+          return yield* new DbResetCancelledError({
+            message: SEED_CANCELLED_MESSAGE,
+            suggestion: seedCancelledSuggestion("reset"),
+          });
+        }
+      }
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 
@@ -287,16 +323,8 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
           yield* applyMigrations(session, fs, path, pending, applyError);
         }
 
-        // `--no-seed` disables seeding; `--sql-paths` overrides `[db.seed].sql_paths` and
-        // force-enables it (mutually exclusive, validated above). Shares `resolveResetSeedConfig`
-        // with the local path's identical override.
-        const resolvedSeed = resolveResetSeedConfig(
-          toml.seed,
-          { noSeed: flags.noSeed, sqlPaths: flags.sqlPaths },
-          path,
-        );
-        if (resolvedSeed.enabled) {
-          const seeds = yield* getPendingSeeds(session, fs, path, resolvedSeed.sqlPaths, workdir);
+        if (seedEnabled) {
+          const seeds = yield* getPendingSeeds(session, fs, path, seedSqlPaths, workdir);
           yield* Effect.annotateCurrentSpan({ "seed.count": seeds.length });
           yield* seedData(session, fs, workdir, path, seeds, applyError);
         }

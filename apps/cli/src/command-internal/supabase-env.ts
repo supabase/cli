@@ -6,7 +6,9 @@
  * so callers OR the parsed flag value with this read (flag-set wins).
  */
 
-import { Config, Effect, Option } from "effect";
+import { Effect } from "effect";
+
+import { envValue } from "../shared/config/env-option.ts";
 
 const TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
@@ -15,14 +17,8 @@ function parseEnvBool(raw: string | undefined): boolean {
   return raw !== undefined && TRUE_VALUES.has(raw);
 }
 
-/** Env-record providers never fail this read, so a `ConfigError` here is a defect. */
-const shellEnv = (name: string) =>
-  Config.option(Config.String(name)).pipe(Effect.map(Option.getOrUndefined), Effect.orDie);
-
-/** Reads a single `SUPABASE_*` boolean env var through `Config` (see module doc). */
-export const supabaseEnvBool = Effect.fnUntraced(function* (name: string) {
-  return parseEnvBool(yield* shellEnv(name));
-});
+/** Reads a single `SUPABASE_*` boolean env var from the ambient config provider (see module doc). */
+export const supabaseEnvBool = (name: string) => Effect.map(envValue(name), parseEnvBool);
 
 /**
  * Resolves a `SUPABASE_*` boolean where a project `supabase/.env` value may
@@ -32,15 +28,15 @@ export const supabaseEnvBool = Effect.fnUntraced(function* (name: string) {
  * project env, letting an opt-out gate default on while any present value
  * still disables.
  */
-export const supabaseEnvBoolWithProjectFallback = Effect.fnUntraced(function* (
+export const supabaseEnvBoolWithProjectFallback = (
   name: string,
   projectEnv: Record<string, string>,
   opts: { readonly whenUnset?: boolean } = {},
-) {
-  const raw = (yield* shellEnv(name)) ?? projectEnv[name];
-  if (raw === undefined) return opts.whenUnset ?? false;
-  return parseEnvBool(raw);
-});
+) =>
+  Effect.map(envValue(name), (shell) => {
+    const raw = shell ?? projectEnv[name];
+    return raw === undefined ? (opts.whenUnset ?? false) : parseEnvBool(raw);
+  });
 
 /**
  * Resolves a `SUPABASE_*` string with the same shell-presence-wins semantics
@@ -48,9 +44,7 @@ export const supabaseEnvBoolWithProjectFallback = Effect.fnUntraced(function* (
  * the raw merged string, or `""` when absent from both. `??` (not `||`)
  * encodes the presence check.
  */
-export const supabaseEnvStringWithProjectFallback = Effect.fnUntraced(function* (
+export const supabaseEnvStringWithProjectFallback = (
   name: string,
   projectEnv: Record<string, string>,
-) {
-  return (yield* shellEnv(name)) ?? projectEnv[name] ?? "";
-});
+) => Effect.map(envValue(name), (shell) => shell ?? projectEnv[name] ?? "");

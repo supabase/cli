@@ -2,11 +2,7 @@ import type { CliConfig } from "@supabase/config";
 
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { serviceContainerIds } from "./docker-ids.ts";
-import {
-  envOverrideBool,
-  resolveLocalConfigValues,
-  type LocalConfigValues,
-} from "./local-config-values.ts";
+import { resolveLocalConfigValues, type LocalConfigValues } from "./local-config-values.ts";
 
 /**
  * A status output field: the dotted key `--override-name <key>=<name>` matches against
@@ -230,15 +226,10 @@ export interface StatusLocalState {
 /**
  * Resolves local config values (URLs, keys — can throw, see {@link resolveLocalConfigValues})
  * and the per-service `.enabled` gates, with no reference to `excluded`/`containerIds` — see
- * {@link gateStatusState} for the Docker-dependent half this composes with. Each `.enabled`
- * gate is read through {@link envOverrideBool}, not the raw decoded `config.<section>.enabled`,
- * so an env-overridden stack's running services match what `status` reports.
+ * {@link gateStatusState} for the Docker-dependent half this composes with. `config` must be
+ * the resolved config's materialized config so env overrides are already applied to every gate.
  *
  * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv override doesn't
- * parse as a valid port.
- * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
- * doesn't parse as a valid bool.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its
  * first key is unsupported — see {@link generateAsymmetricLocalJwt}.
  */
@@ -259,52 +250,15 @@ export function resolveStatusLocalState(
    */
   precomputedLocal?: LocalConfigValues,
 ): StatusLocalState {
-  const local =
-    precomputedLocal ??
-    resolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
+  const local = precomputedLocal ?? resolveLocalConfigValues(config, hostname, workdir, document);
 
-  const apiEnabled = envOverrideBool(
-    "SUPABASE_API_ENABLED",
-    config.api.enabled,
-    "api.enabled",
-    projectEnvValues,
-  );
-  const studioSectionEnabled = envOverrideBool(
-    "SUPABASE_STUDIO_ENABLED",
-    config.studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
-  const authSectionEnabled = envOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
-  const inbucketSectionEnabled = envOverrideBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    config.local_smtp.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
-  const storageSectionEnabled = envOverrideBool(
-    "SUPABASE_STORAGE_ENABLED",
-    config.storage.enabled,
-    "storage.enabled",
-    projectEnvValues,
-  );
-  const edgeRuntimeEnabled = envOverrideBool(
-    "SUPABASE_EDGE_RUNTIME_ENABLED",
-    config.edge_runtime.enabled,
-    "edge_runtime.enabled",
-    projectEnvValues,
-  );
-  const storageS3ProtocolEnabled = envOverrideBool(
-    "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-    config.storage.s3_protocol.enabled,
-    "storage.s3_protocol.enabled",
-    projectEnvValues,
-  );
+  const apiEnabled = config.api.enabled;
+  const studioSectionEnabled = config.studio.enabled;
+  const authSectionEnabled = config.auth.enabled;
+  const inbucketSectionEnabled = config.local_smtp.enabled;
+  const storageSectionEnabled = config.storage.enabled;
+  const edgeRuntimeEnabled = config.edge_runtime.enabled;
+  const storageS3ProtocolEnabled = config.storage.s3_protocol.enabled;
 
   return {
     config,

@@ -23,6 +23,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -430,6 +431,7 @@ function setup(opts: SetupOpts = {}) {
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
     projectFiles,
+    configValuesLayer({ output: outputLayer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
@@ -1099,6 +1101,69 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live("an env() reference on a numeric key is never replaced by the remote value", () => {
+    const before = ['project_id = "test"', "[api]", 'max_rows = "env(ROWS)"', ""].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "ROWS=010\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('max_rows = "env(ROWS)"');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+      const rowsChange = changes.find(
+        (change) => (change["path"] as Array<string>).join(".") === "api.max_rows",
+      );
+      expect(rowsChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(rowsChange?.["env_variables"]).toEqual(["ROWS"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an env() reference inside an array is never replaced by the remote list", () => {
+    const before = [
+      'project_id = "test"',
+      "[auth]",
+      'additional_redirect_urls = ["env(CALLBACK_URL)"]',
+      "",
+    ].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "CALLBACK_URL=https://local.example.com/callback\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('additional_redirect_urls = ["env(CALLBACK_URL)"]');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+      const redirectChange = changes.find(
+        (change) => (change["path"] as Array<string>).join(".") === "auth.additional_redirect_urls",
+      );
+      expect(redirectChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(redirectChange?.["env_variables"]).toEqual(["CALLBACK_URL"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("compares against the file's declared values, ignoring a SUPABASE_* override", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({ toml: before, yes: true });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "1000",
+      Effect.gen(function* () {
+        yield* configPull(noFlags);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
 
   it.live(
     "a declared secret is never written, even though the config file has it declared before AND after the run",

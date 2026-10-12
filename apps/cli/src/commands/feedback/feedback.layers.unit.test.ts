@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import type { DebugLoggerShape } from "../../command-internal/debug-logger.service.ts";
+import type { DebugLoggerShape } from "../../shared/output/debug-logger.service.ts";
 import { feedbackFetch } from "./feedback.layers.ts";
 
 function recordingLogger() {

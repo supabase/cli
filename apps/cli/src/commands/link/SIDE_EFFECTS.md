@@ -67,6 +67,8 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 >   unverified divergent cache is treated as untrustworthy. Similarly, when a name/UUID-resolved
 >   branch link cannot REPLACE a divergent cache (write failure), the stale cache is deleted
 >   rather than left trusted.
+>
+> `linked-project.json` is the only file touched on the branch/404 link path.
 
 ## API Routes
 
@@ -90,8 +92,8 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | `GET`  | `/auth/v1/health`     | best-effort |
 | `GET`  | `/storage/v1/version` | best-effort |
 
-> `link` does not probe `/config/database/postgres`, `/postgrest`,
-> `/config/auth`, or `/network-restrictions`: they would only populate in-process
+> Certain config probes (`/config/database/postgres`, `/postgrest`,
+> `/config/auth`, `/network-restrictions`) are **omitted** here: they only populated in-process
 > config that standalone `link` discards, and they emit nothing observable.
 
 ## Environment Variables
@@ -100,7 +102,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a branch-name lookup (CLI-2167). |
 | `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                |
-| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (no DB-connection path consumes it)                                                                                                                         |
+| `SUPABASE_DB_PASSWORD`  | bound to the hidden `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                           |
 
 ## Exit Codes
 
@@ -126,7 +128,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ### `--output-format text`
 
-- stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stderr: the warning `link ignores --password; remove it from your scripts.` when `--password` is passed (printed before the access token is resolved); `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
 - stderr: `Resolved branch "<name>" of project <parentRef> to project ref <branchRef>.` — via
   `output.raw(..., "stderr")` (NOT `output.info`, which clack renders on stdout with `│`/`◇`
   framing in text mode) — only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value
@@ -150,5 +152,5 @@ in these modes (stderr in `json`; a structured `log` event in `stream-json`) rat
   **not** emitted: it requires loading the local `config.toml` `[db].major_version` with CLI
   defaults, which the CLI does not surface. The `postgres-version` file (the meaningful
   side effect) is still written.
-- The `Finished supabase link.` line is emitted as **plain text**, with no ANSI color on `supabase link` (color
-  helpers are rendered plain); ANSI-stripping scripts are unaffected.
+- The `Finished supabase link.` line is emitted as **plain text**, with no ANSI color
+  on `supabase link`.

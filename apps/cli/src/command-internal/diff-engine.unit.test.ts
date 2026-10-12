@@ -5,16 +5,7 @@ import {
   resolveDeclarativeFromArgs,
   resolveDiffEngine,
   resolvePullDiffEngine,
-  shouldUsePgDelta,
 } from "./diff-engine.ts";
-
-describe("shouldUsePgDelta", () => {
-  it("follows the config and lets --use-pg-delta override an explicit rollback", () => {
-    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false })).toBe(false);
-    expect(shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false })).toBe(true);
-    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true })).toBe(true);
-  });
-});
 
 describe("resolveDiffEngine", () => {
   const base = {
