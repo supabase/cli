@@ -498,7 +498,7 @@ export const cliConfigValuesLayer = Layer.effect(
         dotenvPrivateKeys,
         projectEnvValues: Object.assign<Record<string, string>, Record<string, string>>(
           Object.create(null),
-          projectEnv.values,
+          Object.fromEntries(Object.entries(projectEnv.values).filter(([name]) => !withheld(name))),
         ),
         envValues: (names) => {
           const wanted = [...new Set(names)];

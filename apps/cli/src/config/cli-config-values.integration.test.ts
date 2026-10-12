@@ -121,10 +121,10 @@ describe("CliConfigValues credential scoping", () => {
     );
   }
 
-  it.live("reports a withheld project .env password when the shell does not set one", () =>
+  it.live("withholds a project .env password from every view when the shell does not set one", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "scoped"\n', {
-        supabaseEnv: "SUPABASE_DB_PASSWORD=from-file\n",
+        supabaseEnv: "SUPABASE_DB_PASSWORD=from-file\nUNSCOPED_VAR=kept\n",
       });
       yield* link(root, LINKED);
       const layer = configValuesLayer();
@@ -136,6 +136,9 @@ describe("CliConfigValues credential scoping", () => {
       expect(resolvedConfig.withheldEnv).toMatchObject([
         { envName: "SUPABASE_DB_PASSWORD", tier: "projectEnv" },
       ]);
+      expect(Object.hasOwn(resolvedConfig.projectEnvValues, "SUPABASE_DB_PASSWORD")).toBe(false);
+      expect(resolvedConfig.projectEnvValues["UNSCOPED_VAR"]).toBe("kept");
+      expect(yield* resolvedConfig.envValues(["SUPABASE_DB_PASSWORD"])).toEqual({});
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SUPABASE_DB_PASSWORD: undefined }, effect),
