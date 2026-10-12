@@ -30,8 +30,11 @@ export const endpointPort = (creation: EndpointIntents, name: string): number | 
   return endpoint.port === "auto" || typeof endpoint.port === "number" ? endpoint.port : "auto";
 };
 
-/** Path prefix of a service on the shared API listener, or `undefined` when it has a dedicated one. */
-export const apiRoute = (service: ServiceCreation["service"]): string | undefined => {
+/**
+ * Path prefix of a service on the shared API listener, or `undefined` when it has a dedicated one.
+ * Accepts a plain string too, for a service kind decoded off an RPC transport.
+ */
+export const apiRoute = (service: string): string | undefined => {
   switch (service) {
     case "rest":
       return "/rest/v1";

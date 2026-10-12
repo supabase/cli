@@ -6,7 +6,7 @@ import { renderDockerfile } from "./render-service-dockerfile.ts";
 // one-line-per-alias check is satisfied by default; each test only mutates what it's
 // exercising. `vi.mock` factories are hoisted above every other top-level statement, so the
 // fixture pins are built inline here rather than imported from an outer module.
-vi.mock("@supabase/stack/internal/artifacts", () => {
+vi.mock("@supabase/stack/internal/artifacts", async (importOriginal) => {
   const nativePin = { archive: "a".repeat(64), manifest: "b".repeat(64) };
   const natives = { "darwin-arm64": nativePin, "linux-amd64": nativePin, "linux-arm64": nativePin };
   const pin = (sourceService: string, upstreamImage: string, isDefault: boolean) => ({
@@ -22,9 +22,11 @@ vi.mock("@supabase/stack/internal/artifacts", () => {
     },
   });
   return {
+    ...(await importOriginal<typeof import("@supabase/stack/internal/artifacts")>()),
     catalogPins: () => [
       pin("postgres", "supabase/postgres:17.0.0", true),
       pin("postgres", "supabase/postgres:15.0.0", false),
+      pin("postgres", "supabase/postgres:17.0.0-orioledb", false),
       pin("mailpit", "axllent/mailpit:v1.0.0", true),
       pin("postgrest", "postgrest/postgrest:v1.0.0", true),
       pin("pgmeta", "supabase/postgres-meta:v1.0.0", true),
@@ -65,10 +67,11 @@ function baseDockerfile(overrides: Readonly<Record<string, string>> = {}): strin
 }
 
 describe("renderDockerfile: pin selection", () => {
-  test("pg takes the default pin and pg15 takes the additional one, by isDefault, not a version-string check", () => {
+  test("pg takes the default pin and pg15 the additional stock pin; an OrioleDB pin has no alias", () => {
     const rendered = renderDockerfile(baseDockerfile());
     expect(rendered).toContain("FROM supabase/postgres:17.0.0 AS pg\n");
     expect(rendered).toContain("FROM supabase/postgres:15.0.0 AS pg15\n");
+    expect(rendered).not.toContain("orioledb");
   });
 });
 

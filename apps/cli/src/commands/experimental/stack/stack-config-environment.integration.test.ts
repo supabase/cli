@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer } from "effect";
 import type { ServiceCreationInput } from "@supabase/stack/effect";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
@@ -130,14 +131,36 @@ enabled = false
     }),
   );
 
-  it.live("rejects the existing OrioleDB environment override", () =>
+  it.live("applies the OrioleDB environment override before checking the catalog", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-orioledb"\n');
-      const exit = yield* withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", "15.1.1.14", load(root)).pipe(
+      const exit = yield* withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", "17.0.0.000", load(root)).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("db.orioledb_version");
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
+        );
+    }),
+  );
+
+  it.live("rejects OrioleDB S3 settings given only through the environment", () =>
+    Effect.gen(function* () {
+      const [orioledb = ""] = orioledbVersions();
+      const root = yield* project(
+        `project_id = "stack-config-env-orioledb-s3"\n[db]\norioledb_version = "${orioledb}"\n`,
+      );
+      const exit = yield* withEnvVar(
+        "SUPABASE_EXPERIMENTAL_S3_HOST",
+        "s3.example.test",
+        load(root),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "experimental.s3_host is unsupported by the experimental stack",
+        );
     }),
   );
 });
