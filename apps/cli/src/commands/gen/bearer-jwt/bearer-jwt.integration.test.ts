@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Cause, DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { importJWK, jwtVerify } from "jose";
 
@@ -144,7 +144,7 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 describe("gen bearer-jwt integration", () => {
-  it.live("mints a token with the built-in default ES256 key when no config exists", () => {
+  it.effect("mints a token with the built-in default ES256 key when no config exists", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
@@ -167,7 +167,10 @@ describe("gen bearer-jwt integration", () => {
       expect(lifetime.exp - lifetime.iat).toBe(1800);
 
       const publicKey = yield* Effect.promise(() => importJWK(DEFAULT_SIGNING_KEY_PUBLIC, "ES256"));
-      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      const now = yield* DateTime.now;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: DateTime.toDate(now) }),
+      );
       expect(verified.payload).toMatchObject({ role: "anon" });
     }).pipe(Effect.provide(layer));
   });
@@ -327,7 +330,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live("Branch A: accepts a pasted RS256 JWK from stdin", () => {
+  it.effect("Branch A: accepts a pasted RS256 JWK from stdin", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const { layer, out } = setup({ pipedAnswer: jsonTextSync(jwk) });
     return Effect.gen(function* () {
@@ -341,7 +344,10 @@ describe("gen bearer-jwt integration", () => {
       });
 
       const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "RS256"));
-      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      const now = yield* DateTime.now;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: DateTime.toDate(now) }),
+      );
       expect(verified.payload).toMatchObject({ role: "anon" });
       expect(out.stderrText).toContain(
         "Enter your signing key in JWK format (or leave blank to use local default): ",
