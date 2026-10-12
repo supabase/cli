@@ -21,10 +21,13 @@ import {
   signingKeysReadErrorMessage,
   type SmtpInput,
   type ThirdPartyInput,
+  validateAuthExternalProviders,
+  validateAuthSmsProviders,
   validateResolvedConfig,
 } from "./config-validate.ts";
 import { DbConfigLoadError, isPassthroughLoadFailure } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
+import { resolveAuthExternalProviders } from "./local-config-values.ts";
 import { ramInBytes } from "./size-units.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
@@ -654,59 +657,15 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   });
 
   if (authEnabled) {
-    const sms = auth.sms;
-    const smsProviders = [
-      {
-        enabled: sms.twilio.enabled,
-        fields: ["account_sid", "message_service_sid", "auth_token"],
-        record: sms.twilio,
-        name: "twilio",
+    yield* Effect.try({
+      try: () => {
+        validateAuthSmsProviders(auth.sms);
+        validateAuthExternalProviders(
+          resolveAuthExternalProviders(asRecord(declaredDocument["auth"]), auth.external),
+        );
       },
-      {
-        enabled: sms.twilio_verify.enabled,
-        fields: ["account_sid", "message_service_sid", "auth_token"],
-        record: sms.twilio_verify,
-        name: "twilio_verify",
-      },
-      {
-        enabled: sms.messagebird.enabled,
-        fields: ["originator", "access_key"],
-        record: sms.messagebird,
-        name: "messagebird",
-      },
-      {
-        enabled: sms.textlocal.enabled,
-        fields: ["sender", "api_key"],
-        record: sms.textlocal,
-        name: "textlocal",
-      },
-      {
-        enabled: sms.vonage.enabled,
-        fields: ["from", "api_key", "api_secret"],
-        record: sms.vonage,
-        name: "vonage",
-      },
-    ];
-    const activeSms = smsProviders.find((provider) => provider.enabled);
-    if (activeSms !== undefined) {
-      for (const field of activeSms.fields) {
-        if (Option.isNone(nonEmptyString(asRecord(activeSms.record)?.[field]))) {
-          return yield* fail(
-            `Missing required field in config: auth.sms.${activeSms.name}.${field}`,
-          );
-        }
-      }
-    }
-
-    for (const [name, provider] of Object.entries(auth.external)) {
-      if (name === "linkedin" || name === "slack" || !provider.enabled) continue;
-      if (nonEmpty(provider.client_id) === undefined) {
-        return yield* fail(`Missing required field in config: auth.external.${name}.client_id`);
-      }
-      if (name !== "apple" && name !== "google" && nonEmpty(provider.secret) === undefined) {
-        return yield* fail(`Missing required field in config: auth.external.${name}.secret`);
-      }
-    }
+      catch: (cause) => new DbConfigLoadError({ message: causeMessage(cause) }),
+    });
   }
 
   const vaultConfig = config.db.vault ?? {};

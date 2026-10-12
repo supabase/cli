@@ -2874,6 +2874,22 @@ describe("readDbToml auth.Enabled validation", () => {
       "Missing required field in config: auth.external.github.client_id",
     ),
   );
+  it.effect("rejects an enabled custom external provider without a client_id", () =>
+    failsWith(
+      ["[auth.external.my_oidc]", "enabled = true"],
+      "Missing required field in config: auth.external.my_oidc.client_id",
+    ),
+  );
+  it.effect("rejects an enabled custom external provider without a secret", () =>
+    failsWith(
+      ["[auth.external.my_oidc]", "enabled = true", 'client_id = "cid"'],
+      "Missing required field in config: auth.external.my_oidc.secret",
+    ),
+  );
+  it.effect("accepts a custom external provider whose secret comes from the shell", () => {
+    scrubAmbientEnv({ SUPABASE_AUTH_EXTERNAL_MY_OIDC_SECRET: "shh" });
+    return succeeds(["[auth.external.my_oidc]", "enabled = true", 'client_id = "cid"']);
+  });
   it.effect("exempts apple/google from the external secret requirement", () =>
     succeeds(["[auth.external.apple]", "enabled = true", 'client_id = "a"']),
   );

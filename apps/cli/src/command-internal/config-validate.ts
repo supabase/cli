@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
+import type { CliConfig } from "@supabase/config";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -9,6 +10,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
+import type { ResolvedAuthExternalProvider } from "./local-config-values.ts";
 import { parseUrl } from "./storage-url.ts";
 
 /**
@@ -20,10 +22,11 @@ import { parseUrl } from "./storage-url.ts";
  *   throws `Error`.
  *
  * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are forbidden;
- * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` and
- * `auth.sms`/`auth.external` need the raw pre-decode document, and `auth.jwt_secret` length lives
- * in each key-generation flow. Each reader calls {@link validateResolvedConfig} once, after its
- * own I/O reads, so an error from a branch here surfaces before a caller-only I/O error.
+ * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` needs the raw
+ * pre-decode document, and `auth.jwt_secret` length lives in each key-generation flow. Each reader
+ * calls {@link validateResolvedConfig} once, after its own I/O reads, so an error from a branch
+ * here surfaces before a caller-only I/O error. {@link validateAuthSmsProviders} and
+ * {@link validateAuthExternalProviders} are separate calls taking already-resolved inputs.
  */
 
 // Re-exported under this module's established name; `ref-patterns.ts` is the canonical
@@ -693,4 +696,74 @@ export function apiTlsCertReadErrorMessage(cause: unknown): string {
 /** `failed to read TLS key: ${msg(cause)}` */
 export function apiTlsKeyReadErrorMessage(cause: unknown): string {
   return `failed to read TLS key: ${messageOf(cause)}`;
+}
+
+/**
+ * Validates only the first enabled provider in the fixed priority order; a later
+ * enabled-but-incomplete provider is never checked.
+ */
+export function validateAuthSmsProviders(sms: CliConfig["auth"]["sms"]): void {
+  function requireField(provider: string, field: string, value: string | undefined): void {
+    if (value === undefined || value.length === 0) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.sms.${provider}.${field}`,
+      );
+    }
+  }
+
+  if (sms.twilio.enabled) {
+    requireField("twilio", "account_sid", sms.twilio.account_sid);
+    requireField("twilio", "message_service_sid", sms.twilio.message_service_sid);
+    requireField("twilio", "auth_token", sms.twilio.auth_token);
+    return;
+  }
+  if (sms.twilio_verify.enabled) {
+    requireField("twilio_verify", "account_sid", sms.twilio_verify.account_sid);
+    requireField("twilio_verify", "message_service_sid", sms.twilio_verify.message_service_sid);
+    requireField("twilio_verify", "auth_token", sms.twilio_verify.auth_token);
+    return;
+  }
+  if (sms.messagebird.enabled) {
+    requireField("messagebird", "originator", sms.messagebird.originator);
+    requireField("messagebird", "access_key", sms.messagebird.access_key);
+    return;
+  }
+  if (sms.textlocal.enabled) {
+    requireField("textlocal", "sender", sms.textlocal.sender);
+    requireField("textlocal", "api_key", sms.textlocal.api_key);
+    return;
+  }
+  if (sms.vonage.enabled) {
+    requireField("vonage", "from", sms.vonage.from);
+    requireField("vonage", "api_key", sms.vonage.api_key);
+    requireField("vonage", "api_secret", sms.vonage.api_secret);
+    return;
+  }
+}
+
+/**
+ * Validates required fields for every enabled `auth.external.<name>` provider, including
+ * custom names `@supabase/config`'s schema drops at decode time, so `resolved` must come from
+ * `resolveAuthExternalProviders` over the effective document rather than the decoded config.
+ */
+export function validateAuthExternalProviders(
+  resolved: Readonly<Record<string, ResolvedAuthExternalProvider>>,
+): void {
+  for (const [name, provider] of Object.entries(resolved)) {
+    if (!provider.enabled) continue;
+    if (provider.clientId.length === 0) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.external.${name}.client_id`,
+      );
+    }
+    if (
+      name !== "apple" &&
+      name !== "google" &&
+      (provider.secret === undefined || provider.secret.length === 0)
+    ) {
+      throw new ConfigValidateError(
+        `Missing required field in config: auth.external.${name}.secret`,
+      );
+    }
+  }
 }

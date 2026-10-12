@@ -54,6 +54,8 @@ import {
   type SmtpInput,
   type StudioInput,
   type ThirdPartyInput,
+  validateAuthExternalProviders,
+  validateAuthSmsProviders,
   validateResolvedConfig,
 } from "./config-validate.ts";
 import { parseBoolLiteral } from "../shared/config/config-bool.ts";
@@ -611,49 +613,6 @@ export function resolveAuthSms(sms: CliConfig["auth"]["sms"]): CliConfig["auth"]
   };
 }
 
-/**
- * Validates only the first enabled provider in the fixed priority order; a later
- * enabled-but-incomplete provider is never checked.
- */
-function validateAuthSmsProviders(sms: CliConfig["auth"]["sms"]): void {
-  function requireField(provider: string, field: string, value: string | undefined): void {
-    if (value === undefined || value.length === 0) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.sms.${provider}.${field}`,
-      );
-    }
-  }
-
-  if (sms.twilio.enabled) {
-    requireField("twilio", "account_sid", sms.twilio.account_sid);
-    requireField("twilio", "message_service_sid", sms.twilio.message_service_sid);
-    requireField("twilio", "auth_token", sms.twilio.auth_token);
-    return;
-  }
-  if (sms.twilio_verify.enabled) {
-    requireField("twilio_verify", "account_sid", sms.twilio_verify.account_sid);
-    requireField("twilio_verify", "message_service_sid", sms.twilio_verify.message_service_sid);
-    requireField("twilio_verify", "auth_token", sms.twilio_verify.auth_token);
-    return;
-  }
-  if (sms.messagebird.enabled) {
-    requireField("messagebird", "originator", sms.messagebird.originator);
-    requireField("messagebird", "access_key", sms.messagebird.access_key);
-    return;
-  }
-  if (sms.textlocal.enabled) {
-    requireField("textlocal", "sender", sms.textlocal.sender);
-    requireField("textlocal", "api_key", sms.textlocal.api_key);
-    return;
-  }
-  if (sms.vonage.enabled) {
-    requireField("vonage", "from", sms.vonage.from);
-    requireField("vonage", "api_key", sms.vonage.api_key);
-    requireField("vonage", "api_secret", sms.vonage.api_secret);
-    return;
-  }
-}
-
 /** Deleted external providers, warned on if still enabled, never validated. */
 const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
 
@@ -736,34 +695,6 @@ export function resolveAuthExternalProviders(
     };
   }
   return result;
-}
-
-/**
- * Validates required fields for every enabled `auth.external.<name>` provider, including
- * custom names `@supabase/config`'s schema silently drops at decode time.
- */
-function validateAuthExternalProviders(
-  authDocument: Record<string, unknown> | undefined,
-  external: CliConfig["auth"]["external"],
-): void {
-  const resolved = resolveAuthExternalProviders(authDocument, external);
-  for (const [name, provider] of Object.entries(resolved)) {
-    if (!provider.enabled) continue;
-    if (provider.clientId.length === 0) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.external.${name}.client_id`,
-      );
-    }
-    if (
-      name !== "apple" &&
-      name !== "google" &&
-      (provider.secret === undefined || provider.secret.length === 0)
-    ) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.external.${name}.secret`,
-      );
-    }
-  }
 }
 
 /**
@@ -973,7 +904,7 @@ export function resolveLocalConfigValues(
   validateResolvedConfig(input);
   if (authEnabled) {
     validateAuthSmsProviders(resolveAuthSms(config.auth.sms));
-    validateAuthExternalProviders(authDocument, config.auth.external);
+    validateAuthExternalProviders(resolveAuthExternalProviders(authDocument, config.auth.external));
   }
 
   return {

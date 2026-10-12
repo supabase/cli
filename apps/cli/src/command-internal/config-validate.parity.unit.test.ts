@@ -289,12 +289,26 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     message:
       "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
   },
+  {
+    name: "custom auth.external provider enabled without client_id",
+    toml: ["[auth.external.my_oidc]", "enabled = true"],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true } } } },
+    message: "Missing required field in config: auth.external.my_oidc.client_id",
+  },
+  {
+    name: "custom auth.external provider enabled without secret",
+    toml: ["[auth.external.my_oidc]", "enabled = true", 'client_id = "cid"'],
+    overrides: {},
+    document: { auth: { external: { my_oidc: { enabled: true, client_id: "cid" } } } },
+    message: "Missing required field in config: auth.external.my_oidc.secret",
+  },
 ];
 
 // Explicitly skipped (only one caller runs the branch, or the branch isn't exercised the same
 // way by both — see the module header in `config-validate.ts` for the full out-of-scope list):
-// - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
-// validator (`ConfigValidationInput` has no fields for these at all).
+// - `remotes[*].project_id` — D-only, never part of the shared validator
+// (`ConfigValidationInput` has no field for it).
 // - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
 // presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
