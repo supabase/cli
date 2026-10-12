@@ -173,7 +173,7 @@ const migrationsDirExists = Effect.fnUntraced(function* (workdir: string) {
 const tmp = useTempWorkdir();
 
 describe("migration fetch", () => {
-  it.live("writes migration files joined with the Go separator when the dir is empty", () => {
+  it.live("writes migration files joined with the separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
       rows: [
         {
@@ -194,7 +194,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a lone separator for a row with no statements (Go parity)", () => {
+  it.live("writes a lone separator for a row with no statements", () => {
     // A schema_migrations row can have a NULL/empty statements array; joining still
     // yields exactly ";\n", not an empty file. This locks that byte behavior.
     const { layer } = setup(tmp.current, {
@@ -306,23 +306,20 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
-    () => {
-      // SUPABASE_YES lives only in supabase/.env; the project env loads before the
-      // overwrite prompt.
-      const { layer, out } = setup(tmp.current, {
-        rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
-      });
-      return Effect.gen(function* () {
-        yield* seedExistingMigration(tmp.current);
-        yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
-        yield* migrationFetch(flags());
-        expect(out.stderrText).toContain("[Y/n] y");
-        expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.live("auto-confirms the overwrite prompt from SUPABASE_YES in the project .env", () => {
+    // SUPABASE_YES lives only in supabase/.env; the project env loads before the
+    // overwrite prompt.
+    const { layer, out } = setup(tmp.current, {
+      rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+    });
+    return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
+      yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
+      yield* migrationFetch(flags());
+      expect(out.stderrText).toContain("[Y/n] y");
+      expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
     // The overwrite prompt still writes to stderr and reads stdin in json mode; it must
@@ -381,7 +378,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
+  it.live("writes a valid signed version verbatim (no all-digits requirement)", () => {
     // The raw version column writes verbatim into <version>_<name>.sql with no digit
     // check, so a value like "-1" still fetches instead of aborting the run.
     const { layer } = setup(tmp.current, {

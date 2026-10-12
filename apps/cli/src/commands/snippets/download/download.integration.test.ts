@@ -39,7 +39,7 @@ const SNIPPET_RESPONSE: SnippetResponse = {
   content: { schema_version: "1.0.0", sql: SQL },
 };
 
-// `goOutput` is absent: the download handler doesn't consume `OutputFlag` at
+// `outputFlag` is absent: the download handler doesn't consume `OutputFlag` at
 // all — always prints raw SQL. Threading a value through would suggest a
 // behavior difference that doesn't exist.
 interface SetupOpts {
@@ -88,9 +88,9 @@ describe("snippets download integration", () => {
   });
 
   // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
-  // Guards against a future refactor adding branch-on-goOutput logic by
+  // Guards against a future refactor adding branch-on-outputFlag logic by
   // mistake — if the flag is consumed, this assertion diverges.
-  it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
+  it.live("text mode is unaffected by any `--output` value", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();
@@ -102,7 +102,7 @@ describe("snippets download integration", () => {
       cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
-      goOutput: Option.some("json"),
+      outputFlag: Option.some("json"),
     });
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
@@ -135,7 +135,7 @@ describe("snippets download integration", () => {
   });
 
   it.live(
-    "non-UUID input emits Go-format `invalid UUID length: N`, flushes telemetry+cache, skips API",
+    "non-UUID input emits `invalid UUID length: N`, flushes telemetry+cache, skips API",
     () => {
       const { layer, api, telemetry, cache } = setup();
       return Effect.gen(function* () {
@@ -204,7 +204,7 @@ describe("snippets download integration", () => {
   });
 
   it.live(
-    "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL (Go parity)",
+    "a 32-hex UPPERCASE snippet id resolves to the canonical lowercase hyphenated URL",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {

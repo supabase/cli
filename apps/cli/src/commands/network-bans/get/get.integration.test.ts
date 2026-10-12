@@ -21,7 +21,7 @@ const SAMPLE_BANS: typeof V1ListAllNetworkBansOutput.Type = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1ListAllNetworkBansOutput.Type;
   status?: number;
   network?: "fail";
@@ -40,7 +40,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -81,7 +81,7 @@ describe("network-bans get integration", () => {
   });
 
   it.live("emits TOML bytes for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe("DB banned IPs:\n");
@@ -90,7 +90,7 @@ describe("network-bans get integration", () => {
   });
 
   it.live("emits YAML bytes for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe("DB banned IPs:\n");
@@ -99,8 +99,8 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-compatible JSON bytes for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.live("emits JSON bytes for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe("DB banned IPs:\n");
@@ -114,8 +114,8 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as a JSON alias matching Go's get.go switch", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.live("treats --output pretty as a JSON alias", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe("DB banned IPs:\n");
@@ -130,7 +130,7 @@ describe("network-bans get integration", () => {
   });
 
   it.live("fails with the env-not-supported error for --output env", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -169,8 +169,8 @@ describe("network-bans get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "toml" });
+  it.live("--output wins over --output-format when both are set", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe("DB banned IPs:\n");

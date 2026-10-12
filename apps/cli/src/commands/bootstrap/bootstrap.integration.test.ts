@@ -593,7 +593,7 @@ describe("bootstrap integration", () => {
   );
 
   it.live(
-    "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no Go subprocess",
+    "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no subprocess",
     () =>
       // The test's direct db host is never reachable, so `resolveLinkedConn` falls back to the
       // IPv4 pooler fed by `setup()`'s pooler-config mock via the saved pooler-url file.

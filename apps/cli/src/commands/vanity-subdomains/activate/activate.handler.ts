@@ -7,13 +7,13 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goString,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeString,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   DesiredSubdomainRequiredError,
@@ -23,7 +23,7 @@ import {
 import type { VanitySubdomainsActivateFlags } from "./activate.command.ts";
 
 /** Struct shape for encoding the activate response as YAML/TOML. */
-const GO_ACTIVATE_VANITY_RESPONSE = goStruct([["custom_domain", goString]]);
+const ACTIVATE_VANITY_RESPONSE_SHAPE = shapeStruct([["custom_domain", shapeString]]);
 
 const mapActivateError = mapHttpError({
   networkError: VanitySubdomainsActivateNetworkError,
@@ -89,21 +89,21 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         );
       yield* activating?.clear ?? Effect.void;
 
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goOutput === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goOutput === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_ACTIVATE_VANITY_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, ACTIVATE_VANITY_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "toml") {
-        yield* output.raw(encodeGoToml(response, GO_ACTIVATE_VANITY_RESPONSE));
+      if (outputFlagFormat === "toml") {
+        yield* output.raw(encodeStructToml(response, ACTIVATE_VANITY_RESPONSE_SHAPE));
         return;
       }
-      if (goOutput === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

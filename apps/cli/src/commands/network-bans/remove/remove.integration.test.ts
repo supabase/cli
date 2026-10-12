@@ -26,7 +26,7 @@ const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   network?: "fail";
 }
@@ -44,7 +44,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -98,7 +98,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("unbans every IP in a comma-separated --db-unban-ip value (pflag CSV parity)", () => {
+  it.live("unbans every IP in a comma-separated --db-unban-ip value", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
@@ -160,7 +160,7 @@ describe("network-bans remove integration", () => {
   });
 
   it.live("ignores --output values and still prints the success line", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),
@@ -171,7 +171,7 @@ describe("network-bans remove integration", () => {
   });
 
   it.live("ignores --output yaml and still prints the success line", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),
@@ -205,8 +205,8 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+  it.live("--output wins over --output-format when both are set", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
         projectRef: Option.none(),

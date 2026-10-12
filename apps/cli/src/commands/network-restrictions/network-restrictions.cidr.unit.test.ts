@@ -71,11 +71,11 @@ describe("parseCidr", () => {
     expect(parseCidr("")).toBeNull();
   });
 
-  it("accepts leading zeros in the mask to match Go's parser", () => {
+  it("accepts leading zeros in the mask", () => {
     expect(parseCidr("1.2.3.0/024")).toEqual({ kind: "v4", address: "1.2.3.0", mask: 24 });
   });
 
-  it("reclassifies IPv4-mapped IPv6 inputs as v4 to match Go's To4() semantics", () => {
+  it("reclassifies IPv4-mapped IPv6 inputs as v4", () => {
     expect(parseCidr("::ffff:10.0.0.1/128")).toEqual({
       kind: "v4",
       address: "::ffff:10.0.0.1",
@@ -274,7 +274,7 @@ describe("validateAndPartitionCidrs", () => {
     });
   });
 
-  it("rejects an IPv4-mapped private IPv6 address by default (Go parity)", () => {
+  it("rejects an IPv4-mapped private IPv6 address by default", () => {
     expect(validateAndPartitionCidrs(["::ffff:10.0.0.0/104"], false)).toEqual({
       ok: false,
       kind: "private",

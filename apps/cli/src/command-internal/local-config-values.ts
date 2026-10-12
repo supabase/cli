@@ -49,7 +49,7 @@ import {
   type HookInput,
   type LocalSmtpInput,
   type MfaFactorInput,
-  parseGoBool,
+  parseBoolLiteral,
   type PasskeyInput,
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
@@ -61,7 +61,12 @@ import {
   type ThirdPartyInput,
   validateResolvedConfig,
 } from "./config-validate.ts";
-import { DEFAULT_SIGNING_KEY, generateAsymmetricGoJwt, generateGoJwt, type Jwk } from "./go-jwt.ts";
+import {
+  DEFAULT_SIGNING_KEY,
+  generateAsymmetricLocalJwt,
+  generateLocalJwt,
+  type Jwk,
+} from "./local-jwt.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 
 /**
@@ -172,7 +177,7 @@ const MIN_JWT_SECRET_LENGTH = 16;
 export class InvalidPortEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidPortEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
+    super(`Invalid config for ${dottedFieldPath}: "${value}" is not a valid port`);
     this.name = "InvalidPortEnvOverrideError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -196,7 +201,7 @@ export function envOverridePort(
 ): number {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configuredPort;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > BigInt(MAX_PORT)) {
     throw new InvalidPortEnvOverrideError(dottedFieldPath, value);
   }
@@ -242,7 +247,7 @@ export function envOverride(
 export class InvalidBoolEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidBoolEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
+    super(`Invalid config for ${dottedFieldPath}: "${value}" is not a valid boolean`);
     this.name = "InvalidBoolEnvOverrideError";
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -264,7 +269,7 @@ export function envOverrideBool(
 ): boolean {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBool(value);
+  const parsed = parseBoolLiteral(value);
   if (parsed === undefined) {
     throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
@@ -276,7 +281,7 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidAnalyticsBackendEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
+      `Invalid config for ${dottedFieldPath}: "${value}" must be one of "postgres", "bigquery"`,
     );
     this.name = "InvalidAnalyticsBackendEnvOverrideError";
   }
@@ -309,9 +314,7 @@ export function envOverrideAnalyticsBackend(
 export class InvalidRealtimeIpVersionEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidRealtimeIpVersionEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
-    super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
-    );
+    super(`Invalid config for ${dottedFieldPath}: "${value}" must be one of "IPv4", "IPv6"`);
     this.name = "InvalidRealtimeIpVersionEnvOverrideError";
   }
 
@@ -358,7 +361,7 @@ export class InvalidPoolModeEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidPoolModeEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "transaction", "session"`,
+      `Invalid config for ${dottedFieldPath}: "${value}" must be one of "transaction", "session"`,
     );
     this.name = "InvalidPoolModeEnvOverrideError";
   }
@@ -385,7 +388,7 @@ export class InvalidEdgeRuntimePolicyEnvOverrideError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "InvalidEdgeRuntimePolicyEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
+      `Invalid config for ${dottedFieldPath}: "${value}" must be one of "per_worker", "oneshot"`,
     );
     this.name = "InvalidEdgeRuntimePolicyEnvOverrideError";
   }
@@ -625,8 +628,8 @@ function resolveSignedKey(
 ): string {
   if (configured !== undefined && configured.length > 0) return configured;
   return signingKey !== undefined
-    ? generateAsymmetricGoJwt(signingKey, role)
-    : generateGoJwt(jwtSecret, role);
+    ? generateAsymmetricLocalJwt(signingKey, role)
+    : generateLocalJwt(jwtSecret, role);
 }
 
 /** JWK fields, matching {@link Jwk}. */
@@ -955,11 +958,11 @@ const UINT_MAX = 18446744073709551615n; // 2^64 - 1
 
 /**
  * Base-0 unsigned integer literal parsing (`0b`/`0o`/`0x` prefixes, and a bare leading zero
- * also meaning octal — so `"010"` parses as `8`), matching Go's `strconv.ParseUint(str, 0, …)`
- * grammar. Underscores between digits are allowed; a leading sign is never accepted. Returns
- * `undefined` for anything invalid instead of throwing, leaving bit-width bounds to the caller.
+ * also meaning octal — so `"010"` parses as `8`). Underscores between digits are allowed; a
+ * leading sign is never accepted. Returns `undefined` for anything invalid instead of throwing,
+ * leaving bit-width bounds to the caller.
  */
-function parseGoBaseZeroUint(value: string): bigint | undefined {
+function parseBaseZeroUint(value: string): bigint | undefined {
   if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return undefined;
 
   let literal: string | undefined;
@@ -988,7 +991,7 @@ function parseGoBaseZeroUint(value: string): bigint | undefined {
 
 /**
  * `SUPABASE_<NAME>` sibling of {@link envOverridePort} for uncapped `uint`-typed fields
- * (`db.major_version`, `auth.jwt_expiry`, …). Parses with {@link parseGoBaseZeroUint} and
+ * (`db.major_version`, `auth.jwt_expiry`, …). Parses with {@link parseBaseZeroUint} and
  * folds an invalid or out-of-{@link UINT_MAX} override into the generic "Invalid <field>"
  * error message.
  */
@@ -1000,7 +1003,7 @@ export function envOverrideUint(
 ): number {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
@@ -1047,7 +1050,7 @@ function envOverrideOptionalUint(
 ): number | undefined {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBaseZeroUint(value);
+  const parsed = parseBaseZeroUint(value);
   if (parsed === undefined || parsed > UINT_MAX) {
     throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
@@ -1066,7 +1069,7 @@ function envOverrideOptionalBool(
 ): boolean | undefined {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  const parsed = parseGoBool(value);
+  const parsed = parseBoolLiteral(value);
   if (parsed === undefined) {
     throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
   }
@@ -1079,7 +1082,7 @@ export class InvalidSessionReplicationRoleEnvOverrideError extends Error {
     "InvalidSessionReplicationRoleEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
-      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,
+      `Invalid config for ${dottedFieldPath}: "${value}" must be one of "origin", "replica", "local"`,
     );
     this.name = "InvalidSessionReplicationRoleEnvOverrideError";
   }
@@ -2135,7 +2138,7 @@ export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boole
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
-    const parsed = parseGoBool(value);
+    const parsed = parseBoolLiteral(value);
     if (parsed === undefined) {
       throw new InvalidBoolEnvOverrideError(dottedFieldPath, value);
     }
@@ -2305,7 +2308,7 @@ function validateAuthExternalProviders(
  * {@link readApiTlsFiles}.
  * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
  * malformed, or its first key uses an unsupported algorithm — see
- * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricGoJwt}.
+ * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricLocalJwt}.
  * @throws when an email template's `content` is present without `content_path`, or a
  * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
  * @throws {InvalidAnalyticsBackendEnvOverrideError} when `SUPABASE_ANALYTICS_BACKEND` doesn't
@@ -2420,9 +2423,7 @@ export function resolveLocalConfigValues(
   // `/etc/postgresql-custom/pgsodium_root.key` on every start.
   const rawRootKeyValue = asRecord(document?.["db"])?.["root_key"];
   if (rawRootKeyValue !== undefined && typeof rawRootKeyValue !== "string") {
-    throw new ConfigValidateError(
-      "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
-    );
+    throw new ConfigValidateError("failed to parse config:\ndb.root_key: expected a table");
   }
   const rawRootKey = remoteWins("db.root_key")
     ? rawRootKeyValue

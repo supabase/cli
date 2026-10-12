@@ -117,8 +117,7 @@ contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 
 ### `-o/--output` (machine formats)
 
-**Not supported.** `config diff` is a net-new TS command with no Go parity
-contract (CLI-2156, per Colum). Any `-o`/`--output` value — every
+**Not supported.** `config diff` does not accept `-o`/`--output`. Any value — every
 machine-format value AND `pretty` — is rejected outright
 (`ConfigDiffOutputFlagUnsupportedError`, exit 1) with:
 
@@ -132,7 +131,7 @@ command's own `withCommandTelemetry` wiring widens the wrapper's
 per-command `-o` enum to the full global choice set so every value (including
 `table`/`csv`, which are otherwise only meaningful to `db query`) reaches this
 handler-level rejection with its pointed message, rather than the wrapper's
-generic pflag-style "invalid argument" rejection. One telemetry consequence of
+generic "invalid argument" rejection. One telemetry consequence of
 the widening: a rejected `-o` invocation still emits `cli_command_executed`
 (exit code 1, `invalid_input`), whereas other commands' out-of-enum `-o`
 values are rejected by the wrapper's enum check before instrumentation fires

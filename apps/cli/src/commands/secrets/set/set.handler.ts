@@ -4,7 +4,10 @@ import {
   type CliConfig,
   type CliConfigParseError,
 } from "@supabase/config/effect";
-import { loadCliConfig, resolveCliConfigSubtree } from "@supabase/config/internal";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+} from "../../../command-internal/cli-config-load.ts";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
@@ -115,11 +118,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     //
     // Passing `ref` merges a matching `[remotes.*]` block over the base config before decode,
     // so a schema-decode error on a remote target recovers that remote's override, not the base
-    // document. `goViperCompat: true` enables the duplicate-project_id/format checks needed for
-    // the `DuplicateRemoteProjectIdError` catch below to ever fire.
+    // document. The CLI loader's duplicate-project_id/format checks are what make the
+    // `DuplicateRemoteProjectIdError` catch below fire.
     const loadedConfig = yield* loadCliConfig(runtimeInfo.cwd, {
       projectRef: ref,
-      goViperCompat: true,
     }).pipe(
       Effect.flatMap((loaded) => {
         if (loaded === null) {
@@ -184,7 +186,6 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           loadedConfig.edge_runtime,
           projectEnv,
           "edge_runtime",
-          { goViperCompat: true },
         );
         for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
           // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an

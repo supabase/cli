@@ -20,7 +20,7 @@ interface ProjectRefResolverShape {
   /**
    * Resolution chain used by `supabase link`, skipping the on-disk `project-ref` file:
    * flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt. Fails with
-   * `ProjectRefRequiredError` on a non-TTY when neither is set, matching cobra's
+   * `ProjectRefRequiredError` on a non-TTY when neither is set, with the
    * `required flag(s) "project-ref" not set` wording.
    */
   readonly resolveForLink: (

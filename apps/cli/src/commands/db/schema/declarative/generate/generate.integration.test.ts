@@ -49,7 +49,6 @@ import {
   NetworkIdFlag,
   YesFlag,
 } from "../../../../../command-internal/global-flags.ts";
-import { GoProxy } from "../../../../../command-internal/go-proxy.service.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
@@ -303,11 +302,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
-  const proxyCalls: ReadonlyArray<string>[] = [];
-  const proxy = Layer.succeed(GoProxy, {
-    exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
-    execCapture: () => Effect.succeed(""),
-  });
   const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
   const processControl = mockProcessControl();
   const experimentalFlag = Layer.succeed(ExperimentalFlag, opts.experimental ?? true);
@@ -328,7 +322,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     engine,
     mockLocalDockerEngineUnavailableLayer,
     resolver,
-    proxy,
     dbConn,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
@@ -366,7 +359,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbExec,
     engineExportCalls,
     resolverCalls,
-    proxyCalls,
     localPostgresImageChecks,
     get ensureStartedCalls() {
       return ensureStartedCalls;
@@ -392,6 +384,17 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+const disablePgDelta = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(workdir, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
+  });
+
 const seedMigration = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -404,9 +407,24 @@ const seedMigration = (workdir: string) =>
 describe("db schema declarative generate integration", () => {
   const tmp = useTempWorkdir();
 
-  it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
+  it.effect("gate is open by default: runs without --experimental or any pgdelta config", () => {
+    const s = setup(tmp.current, { experimental: false });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      expect(
+        yield* fs.exists(
+          path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("gate: fails when config disables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
+      yield* disablePgDelta(tmp.current);
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
       );
@@ -435,6 +453,7 @@ describe("db schema declarative generate integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* Effect.exit(
           dbSchemaDeclarativeGenerate(
             flags({ local: Option.some(true), linked: Option.some(true) }),
@@ -479,6 +498,7 @@ describe("db schema declarative generate integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
+        yield* disablePgDelta(tmp.current);
         const exit = yield* withConfigEnv(
           { [ENV]: "1" },
           Effect.exit(dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }))),
@@ -826,7 +846,7 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--linked=false is an explicit linked target (Go gates on flag.Changed)", () => {
+  it.effect("--linked=false is an explicit linked target", () => {
     // Non-interactive (no TTY, no --yes), so a smart-mode fall-through would fail with "specify
     // a target" instead.
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false });
@@ -839,7 +859,7 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("caches the linked project after generate --linked (Go PersistentPostRun)", () => {
+  it.effect("caches the linked project after generate --linked", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
@@ -871,6 +891,8 @@ describe("db schema declarative generate integration", () => {
           path.join(tmp.current, "supabase", "config.toml"),
           [
             'project_id = "base"',
+            "[experimental.pgdelta]",
+            "enabled = false",
             "[remotes.prod]",
             `project_id = "${ref}"`,
             "[remotes.prod.experimental.pgdelta]",
@@ -1040,30 +1062,27 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "smart mode: caches the linked project even when the user picks local (Go PostRun)",
-    () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        stdinIsTty: true,
-        yes: true,
-        projectId: Option.some("abcdefghijklmnopqrst"),
-        promptSelectResponses: ["local"],
-      });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current);
-        yield* dbSchemaDeclarativeGenerate(flags());
-        expect(s.cache.cached).toBe(true);
-        // The in-process local reset's own body never touches the linked-project cache or
-        // telemetry, so the outer command's single `Effect.ensuring` finalizer must still fire
-        // exactly once each, not twice.
-        expect(s.cache.cacheCount).toBe(1);
-        expect(s.telemetry.flushCount).toBe(1);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+  it.effect("smart mode: caches the linked project even when the user picks local", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      yes: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current);
+      yield* dbSchemaDeclarativeGenerate(flags());
+      expect(s.cache.cached).toBe(true);
+      // The in-process local reset's own body never touches the linked-project cache or
+      // telemetry, so the outer command's single `Effect.ensuring` finalizer must still fire
+      // exactly once each, not twice.
+      expect(s.cache.cacheCount).toBe(1);
+      expect(s.telemetry.flushCount).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
 
-  it.effect("smart mode: does not cache when no migrations exist (Go skips LoadProjectRef)", () => {
+  it.effect("smart mode: does not cache when no migrations exist", () => {
     const s = setup(tmp.current, {
       experimental: true,
       yes: true,

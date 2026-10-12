@@ -9,11 +9,9 @@ import {
 } from "@supabase/config/effect";
 import {
   applyConfigEdits,
-  decodeCliConfigDocumentForValidationEffect,
   writeCliConfigDocumentText,
   type ConfigEdit,
   type ConfigEditRefusalReason,
-  type DecodeCliConfigDocumentForValidationEffectOptions,
 } from "@supabase/config/internal";
 import type { ConfigChange } from "@supabase/config";
 import { operationDefinitions } from "@supabase/api/effect";
@@ -22,6 +20,10 @@ import { Effect, FileSystem, Result, Schema, SchemaIssue } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
+import {
+  decodeCliConfigDocumentForValidation,
+  type CliConfigValidationOptions,
+} from "./cli-config-load.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
 import type { ConfigTarget } from "./project-target.ts";
 import { BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
@@ -298,7 +300,7 @@ function configPullChangeRelativeValue(
 }
 
 /**
- * Converts a failed {@link decodeCliConfigDocumentForValidationEffect} attempt's
+ * Converts a failed {@link decodeCliConfigDocumentForValidation} attempt's
  * `SchemaIssue` paths into `ConfigChange.path`-relative segments. `isLabelPrefixed` strips
  * one leading segment for the raw/unmerged projection of a remote destination, whose issue
  * paths start with the `remotes` map's own key (the label) rather than already being
@@ -372,16 +374,16 @@ function configPullFamiliesForChangePaths(
 }
 
 /**
- * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only its own
+ * Runs {@link decodeCliConfigDocumentForValidation}, capturing only its own
  * `CliConfigParseError` failure into a `Result`. A genuinely malformed `.env`/`.env.local`,
  * or a filesystem failure reading one, is not a decode-attribution failure, so those
  * propagate uncaught, matching how the real `loadCliConfig` call already handles them.
  */
 function decodeConfigPullValidation(
   document: Record<string, unknown>,
-  options: DecodeCliConfigDocumentForValidationEffectOptions,
+  options: CliConfigValidationOptions,
 ) {
-  return decodeCliConfigDocumentForValidationEffect(document, options).pipe(
+  return decodeCliConfigDocumentForValidation(document, options).pipe(
     Effect.map(Result.succeed),
     Effect.catchTag("CliConfigParseError", (cause) => Effect.succeed(Result.fail(cause))),
   );
@@ -389,7 +391,7 @@ function decodeConfigPullValidation(
 
 /**
  * The change-path keys ({@link configPathKey}) that already fail
- * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` as it sits on disk
+ * {@link decodeCliConfigDocumentForValidation} in `rawDocument` as it sits on disk
  * right now, before this pull's own writes are projected. {@link validateConfigPullPlan}
  * excludes these from the families it forms — pulling should never attribute, drop, or fail
  * over a pre-existing problem; it only needs to leave the file no worse than it was. Runs
@@ -406,7 +408,6 @@ const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (
   const rawDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
     path: input.configPath,
     format: input.format,
-    goViperCompat: true,
   });
   if (Result.isFailure(rawDecoded)) {
     for (const path of configPullSchemaIssueChangePaths(
@@ -420,7 +421,6 @@ const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (
     const mergedDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
       path: input.configPath,
       format: input.format,
-      goViperCompat: true,
       remoteName: input.destination.label,
     });
     if (Result.isFailure(mergedDecoded)) {
@@ -471,14 +471,12 @@ const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
       input.projectRef,
     );
     const rawDecoded = yield* decodeConfigPullValidation(document, {
-      goViperCompat: true,
       path: input.configPath,
       format: input.format,
     });
     const mergedDecoded =
       destination.kind === "remote"
         ? yield* decodeConfigPullValidation(document, {
-            goViperCompat: true,
             path: input.configPath,
             format: input.format,
             remoteName: destination.label,

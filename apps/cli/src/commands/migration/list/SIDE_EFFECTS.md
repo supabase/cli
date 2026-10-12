@@ -40,8 +40,7 @@
 
 ### `--output-format text`
 
-Prints a Glamour ASCII table `|Local|Remote|Time (UTC)|` to stdout (`AsciiStyle`
-rendering; cells are backtick-wrapped inline code). Queries `SELECT version FROM
+Prints an ASCII table `|Local|Remote|Time (UTC)|` to stdout (cells are backtick-wrapped inline code). Queries `SELECT version FROM
 supabase_migrations.schema_migrations ORDER BY version` (a missing table → empty
 Remote column).
 
@@ -61,10 +60,9 @@ Same structured `migrations` result delivered as an NDJSON `result` event.
 - `--db-url` targets a specific database URL directly.
 - `--password` / `-p` sets the DB password (also reads `DB_PASSWORD` env var).
 - `--db-url`, `--linked`, and `--local` are mutually exclusive.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target).

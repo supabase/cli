@@ -21,9 +21,9 @@ import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { DbDiffPgAdminError } from "./diff.errors.ts";
 
-// Trims the Unicode `White_Space` set like Go's `strings.TrimSpace`; unlike JS `trim`, it
+// Trims the Unicode `White_Space` set; unlike JS `trim`, it
 // leaves a leading U+FEFF (BOM) in place.
-const trimGoSpace = (value: string): string =>
+const trimUnicodeSpace = (value: string): string =>
   value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 
 // `differ` has no slim build, so the slim flag never applies to it.
@@ -185,7 +185,7 @@ export function parsePgAdminDiffEntries(
     ) {
       continue;
     }
-    const trimmedDdl = trimGoSpace(diffDdl);
+    const trimmedDdl = trimUnicodeSpace(diffDdl);
     if (trimmedDdl.length > 0) filteredDdls.push(trimmedDdl);
   }
 

@@ -139,6 +139,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "query",
   "registry_pull",
   "release_mismatch",
+  "removed_command",
+  "removed_flag",
   "replication_slots_active",
   "replication_slots_query",
   "request_encoding",
@@ -408,6 +410,13 @@ export const actionability = {
     error_category: CliErrorCategory.ResourceLimit,
     has_suggestion: true,
     suggestion_type: CliSuggestionType.UpdateConfig,
+  },
+  /** A removed command path or flag; the suggestion is free-form replacement guidance. */
+  removedSurface: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidInput,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
   },
   externalNetwork: {
     error_kind: CliErrorKind.ExternalService,

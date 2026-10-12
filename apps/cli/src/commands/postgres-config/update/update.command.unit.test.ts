@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { postgresConfigUpdateConfigFlag } from "./update.command.ts";
 
-describe("postgres-config update --config flag (pflag StringSlice parity)", () => {
+describe("postgres-config update --config flag", () => {
   it.live("splits a comma-separated value into multiple key=value pairs", () =>
     Effect.gen(function* () {
       const [, values] = yield* postgresConfigUpdateConfigFlag.parse({
@@ -27,7 +27,7 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.live("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, values] = yield* postgresConfigUpdateConfigFlag.parse({
         flags: { config: ['a=1\nb"2'] },
@@ -38,7 +38,7 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", () =>
+  it.live("rejects malformed CSV (unterminated quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdateConfigFlag.parse({
@@ -49,7 +49,7 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // `"max_connections=100` is 20 bytes, so pflag's CSV reader hits EOF at column 21.
+        // `"max_connections=100` is 20 bytes, so the CSV reader hits EOF at column 21.
         expect(normalizeCause(exit.cause).message).toBe(
           'invalid argument "\\"max_connections=100" for "--config" flag: parse error on line 1, column 21: extraneous or missing " in quoted-field',
         );
@@ -57,7 +57,7 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.live("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdateConfigFlag.parse({

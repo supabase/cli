@@ -8,7 +8,7 @@ import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../shared/git/git-root.ts";
 import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";

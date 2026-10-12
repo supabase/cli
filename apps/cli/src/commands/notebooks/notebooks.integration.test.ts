@@ -482,7 +482,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each([{ interactive: false }, { goOutput: "json" as const }])(
+  it.live.each([{ interactive: false }, { outputFlag: "json" as const }])(
     "keeps divergence without prompting in unattended text output (%j)",
     (options) => {
       const { layer, out, http } = setup(command, {
@@ -564,8 +564,8 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
 
   it.live.each(["json", "yaml", "toml"] as const)(
     "honors -o %s before --output-format and keeps stdout clean",
-    (goOutput) => {
-      const { layer, out } = setup(command, { goOutput, format: "stream-json" });
+    (outputFlag) => {
+      const { layer, out } = setup(command, { outputFlag, format: "stream-json" });
       return Effect.gen(function* () {
         yield* run(command);
         expect(out.stdoutText).toContain(NOTEBOOKS_PROJECT_REF);
@@ -577,8 +577,8 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
 
   it.live.each(["table", "csv", "env"] as const)(
     "rejects -o %s without reading or changing notebooks",
-    (goOutput) => {
-      const { layer, http, cache } = setup(command, { goOutput });
+    (outputFlag) => {
+      const { layer, http, cache } = setup(command, { outputFlag });
       return Effect.gen(function* () {
         expect(Exit.isFailure(yield* run(command).pipe(Effect.exit))).toBe(true);
         expect(http.requests).toEqual([]);

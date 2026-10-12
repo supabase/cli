@@ -10,12 +10,15 @@ import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { aqua } from "../../../command-internal/colors.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
-import { GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
+import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesBranchNameEmptyError,
   BranchesCreateCancelledError,
@@ -36,7 +39,7 @@ const mapCreateErrorRaw = mapHttpError({
 
 export const branchesCreate = Effect.fn("branches.create")(function* (flags: BranchesCreateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -123,25 +126,25 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
       );
     yield* creating?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
     // "Created preview branch:" always writes first, then the table or encoded payload.
-    if (goFmt === "json") {
+    if (outputFlagFormat === "json") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeGoJson(created));
+      yield* output.raw(encodeSortedJson(created));
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeGoYaml(created, GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeStructYaml(created, BRANCH_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeGoToml(created, GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeStructToml(created, BRANCH_RESPONSE_SHAPE));
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw("Created preview branch:\n");
       yield* output.raw(encodeEnv(created) + "\n");
       return;

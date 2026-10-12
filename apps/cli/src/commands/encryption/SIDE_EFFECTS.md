@@ -14,10 +14,10 @@ additionally reads the new key from stdin.
 
 ## Files Written
 
-| Path                                             | Format | When                                              |
-| ------------------------------------------------ | ------ | ------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | PersistentPostRun, after the project ref resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | PersistentPostRun, on success or failure          |
+| Path                                             | Format | When                                     |
+| ------------------------------------------------ | ------ | ---------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | post-run, after the project ref resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | post-run, on success or failure          |
 
 ## API Routes
 
@@ -59,7 +59,7 @@ No custom `phtelemetry.*` events in `internal/encryption/`.
 
 - `get-root-key`: the bare root key followed by a newline, to **stdout**.
 - `update-root-key`: `Finished supabase root-key update.` followed by a newline, to **stderr**
-  (color rendered as plain text per the port convention).
+  (color rendered as plain text).
 
 ### `--output-format json`
 
@@ -79,8 +79,6 @@ One `result` event carrying `{root_key}` (both subcommands).
 - `update-root-key` reads the key from stdin: a real TTY is read with a masked
   prompt; piped stdin is decoded as UTF-8 and whitespace-trimmed. An empty or
   whitespace-only key sends an empty `root_key` (the TTY masked prompt also trims).
-- **Known divergence:** the old Go CLI wrote the bare prompt `Enter a new root key: ` to
-  stderr and read via a raw password reader. The port uses a clack masked prompt
-  with the same label text, so the rendered TTY prompt is not byte-identical to
-  the old CLI's (clack adds its own framing). Piped (non-TTY) mode does not print the
+- The TTY prompt is a clack masked prompt labelled `Enter a new root key: `
+  (clack adds its own framing). Piped (non-TTY) mode does not print the
   prompt at all — it reads stdin directly.

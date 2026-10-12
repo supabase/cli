@@ -9,7 +9,7 @@ import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import { settleFeedbackTask } from "../feedback-task.ts";
@@ -78,14 +78,14 @@ const resolveFeedbackMessage = Effect.fnUntraced(function* (args: FeedbackAddArg
   }
 
   const output = yield* Output;
-  const goFmt = Option.getOrUndefined(yield* OutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
   // `output.interactive` is stdout-derived; the prompt reads stdin. Both must
   // be TTYs — whitespace-only piped stdin with a TTY stdout would otherwise
   // open a prompt against exhausted non-TTY stdin instead of failing below.
   // `-o json` leaves `output.format === "text"` (it is independent of
   // `--output-format`), so it is gated explicitly: the clack prompt would
   // write ANSI and prompt text to stdout ahead of the machine payload.
-  if (stdin.isTTY && output.interactive && goFmt !== "json") {
+  if (stdin.isTTY && output.interactive && outputFlagFormat !== "json") {
     const typed = yield* output.promptText("What's on your mind?", {
       validate: (value) =>
         value.trim().length === 0 ? "Feedback message cannot be empty." : undefined,
@@ -98,7 +98,7 @@ const resolveFeedbackMessage = Effect.fnUntraced(function* (args: FeedbackAddArg
 
 export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAddArgs) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
@@ -167,8 +167,8 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
 
     // `-o json` takes priority over `--output-format` (CLI Agent Guide invariant 6):
     // stdout carries the machine payload only. `pretty` (or unset) falls through.
-    if (Option.getOrUndefined(goOutputFlag) === "json") {
-      yield* output.raw(encodeGoJson({ delete_token: deleteToken }));
+    if (Option.getOrUndefined(outputFlag) === "json") {
+      yield* output.raw(encodeSortedJson({ delete_token: deleteToken }));
       return;
     }
 

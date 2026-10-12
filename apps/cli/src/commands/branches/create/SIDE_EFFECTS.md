@@ -2,14 +2,14 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                               |
-| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`                                      |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                           |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                                      |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | when `--project-ref` is unset, as the 2nd PARENT-ref candidate (CLI-2167 follow-up, TS-only — see `branches list/SIDE_EFFECTS.md`) |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset, as the 3rd (last) PARENT-ref candidate                              |
-| `<cwd>/.git/HEAD` (walking parents)            | plain text                | when the positional `[name]` arg is omitted — fallback branch name detection                                                       |
+| Path                                           | Format                    | When                                                                                                                      |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`                             |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                  |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                             |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | when `--project-ref` is unset, as the 2nd PARENT-ref candidate (CLI-2167 follow-up — see `branches list/SIDE_EFFECTS.md`) |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset, as the 3rd (last) PARENT-ref candidate                     |
+| `<cwd>/.git/HEAD` (walking parents)            | plain text                | when the positional `[name]` arg is omitted — fallback branch name detection                                              |
 
 ## Files Written
 
@@ -57,7 +57,7 @@
 
 Honors both `--output {pretty,json,yaml,toml,env}` and `--output-format {text,json,stream-json}`. `--output` wins when both are supplied.
 
-In **text mode** (default / `--output pretty`), the header `Created preview branch:` writes to **stdout** followed by the single-row Glamour-styled list-table.
+In **text mode** (default / `--output pretty`), the header `Created preview branch:` writes to **stdout** followed by the single-row styled list-table.
 
 For `--output {json,yaml,toml,env}`, the same header writes to stdout followed by the encoded `V1CreateABranchOutput` payload.
 

@@ -4,7 +4,7 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { MigrationsReadError } from "../../command-internal/migration.errors.ts";
-import { unsupportedOutputFlagMessage } from "../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
@@ -192,7 +192,7 @@ function pullWithRetryHint(
  */
 export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const yes = yield* resolveYes;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
@@ -210,7 +210,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
   yield* Effect.gen(function* () {
     // Rejects `-o`/`--output` outright; `pull` only supports `--output-format`.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new PullOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("pull"),
       });

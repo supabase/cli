@@ -60,7 +60,7 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () => {
+describe("postgres-config experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["postgres-config", "get"] },
     { name: "update", args: ["postgres-config", "update"] },
@@ -100,7 +100,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   }
 
   // A malformed CSV value fails at parse time, before the experimental gate ever runs,
-  // with pflag's own diagnostic text.
+  // with its own diagnostic text.
   const malformedCsvCases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -123,7 +123,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
 
   for (const { name, args, message } of malformedCsvCases) {
     it.live(
-      `${name}: malformed --config CSV fails at parse time with pflag's exact diagnostic, before the gate`,
+      `${name}: malformed --config CSV fails at parse time with the exact diagnostic, before the gate`,
       () => {
         const { layer, api } = setup();
         return Effect.gen(function* () {

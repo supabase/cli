@@ -53,18 +53,16 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect(
-    "defaults the user to the OS account when userinfo is omitted (libpq/pgconn parity)",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* parseConnectionString("postgresql://localhost/mydb")).toEqual({
-          host: "localhost",
-          port: 5432,
-          user: osUser,
-          password: "",
-          database: "mydb",
-        });
-      }),
+  it.effect("defaults the user to the OS account when userinfo is omitted (libpq parity)", () =>
+    Effect.gen(function* () {
+      expect(yield* parseConnectionString("postgresql://localhost/mydb")).toEqual({
+        host: "localhost",
+        port: 5432,
+        user: osUser,
+        password: "",
+        database: "mydb",
+      });
+    }),
   );
 
   it.effect("defaults user to the OS account and database to that user when both are omitted", () =>
@@ -103,7 +101,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     ),
   );
 
-  it.effect("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () =>
+  it.effect("honors libpq query params (host/dbname) over the structural URL", () =>
     Effect.gen(function* () {
       expect(
         yield* parseConnectionString("postgresql:///postgres?host=/var/run/postgresql"),
@@ -128,7 +126,7 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
-  it.effect("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () =>
+  it.effect("strips the brackets from an IPv6 literal host", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
         host: "::1",
@@ -596,7 +594,7 @@ layer(parseTestLayer)("multi-host failover (pgconn parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("passfile= DSN setting (pgconn parity)", (it) => {
+layer(parseTestLayer)("passfile= DSN setting", (it) => {
   // Points PGPASSFILE at one file and `passfile=` at a different one, to prove the
   // connection-string setting wins.
   const withPassfiles = <A, E, R>(body: (customPath: string) => Effect.Effect<A, E, R>) =>
@@ -716,7 +714,7 @@ layer(parseTestLayer)("injected env lookup (project dotenv parity)", (it) => {
   );
 });
 
-layer(parseTestLayer)("pgservice resolution (pgconn parity)", (it) => {
+layer(parseTestLayer)("pgservice resolution", (it) => {
   // A `service=`/`PGSERVICE` resolves against the service file and merges its settings between
   // env and the explicit connection-string fields. `dbname` is remapped to `database`. An
   // unresolvable service is a hard parse error.

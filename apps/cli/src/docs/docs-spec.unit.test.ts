@@ -149,7 +149,7 @@ describe("buildDocsSpec", () => {
     }
   });
 
-  it("excludes Go-deprecated commands from the spec and from subcommand lists", () => {
+  it("excludes deprecated commands from the spec and from subcommand lists", () => {
     const { byId } = builtSpec();
     for (const excluded of DOCS_EXCLUDED) {
       expect(byId.has(excluded)).toBe(false);

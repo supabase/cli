@@ -12,8 +12,8 @@ import {
   assertDecodableJwkAlgorithm,
   DEFAULT_SIGNING_KEY,
   type Jwk,
-} from "../../../command-internal/go-jwt.ts";
-import { goJsonKindName } from "../../../command-internal/go-json.ts";
+} from "../../../command-internal/local-jwt.ts";
+import { jsonKindName } from "../../../command-internal/html-safe-json.ts";
 import { textOutputLayer } from "../../../shared/output/output.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
@@ -29,8 +29,8 @@ import {
 } from "./bearer-jwt.errors.ts";
 
 /** Console read-line timeouts. */
-const GO_CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
-const GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
+const CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
+const CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
  * Writes `label` to stderr with no trailing newline, reads one line bounded
@@ -43,7 +43,7 @@ const consolePromptText = Effect.fnUntraced(function* (label: string) {
   const stdin = yield* Stdin;
   yield* output.raw(label, "stderr");
   const line = yield* stdin.readLine(
-    tty.stdinIsTty ? GO_CONSOLE_TTY_TIMEOUT_MILLIS : GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS,
+    tty.stdinIsTty ? CONSOLE_TTY_TIMEOUT_MILLIS : CONSOLE_NON_TTY_TIMEOUT_MILLIS,
   );
   const input = Option.getOrElse(line, () => "").trim();
   if (!tty.stdinIsTty) {
@@ -115,7 +115,7 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     return yield* new GenBearerJwtKeyParseError({
-      message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
+      message: `failed to parse JWK: expected a JSON object, got ${jsonKindName(parsed)}`,
     });
   }
   const record = parsed as Record<string, unknown>;

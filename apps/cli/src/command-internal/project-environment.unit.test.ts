@@ -46,7 +46,7 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }),
   );
 
-  it.effect("fills in a value from a project-root .env file Go's loadNestedEnv would load", () =>
+  it.effect("fills in a value from a project-root .env file", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
       const { fs, path, root } = dirs;
@@ -138,7 +138,7 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }).pipe((body) => withConfigEnv({ SUPABASE_ENV: "production" }, body)),
   );
 
-  it.effect("skips .env.local when SUPABASE_ENV=test, matching Go's loadDefaultEnv", () =>
+  it.effect("skips .env.local when SUPABASE_ENV=test", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
       const { fs, path, root } = dirs;
@@ -206,19 +206,14 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }),
   );
 
-  it.effect(
-    "preserves a literal # in an unquoted value with no leading whitespace, matching godotenv",
-    () =>
-      Effect.gen(function* () {
-        const dirs = yield* project;
-        const { fs, path, root } = dirs;
-        yield* fs.writeFileString(
-          path.join(root, ".env"),
-          "SUPABASE_AUTH_JWT_SECRET=long#secret\n",
-        );
-        const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
-        expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
-      }),
+  it.effect("preserves a literal # in an unquoted value with no leading whitespace", () =>
+    Effect.gen(function* () {
+      const dirs = yield* project;
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(path.join(root, ".env"), "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
+      const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
+      expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
+    }),
   );
 
   it.effect("still truncates an unquoted value at a whitespace-preceded inline comment", () =>
@@ -231,7 +226,7 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }),
   );
 
-  it.effect("strips a trailing comment after a quoted value, matching godotenv", () =>
+  it.effect("strips a trailing comment after a quoted value", () =>
     Effect.gen(function* () {
       const dirs = yield* project;
       const { fs, path, root } = dirs;
@@ -241,16 +236,14 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }),
   );
 
-  it.effect(
-    "accepts a colon-separated assignment, matching godotenv's YAML-style key/value form",
-    () =>
-      Effect.gen(function* () {
-        const dirs = yield* project;
-        const { fs, path, root } = dirs;
-        yield* fs.writeFileString(path.join(root, ".env"), "SUPABASE_PROJECT_ID: colon-project\n");
-        const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
-        expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
-      }),
+  it.effect("accepts a colon-separated assignment (YAML-style key/value form)", () =>
+    Effect.gen(function* () {
+      const dirs = yield* project;
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(path.join(root, ".env"), "SUPABASE_PROJECT_ID: colon-project\n");
+      const merged = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
+    }),
   );
 
   it.effect(
@@ -292,19 +285,17 @@ layer(BunServices.layer)("resolveProjectEnvironmentValues", (it) => {
     }).pipe((body) => withConfigEnv({ SUPABASE_ENV: "development" }, body)),
   );
 
-  it.effect(
-    "fails on a malformed line, matching Go's loadEnvIfExists propagating godotenv's parse error",
-    () =>
-      Effect.gen(function* () {
-        const dirs = yield* project;
-        const { fs, path, root } = dirs;
-        yield* fs.writeFileString(path.join(root, ".env"), "not a valid line\n");
-        const error = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(ProjectEnvironmentError);
-        expect(String(error)).toMatch(/^Error: failed to parse environment file: /);
-      }),
+  it.effect("fails on a malformed line", () =>
+    Effect.gen(function* () {
+      const dirs = yield* project;
+      const { fs, path, root } = dirs;
+      yield* fs.writeFileString(path.join(root, ".env"), "not a valid line\n");
+      const error = yield* resolveProjectEnvironmentValues(fakeProjectEnv(dirs), root).pipe(
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(ProjectEnvironmentError);
+      expect(String(error)).toMatch(/^Error: failed to parse environment file: /);
+    }),
   );
 
   it.effect("keeps a leading BOM, so a BOM-prefixed .env fails to parse", () =>

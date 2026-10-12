@@ -128,13 +128,13 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("fails with the unmarshal error when samples.json is not json", () => {
+  it.live("fails with the parse error when samples.json is not json", () => {
     const s = setup({ content: "not json" });
     return Effect.gen(function* () {
       const service = yield* TemplateService;
       const error = yield* Effect.flip(service.listSamples);
       expect(error).toBeInstanceOf(BootstrapTemplateListError);
-      expect(error.message).toContain("failed to unmarshal samples:");
+      expect(error.message).toContain("failed to parse samples:");
     }).pipe(Effect.provide(s.layer));
   });
 

@@ -9,18 +9,21 @@ import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  encodeGoJson,
-  encodeGoStructJsonBody,
-} from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+  encodeSortedJson,
+  encodeSortedJsonBody,
+} from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
@@ -29,13 +32,13 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
-  pflagBoolValue,
-  pflagEnumValue,
-  pflagSliceValue,
-  pflagStringValue,
-  resolvePflagProfile,
-  validatePflagWorkdir,
-} from "../../../command-internal/pflag-reconcile.ts";
+  argvBoolValue,
+  argvEnumValue,
+  argvSliceValue,
+  argvStringValue,
+  resolveArgvProfile,
+  validateArgvWorkdir,
+} from "../../../command-internal/argv-flag-reconcile.ts";
 import {
   SsoFlagNeedsArgumentError,
   SsoInvalidFlagValueError,
@@ -90,7 +93,7 @@ const SSO_UPDATE_MUTEX_GROUPS = [
 ] as const;
 
 /**
- * Value-taking flags for `pflagArgvScan`: each consumes the next argv token
+ * Value-taking flags for `scanArgvFlags`: each consumes the next argv token
  * as its value. `--skip-url-validation` is this command's only boolean flag,
  * so it's excluded; `sso update` declares no shorthands beyond the
  * persistent `-o`.
@@ -184,7 +187,7 @@ function mergeDomains(
 
 export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const httpClient = yield* HttpClient.HttpClient;
   const cliSettings = yield* CommandSettings;
@@ -203,37 +206,37 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // "Set" means passed at all, not the resulting value — `--domains=`
     // parses to `[]` but must still count as set, so gating on
     // `.length > 0` would miss it.
-    const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
+    const scan = scanArgvFlags(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
-    // Validate against pflag's accepted values before the missing-value,
-    // arity, and mutex checks — pflag fails on the first invalid occurrence
-    // even if a later one overrides it, and its bool parsing excludes
+    // Validate against the accepted values before the missing-value,
+    // arity, and mutex checks — the first invalid occurrence fails
+    // even if a later one overrides it, and bool parsing excludes
     // `yes`/`no`.
     const skipUrlValidation = yield* Result.match(
-      pflagBoolValue(occurrences, "skip-url-validation"),
+      argvBoolValue(occurrences, "skip-url-validation"),
       {
         onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
         onSuccess: Effect.succeed,
       },
     );
     const nameIdFormat = yield* Result.match(
-      pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
+      argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
       {
         onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
         onSuccess: Effect.succeed,
       },
     );
 
-    // A bare value-taking flag as the final token is a pflag parse error,
+    // A bare value-taking flag as the final token is a parse error,
     // reported even when the arg count is also wrong. The TS parser accepts
     // it as unset, so this must run before the arity check.
     if (scan.missingValueError !== undefined) {
       return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
-    // Arity is counted from pflag-effective positionals, which shift
-    // whenever pflag consumed a flag token as another flag's value — the TS
+    // Arity is counted from the scanned positionals, which shift
+    // whenever a flag token was consumed as another flag's value — the TS
     // parser's own arity check can't see that. Gated on `anchored`: an
     // unscoped scan has no positional information.
     if (scan.anchored && scan.positionals.length !== 1) {
@@ -246,7 +249,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // unloadable profile loses to an arity violation but beats the workdir
     // and mutex checks. Where the scan and parser agree this resolves to
     // `none` and the config layer's apiUrl is already correct.
-    const reconciledProfile = yield* resolvePflagProfile(scan);
+    const reconciledProfile = yield* resolveArgvProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
@@ -265,26 +268,26 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // Validate the effective `--workdir` after arity but before the mutex
     // checks: it loses to an arity violation but beats a mutex violation and
     // any GET/PUT.
-    yield* validatePflagWorkdir(scan);
+    yield* validateArgvWorkdir(scan);
 
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {
         return yield* new SsoMutexFlagError({
-          message: cobraMutuallyExclusiveErrorMessage(group, changed),
+          message: mutuallyExclusiveFlagsMessage(group, changed),
         });
       }
     }
 
-    // Everything below reads pflag-effective values from the scan rather
-    // than the TS-parsed flags — see `add.handler.ts` and `pflag-reconcile.ts`.
-    const projectRefFlag = pflagStringValue(occurrences, "project-ref");
-    const metadataFile = pflagStringValue(occurrences, "metadata-file");
-    const metadataUrl = pflagStringValue(occurrences, "metadata-url");
-    const attributeMappingFile = pflagStringValue(occurrences, "attribute-mapping-file");
-    const domains = pflagSliceValue(occurrences, "domains", flags.domains);
-    const addDomains = pflagSliceValue(occurrences, "add-domains", flags.addDomains);
-    const removeDomains = pflagSliceValue(occurrences, "remove-domains", flags.removeDomains);
+    // Everything below reads values from the scan rather
+    // than the TS-parsed flags — see `add.handler.ts` and `argv-flag-reconcile.ts`.
+    const projectRefFlag = argvStringValue(occurrences, "project-ref");
+    const metadataFile = argvStringValue(occurrences, "metadata-file");
+    const metadataUrl = argvStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
+    const domains = argvSliceValue(occurrences, "domains", flags.domains);
+    const addDomains = argvSliceValue(occurrences, "add-domains", flags.addDomains);
+    const removeDomains = argvSliceValue(occurrences, "remove-domains", flags.removeDomains);
 
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
@@ -292,7 +295,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
     const ref = yield* resolver.resolve(projectRefFlag);
 
-    // Use the pflag-reconciled profile's host when it disagreed with
+    // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
@@ -455,7 +458,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         // See `add.handler.ts` — key order matters for cli-e2e parity.
-        HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
+        HttpClientRequest.bodyText(encodeSortedJsonBody(body), "application/json"),
       );
 
       const response = yield* httpClient.execute(request).pipe(
@@ -495,20 +498,20 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
       yield* fetching?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(parsedJson));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(parsedJson));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(parsedJson, GO_SSO_PROVIDER_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
+      if (outputFlagFormat === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(parsedJson, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeStructToml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -517,7 +520,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         yield* output.raw(toml);
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         return;
       }
 

@@ -4,7 +4,7 @@
  *
  * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are the same runtime
  * functions `./effect` exports, re-typed here to widen their options parameter to the
- * internal-only `goViperCompat` knob.
+ * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {

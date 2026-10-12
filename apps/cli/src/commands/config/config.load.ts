@@ -1,4 +1,4 @@
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig } from "../../command-internal/cli-config-load.ts";
 import { Effect } from "effect";
 
 import {
@@ -23,7 +23,6 @@ export function loadLocalConfig<E>(
 ) {
   return loadCliConfig(cliSettings.workdir, {
     projectRef,
-    goViperCompat: true,
     search: shouldSearchAncestors(cliSettings),
   }).pipe(
     Effect.catchTags({
