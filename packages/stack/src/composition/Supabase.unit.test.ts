@@ -3,8 +3,13 @@ import { Deferred, Effect, Exit, Fiber, Redacted, Ref, Scope, Stream } from "eff
 import * as TestClock from "effect/testing/TestClock";
 import * as Orchestrator from "../Orchestrator.ts";
 import { makeService, ServiceError } from "../Service.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
-import { makeSupabaseComposition, type SupabaseCompositionOperations } from "./Supabase.ts";
+import {
+  makeSupabaseComposition,
+  planEndpointReplan,
+  type SupabaseCompositionOperations,
+} from "./Supabase.ts";
 
 /** A registered instance with no runtime behavior beyond an immediate healthy start and stop. */
 const makeInstance = (
@@ -192,3 +197,58 @@ it.live(
       }),
     ).pipe(Effect.provide(TestClock.layer())),
 );
+
+it("does not let an excluded sibling's stale fixed port mask a shared endpoint's own change", () => {
+  const fixedPort = 54_321;
+  const saved: Pick<SavedStack, "instances" | "composition"> = {
+    instances: [
+      {
+        id: "rest-1",
+        creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+      },
+      {
+        id: "auth-1",
+        creation: { service: "auth", config: {}, endpoints: { http: { port: fixedPort } } },
+      },
+    ],
+    composition: {
+      members: [
+        { id: "rest-1", activation: "eager" },
+        { id: "auth-1", activation: "eager" },
+      ],
+      dependencies: [],
+    },
+  };
+  // The config dropped [api] port and the start excludes auth, so only REST is requested.
+  const requested: ReadonlyArray<ServiceCreation> = [
+    { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+  ];
+  const plan = planEndpointReplan(saved, requested);
+  expect(plan?.changes).toEqual([
+    {
+      id: "rest-1",
+      service: "rest",
+      endpoint: "http",
+      key: "api",
+      previous: fixedPort,
+    },
+  ]);
+});
+
+it("releases the shared listener's automatic claim when another sharing service takes a fixed port", () => {
+  const saved: Pick<SavedStack, "instances" | "composition"> = {
+    instances: [
+      {
+        id: "auth-1",
+        creation: { service: "auth", config: {}, endpoints: { http: { port: "auto" } } },
+      },
+    ],
+    composition: { members: [{ id: "auth-1", activation: "eager" }], dependencies: [] },
+  };
+  // Auth is excluded from this start and REST takes the config's fixed [api] port.
+  const requested: ReadonlyArray<ServiceCreation> = [
+    { service: "rest", config: {}, endpoints: { http: { port: 8_911 } } },
+  ];
+  expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
+  expect(planEndpointReplan(saved, [])).toBeUndefined();
+});
