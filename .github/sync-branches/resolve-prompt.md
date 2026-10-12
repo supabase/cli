@@ -27,8 +27,10 @@ ancestor, `>>>>>>>` is `next`. Repository conventions live in `CLAUDE.md`, `AGEN
    regenerates it from the merged `package.json` files.
 5. When both behaviors cannot be kept, or both sides claim the same identifier (an ADR or
    migration number, a flag, an error code), pick the option you judge best (by default `next`'s
-   behavior with `develop`'s fix ported onto it) and record it in `decisions`. Record every change
-   under `.github/` as a decision too. Mechanical merges are not decisions.
+   behavior with `develop`'s fix ported onto it) and record it in `decisions`. Mechanical merges are
+   not decisions. Resolve and fix files under `.github/` like any other: those edits are not pushed,
+   because workflows on the sync branch run with repository secrets, but posted as review
+   suggestions that a maintainer commits.
 6. Never edit `.git/` or create scratch files. You cannot run commands; after you finish, the job
    runs `check:all` and unit tests on the merged tree and asks you to fix failures.
 

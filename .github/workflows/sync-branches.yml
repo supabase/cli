@@ -153,6 +153,7 @@ jobs:
           name: sync-resolution
           path: |
             ${{ github.workspace }}/sync-agent/comment.md
+            ${{ github.workspace }}/sync-agent/github.diff
             ${{ github.workspace }}/sync-agent/sync.bundle
           if-no-files-found: ignore
           retention-days: 7
@@ -278,6 +279,7 @@ jobs:
           name: sync-fixed
           path: |
             ${{ github.workspace }}/sync-agent/comment.md
+            ${{ github.workspace }}/sync-agent/github.diff
             ${{ github.workspace }}/sync-agent/sync.bundle
           retention-days: 7
 
@@ -315,13 +317,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
           pattern: sync-*
           path: ${{ github.workspace }}/sync-artifacts
 
-      # A plain push fails if the sync branch moved since the resolve job checked it out.
+      # Pushes only a `.github/` that reviewed code gives, then proposes Claude's workflow edits as review suggestions. A
+      # plain push fails if the sync branch moved since the resolve job checked it out.
       - name: Publish
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -339,6 +346,9 @@ jobs:
           done
           if [ "$RESOLVED" = true ]; then
             git fetch "$stage/sync.bundle" HEAD:refs/sync/resolution
+            export REPO_DIR="$GITHUB_WORKSPACE" OUTPUT_DIR="$stage" HEAD_SHA
+            HEAD_SHA="$(git rev-parse refs/sync/resolution)"
+            BASE_REF=origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify
             git -c core.hooksPath=/dev/null push \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/sync/resolution:refs/heads/sync/develop-into-next
             printf "Approve to fast-forward \`next\` once checks pass ([workflow run](%s)).\n" "$RUN_URL" >> "$stage/comment.md"
@@ -350,5 +360,6 @@ jobs:
               --body "@supabase/cli The resolve job failed; resolve this merge by hand as described above ([workflow run](${RUN_URL}))."
           fi
           if [ "$RESOLVED" = true ]; then
+            bun .github/scripts/sync-agent.ts suggest
             GH_TOKEN="$JOB_TOKEN" gh workflow run ai-review.yml --repo "$GITHUB_REPOSITORY" -f pr="$PR"
           fi

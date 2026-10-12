@@ -23,6 +23,9 @@ const PROMPTS_DIR = join(import.meta.dir, "../sync-branches");
 const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 const REPAIR_MARKER = "<!-- sync-agent repair";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
+/** Workflows on the sync branch run with repository secrets, so Claude's edits there are only proposed. */
+const WORKFLOWS = ".github/";
+const WORKFLOW_DIFF = "github.diff";
 const MAX_REPAIR_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
 /** The quick checks of the pull request's CI; integration and end-to-end tests are left to CI and `Sync repair`. */
@@ -49,6 +52,10 @@ export type RepairPlan =
 
 function repairMarker(head: string): string {
   return `${REPAIR_MARKER} head=${head} -->`;
+}
+
+function workflowMarker(head: string): string {
+  return `<!-- sync-agent workflow-suggestions head=${head} -->`;
 }
 
 /** Branch policy fails `Require fast-forward` on every sync pull request by design; the others run on approval. */
@@ -100,6 +107,12 @@ export function planRepair(state: {
   }
   if (state.reviewRunning) {
     return { action: "skip", reason: "The AI review is still running." };
+  }
+  if (botComments.some((body) => body.includes(workflowMarker(head)))) {
+    return {
+      action: "skip",
+      reason: "Waiting for a maintainer to commit the workflow suggestions.",
+    };
   }
   const failures = runs.filter(
     (run) => run.conclusion === "failure" || run.conclusion === "timed_out",
@@ -209,6 +222,46 @@ function commit(git: GitRunner, message?: string): void {
   ]);
 }
 
+/**
+ * Commits the working tree except `.github/`, which is reset to `baseline` (with `ours` paths from `HEAD`). The edits
+ * left out are saved as a diff that publish turns into review suggestions. Returns whether a commit was made.
+ */
+function commitOutsideWorkflows(
+  git: GitRunner,
+  outputDir: string,
+  message: string | undefined,
+  baseline = "HEAD",
+  ours: string[] = [],
+): boolean {
+  gitOrThrow(git, ["add", "-A"]);
+  const proposed = gitOrThrow(git, ["write-tree"]);
+  gitOrThrow(git, ["restore", `--source=${baseline}`, "--staged", "--worktree", "--", WORKFLOWS]);
+  for (const path of ours) {
+    gitOrThrow(
+      git,
+      git(["cat-file", "-e", `HEAD:${path}`]).status === 0
+        ? ["--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree", "--", path]
+        : ["--literal-pathspecs", "rm", "--quiet", "--force", "--ignore-unmatch", "--", path],
+    );
+  }
+  const merging = git(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"]).status === 0;
+  const committed = merging || git(["diff", "--cached", "--quiet"]).status !== 0;
+  if (committed) {
+    commit(git, message);
+  }
+  const diff = gitOrThrow(git, ["diff", "--unified=0", "HEAD", proposed, "--", WORKFLOWS]);
+  writeFileSync(join(outputDir, WORKFLOW_DIFF), diff ? `${diff}\n` : "");
+  return committed;
+}
+
+/** Puts the proposed workflow edits back into the working tree, so checks and Claude see the whole resolution. */
+function applyWorkflowDiff(git: GitRunner, outputDir: string): void {
+  const file = join(outputDir, WORKFLOW_DIFF);
+  if (existsSync(file) && readFileSync(file, "utf8") !== "") {
+    gitOrThrow(git, ["apply", "--unidiff-zero", file]);
+  }
+}
+
 function setOutput(name: string, value: string): void {
   appendFileSync(requireEnv("GITHUB_OUTPUT"), `${name}=${value}\n`);
 }
@@ -271,10 +324,9 @@ function runChecks(workDir: string): string[] {
 /** Runs the quick checks on the resolution, commits the formatter's and lockfile's changes, and writes the failures. */
 function check(workDir: string, outputDir: string): void {
   const git = makeGit(workDir);
+  applyWorkflowDiff(git, outputDir);
   const failures = runChecks(workDir);
-  if (gitOrThrow(git, ["status", "--porcelain"]) !== "") {
-    commit(git, "chore(repo): format the develop-into-next merge");
-  }
+  commitOutsideWorkflows(git, outputDir, "chore(repo): format the develop-into-next merge");
   setOutput("failed", String(failures.length > 0));
   const contextDir = join(outputDir, "context");
   mkdirSync(contextDir, { recursive: true });
@@ -288,51 +340,34 @@ function check(workDir: string, outputDir: string): void {
   );
 }
 
-/** Lets Claude fix the checked-out tree from the context files, and commits its edits only when it returned a result. */
-function claudeFix(workDir: string, contextDir: string, message: string) {
+/**
+ * Lets Claude fix the checked-out tree from the context files. Its edits are committed, except under `.github/`, only
+ * when it returned a result.
+ */
+function claudeFix(workDir: string, outputDir: string, message: string) {
+  const git = makeGit(workDir);
+  applyWorkflowDiff(git, outputDir);
   const output = runClaude(
     readFileSync(join(PROMPTS_DIR, "repair-prompt.md"), "utf8"),
     "repair.schema.json",
     workDir,
-    contextDir,
+    join(outputDir, "context"),
   );
   const result = typeof output === "object" ? (output as Repair) : undefined;
-  const git = makeGit(workDir);
-  const changed = result !== undefined && gitOrThrow(git, ["status", "--porcelain"]) !== "";
-  if (changed) {
-    commit(git, message);
-  }
+  const changed = result !== undefined && commitOutsideWorkflows(git, outputDir, message);
   setOutput("changed", String(changed));
-  const workflowEdits = changed
-    ? gitOrThrow(git, ["diff", "--name-only", "HEAD~1", "HEAD", "--", ".github/"])
-        .split("\n")
-        .filter(Boolean)
-    : [];
   return {
     result,
     summary:
       result?.summary ??
       `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
-    workflowNote:
-      workflowEdits.length > 0
-        ? `@supabase/cli Claude changed files under \`.github/\`, which run in this PR's CI: ${workflowEdits.map((path) => `\`${path}\``).join(", ")}.`
-        : undefined,
   };
 }
 
 /** Lets Claude fix the quick checks that failed, once; CI runs them again on the pull request. */
 function fix(workDir: string, outputDir: string): void {
-  const { summary, workflowNote } = claudeFix(
-    workDir,
-    join(outputDir, "context"),
-    "chore(repo): fix the develop-into-next merge",
-  );
-  appendFileSync(
-    join(outputDir, "comment.md"),
-    [`**Claude's fix.** ${summary}`, "", ...(workflowNote ? [workflowNote, ""] : []), ""].join(
-      "\n",
-    ),
-  );
+  const { summary } = claudeFix(workDir, outputDir, "chore(repo): fix the develop-into-next merge");
+  appendFileSync(join(outputDir, "comment.md"), `**Claude's fix.** ${summary}\n\n`);
 }
 
 /** `git status` codes for unmerged paths; `HEAD` is `develop` and the merged side is `next`. */
@@ -383,6 +418,11 @@ function resolve(workDir: string, outputDir: string): void {
   if (merge.status !== 0 && conflicts.length === 0) {
     throw new Error(`git merge failed without conflicts: ${merge.stderr || merge.stdout}`);
   }
+  // git's own merge, conflict markers included; conflicted workflows keep the `develop` side until a maintainer acts.
+  const autoMerge =
+    git(["merge-tree", "--write-tree", "--no-messages", "HEAD", "origin/next"]).stdout.split(
+      "\n",
+    )[0] ?? "";
 
   const prompt = [
     readFileSync(join(PROMPTS_DIR, "resolve-prompt.md"), "utf8"),
@@ -421,7 +461,13 @@ function resolve(workDir: string, outputDir: string): void {
     return;
   }
 
-  commit(git);
+  commitOutsideWorkflows(
+    git,
+    outputDir,
+    undefined,
+    autoMerge,
+    conflicts.map(({ path }) => path).filter((path) => path.startsWith(WORKFLOWS)),
+  );
   setOutput("resolved", "true");
   const lines = [
     RESOLVE_MARKER,
@@ -574,10 +620,16 @@ async function collect(outputDir: string): Promise<void> {
     setOutput("action", "skip");
     return;
   }
-  const comments = await githubRequest<{ user: { login: string } | null; body: string }[]>(
-    token,
-    `/repos/${repository}/issues/${pull.number}/comments?per_page=100`,
-  );
+  const comments = [
+    ...(await githubRequest<{ user: { login: string } | null; body: string }[]>(
+      token,
+      `/repos/${repository}/issues/${pull.number}/comments?per_page=100`,
+    )),
+    ...(await githubRequest<{ user: { login: string } | null; body: string }[]>(
+      token,
+      `/repos/${repository}/pulls/${pull.number}/reviews?per_page=100`,
+    )),
+  ];
   const plan = planRepair({
     head: pull.head.sha,
     botComments: comments
@@ -639,9 +691,9 @@ function repair(workDir: string, outputDir: string, head: string): void {
   const threads = JSON.parse(
     readFileSync(join(outputDir, "threads.json"), "utf8"),
   ) as ReviewThread[];
-  const { result, summary, workflowNote } = claudeFix(
+  const { result, summary } = claudeFix(
     workDir,
-    join(outputDir, "context"),
+    outputDir,
     "chore(repo): repair the develop-into-next sync",
   );
   const replies = (result?.findings ?? []).flatMap(({ id, fixed, reply }) => {
@@ -659,11 +711,192 @@ function repair(workDir: string, outputDir: string, head: string): void {
       "",
       summary,
       "",
-      ...(workflowNote ? [workflowNote, ""] : []),
       `${replies.filter((reply) => reply.resolve).length} findings fixed, ${replies.filter((reply) => !reply.resolve).length} declined (${runLink()}).`,
       "",
     ].join("\n"),
   );
+}
+
+export interface Suggestion {
+  path: string;
+  line: number;
+  start_line?: number;
+  side: "RIGHT";
+  body: string;
+}
+
+/**
+ * Turns a `--unified=0` diff of `.github/` into review suggestions on the lines GitHub can anchor them to (`anchors`:
+ * the head-side line ranges of the pull request's diff, per path). File additions, deletions, and hunks outside the
+ * pull request's diff are returned as a diff to apply by hand.
+ */
+export function buildSuggestions(
+  diff: string,
+  anchors: Map<string, [number, number][]>,
+  headLine: (path: string, line: number) => string,
+): { comments: Suggestion[]; leftover: string } {
+  const comments: Suggestion[] = [];
+  const leftover: string[] = [];
+  for (const section of diff
+    .split(/^(?=diff --git )/m)
+    .filter((part) => part.startsWith("diff --git "))) {
+    const [header = "", ...hunks] = section.split(/^(?=@@ )/m);
+    const path = header.match(/^\+\+\+ b\/(.+)$/m)?.[1];
+    if (!path || /^(new|deleted) file mode/m.test(header)) {
+      leftover.push(section);
+      continue;
+    }
+    const manual: string[] = [];
+    for (const hunk of hunks) {
+      const [, from = "0", count = "1"] = hunk.match(/^@@ -(\d+)(?:,(\d+))? /) ?? [];
+      const added = hunk
+        .split("\n")
+        .slice(1)
+        .filter((line) => line.startsWith("+"))
+        .map((line) => line.slice(1));
+      const removed = Number(count);
+      // An insertion replaces the line it follows with that line plus the new ones.
+      const start = removed > 0 ? Number(from) : Math.max(Number(from), 1);
+      const end = removed > 0 ? start + removed - 1 : start;
+      const lines =
+        removed > 0
+          ? added
+          : Number(from) === 0
+            ? [...added, headLine(path, 1)]
+            : [headLine(path, start), ...added];
+      if (anchors.get(path)?.some(([low, high]) => low <= start && end <= high)) {
+        comments.push({
+          path,
+          line: end,
+          ...(start < end ? { start_line: start } : {}),
+          side: "RIGHT",
+          body: ["```suggestion", ...lines, "```"].join("\n"),
+        });
+      } else {
+        manual.push(hunk);
+      }
+    }
+    if (manual.length > 0) {
+      leftover.push(header + manual.join(""));
+    }
+  }
+  return { comments, leftover: leftover.join("") };
+}
+
+/** Head-side line ranges of each `.github/` file's hunks in the pull request's diff against `next`. */
+function pullRequestAnchors(git: GitRunner, head: string): Map<string, [number, number][]> {
+  const anchors = new Map<string, [number, number][]>();
+  let path = "";
+  for (const line of gitOrThrow(git, [
+    "diff",
+    "--unified=3",
+    `origin/next...${head}`,
+    "--",
+    WORKFLOWS,
+  ]).split("\n")) {
+    path = line.match(/^\+\+\+ b\/(.+)$/)?.[1] ?? path;
+    const [, from, count = "1"] = line.match(/^@@ -\S+ \+(\d+)(?:,(\d+))? @@/) ?? [];
+    if (from && Number(count) > 0) {
+      anchors.set(path, [
+        ...(anchors.get(path) ?? []),
+        [Number(from), Number(from) + Number(count) - 1],
+      ]);
+    }
+  }
+  return anchors;
+}
+
+/** Posts the proposed workflow edits on the pushed head as one review a maintainer commits from. */
+async function suggest(repoDir: string, outputDir: string): Promise<void> {
+  const file = join(outputDir, WORKFLOW_DIFF);
+  const diff = existsSync(file) ? readFileSync(file, "utf8") : "";
+  if (diff === "") {
+    return;
+  }
+  const git = makeGit(repoDir);
+  const token = requireEnv("GH_TOKEN");
+  const repository = requireEnv("GITHUB_REPOSITORY");
+  const head = requireEnv("HEAD_SHA");
+  const { comments, leftover } = buildSuggestions(
+    diff,
+    pullRequestAnchors(git, head),
+    (path, line) => gitOrThrow(git, ["show", `${head}:${path}`]).split("\n")[line - 1] ?? "",
+  );
+  const body = (rest: string) =>
+    [
+      workflowMarker(head),
+      "### Workflow changes for a maintainer",
+      "",
+      "Claude's edits under `.github/` are not pushed, because workflows on this branch run with repository secrets. Review them, then use **Commit suggestions** so they run.",
+      ...(rest ? ["", "Apply these by hand:", "", ...codeFence(rest, "diff")] : []),
+    ].join("\n");
+  const review = (payload: object) =>
+    githubRequest(token, `/repos/${repository}/pulls/${requireEnv("PR")}/reviews`, {
+      commit_id: head,
+      event: "COMMENT",
+      ...payload,
+    });
+  try {
+    await review({ body: body(leftover), comments });
+  } catch (error) {
+    console.log(`::warning::Suggestions were rejected, posting the diff instead: ${String(error)}`);
+    await review({ body: body(diff) });
+  }
+}
+
+/** A code fence longer than any backtick run in `text`, so the text cannot close it. */
+function codeFence(text: string, language: string): string[] {
+  const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  return [`${fence}${language}`, text.trimEnd(), fence];
+}
+
+/**
+ * Refuses a push whose `.github/` differs from what reviewed code gives: each merge must match git's own merge, with
+ * conflicted workflows on the `develop` side, and no other commit may touch `.github/`.
+ */
+function verifyWorkflows(repoDir: string, base: string, head: string): void {
+  const git = makeGit(repoDir);
+  for (const commit of gitOrThrow(git, ["rev-list", "--first-parent", `${base}..${head}`])
+    .split("\n")
+    .filter(Boolean)) {
+    const parents = gitOrThrow(git, ["rev-list", "--parents", "-n", "1", commit])
+      .split(" ")
+      .slice(1);
+    if (parents.length < 2) {
+      if (git(["diff", "--quiet", `${commit}^`, commit, "--", WORKFLOWS]).status !== 0) {
+        throw new Error(
+          `${commit} changes ${WORKFLOWS}; workflow edits must come from a maintainer.`,
+        );
+      }
+      continue;
+    }
+    const merged = git([
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      "--no-messages",
+      `${commit}^1`,
+      `${commit}^2`,
+    ]);
+    const [tree = "", ...conflicted] = merged.stdout.split("\n");
+    if (merged.status > 1) {
+      throw new Error(`git merge-tree failed for ${commit}: ${merged.stderr}`);
+    }
+    const edited = gitOrThrow(git, ["diff", "--name-only", tree, commit, "--", WORKFLOWS])
+      .split("\n")
+      .filter(Boolean)
+      .filter(
+        (path) =>
+          !conflicted.includes(path) ||
+          git(["--literal-pathspecs", "diff", "--quiet", `${commit}^1`, commit, "--", path])
+            .status !== 0,
+      );
+    if (edited.length > 0) {
+      throw new Error(
+        `${commit} edits ${edited.join(", ")} beyond git's merge; workflow edits must come from a maintainer.`,
+      );
+    }
+  }
 }
 
 if (import.meta.main) {
@@ -679,6 +912,12 @@ if (import.meta.main) {
     case "fix":
       fix(requireEnv("WORK_DIR"), outputDir);
       break;
+    case "verify":
+      verifyWorkflows(requireEnv("REPO_DIR"), requireEnv("BASE_REF"), requireEnv("HEAD_SHA"));
+      break;
+    case "suggest":
+      await suggest(requireEnv("REPO_DIR"), outputDir);
+      break;
     case "collect":
       await collect(outputDir);
       break;
@@ -686,6 +925,8 @@ if (import.meta.main) {
       repair(requireEnv("WORK_DIR"), outputDir, requireEnv("HEAD_SHA"));
       break;
     default:
-      throw new Error("usage: sync-agent.ts resolve | check | fix | collect | repair");
+      throw new Error(
+        "usage: sync-agent.ts resolve | check | fix | verify | suggest | collect | repair",
+      );
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { type CheckRun, REQUIRED_CHECKS } from "./fast-forward.ts";
-import { planRepair, type ReviewThread } from "./sync-agent.ts";
+import { buildSuggestions, planRepair, type ReviewThread } from "./sync-agent.ts";
 
 const HEAD = "a".repeat(40);
 const RESOLVED = "<!-- sync-agent resolve -->\nClaude resolved the merge.";
@@ -124,5 +124,60 @@ describe("planRepair", () => {
     });
 
     expect(plan).toEqual({ action: "skip", reason: "The AI review is still running." });
+  });
+
+  test("waits while workflow suggestions on the head are not committed", () => {
+    const plan = planRepair({
+      head: HEAD,
+      reviewRunning: false,
+      botComments: [RESOLVED, `<!-- sync-agent workflow-suggestions head=${HEAD} -->`],
+      runs: [...green, run(99, "Check code quality", "failure")],
+      threads: [],
+    });
+
+    expect(plan.action).toBe("skip");
+  });
+});
+
+describe("buildSuggestions", () => {
+  const diff = [
+    "diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml",
+    "--- a/.github/workflows/test.yml",
+    "+++ b/.github/workflows/test.yml",
+    "@@ -10 +9,0 @@",
+    '-          go-cache: "false"',
+    "@@ -20,0 +20 @@",
+    "+          shell: bash",
+    "@@ -90 +89 @@",
+    "-          old: true",
+    "+          new: true",
+    "diff --git a/.github/workflows/go.yml b/.github/workflows/go.yml",
+    "deleted file mode 100644",
+    "--- a/.github/workflows/go.yml",
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-name: Go",
+    "",
+  ].join("\n");
+
+  test("suggests edits inside the pull request's diff and leaves the rest to apply by hand", () => {
+    const { comments, leftover } = buildSuggestions(
+      diff,
+      new Map([[".github/workflows/test.yml", [[5, 25]]]]),
+      (_path, line) => `line ${line}`,
+    );
+
+    expect(comments).toEqual([
+      { path: ".github/workflows/test.yml", line: 10, side: "RIGHT", body: "```suggestion\n```" },
+      {
+        path: ".github/workflows/test.yml",
+        line: 20,
+        side: "RIGHT",
+        body: "```suggestion\nline 20\n          shell: bash\n```",
+      },
+    ]);
+    expect(leftover).toContain("@@ -90 +89 @@");
+    expect(leftover).toContain("deleted file mode 100644");
+    expect(leftover).not.toContain("go-cache");
   });
 });

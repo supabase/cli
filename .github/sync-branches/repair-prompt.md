@@ -24,8 +24,9 @@ fail. Repository conventions live in `CLAUDE.md`, `AGENTS.md`, and `docs/adr/`. 
    every other finding, even a real bug, with a reply saying it is not introduced by the merge and
    is out of scope for the sync.
 3. Keep both sides' intent: `develop`'s fixes and `next`'s breaking changes.
-4. Edit files under `.github/` only when a failure requires it; every such change is flagged for
-   maintainer review because those workflows run with repository secrets.
+4. Edit files under `.github/` only when a failure requires it. Those edits are not pushed, because
+   workflows on the sync branch run with repository secrets, but posted as review suggestions that
+   a maintainer commits.
 5. Never edit `.git/`, delete files, or create scratch files. You cannot run commands; CI runs
    again on the pull request after you finish.
 

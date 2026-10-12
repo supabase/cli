@@ -66,6 +66,7 @@ jobs:
         with:
           path: work
           ref: ${{ steps.collect.outputs.head }}
+          fetch-depth: 0
           persist-credentials: false
 
       # Same pinned release and isolated npm config as the AI review workflow.
@@ -98,7 +99,6 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-          permission-workflows: write
 
       # A push, or the head check without one, stops when the branch moved since the checks settled; the next completed
       # run starts over. The round comment goes first so a failed reply cannot hide a round from the limit.
@@ -111,6 +111,10 @@ jobs:
           CHANGED: ${{ steps.repair.outputs.changed }}
         run: |
           if [ "$CHANGED" = true ]; then
+            if ! git -C work diff --quiet "$HEAD_SHA" HEAD -- .github/; then
+              echo "::error::The repair commit changes .github/; workflow edits must come from a maintainer."
+              exit 1
+            fi
             git -C work -c core.hooksPath=/dev/null push \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
           elif [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
@@ -128,4 +132,9 @@ jobs:
                   -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id } } }' > /dev/null
               fi
             done
+          fi
+          if [ "$CHANGED" != "" ]; then
+            cd trusted
+            REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
+              bun .github/scripts/sync-agent.ts suggest
           fi
