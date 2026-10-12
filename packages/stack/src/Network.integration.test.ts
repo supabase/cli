@@ -6,7 +6,6 @@ import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpBody, HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
-import { nativePortBase } from "./Ports.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import { freshWrites } from "./host/Endpoints.ts";
@@ -601,9 +600,10 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
 
 /**
  * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
- * neither another test's auto allocation nor an outbound socket can already hold it.
+ * neither another test's auto allocation nor an outbound socket can already hold it. It stays
+ * under 9000, where other files pin fixed ports.
  */
-const pinnedPort = () => 1024 + (Math.abs(Hash.string(randomUUID())) % (nativePortBase - 1024));
+const pinnedPort = () => 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
   Effect.scoped(
