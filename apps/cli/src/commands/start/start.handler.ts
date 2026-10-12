@@ -123,6 +123,7 @@ import type { StartFlags } from "./start.command.ts";
 import {
   StartConfigLoadError,
   StartInvalidConfigError,
+  StartSnippetsDirectoryError,
   StartWorkdirError,
 } from "./start.errors.ts";
 import { partitionStartExcludeFlags } from "./start.exclude.ts";
@@ -836,6 +837,19 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           projectEnvValues,
         )
       : new Set<string>();
+    /* Docker creates a missing bind source, but `podman create -v` rejects it. */
+    if (gates.studio)
+      yield* fs
+        .makeDirectory(path.join(cliSettings.workdir, "supabase", "snippets"), { recursive: true })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new StartSnippetsDirectoryError({
+                message: `Unable to create the Studio snippets directory: ${error.message}`,
+                cause: error,
+              }),
+          ),
+        );
 
     // `--network-id` wins over the generated `supabase_network_<project>` fallback, falling back
     // to `SUPABASE_NETWORK_ID` only when the flag was never passed. See
@@ -843,7 +857,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: yield* viperEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        projectEnvValues,
+      ),
       projectId,
     });
     // Linux-only `host.docker.internal:host-gateway` extra host; empty on darwin/windows, where

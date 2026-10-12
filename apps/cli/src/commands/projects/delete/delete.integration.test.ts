@@ -13,7 +13,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { projectsDelete } from "./delete.handler.ts";
@@ -179,9 +179,8 @@ describe("projects delete integration", () => {
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
     const { layer, out, api } = setup({ yes: false });
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
+    return withConfigEnv(
+      { SUPABASE_YES: "1" },
       Effect.gen(function* () {
         yield* projectsDelete({ ref: Option.some(VALID_REF) });
         expect(out.stderrText).toContain("Do you want to delete project ");

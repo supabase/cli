@@ -29,6 +29,7 @@ import {
   VALID_REF,
   jsonResponse,
   withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -803,6 +804,7 @@ function mockResetStackApi(opts: {
       }),
       restart: Effect.die("unused"),
     },
+    startupEndpointChanges: Effect.die("unused"),
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
     gateway: unusedGateway,
@@ -1789,9 +1791,7 @@ describe("db reset", () => {
           ],
         });
         // Ambient `SUPABASE_YES` would take the auto-confirm branch and echo a trailing `y`.
-        return withEnvVar(
-          "SUPABASE_YES",
-          undefined,
+        return withEmptyConfigEnv(
           Effect.gen(function* () {
             yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
             expect(out.stderrText).toContain(
@@ -1829,9 +1829,7 @@ describe("db reset", () => {
             },
           ],
         });
-        return withEnvVar(
-          "SUPABASE_YES",
-          undefined,
+        return withEmptyConfigEnv(
           Effect.gen(function* () {
             yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
             expect(out.stderrText).toContain("Do you want to prune it? [y/N]");
@@ -1865,9 +1863,7 @@ describe("db reset", () => {
         ],
       });
       // Shell `SUPABASE_YES` (any value) would shadow the project dotenv under test.
-      return withEnvVar(
-        "SUPABASE_YES",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
@@ -1903,9 +1899,7 @@ describe("db reset", () => {
           { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
         ],
       });
-      return withEnvVar(
-        "SUPABASE_YES",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
@@ -3120,9 +3114,7 @@ describe("db reset", () => {
           confirm: [true],
           // No experimental flag / shell env — only the project .env sets it.
         });
-        return withEnvVar(
-          "SUPABASE_EXPERIMENTAL",
-          undefined,
+        return withEmptyConfigEnv(
           Effect.gen(function* () {
             yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
             expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);

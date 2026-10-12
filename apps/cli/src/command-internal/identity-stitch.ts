@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Context, DateTime, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
@@ -19,6 +19,8 @@ import { readExistingState } from "../telemetry/telemetry-state.layer.ts";
 
 const HEADER_GOTRUE_ID = "x-gotrue-id";
 const TELEMETRY_SCHEMA_VERSION = 1;
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface TelemetryState {
   readonly enabled: boolean;
@@ -100,7 +102,7 @@ const makeIdentityStitcher: Effect.Effect<
         enabled,
         device_id: prior?.device_id ?? runtime.deviceId,
         session_id: prior?.session_id ?? runtime.sessionId,
-        session_last_active: new Date().toISOString(),
+        session_last_active: DateTime.formatIso(yield* DateTime.now),
         distinct_id: gotrueId,
         schema_version:
           prior?.schemaVersionToken !== undefined
@@ -114,9 +116,11 @@ const makeIdentityStitcher: Effect.Effect<
         // Preserves the prior schema_version's exact int64 token:
         // re-serializing `state.schema_version` through `Number` would round
         // values above 2^53 (e.g. 9007199254740993 → …992).
-        prior?.schemaVersionToken === undefined
-          ? JSON.stringify(state)
-          : JSON.stringify({ ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) }),
+        yield* encodeJson(
+          prior?.schemaVersionToken === undefined
+            ? state
+            : { ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) },
+        ),
       );
     });
 

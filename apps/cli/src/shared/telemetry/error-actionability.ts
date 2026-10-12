@@ -749,11 +749,13 @@ function readDeclaration(error: unknown): CliErrorActionabilityDeclaration | und
   }
 }
 
-function safeIdentifier(value: string | undefined): string | undefined {
+/** `allowDots` admits namespaced tags such as `Namespace.NamespaceError`. */
+function safeIdentifier(value: string | undefined, allowDots = false): string | undefined {
   if (value === undefined) return undefined;
   // The length cap is defense-in-depth: every legitimate identifier is a
   // class/tag name, so an oversized value is never a real CLI error source.
-  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : undefined;
+  const pattern = allowDots ? /^[A-Za-z][A-Za-z0-9_.]{0,63}$/ : /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+  return pattern.test(value) ? value : undefined;
 }
 
 function readErrorTag(error: unknown): string | undefined {
@@ -791,7 +793,7 @@ function readDeclaredErrorFingerprintId(error: unknown): string | undefined {
  * identifier minification. Never invoke prototype getters here: only the
  * static data property created by Effect is a safe fingerprint authority.
  */
-function readStableTaggedPrototypeName(error: unknown): string | undefined {
+function readStableTaggedPrototypeName(error: unknown, allowDots = false): string | undefined {
   if (!(error instanceof Error)) return undefined;
   let prototype: unknown = Object.getPrototypeOf(error);
   while (prototype !== Error.prototype) {
@@ -799,7 +801,9 @@ function readStableTaggedPrototypeName(error: unknown): string | undefined {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "name");
     if (descriptor !== undefined && "value" in descriptor) {
       const name =
-        typeof descriptor.value === "string" ? safeIdentifier(descriptor.value) : undefined;
+        typeof descriptor.value === "string"
+          ? safeIdentifier(descriptor.value, allowDots)
+          : undefined;
       if (name !== undefined && name !== "Error") return name;
     }
     prototype = Object.getPrototypeOf(prototype);
@@ -1104,17 +1108,79 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   return toActionability(actionability.unknown, "error", undefined);
 }
 
+/** A fixed list, so a code groups the same way on every platform. */
+const defectSystemErrorCodes = new Set([
+  "EACCES",
+  "EADDRINUSE",
+  "EADDRNOTAVAIL",
+  "EAGAIN",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EAI_NONAME",
+  "EBADF",
+  "EBUSY",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EEXIST",
+  "EHOSTUNREACH",
+  "EINVAL",
+  "EISDIR",
+  "ELOOP",
+  "EMFILE",
+  "ENAMETOOLONG",
+  "ENETUNREACH",
+  "ENFILE",
+  "ENOENT",
+  "ENOMEM",
+  "ENOSPC",
+  "ENOTDIR",
+  "ENOTEMPTY",
+  "ENOTFOUND",
+  "ENOTSUP",
+  "EPERM",
+  "EPIPE",
+  "EROFS",
+  "ESRCH",
+  "ETIMEDOUT",
+  "EXDEV",
+]);
+
+/**
+ * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
+ * for a non-error value. Instance fields other than an errno code are never read, so only
+ * source-owned identifiers reach telemetry.
+ */
+function defectIdentity(defect: unknown): string {
+  try {
+    const error = unwrapNativeFailure(defect);
+    if (!isErrorRecord(error)) return typeof error;
+    if (!(error instanceof Error)) return "object";
+    const base = readStableTaggedPrototypeName(error, true) ?? "Error";
+    // A data descriptor, so reading the code never runs a getter.
+    const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
+    return typeof code === "string" && defectSystemErrorCodes.has(code) ? `${base}:${code}` : base;
+  } catch {
+    return "Unreadable";
+  }
+}
+
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {
   let firstKnownDefect: CliErrorActionability | undefined;
-  let hasUnknownDefect = false;
+  let unknownDefect: { readonly defect: unknown } | undefined;
   for (const reason of cause.reasons) {
     if (!Cause.isDieReason(reason)) continue;
     const classified = classifyCliErrorActionability(reason.defect);
     if (classified.error_kind === CliErrorKind.InternalBug) return classified;
-    if (classified.error_kind === CliErrorKind.Unknown) hasUnknownDefect = true;
+    if (classified.error_kind === CliErrorKind.Unknown) unknownDefect ??= { defect: reason.defect };
     else firstKnownDefect ??= classified;
   }
-  if (hasUnknownDefect) return toActionability(actionability.internalPanic, "error", "Defect");
+  if (unknownDefect !== undefined) {
+    return {
+      ...toActionability(actionability.internalPanic, "error", "Defect"),
+      error_fingerprint: `error:Defect:${defectIdentity(unknownDefect.defect)}`,
+    };
+  }
   if (firstKnownDefect !== undefined) return firstKnownDefect;
   if (Cause.hasInterruptsOnly(cause)) {
     return toActionability(actionability.cancelled, "error", "Interrupt");

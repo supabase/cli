@@ -821,46 +821,104 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("classifies a container start the engine could not publish as port allocation", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const runtime = yield* makeContainerRuntime({
-          target: containerTarget,
-          root: ".",
-          hostGateway: sharedHostGateway,
-        });
-        yield* runtime.prepare(image);
-        const result = yield* makeContainerRuntime({
-          target: containerTarget,
-          root: ".",
-          hostGateway: sharedHostGateway,
-        }).pipe(
-          Effect.flatMap((rejecting) =>
-            rejecting.launch({
-              image,
-              stackId: "c".repeat(64),
-              instanceId: "port-allocated",
-              env: {},
-              args: ["-e", "process.exit(0)"],
-              ports: [8080],
-            }),
-          ),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            makePortAllocatedStartSpawner(delegate),
-          ),
-          Effect.exit,
-        );
-        const failure = Exit.isFailure(result)
-          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
-          : undefined;
-        if (!(failure instanceof ContainerLaunchError))
-          return yield* Effect.die("publish failure did not retain cleanup authority");
-        yield* failure.process.remove;
-        expect(failureKind(failure)).toBe("port-allocation");
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+  it.live(
+    "gives up after bounded attempts when a published host port keeps colliding, leaving only the last container",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
+          yield* runtime.prepare(image);
+          const { spawner, started } = makeFailingStartSpawner(
+            delegate,
+            dockerPortAllocated,
+            Number.POSITIVE_INFINITY,
+          );
+          const result = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          }).pipe(
+            Effect.flatMap((rejecting) =>
+              rejecting.launch({
+                image,
+                stackId: "c".repeat(64),
+                instanceId: "port-allocated",
+                env: {},
+                args: ["-e", "process.exit(0)"],
+                ports: [8080],
+              }),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.exit,
+          );
+          const failure = Exit.isFailure(result)
+            ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+            : undefined;
+          if (!(failure instanceof ContainerLaunchError))
+            return yield* Effect.die("publish failure did not retain cleanup authority");
+          expect(failureKind(failure)).toBe("port-allocation");
+          expect(failure.failure.message).toContain("port is already allocated");
+          expect(started).toHaveLength(3);
+          expect(new Set(started).size).toBe(3);
+          expect(yield* Effect.forEach(started, exists)).toEqual([false, false, true]);
+          expect(failure.process.id).toBe(started[2]);
+          yield* failure.process.remove;
+          expect(yield* exists(started[2]!)).toBe(false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "recreates a container whose published host port was taken before the engine bound it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fs = yield* FileSystem.FileSystem;
+          const { spawner, started, envFiles } = makeFailingStartSpawner(
+            delegate,
+            pastaAddressInUse,
+            1,
+          );
+          const process = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          }).pipe(
+            Effect.flatMap((flaky) =>
+              flaky.prepare(image).pipe(
+                Effect.andThen(
+                  flaky.launch({
+                    image,
+                    stackId: "c".repeat(64),
+                    instanceId: "port-recreated",
+                    env: {},
+                    ports: [8080],
+                    args: [
+                      "-e",
+                      "Bun.serve({ hostname: '0.0.0.0', port: 8080, fetch() { return new Response('ok') } }); console.log('ready')",
+                    ],
+                  }),
+                ),
+              ),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(started).toHaveLength(2);
+          expect(process.id).toBe(started[1]);
+          expect(yield* exists(started[0]!)).toBe(false);
+          expect(yield* exists(started[1]!)).toBe(true);
+          expect(process.ports[8080]).toBeDefined();
+          expect(envFiles).toHaveLength(2);
+          expect(yield* fs.exists(envFiles[0]!)).toBe(false);
+          expect(yield* fs.exists(envFiles[1]!)).toBe(true);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps exit observation shared after a caller cancels its wait", () =>
@@ -1757,26 +1815,43 @@ const makePullFailureSpawner = (
     return delegate.spawn(command);
   });
 
-/** Fails the engine's `start` the way Docker reports a published host port another listener holds. */
-const makePortAllocatedStartSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
-  ChildProcessSpawner.make((command) =>
-    ChildProcess.isStandardCommand(command) &&
-    command.command === testEngine &&
-    command.args[0] === "start"
-      ? delegate.spawn(
+const dockerPortAllocated =
+  "Error response from daemon: driver failed programming external connectivity on endpoint port-allocated: Bind for 127.0.0.1:54321 failed: port is already allocated";
+const pastaAddressInUse =
+  'Error: unable to start container "abc": pasta failed with exit code 1:\nListen failed for HOST TCP port 127.0.0.1/42651: Address in use';
+
+/** Fails the first `failures` engine `start` calls with `message`, recording every started container name. */
+const makeFailingStartSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  message: string,
+  failures: number,
+) => {
+  const started: Array<string> = [];
+  const envFiles: Array<string> = [];
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (ChildProcess.isStandardCommand(command) && command.command === testEngine) {
+      const envFile = command.args[command.args.indexOf("--env-file") + 1];
+      if (command.args[0] === "create" && envFile !== undefined) envFiles.push(envFile);
+    }
+    if (
+      !ChildProcess.isStandardCommand(command) ||
+      command.command !== testEngine ||
+      command.args[0] !== "start"
+    )
+      return delegate.spawn(command);
+    started.push(String(command.args.at(-1)));
+    return started.length > failures
+      ? delegate.spawn(command)
+      : delegate.spawn(
           ChildProcess.make(
             process.execPath,
-            [
-              "-e",
-              `console.error(${JSON.stringify(
-                "Error response from daemon: driver failed programming external connectivity on endpoint port-allocated: Bind for 127.0.0.1:54321 failed: port is already allocated",
-              )}); process.exit(1)`,
-            ],
+            ["-e", `console.error(${JSON.stringify(message)}); process.exit(1)`],
             { stdin: "ignore" },
           ),
-        )
-      : delegate.spawn(command),
-  );
+        );
+  });
+  return { spawner, started, envFiles };
+};
 
 const hostGatewayRejectionScript = `console.error(${JSON.stringify(
   'Error response from daemon: invalid IP address in add-host: "host-gateway"',
