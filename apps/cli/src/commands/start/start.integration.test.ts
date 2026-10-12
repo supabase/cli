@@ -1558,6 +1558,10 @@ describe("start integration", () => {
           expect(Cause.pretty(exit.cause)).toContain(
             "Unable to create the Studio snippets directory",
           );
+          expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+            error_kind: "unknown",
+            error_fingerprint: "tag:StartSnippetsDirectoryError:platform_error",
+          });
         }
         expect(
           child.spawned.some(

@@ -846,6 +846,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             (error) =>
               new StartSnippetsDirectoryError({
                 message: `Unable to create the Studio snippets directory: ${error.message}`,
+                cause: error,
               }),
           ),
         );

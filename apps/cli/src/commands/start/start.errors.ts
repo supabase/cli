@@ -1,7 +1,9 @@
 import { Data } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -45,8 +47,14 @@ export class StartInvalidConfigError extends Data.TaggedError("StartInvalidConfi
 /** Studio is enabled and `<workdir>/supabase/snippets` could not be created before bring-up. */
 export class StartSnippetsDirectoryError extends Data.TaggedError("StartSnippetsDirectoryError")<{
   readonly message: string;
+  readonly cause: PlatformError;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+    return (
+      causeDeclaration(this.cause) ?? {
+        ...actionability.unknown,
+        fingerprint_suffix: "platform_error",
+      }
+    );
   }
 }
