@@ -161,6 +161,7 @@ function syncStackApi(workdir: string, port: number) {
       stop: unusedSync,
       restart: unusedSync,
     },
+    startupEndpointChanges: unusedSync,
     stop: unusedSync,
     destroy: unusedSync,
     gateway: unusedGateway,

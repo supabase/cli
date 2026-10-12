@@ -48,6 +48,7 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
+import { bindMountSpecSource } from "../../command-internal/docker-bind-classify.ts";
 import { HealthCheckTimeoutSeconds } from "../../command-internal/db-bootstrap/health-check.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
@@ -1494,6 +1495,80 @@ describe("start integration", () => {
             expect.objectContaining({ event: "cli_stack_started" }),
           );
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("starts Studio in a fresh project on Podman, which rejects missing bind sources", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const snippetsDir = path.join(tempRoot.current, "supabase", "snippets");
+        const route = defaultRoute();
+        const { layer, child } = yield* setup({
+          route: (args) =>
+            Effect.gen(function* () {
+              const sources = args.flatMap((arg, index) =>
+                args[0] === "create" && arg === "-v"
+                  ? [bindMountSpecSource(args[index + 1] ?? "")]
+                  : [],
+              );
+              for (const source of sources.filter((s) => s.startsWith(tempRoot.current)))
+                if (!(yield* fs.exists(source)))
+                  return {
+                    exitCode: 125,
+                    stderr: [`Error: statfs ${source}: no such file or directory`],
+                  };
+              return route(args);
+            }),
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        expect(createdContainerNames(child.spawned).some((name) => name.includes("_studio_"))).toBe(
+          true,
+        );
+        expect(yield* fs.exists(snippetsDir)).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("leaves supabase/snippets uncreated when Studio is excluded", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const { layer } = yield* setup();
+
+        yield* start(flags({ exclude: ["studio"] })).pipe(Effect.provide(layer));
+
+        expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "snippets"))).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("fails before creating anything when a file blocks supabase/snippets", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(tempRoot.current, "supabase", "snippets"), "");
+        const { layer, child } = yield* setup();
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StartSnippetsDirectoryError");
+          expect(Cause.pretty(exit.cause)).toContain(
+            "Unable to create the Studio snippets directory",
+          );
+          expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+            error_kind: "unknown",
+            error_fingerprint: "tag:StartSnippetsDirectoryError:platform_error",
+          });
+        }
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "create" || (s.args[0] === "network" && s.args[1] === "create"),
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.live("emits a machine status payload in json mode instead of the pretty table", () =>

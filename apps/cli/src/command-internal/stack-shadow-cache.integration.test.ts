@@ -1,4 +1,5 @@
 import { CliConfigSchema } from "@supabase/config";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
@@ -66,19 +67,27 @@ describe("stack shadow cache entry", () => {
       yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
 
       const base = input(fs, path, root);
-      const first = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const first = yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config");
       if (first === undefined) return yield* Effect.die("cache entry unexpectedly disabled");
 
       yield* fs.writeFileString(
         path.join(root, "supabase", "roles.sql"),
         "CREATE ROLE cache_probe;\n",
       );
-      const withRoles = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const withRoles = yield* stackShadowCacheEntry(
+        base,
+        "17",
+        "native",
+        "darwin",
+        "arm64",
+        "config",
+      );
       if (withRoles === undefined) return yield* Effect.die("roles entry unexpectedly disabled");
       expect(withRoles.key).not.toBe(first.key);
 
       const withWebhooks = yield* stackShadowCacheEntry(
         input(fs, path, root, { webhooksEnabled: true }),
+        "17",
         "native",
         "darwin",
         "arm64",
@@ -90,6 +99,7 @@ describe("stack shadow cache entry", () => {
 
       const withPassword = yield* stackShadowCacheEntry(
         input(fs, path, root, {}, { password: "rotated-password" }),
+        "17",
         "native",
         "darwin",
         "arm64",
@@ -100,17 +110,36 @@ describe("stack shadow cache entry", () => {
       expect(withPassword.key).not.toBe(withRoles.key);
 
       expect(
-        yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config", true),
+        yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config", true),
       ).toBeUndefined();
       expect(
         yield* stackShadowCacheEntry(
           input(fs, path, root, { projectEnvValues: { SUPABASE_SHADOW_CACHE: "0" } }),
+          "17",
           "native",
           "darwin",
           "arm64",
           "config",
         ),
       ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keys stock and OrioleDB shadows of the same major apart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-cache-version-" });
+      const base = input(fs, path, root);
+      const entry = (version: string) =>
+        stackShadowCacheEntry(base, version, "native", "darwin", "arm64", "config");
+      const [orioledb = ""] = orioledbVersions();
+
+      const stock = yield* entry("17");
+      const oriole = yield* entry(`${orioledb}-orioledb`);
+      expect(stock?.key).toBeDefined();
+      expect(oriole?.key).toBeDefined();
+      expect(oriole?.key).not.toBe(stock?.key);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

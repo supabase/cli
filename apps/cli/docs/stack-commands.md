@@ -93,6 +93,17 @@ owner are unreachable. Plain `status` JSON `env` comes from saved bindings and c
 stopped or sleeping members, while `--env` requires a reachable owner and a running primary
 database.
 
+Starting a stopped stack whose `config.toml` moved an endpoint to a different port, or to and from
+automatic, applies that change instead of failing: text output prints one line per changed endpoint,
+for example `api: 54321 → 26199`, and JSON/stream-json output add an `endpoint_changes` array (each
+entry naming the endpoint, the `endpoints` keys it moved in `keys`, and its `from`/`to` port) to the
+success payload, present only when a change applied. A requested fixed port that is already taken
+fails the start with the usual port conflict; the new port stays saved and the previous automatic
+port is released, so starting again succeeds once the port is free. A changed artifact version or
+PostgreSQL major version still fails, naming the changed setting and suggesting
+`supabase stack destroy`. A changed port met by a stack whose owner is still running (for example
+after `stack prepare`) fails with advice to run `supabase stack stop`, then `supabase stack start`.
+
 ## Exporting environment variables
 
 ```sh
@@ -166,8 +177,9 @@ Other values are rejected. The override is applied before reading the project co
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit. PostgreSQL uses the selected major version (15 or 17); invalid configuration
-or an unsupported PostgreSQL major warns with the cause and uses catalog defaults. This inventory describes the
+Mailpit. PostgreSQL uses the selected major version (15 or 17), or the catalog's OrioleDB build
+when `db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL major, or an
+OrioleDB version the catalog does not pin warns with the cause and uses catalog defaults. This inventory describes the
 CLI catalog, not running containers, downloaded images, or service health. The Docker and native
 stack runtimes use the same catalog versions, though a running stack launched by another CLI
 version or using mirrored images may differ. Legacy version pins and slim-image overrides do not
@@ -181,8 +193,9 @@ and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
 
 When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
 `inspect` families use the project stack and provision a throwaway shadow database owned by the
-stack runtime. Top-level `supabase pull` uses the same stack shadow
-as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
+stack runtime. The shadow runs the project's resolved database version, the OrioleDB build when
+`db.orioledb_version` is set, and its baseline cache is keyed by that version. Top-level
+`supabase pull` uses the same stack shadow as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
 A `--db-url` that matches `config.toml` host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
