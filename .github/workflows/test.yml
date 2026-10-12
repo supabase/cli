@@ -218,7 +218,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Run stack native whole-stack scenarios
         working-directory: packages/stack
@@ -361,7 +360,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Setup Podman
         uses: ./.github/actions/setup-podman

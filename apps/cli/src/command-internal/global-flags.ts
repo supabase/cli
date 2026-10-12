@@ -294,9 +294,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     if (explicit !== undefined) {
       return explicit;
     }
-    return (
-      flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv))
-    );
+    return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv));
   });
 
 /**

@@ -409,7 +409,7 @@ describe("services", () => {
         path.join(workdir, "supabase", ".env"),
         `SUPABASE_DB_ORIOLEDB_VERSION=${orioledb}\n`,
       );
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 

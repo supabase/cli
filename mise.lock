@@ -73,6 +73,7 @@ checksum = "sha256:6533bd8047fc012a3f66238d84f65cacdac669da00b9f6cf042c1734c252b
 url = "https://github.com/jdx/jactionlint/releases/download/v1.8.2/jactionlint_1.8.2_linux_amd64.tar.gz"
 url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/611338580"
 provenance = "github-attestations"
+provenance_verified = true
 
 [tools.jactionlint."platforms.linux-x64-baseline"]
 checksum = "sha256:6533bd8047fc012a3f66238d84f65cacdac669da00b9f6cf042c1734c252bc93"

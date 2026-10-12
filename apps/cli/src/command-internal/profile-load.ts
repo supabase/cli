@@ -127,9 +127,10 @@ export function loadProfile(
       const raw = config[field.key];
       const weak = weakString(raw);
       if (weak === undefined) {
-        decodeErrors.push(
-          `${field.key}: expected a string, got ${valueTypeName(raw)}: ${JSON.stringify(raw)}`,
+        const shown = yield* encodeJsonValue(raw).pipe(
+          Effect.mapError((error) => readError(error.message)),
         );
+        decodeErrors.push(`${field.key}: expected a string, got ${valueTypeName(raw)}: ${shown}`);
         continue;
       }
       values.set(field.key, weak);
@@ -169,6 +170,9 @@ const readError = (detail: string) =>
 const failRead = (detail: string) => Effect.fail(readError(detail));
 
 const quoteJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+/** JSON rendering of a non-string profile value for decode-error messages. */
+const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Aggregate decode-error template: multiple failing fields render as one block. */
 const failDecode = (detail: string) => fail(`failed to parse profile:\n${detail}`);

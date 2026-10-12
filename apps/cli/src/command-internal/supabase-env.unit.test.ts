@@ -48,9 +48,7 @@ describe("supabaseEnvBoolWithProjectFallback", () => {
       expect(
         yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }).pipe(withShellEnv({})),
       ).toBe(false);
-      expect(yield* supabaseEnvBoolWithProjectFallback(KEY, {}).pipe(withShellEnv({}))).toBe(
-        false,
-      );
+      expect(yield* supabaseEnvBoolWithProjectFallback(KEY, {}).pipe(withShellEnv({}))).toBe(false);
     }),
   );
 
@@ -124,9 +122,11 @@ describe("supabaseEnvBoolWithProjectFallback", () => {
         ),
       ).toBe(false);
       expect(
-        yield* supabaseEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }, { whenUnset: true }).pipe(
-          withShellEnv({}),
-        ),
+        yield* supabaseEnvBoolWithProjectFallback(
+          KEY,
+          { [KEY]: "false" },
+          { whenUnset: true },
+        ).pipe(withShellEnv({})),
       ).toBe(false);
     }),
   );
