@@ -7,6 +7,7 @@ import {
 } from "@supabase/config/internal";
 import {
   Cache,
+  Console,
   Data,
   Duration,
   Effect,
@@ -175,8 +176,20 @@ export const cliConfigValuesLayer = Layer.effect(
       return output.warn(message);
     };
 
+    const deprecationsSeen = new Set<string>();
+    const warnDeprecationOnce = (message: string) => {
+      if (deprecationsSeen.has(message)) return Effect.void;
+      deprecationsSeen.add(message);
+      return Console.error(message).pipe(
+        Effect.provideService(Console.Console, globalThis.console),
+      );
+    };
+
     const parsedDocuments = yield* Cache.makeWith(
-      (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
+      (workdir: string) =>
+        withPlatform(
+          parseCliConfigDocumentFile(workdir, { search: false, onWarning: warnDeprecationOnce }),
+        ),
       {
         capacity: 8,
         timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
@@ -343,9 +356,15 @@ export const cliConfigValuesLayer = Layer.effect(
       const invalid: Array<CliConfigValueError> = [];
       const entryFailures: Array<CliConfigValueError> = [];
       const overrideWarnings: Array<string> = [];
+      const declaredResolved: Array<ReadonlyArray<string>> = [];
+      const materializedResolved: Array<ReadonlyArray<string>> = [];
+      const fileResolved: Array<ReadonlyArray<string>> = [];
       for (const key of enumerated.values()) {
         const fileValue = fileWrite(key, sources);
-        if (fileValue !== undefined) setDocumentValue(fileDraft, key.segments, fileValue);
+        if (fileValue !== undefined) {
+          setDocumentValue(fileDraft, key.segments, fileValue);
+          fileResolved.push(key.segments);
+        }
         const picked = pickCliConfigKey(key, sources);
         if (Result.isFailure(picked)) {
           if (target.tolerateInvalid) {
@@ -369,10 +388,15 @@ export const cliConfigValuesLayer = Layer.effect(
           }
         }
         const declared = declaredWrite(key, picked.success, sources.config(key.segments)?.value);
-        if (declared !== undefined) setDocumentValue(declaredDraft, key.segments, declared);
+        if (declared !== undefined) {
+          setDocumentValue(declaredDraft, key.segments, declared);
+          declaredResolved.push(key.segments);
+        }
         const materialized = materializedWrite(key, picked.success, declared);
-        if (materialized !== undefined)
+        if (materialized !== undefined) {
           setDocumentValue(materializedDraft, key.segments, materialized);
+          materializedResolved.push(key.segments);
+        }
       }
       const [firstFailure] = entryFailures;
       if (firstFailure !== undefined) {
@@ -398,6 +422,8 @@ export const cliConfigValuesLayer = Layer.effect(
           envValues,
           cliCompat: true,
           document: declaredDraft,
+          resolvedPaths: declaredResolved,
+          onWarning: warnDeprecationOnce,
         }),
       );
       const fileDeclared = withPlatform(
@@ -405,7 +431,8 @@ export const cliConfigValuesLayer = Layer.effect(
           envValues,
           cliCompat: true,
           document: fileDraft,
-          silent: true,
+          resolvedPaths: fileResolved,
+          onWarning: warnDeprecationOnce,
         }),
       );
       const materializedLoaded = yield* withPlatform(
@@ -413,7 +440,8 @@ export const cliConfigValuesLayer = Layer.effect(
           envValues,
           cliCompat: true,
           document: materializedDraft,
-          silent: true,
+          resolvedPaths: materializedResolved,
+          onWarning: warnDeprecationOnce,
         }),
       );
 
@@ -430,7 +458,10 @@ export const cliConfigValuesLayer = Layer.effect(
             : {
                 tier: "config",
                 origin: decoded,
-                ...(appliedRemote === undefined ? {} : { remote: appliedRemote }),
+                ...(decoded.source === "remote" && appliedRemote !== undefined
+                  ? { remote: appliedRemote }
+                  : {}),
+                ...(merged === null ? {} : { file: merged.path }),
               };
         },
       };

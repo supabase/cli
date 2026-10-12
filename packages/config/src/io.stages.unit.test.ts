@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -139,6 +139,52 @@ describe("config pipeline stages", () => {
       source: "environment",
       envVariables: ["PROJECT_NAME"],
     });
+  });
+
+  test("a resolved path stays verbatim while an unlisted sibling still resolves", async () => {
+    const cwd = await makeProject(
+      'project_id = "env(PROJECT_NAME)"\n[auth]\nsite_url = "env(SITE)"\n',
+    );
+    const decoded = await run(
+      Effect.gen(function* () {
+        const merged = yield* parseMerge(cwd, { search: false, selectRemote: () => undefined });
+        if (merged === null) return null;
+        return yield* decodeMergedCliConfig(merged, {
+          envValues: { PROJECT_NAME: "from-env", SITE: "http://resolved.test" },
+          resolvedPaths: [["auth", "site_url"]],
+        });
+      }),
+    );
+
+    expect(decoded?.config.project_id).toBe("from-env");
+    expect(decoded?.config.auth.site_url).toBe("env(SITE)");
+  });
+
+  test("onWarning receives each deprecation warning instead of the real console", async () => {
+    const cwd = await makeProject(
+      '[inbucket]\nenabled = true\n[auth.external.slack]\nenabled = true\nclient_id = "a"\nsecret = "b"\n',
+    );
+    const warnings: Array<string> = [];
+    const onWarning = (message: string) => Effect.sync(() => void warnings.push(message));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await run(
+        Effect.gen(function* () {
+          const parsed = yield* parseCliConfigDocumentFile(cwd, { search: false, onWarning });
+          if (parsed === null) return;
+          const merged = yield* mergeParsedCliConfig(parsed, { selectRemote: () => undefined });
+          yield* decodeMergedCliConfig(merged, { envValues: {}, cliCompat: true, onWarning });
+        }),
+      );
+
+      expect(warnings).toEqual([
+        "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+        'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
+      ]);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { vi } from "vitest";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
@@ -1307,6 +1308,31 @@ major_version = 15
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live("leaves a base-only value under an applied remote without a remote origin", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        `[[experimental.inspect.rules]]
+name = "base-rule"
+query = "select 1"
+
+[remotes.staging]
+project_id = "${LINKED}"
+
+[remotes.staging.db]
+major_version = 15
+`,
+      );
+      yield* link(root, LINKED);
+
+      const { originAt } = yield* materialize(root, { ref: LINKED });
+
+      const origin = originAt("experimental.inspect.rules");
+      expect(origin).toMatchObject({ tier: "config" });
+      expect(origin).not.toHaveProperty("remote");
+      expect(origin).toHaveProperty("file", expect.stringContaining("config.toml"));
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("decodes defaults when the workdir has no config file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1495,4 +1521,95 @@ project_id = "${LINKED}"
       Effect.scoped,
     ),
   );
+
+  it.live("expands a chained env reference once across get, loaded and materialized", () =>
+    Effect.gen(function* () {
+      const root = yield* project('[auth]\nsite_url = "http://from-config"\n', {
+        supabaseEnv: "CHAIN_W=w\n",
+      });
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const got = yield* resolvedConfig.get(CliConfigKeys.auth.siteUrl);
+
+      expect(got.value).toBe("env(CHAIN_W)");
+      expect(resolvedConfig.loaded.config.auth.site_url).toBe("env(CHAIN_W)");
+      expect(resolvedConfig.materialized.config.auth.site_url).toBe("env(CHAIN_W)");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) =>
+        withShell({ SUPABASE_AUTH_SITE_URL: "env(CHAIN_Y)", CHAIN_Y: "env(CHAIN_W)" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("expands a chained env reference in a config-tier secret once", () =>
+    Effect.gen(function* () {
+      const root = yield* project('[auth]\njwt_secret = "env(CHAIN_Y)"\n', {
+        supabaseEnv: "CHAIN_W=w\n",
+      });
+      const layer = configValuesLayer();
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const got = yield* resolvedConfig.get(CliConfigKeys.auth.jwtSecret);
+
+      expect(got.value).toEqual(Option.some("env(CHAIN_W)"));
+      expect(resolvedConfig.loaded.config.auth.jwt_secret).toBe("env(CHAIN_W)");
+      expect(resolvedConfig.materialized.config.auth.jwt_secret).toBe("env(CHAIN_W)");
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ CHAIN_Y: "env(CHAIN_W)" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("keeps a flag literal that looks like an env reference as written", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n', { supabaseEnv: "CHAIN_W=w\n" });
+      const layer = configValuesLayer({
+        flags: [flagInput("db.seed.sql_paths", "sql-paths", ["env(CHAIN_W)"])],
+      });
+
+      const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+
+      expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["env(CHAIN_W)"]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("prints each deprecation warning once across targets and invalidation", () => {
+    const warnings: Array<string> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    });
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `[inbucket]
+enabled = true
+
+[auth.external.slack]
+enabled = true
+client_id = "a"
+secret = "b"
+`,
+      );
+      const layer = configValuesLayer();
+
+      yield* Effect.gen(function* () {
+        const values = yield* CliConfigValues;
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
+        yield* values.invalidate;
+        yield* values.load({ workdir: root, projectRef: Option.none() });
+      }).pipe(Effect.provide(layer));
+
+      const warned = (needle: string) => warnings.filter((message) => message.includes(needle));
+      expect(warned("config section [inbucket] is deprecated")).toHaveLength(1);
+      expect(warned('disabling deprecated "slack" provider')).toHaveLength(1);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({}, effect),
+      Effect.scoped,
+      Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())),
+    );
+  });
 });

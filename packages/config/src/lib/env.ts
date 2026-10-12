@@ -208,7 +208,12 @@ function walk(
   onResolvedEnv:
     | ((path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void)
     | undefined,
+  skip: ((path: ReadonlyArray<string>) => boolean) | undefined,
 ): unknown {
+  if (skip?.(path) === true) {
+    return document;
+  }
+
   if (Array.isArray(document)) {
     // Element-level resolutions are reported once, at the array's own path —
     // one array literal may draw on several env vars, so the names collect.
@@ -225,7 +230,7 @@ function walk(
           };
     const result = document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child, cliCompat, [...path, String(index)], onResolvedArrayEnv);
+      return walk(item, env, child, cliCompat, [...path, String(index)], onResolvedArrayEnv, skip);
     });
     if (envNames.length > 0) {
       onResolvedEnv?.(path, envNames);
@@ -237,7 +242,7 @@ function walk(
     return Object.fromEntries(
       Object.entries(document).map(([key, value]) => {
         const child = ast === null ? null : descendAst(ast, key);
-        return [key, walk(value, env, child, cliCompat, [...path, key], onResolvedEnv)];
+        return [key, walk(value, env, child, cliCompat, [...path, key], onResolvedEnv, skip)];
       }),
     );
   }
@@ -293,7 +298,17 @@ export function interpolateEnvReferencesAgainstSchema(
      * leaves report once at the array path, collecting every element's
      * variable — one array literal may draw on several). */
     readonly onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void;
+    /** A leaf or array at a path this returns true for is kept verbatim, already resolved. */
+    readonly skip?: (path: ReadonlyArray<string>) => boolean;
   },
 ): unknown {
-  return walk(document, env, schema.ast, options?.cliCompat ?? false, [], options?.onResolvedEnv);
+  return walk(
+    document,
+    env,
+    schema.ast,
+    options?.cliCompat ?? false,
+    [],
+    options?.onResolvedEnv,
+    options?.skip,
+  );
 }

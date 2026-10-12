@@ -571,7 +571,14 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
+/** Writes to the real console so a caller's deferred or buffered `Console` cannot delay or swallow it. */
+const warnOnRealConsole = (message: string): Effect.Effect<void> =>
+  Console.error(message).pipe(Effect.provideService(Console.Console, globalThis.console));
+
+const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (
+  filePath: string,
+  onWarning: (message: string) => Effect.Effect<void> = warnOnRealConsole,
+) {
   const fs = yield* FileSystem.FileSystem;
   const format = filePath.endsWith(".json") ? "json" : "toml";
   const content = yield* fs.readFileString(filePath);
@@ -583,20 +590,15 @@ const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: str
     normalizeDeprecatedSMTPSections(document);
   const { document: normalized, deprecatedPaths: deprecatedOrioleDBPaths } =
     normalizeDeprecatedOrioleDBVersion(smtpNormalized);
-  // Warn on stderr, writing directly to the real console (bypassing whatever `Console.Console`
-  // is ambient) so a caller wrapping this in a deferred/buffered console can't delay or
-  // swallow it.
   for (const section of deprecatedSections) {
     const replacement = section.replace(/inbucket$/, "local_smtp");
-    yield* Console.error(
+    yield* onWarning(
       `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
-    ).pipe(Effect.provideService(Console.Console, globalThis.console));
+    );
   }
   for (const path of deprecatedOrioleDBPaths) {
     const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
-    yield* Console.error(`WARN: ${path} is deprecated. Please use ${replacement} instead.`).pipe(
-      Effect.provideService(Console.Console, globalThis.console),
-    );
+    yield* onWarning(`WARN: ${path} is deprecated. Please use ${replacement} instead.`);
   }
   return { format, content, document, normalized } as const;
 });
@@ -670,8 +672,10 @@ export interface DecodeMergedCliConfigOptions {
   readonly envValues: Readonly<Record<string, string>>;
   readonly cliCompat?: boolean;
   readonly document?: Record<string, unknown>;
-  /** Skips the deprecation warnings, for a caller that decodes the same document twice. */
-  readonly silent?: boolean;
+  /** Receives each deprecation warning; defaults to writing it to the real console. */
+  readonly onWarning?: (message: string) => Effect.Effect<void>;
+  /** Paths whose values are already resolved: the decode keeps them verbatim instead of expanding `env()` again. */
+  readonly resolvedPaths?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(function* (
@@ -679,13 +683,17 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   options: DecodeMergedCliConfigOptions,
 ) {
   const cliCompat = options.cliCompat ?? false;
+  const onWarning = options.onWarning ?? warnOnRealConsole;
+  const resolvedPathKeys = new Set((options.resolvedPaths ?? []).map(pathKey));
   const interpolateDocument = (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
+    skip?: (path: ReadonlyArray<string>) => boolean,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, options.envValues, CliConfigSchema, {
       cliCompat,
       onResolvedEnv,
+      skip,
     });
 
   let interpolatedRemotes = merged.interpolatedRemotes;
@@ -707,10 +715,14 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     ? (options.document ?? merged.document)
     : merged.document;
   const documentForDecode = isObject(documentToDecode)
-    ? interpolateDocument(documentToDecode, (path, envNames) => {
-        resolvedEnvironmentPaths.push(Array.from(path));
-        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
-      })
+    ? interpolateDocument(
+        documentToDecode,
+        (path, envNames) => {
+          resolvedEnvironmentPaths.push(Array.from(path));
+          resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
+        },
+        (path) => resolvedPathKeys.has(pathKey(path)),
+      )
     : documentToDecode;
 
   // Strip the deprecated `auth.external.{linkedin,slack}` provider ids from the post-remote-merge
@@ -720,12 +732,11 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     deprecatedProviders,
     removedProviders,
   } = normalizeDeprecatedExternalProviders(documentForDecode);
-  // Pinned to the real console, same as the `[inbucket]` warning above.
-  if (cliCompat && options.silent !== true) {
+  if (cliCompat) {
     for (const ext of deprecatedProviders) {
-      yield* Console.error(
+      yield* onWarning(
         `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
-      ).pipe(Effect.provideService(Console.Console, globalThis.console));
+      );
     }
   }
 
@@ -903,7 +914,11 @@ export interface ParsedCliConfigDocument {
  */
 export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(function* (
   cwd: string,
-  options?: { readonly search?: boolean; readonly tomlOnly?: boolean },
+  options?: {
+    readonly search?: boolean;
+    readonly tomlOnly?: boolean;
+    readonly onWarning?: (message: string) => Effect.Effect<void>;
+  },
 ) {
   const located = yield* locateCliConfigFile(cwd, options);
 
@@ -913,6 +928,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
 
   const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
     located.filePath,
+    options?.onWarning,
   );
 
   return {
