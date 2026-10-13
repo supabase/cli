@@ -51,7 +51,7 @@
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS`, `` SAML 2.0 `EntityID` ``, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
+Styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS`, `` SAML 2.0 `EntityID` ``, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
@@ -67,5 +67,5 @@ Single `success` event with `{providers: items}` as data.
 
 ## Notes
 
-- The `SAML 2.0 EntityID` header label is rendered as plain text; the old Go CLI's markdown source wrote `` SAML 2.0 `EntityID` `` and Glamour strips the inline-code backticks. Our flat ASCII renderer drops them at the source for byte parity with Glamour's output.
+- The `SAML 2.0 EntityID` header label is rendered as plain text, without inline-code backticks.
 - Upgrade-gate side calls only fire on 4xx.

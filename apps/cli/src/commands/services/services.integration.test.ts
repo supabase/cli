@@ -40,6 +40,7 @@ import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { servicesCommand } from "./services.command.ts";
 import { services } from "./services.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
 
@@ -81,7 +82,7 @@ const defaultWorkdir = useTempWorkdir("supabase-services-");
 function setup(
   opts: {
     format?: "text" | "json" | "stream-json";
-    goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+    outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     workdir?: string;
     accessToken?: string;
     accessTokenFailure?: PlatformError.PlatformError;
@@ -100,6 +101,7 @@ function setup(
     telemetry,
     cachedRefs,
     layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       FetchHttpClient.layer,
       mockRuntimeInfo({
@@ -108,11 +110,10 @@ function setup(
       }),
       out.layer,
       telemetry.layer,
-      Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
+      Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          dbPassword: Option.none(),
           githubToken: Option.none(),
           workdirEnvValue: Option.none(),
           profile: "supabase",
@@ -264,6 +265,7 @@ describe("services", () => {
       const analytics = mockAnalytics();
       const args = ["services"];
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         BunServices.layer,
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
@@ -313,7 +315,7 @@ describe("services", () => {
   });
 
   it.live("emits a services JSON array for --output json", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
 
     return Effect.gen(function* () {
       yield* services({}).pipe(Effect.provide(layer));
@@ -330,7 +332,7 @@ describe("services", () => {
   it.live("reports the configured Postgres version for local projects", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(15);
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(layer));
 
@@ -347,7 +349,7 @@ describe("services", () => {
   it.live("uses the stack artifact catalog when the stack backend is selected", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithDbMajorVersion(15);
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 
@@ -385,7 +387,7 @@ describe("services", () => {
         path.join(workdir, "supabase", ".env"),
         "SUPABASE_DB_MAJOR_VERSION=15\n",
       );
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 
@@ -409,7 +411,7 @@ describe("services", () => {
         path.join(workdir, "supabase", ".env"),
         `SUPABASE_DB_ORIOLEDB_VERSION=${orioledb}\n`,
       );
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 
@@ -430,7 +432,7 @@ describe("services", () => {
         const workdir = yield* makeProjectWithDbMajorVersion(16);
         yield* writeTempFile(workdir, "postgres-version", "legacy-postgres-tag\n");
         yield* writeTempFile(workdir, "gotrue-version", "legacy-auth-tag\n");
-        const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+        const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
         yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 
@@ -455,7 +457,7 @@ describe("services", () => {
   it.live("reports malformed config causes before falling back to the stack catalog", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[db]\nmajor_version = ");
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
 
@@ -471,13 +473,13 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores config.json and reads legacy config.toml for local image selection", () =>
+  it.live("reads config.json over config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
-        toml: "[db]\nmajor_version = 15\n",
-        json: '{"db":{"major_version":14}}',
+        toml: "[db]\nmajor_version = 17\n",
+        json: '{"db":{"major_version":15}}',
       });
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(layer));
 
@@ -504,7 +506,7 @@ project_id = "abcdefghijklmnopqrst"
 major_version = 15
 `);
       yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(layer));
 
@@ -620,7 +622,7 @@ major_version = 15
         workdir,
         accessToken: "sbp_test-token",
         apiUrl: server.url.origin,
-        goOutput: Option.some("json"),
+        outputFlag: Option.some("json"),
       });
 
       yield* services({}).pipe(Effect.provide(layer));
@@ -639,7 +641,7 @@ major_version = 15
         workdir,
         accessToken: "sbp_test-token",
         apiUrl: server.url.origin,
-        goOutput: Option.some("json"),
+        outputFlag: Option.some("json"),
       });
       yield* services({}).pipe(
         Effect.provide(Layer.mergeAll(stack.layer, stackBackendLayer("stack"))),
@@ -663,7 +665,7 @@ major_version = 15
       yield* writeTempFile(workdir, "postgres-version", "15.1.0.117\n");
       yield* writeTempFile(workdir, "gotrue-version", "2.74.2\n");
       yield* writeTempFile(workdir, "storage-version", "v1.28.0\n");
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(layer));
 
@@ -682,7 +684,7 @@ major_version = 15
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[edge_runtime]\ndeno_version = 1\n");
       yield* writeTempFile(workdir, "edge-runtime-version", "v9.9.9\n");
-      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+      const { layer, out } = setup({ outputFlag: Option.some("json"), workdir });
 
       yield* services({}).pipe(Effect.provide(layer));
 
@@ -694,6 +696,38 @@ major_version = 15
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([
+    ["legacy", undefined],
+    ["stack", "stack"],
+  ] as const)(
+    "fails naming the source when a config value is invalid (%s backend)",
+    ([, backend]) =>
+      Effect.gen(function* () {
+        const workdir = yield* makeProjectWithConfig('project_id = "demo"\n');
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", ".env"),
+          "SUPABASE_API_PORT=notaport\n",
+        );
+        const { layer } = setup({ workdir });
+
+        const exit = yield* services({}).pipe(
+          Effect.provide(
+            backend === undefined ? layer : Layer.mergeAll(layer, stackBackendLayer(backend)),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("CliConfigValueError");
+          expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        }
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live("prints config load errors and falls back to the default matrix", () =>
@@ -713,7 +747,7 @@ major_version = 15
   it.live("emits structured JSON for --output pretty combined with --output-format json", () => {
     // --output pretty defers to --output-format json instead of forcing the
     // human-readable table.
-    const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
+    const { layer, out } = setup({ format: "json", outputFlag: Option.some("pretty") });
 
     return Effect.gen(function* () {
       yield* services({}).pipe(Effect.provide(layer));
@@ -749,7 +783,7 @@ major_version = 15
   });
 
   it.live("emits a TOML services array for --output toml", () => {
-    const { layer, out } = setup({ goOutput: Option.some("toml") });
+    const { layer, out } = setup({ outputFlag: Option.some("toml") });
 
     return Effect.gen(function* () {
       yield* services({}).pipe(Effect.provide(layer));
@@ -762,7 +796,7 @@ major_version = 15
   });
 
   it.live("emits a YAML services array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: Option.some("yaml") });
+    const { layer, out } = setup({ outputFlag: Option.some("yaml") });
 
     return Effect.gen(function* () {
       yield* services({}).pipe(Effect.provide(layer));
@@ -773,7 +807,7 @@ major_version = 15
   });
 
   it.live("rejects --output env", () => {
-    const { layer } = setup({ goOutput: Option.some("env") });
+    const { layer } = setup({ outputFlag: Option.some("env") });
 
     return Effect.gen(function* () {
       const exit = yield* services({}).pipe(Effect.provide(layer), Effect.exit);

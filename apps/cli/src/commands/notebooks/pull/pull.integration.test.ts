@@ -300,7 +300,7 @@ describe("notebooks pull", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
-      goOutput: "json",
+      outputFlag: "json",
       routes: {
         [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
       },

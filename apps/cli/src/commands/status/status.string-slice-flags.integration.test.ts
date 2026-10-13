@@ -17,7 +17,7 @@ import {
 import { statusCommand } from "./status.command.ts";
 
 // `--override-name` and `--exclude` are string-slice flags, so malformed CSV aborts flag parsing
-// before the handler runs, with the exact `invalid argument %q for %q flag: %v` line on stderr.
+// before the handler runs, with the exact `invalid argument "<value>" for "<flag>" flag: <reason>` line on stderr.
 // These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-status-string-slice-int-");
@@ -64,7 +64,7 @@ function setup() {
   return { layer };
 }
 
-describe("status StringSlice flags (pflag CSV parity)", () => {
+describe("status StringSlice flags", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -86,7 +86,7 @@ describe("status StringSlice flags (pflag CSV parity)", () => {
   ];
 
   for (const { name, args, message } of cases) {
-    it.live(`${name} CSV fails at parse time with pflag's exact diagnostic`, () => {
+    it.live(`${name} CSV fails at parse time with the exact diagnostic`, () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));

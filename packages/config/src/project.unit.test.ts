@@ -54,7 +54,7 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
-  test("search: false only checks cwd itself, matching Go's exact-workdir resolution", async () => {
+  test("search: false only checks cwd itself", async () => {
     const cwd = makeTempProject();
     const repoRoot = join(cwd, "repo");
     const packageRoot = join(repoRoot, "apps", "web");
@@ -178,7 +178,7 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
-  test("parses a multiline double-quoted .env value (godotenv/Go parity)", async () => {
+  test("parses a multiline double-quoted .env value", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -248,7 +248,7 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
-  test("skipEnvLocal ignores .env.local entirely, matching Go's SUPABASE_ENV=test gate", async () => {
+  test("skipEnvLocal ignores .env.local entirely", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -419,7 +419,7 @@ jwt_secret = "env(PREVIEW_JWT_SECRET)"
     }
   });
 
-  test("resolveCliConfigValue preserves env() literal when the env var is missing (Go parity)", async () => {
+  test("resolveCliConfigValue preserves env() literal when the env var is missing", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -448,7 +448,7 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
-  test("resolveCliConfigValue preserves env() literal when the env var is present but empty (Go parity)", async () => {
+  test("resolveCliConfigValue preserves env() literal when the env var is present but empty", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -568,7 +568,7 @@ jwt_secret = "env(lowercase_secret)"
     }
   });
 
-  test("resolveCliConfigValue resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+  test("resolveCliConfigValue resolves a lowercase-named env() reference when cliCompat is true", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -592,7 +592,7 @@ jwt_secret = "env(lowercase_secret)"
           loaded!.config.auth.jwt_secret,
           projectEnv!,
           "auth.jwt_secret",
-          { goViperCompat: true },
+          { cliCompat: true },
         ),
       );
 

@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import type { DbSession } from "./db-connection.service.ts";
 import { applySeedFiles } from "./seed.ts";
 
@@ -36,7 +37,7 @@ const run = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* applySeedFiles(session, fs, path, workdir, { enabled: true, sqlPaths });
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cliConfigProviderLayer)));
 
 describe("applySeedFiles seed glob", () => {
   it.effect("treats a backslash escape as a glob metacharacter (matches the real file)", () => {
@@ -78,38 +79,35 @@ describe("applySeedFiles seed glob", () => {
     );
   });
 
-  it.effect(
-    "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "seed-"));
-      mkdirSync(join(dir, "seeds"));
-      writeFileSync(join(dir, "seeds", "b.sql"), "insert into t values (2);");
-      writeFileSync(join(dir, "seeds", "a.sql"), "insert into t values (1);");
-      writeFileSync(join(dir, "seeds", "README.md"), "not a seed file");
-      const { session, queries } = fakeSession();
-      const out = mockOutput();
-      return run(session, dir, ["seeds"], out).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const upserts = queries.filter((q) =>
-              q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
-            );
-            expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
-            expect(out.rawChunks.map((c) => c.text)).toEqual([
-              "Seeding data from seeds/a.sql...\n",
-              "Seeding data from seeds/b.sql...\n",
-            ]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("expands a matched directory to its sorted, regular .sql files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "seed-"));
+    mkdirSync(join(dir, "seeds"));
+    writeFileSync(join(dir, "seeds", "b.sql"), "insert into t values (2);");
+    writeFileSync(join(dir, "seeds", "a.sql"), "insert into t values (1);");
+    writeFileSync(join(dir, "seeds", "README.md"), "not a seed file");
+    const { session, queries } = fakeSession();
+    const out = mockOutput();
+    return run(session, dir, ["seeds"], out).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const upserts = queries.filter((q) =>
+            q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
+          );
+          expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
+          expect(out.rawChunks.map((c) => c.text)).toEqual([
+            "Seeding data from seeds/a.sql...\n",
+            "Seeding data from seeds/b.sql...\n",
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("applySeedFiles scanner buffer size", () => {
   it.effect(
-    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured",
     () => {
       const dir = mkdtempSync(join(tmpdir(), "seed-scanner-"));
       // The seed text must exceed the 4096-byte scanner floor regardless of the configured

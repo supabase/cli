@@ -90,7 +90,7 @@ backend — same roles as `storage ls`.
 
 ## Notes
 
-- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+- **`--project-ref`** overrides ONLY the linked-ref
   resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.

@@ -38,29 +38,26 @@ function fakeSeedSession(opts: { restoreRoleSql?: string } = {}) {
 // (`../../../shared/path-match.ts`) end to end; pattern-matching semantics are covered by
 // `path-match.unit.test.ts`.
 describe("getPendingSeeds (glob character classes)", () => {
-  it.effect(
-    "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "seed-glob-"));
-      writeFileSync(join(dir, "a.sql"), "select 1;");
-      writeFileSync(join(dir, "b.sql"), "select 2;");
-      const { session } = fakeSeedSession();
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        // `[!a]` is a positive class of `!` and `a`; only a leading `^` negates.
-        const pending = yield* getPendingSeeds(session, fs, path, ["[!a].sql"], dir);
-        expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(BunServices.layer),
-      );
-    },
-  );
+  it.effect("treats a leading `!` in a bracket class as literal, not negation", () => {
+    const dir = mkdtempSync(join(tmpdir(), "seed-glob-"));
+    writeFileSync(join(dir, "a.sql"), "select 1;");
+    writeFileSync(join(dir, "b.sql"), "select 2;");
+    const { session } = fakeSeedSession();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // `[!a]` is a positive class of `!` and `a`; only a leading `^` negates.
+      const pending = yield* getPendingSeeds(session, fs, path, ["[!a].sql"], dir);
+      expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(BunServices.layer),
+    );
+  });
 
   it.effect(
-    "warns Go's bad-pattern message for an unterminated bracket class, not a bogus no-match",
+    "warns the bad-pattern message for an unterminated bracket class, not a bogus no-match",
     () => {
       // An unclosed `[` is malformed, so `fs.Glob` reports a syntax error, not a bogus
       // "no files matched" for a well-formed-but-empty pattern.
@@ -116,7 +113,7 @@ describe("seedData (dirty parse)", () => {
   });
 
   it.effect(
-    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured",
     () => {
       const dir = mkdtempSync(join(tmpdir(), "seed-scanner-"));
       // The seed text must exceed the 4096-byte scanner floor regardless of the configured

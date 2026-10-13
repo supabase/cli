@@ -1,11 +1,14 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPull } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   name: Argument.String("migration name").pipe(
@@ -21,13 +24,11 @@ const config = {
     ),
     Flag.optional,
   ),
-  usePgDelta: Flag.Boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to pull declarative schema."),
-    // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints
-    // cobra's deprecation line.
-    Flag.withHidden,
-    Flag.optional,
-  ),
+  usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
+    name: "use-pg-delta",
+    description: "Use pg-delta to pull declarative schema.",
+    hidden: true,
+  }),
   diffEngine: Flag.Literals("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
@@ -66,11 +67,12 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 export type DbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -104,4 +106,6 @@ export const dbPullCommand = Command.make("pull", config).pipe(
     ),
   ),
   Command.provide(dbPullRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

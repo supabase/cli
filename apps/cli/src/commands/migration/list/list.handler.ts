@@ -8,14 +8,17 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import {
+  rejectPasswordWithDirectTarget,
+  resolveDbTargetFlags,
+} from "../../../command-internal/db-target-flags.ts";
 import {
   listRemoteMigrations,
   loadLocalVersions,
 } from "../../../command-internal/migration-history.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { MigrationPasswordFlagsError, MigrationTargetFlagsError } from "../migration.errors.ts";
+import { MigrationTargetFlagsError } from "../migration.errors.ts";
 import type { MigrationListFlags } from "./list.command.ts";
 import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
 
@@ -40,12 +43,7 @@ const runList = Effect.fnUntraced(function* (
       message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
     });
   }
-  if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-    return yield* new MigrationPasswordFlagsError({
-      message:
-        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-    });
-  }
+  yield* rejectPasswordWithDirectTarget(target.connType ?? "linked", flags.password);
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.

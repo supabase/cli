@@ -45,7 +45,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
 
     // Resolve the project ref for --linked before loading config, so the
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is
-    // merged over the base config by `loadCliConfig`. `--linked` selects the
+    // merged over the base config by the resolved config load. `--linked` selects the
     // linked path whenever it's set, even `--linked=false`.
     const setFlags = changedLinkedLocalFlags(cliArgs.args);
     const isLinked = setFlags.includes("linked");

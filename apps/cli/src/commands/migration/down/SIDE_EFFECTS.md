@@ -65,16 +65,14 @@ Same structured result delivered as an NDJSON `result` event.
 - `--last` (default 1) resets up to the last n migration versions; must be `> 0`
   and `<` the number of applied migrations.
 - `--local` (default true), `--linked`, and `--db-url` are mutually exclusive.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target).
 - Takes no positional arguments.
-- Skips a best-effort migrations-catalog cache optimization present in the old
-  Go CLI (documented divergence).
+- Performs no best-effort migrations-catalog cache optimization.
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config
   load using `DOTENV_PRIVATE_KEY[_*]`; an `encrypted:` value with no working key
   aborts the command with `failed to parse config: …`.

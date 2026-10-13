@@ -16,6 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -212,6 +213,7 @@ const setup = (opts: SetupOpts = {}) =>
     });
 
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       runtimeInfoLayer,
       out.layer,
       cliSettings,
@@ -345,7 +347,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps an explicit --project-id raw, unsanitized (Go's bypass)", () =>
+  it.live("keeps an explicit --project-id raw, unsanitized", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ projectId: Option.some("Raw Value!!") })).pipe(Effect.provide(layer));
@@ -637,7 +639,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits --all from docker's volume prune on a pre-1.42 API host, matching Go's gate", () =>
+  it.live("omits --all from docker's volume prune on a pre-1.42 API host", () =>
     Effect.gen(function* () {
       // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
       // nothing) on an older daemon.
@@ -680,7 +682,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("--backup=false alone does not delete data volumes, matching Go's dead flag", () =>
+  it.live("--backup=false alone does not delete data volumes", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -737,6 +739,22 @@ describe("stop integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails naming the source when a config value is invalid", () =>
+    Effect.gen(function* () {
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const { layer, child } = yield* setup({ route: defaultRoute() });
+      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -817,7 +835,7 @@ additional_redirect_urls = "http://a,http://b"
   it.live("warns on stderr for a deprecated auth.external provider", () =>
     Effect.gen(function* () {
       // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-      // `Console.error` only when `goViperCompat` is set.
+      // `Console.error` only under the CLI's config-loading semantics.
       yield* writeSupabaseFile(
         tempRoot.current,
         "config.toml",
@@ -1245,7 +1263,7 @@ enabled = true
     vi.spyOn(process.stderr, "write").mockImplementation(() => true),
   );
 
-  it.live("reports Go's --debug Pruned lines to stderr, in stage order", () =>
+  it.live("reports the --debug Pruned lines to stderr, in stage order", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         debug: true,
@@ -1276,7 +1294,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("never writes Go's Pruned lines to stderr without --debug", () =>
+  it.live("never writes the Pruned lines to stderr without --debug", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",

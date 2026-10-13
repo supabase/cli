@@ -47,7 +47,7 @@ export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke
         engine: outcome.engine,
       });
     }
-  } else if (invoke?.skipFinishedLine !== true) {
+  } else {
     yield* output.raw(`Finished ${aqua("supabase db pull")}.\n`);
   }
 });

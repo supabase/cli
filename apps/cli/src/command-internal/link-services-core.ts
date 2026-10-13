@@ -4,7 +4,7 @@ import type { PlatformError } from "effect/PlatformError";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
-import { tempPaths } from "./temp-paths.ts";
+import { tempPaths } from "../shared/config/temp-paths.ts";
 import {
   fetchGotrueVersion,
   fetchPostgrestVersion,

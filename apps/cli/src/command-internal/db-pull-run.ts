@@ -13,13 +13,15 @@ import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { bold } from "./colors.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -37,11 +39,9 @@ import {
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
 import {
-  parseBoolEnv,
   resolveDeclarativeFromArgs,
   resolvePullDiffEngine,
   schemaPathsTransitionWarning,
-  shouldUsePgDelta,
 } from "./diff-engine.ts";
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
@@ -63,7 +63,7 @@ import {
   PgDeltaEngine,
   type PgDeltaDatabaseEndpoint,
 } from "../commands/db/shared/pgdelta-engine.service.ts";
-import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
+import { type PgDeltaContext, isPgDeltaDebugEnabled } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
@@ -89,13 +89,11 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
-const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+const DEPRECATION_LINE = "Flag --use-pg-delta has been deprecated, use --declarative instead.";
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
- * --debug…" footer, which would read like a crash for what is really a finding. See
- * `docs/go-cli-divergences.md` for the established message/exit-code contract.
+ * --debug…" footer, which would read like a crash for what is really a finding.
  */
 const IN_SYNC_SUGGESTION =
   "The remote database is already in sync with your local migrations — nothing to pull.";
@@ -110,8 +108,6 @@ const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
   "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
-  /** Skip printing `Finished supabase db pull.` for callers that must not emit it. */
-  readonly skipFinishedLine?: boolean;
   /**
    * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
    * in-process caller that already ran its own aggregated confirmation.
@@ -164,11 +160,12 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
   const cliArgs = yield* CliArgs;
+  const configValues = yield* CliConfigValues;
 
   // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
   // the native initial-migra history repair too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   // `EXPERIMENTAL` resolves from either the global `--experimental` flag or
   // `SUPABASE_EXPERIMENTAL`, reusing `resolveExperimentalWithProjectEnv`'s flag-over-env
@@ -264,6 +261,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    const resolvedConfig = yield* configValues.load({
+      workdir: cliSettings.workdir,
+      projectRef: Option.fromNullishOr(linkedRef),
+    });
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
@@ -281,9 +282,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
             // override, same as `toml` above.
             connType === "linked" ? linkedRef : undefined,
-            // `toml`'s remote-override-key tracking (same matched block), so a remote-set
-            // bootstrap field isn't re-overridden by a conflicting `SUPABASE_*` env var here.
-            toml.remoteOverrideKeys,
           ),
         );
 
@@ -300,10 +298,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      // Precedence: `SUPABASE_PROJECT_ID` env override, then config.toml's `project_id`, then
-      // the workdir basename fallback — with the matched `[remotes.<ref>]` block's own
-      // `project_id` suppressing the raw env argument on the linked path.
-      projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
+      projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
@@ -364,16 +359,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
       pgDeltaDefault:
         (yield* currentStackBackend).kind === "stack" ||
-        shouldUsePgDelta({
-          configEnabled: toml.pgDelta.enabled,
-          usePgDeltaFlag: false,
-          envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-        }),
+        (yield* resolvedConfig.get(CliConfigKeys.experimental.pgdelta.enabled)).value,
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
       yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
     }
     const diffEngine = usePgDeltaDiff ? "pg-delta" : "migra";
+    const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
 
     // Connectivity check, run before dialing.
     return yield* Effect.scoped(
@@ -401,7 +393,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: isPgDeltaDebugEnabled(),
+              debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
@@ -657,7 +649,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     },
                     schema: diffSchema,
                     formatOptions,
-                    debug: isPgDeltaDebugEnabled(),
+                    debug: pgDeltaDebug,
                     strictCoverage: flags.strictCoverage,
                   });
                 }
