@@ -59,7 +59,7 @@ export const accountRecoveryReminderHook = (
     for (const { token } of rootFlagTokens(args, info.isValueTakingFlagToken)) {
       if (token === "-o" || token.startsWith("-o=")) return;
     }
-    yield* Effect.sync(() => process.stderr.write(`${message(state)}\n`));
+    yield* Effect.sync(() => process.stderr.write(`\n${message(state)}\n`));
   }).pipe(
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv())),
     Effect.withSpan("AccountRecoveryReminder.show"),
