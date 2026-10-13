@@ -19,8 +19,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: fill-sticky-disks-${{ github.ref }}
-  cancel-in-progress: true
+  # Every ref writes the same repository-wide disks, so fills run one at a time.
+  group: fill-sticky-disks
+  cancel-in-progress: false
 
 jobs:
   fill:
@@ -41,7 +42,7 @@ jobs:
       # Clearing on the default branch drops artifacts of older service versions.
       - name: Download native stack artifacts
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
         run: |
           if [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
             rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts/"*
@@ -58,7 +59,7 @@ jobs:
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
           SUPABASE_CLI_BINARY_OVERRIDE: ${{ github.workspace }}/apps/cli/dist/supabase
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
         run: |
           project="$(mktemp -d)"
           cli="$GITHUB_WORKSPACE/apps/cli/dist/supabase.js"
@@ -76,10 +77,6 @@ jobs:
           pnpm --silent --filter @supabase/stack prepare:test-artifacts --images |
             xargs --max-procs 4 --max-args 1 docker pull --quiet
 
-      - name: Stop Docker so its image disk can be saved
+      - name: Save Docker image disk
         if: always()
-        run: |
-          docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-          docker system prune --force
-          docker volume prune --all --force
-          sudo systemctl stop docker.socket docker.service
+        uses: ./.github/actions/save-docker-disk
