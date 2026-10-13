@@ -10,15 +10,17 @@ import type {
   PermissionVariant,
 } from "./permission-registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "./permission-global-flags.ts";
+import { mapped } from "../../src/command-internal/command-permissions/model.ts";
 import type {
   CommandPermissions,
   EntryCondition,
   OperationEntry,
+  PermissionFragment,
 } from "../../src/command-internal/command-permissions/model.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
 
-export interface RecordedMethodUrl {
+interface RecordedMethodUrl {
   readonly method: string;
   readonly url: string;
   /** Query parameters Effect's HttpClient keeps apart from `url` (a recorded request's `urlParams`). */
@@ -42,6 +44,8 @@ export interface DriftCheckOptions {
    */
   readonly exact?: boolean;
 }
+
+export interface BlockDriftOptions extends Omit<DriftCheckOptions, "command" | "acceptedFlags"> {}
 
 export interface AssertPermissionDriftOptions extends DriftCheckOptions {
   /** The command tree to look `command` up in; defaults to the default root (`start`/`status`/`stop` differ by stack backend). */
@@ -84,20 +88,20 @@ function queryOf(request: RecordedMethodUrl, apiUrl: string | undefined): URLSea
  * qualifier value the declaration names for the operation without an applicable entry declaring it.
  */
 function assertQualifiersMatch(
-  command: string,
+  prefix: string,
   request: RecordedMethodUrl,
   sent: URLSearchParams,
   applicable: ReadonlyArray<OperationEntry>,
   declaredForOperation: ReadonlyArray<OperationEntry>,
 ): void {
-  const label = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
+  const target = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
   if (
     !applicable.some((entry) =>
       Object.entries(entry.request?.query ?? {}).every(([key, value]) => sent.get(key) === value),
     )
   ) {
     throw new Error(
-      `assertPermissionDrift: "${command}": request ${label} was sent without the query qualifiers its declaration lists (${applicable
+      `${prefix}: request ${target} was sent without the query qualifiers its declaration lists (${applicable
         .map((entry) => JSON.stringify(entry.request?.query))
         .join(" or ")}).`,
     );
@@ -109,7 +113,7 @@ function assertQualifiersMatch(
     const value = sent.get(key);
     if (value !== null && !applicable.some((entry) => entry.request?.query?.[key] === value)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": request ${label} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
+        `${prefix}: request ${target} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
       );
     }
   }
@@ -128,12 +132,37 @@ export function assertPermissionDrift(options: AssertPermissionDriftOptions): vo
   });
 }
 
+/**
+ * Like {@link assertPermissionDrift}, for a building block built with `block()`: the label comes
+ * from the block's `source`, so a block test names no command. Use it where the module under test
+ * is the one that makes the calls.
+ */
+export function assertBlockDrift(fragment: PermissionFragment, options: BlockDriftOptions): void {
+  const sources = new Set(fragment.operations.map((entry) => entry.source));
+  const [name] = sources;
+  if (sources.size !== 1 || name === undefined) {
+    throw new Error(
+      `assertBlockDrift: expected the result of a single block(...) call, but its entries come from ${sources.size === 0 ? "no source" : `${sources.size} sources`}.`,
+    );
+  }
+  assertDriftAgainst(
+    { _tag: "Declared", permissions: mapped(fragment) },
+    { ...options, command: name, subject: "building block" },
+  );
+}
+
 /** {@link assertPermissionDrift} against an already-resolved lookup, so each failure branch can be exercised without a real command. */
 export function assertDriftAgainst(
   lookup: DeclaredPermissionsLookup,
-  options: DriftCheckOptions & { readonly variant?: PermissionVariant },
+  options: DriftCheckOptions & {
+    readonly variant?: PermissionVariant;
+    /** What `command` names in error messages; set by {@link assertBlockDrift}. */
+    readonly subject?: "command" | "building block";
+  },
 ): void {
-  const { command, requests, exact = false } = options;
+  const { command, requests, exact = false, subject = "command" } = options;
+  const label = subject === "command" ? `"${command}"` : `${subject} "${command}"`;
+  const helper = subject === "command" ? "assertPermissionDrift" : "assertBlockDrift";
   const activeFlags = options.activeFlags ?? {};
   if (lookup._tag === "NotFound") {
     throw new Error(
@@ -155,7 +184,7 @@ export function assertDriftAgainst(
   for (const flag of Object.keys(activeFlags)) {
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": activeFlags names "${flag}", but this command does not accept --${flag} — a shared building block may mention it without the command having it.`,
+        `${helper}: ${label}: activeFlags names "${flag}", but this ${subject} does not accept --${flag} — a shared building block may mention it without the command having it.`,
       );
     }
   }
@@ -176,19 +205,19 @@ export function assertDriftAgainst(
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) continue;
     if (typeof activeFlags[flag] !== "boolean") {
       throw new Error(
-        `assertPermissionDrift: "${command}": a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,
+        `${helper}: ${label}: a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,
       );
     }
   }
   for (const [flag, value] of Object.entries(activeFlags)) {
     if (!known.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": activeFlags names "${flag}", which this command's declaration never classifies — check for a typo.`,
+        `${helper}: ${label}: activeFlags names "${flag}", which this ${subject}'s declaration never classifies — check for a typo.`,
       );
     }
     if (typeof value !== "string" && valueChecked.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
+        `${helper}: ${label}: activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
       );
     }
   }
@@ -208,13 +237,13 @@ export function assertDriftAgainst(
     if (match.kind === "out-of-scope") continue;
     if (match.kind === "unmatched") {
       throw new Error(
-        `assertPermissionDrift: "${command}": request ${request.method} ${match.pathname} matched no known Management API operation — check operation-table.ts and the spec.`,
+        `${helper}: ${label}: request ${request.method} ${match.pathname} matched no known Management API operation — check operation-table.ts and the spec.`,
       );
     }
     requestedIds.add(match.operation.operationId);
     if (activeIds.has(match.operation.operationId)) {
       assertQualifiersMatch(
-        command,
+        `${helper}: ${label}`,
         request,
         queryOf(request, options.apiUrl),
         applicableByOperation.get(match.operation.operationId) ?? [],
@@ -224,11 +253,11 @@ export function assertDriftAgainst(
     }
     if (allDeclaredIds.has(match.operation.operationId)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this command but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
+        `${helper}: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this ${subject} but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
       );
     }
     throw new Error(
-      `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this command at all (activeFlags=${describeActiveFlags(activeFlags)}).`,
+      `${helper}: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this ${subject} at all (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 
@@ -242,7 +271,7 @@ export function assertDriftAgainst(
   );
   if (missingRequired.length > 0) {
     throw new Error(
-      `assertPermissionDrift: "${command}": exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=${describeActiveFlags(activeFlags)}).`,
+      `${helper}: ${label}: exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 }

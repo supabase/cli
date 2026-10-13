@@ -13,9 +13,8 @@ import {
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { projectRefLayer, projectRefPicker } from "./project-ref.layer.ts";
-import { mapped } from "../command-internal/command-permissions/model.ts";
 import { ProjectRefResolver } from "./project-ref.service.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
@@ -36,8 +35,6 @@ const PROJECT: Projects[number] = {
     release_channel: "ga",
   },
 };
-
-const declared = { _tag: "Declared", permissions: mapped(projectRefPicker) } as const;
 
 describe("projectRefLayer Management API requests", () => {
   const workdir = useTempWorkdir("project-ref-api-");
@@ -69,8 +66,7 @@ describe("projectRefLayer Management API requests", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
       ]);
-      assertDriftAgainst(declared, {
-        command: "project-ref picker block",
+      assertBlockDrift(projectRefPicker, {
         activeFlags: {},
         requests: api.requests,
       });
@@ -86,8 +82,7 @@ describe("projectRefLayer Management API requests", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
       ]);
-      assertDriftAgainst(declared, {
-        command: "project-ref picker block",
+      assertBlockDrift(projectRefPicker, {
         activeFlags: { "project-ref": "" },
         requests: api.requests,
       });

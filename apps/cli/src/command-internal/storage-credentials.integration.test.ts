@@ -8,12 +8,10 @@ import {
   mockCommandSettings,
 } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { mapped } from "./command-permissions/model.ts";
 import { resolveStorageCredentials, storageCredentials } from "./storage-credentials.ts";
 
-const declared = { _tag: "Declared", permissions: mapped(storageCredentials) } as const;
 const apiKeys = [
   { name: "anon", api_key: "anon-key", type: "legacy" },
   { name: "service_role", api_key: "service-role-key", type: "legacy" },
@@ -45,8 +43,7 @@ describe("resolveStorageCredentials for a remote project", () => {
 
       expect(credentials.apiKey).toBe("service-role-key");
       expect(api.requests.map((request) => request.urlParams)).toEqual(["reveal=true"]);
-      assertDriftAgainst(declared, {
-        command: "storage-credentials block",
+      assertBlockDrift(storageCredentials, {
         activeFlags: {},
         requests: api.requests,
       });
