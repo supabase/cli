@@ -36,6 +36,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: [...green, failed, run(100, "Require fast-forward", "failure")],
       threads: [],
@@ -49,6 +50,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: [...green, cancelled],
       threads: [],
@@ -61,6 +63,7 @@ describe("planRepair", () => {
     const running = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: [...green, run(99, "CodeQL", null)],
       threads: [finding],
@@ -68,6 +71,7 @@ describe("planRepair", () => {
     const missing = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: green.slice(1),
       threads: [finding],
@@ -81,6 +85,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [
         "@supabase/cli Claude could not resolve this merge: <!-- sync-agent resolve -->",
       ],
@@ -98,6 +103,7 @@ describe("planRepair", () => {
       runs: green,
       threads: [finding],
       reviewRunning: false,
+      reviewedHeads: [],
     });
 
     expect(plan.action).toBe("skip");
@@ -107,6 +113,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: [...green, run(-1, "Check code quality", "failure")],
       threads: [],
@@ -119,6 +126,7 @@ describe("planRepair", () => {
     const state = {
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED, repaired(HEAD)],
       runs: [...green, run(99, "Check code quality", "failure")],
     };
@@ -131,6 +139,7 @@ describe("planRepair", () => {
     const state = {
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
     };
@@ -143,6 +152,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: "d".repeat(40),
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED, repaired(HEAD), "<!-- sync-agent exhausted -->"],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [finding],
@@ -155,6 +165,7 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: true,
+      reviewedHeads: [],
       botComments: [RESOLVED],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
@@ -167,12 +178,26 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
+      reviewedHeads: [],
       botComments: [RESOLVED, `<!-- sync-agent workflow-suggestions head=${HEAD} -->`],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
     });
 
     expect(plan.action).toBe("skip");
+  });
+
+  test("approves a green head the AI review saw, but not one a repair commit moved past it", () => {
+    const state = {
+      reviewRunning: false,
+      reviewedHeads: [HEAD],
+      botComments: [RESOLVED, repaired(HEAD)],
+      runs: [...green, run(100, "Require fast-forward", "failure")],
+      threads: [],
+    };
+
+    expect(planRepair({ ...state, head: HEAD })).toEqual({ action: "approve" });
+    expect(planRepair({ ...state, head: "e".repeat(40) }).action).toBe("skip");
   });
 });
 

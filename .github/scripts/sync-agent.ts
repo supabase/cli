@@ -50,6 +50,7 @@ export interface ReviewThread {
 export type RepairPlan =
   | { action: "skip"; reason: string }
   | { action: "exhausted" }
+  | { action: "approve" }
   | { action: "repair"; failures: CheckRun[]; threads: ReviewThread[] };
 
 function repairMarker(head: string): string {
@@ -93,6 +94,8 @@ export function planRepair(state: {
   runs: CheckRun[];
   threads: ReviewThread[];
   reviewRunning: boolean;
+  /** Commits the AI review posted a review on. */
+  reviewedHeads: string[];
 }): RepairPlan {
   const { head, botComments, threads } = state;
   if (!botComments.some((body) => body.startsWith(RESOLVE_MARKER))) {
@@ -121,7 +124,10 @@ export function planRepair(state: {
     (run) => !["success", "neutral", "skipped"].includes(run.conclusion ?? ""),
   );
   if (threads.length === 0 && failures.length === 0) {
-    return { action: "skip", reason: "Nothing to repair." };
+    // A head the AI review saw has no repair commit on top, so only Claude's resolution and declined findings remain.
+    return state.reviewedHeads.includes(head)
+      ? { action: "approve" }
+      : { action: "skip", reason: "Nothing to repair." };
   }
   const rounds = botComments.filter((body) => body.startsWith(REPAIR_MARKER)).length;
   const headRepaired = botComments.some((body) => body.startsWith(repairMarker(head)));
@@ -648,11 +654,13 @@ async function collect(outputDir: string): Promise<void> {
       token,
       `/repos/${repository}/issues/${pull.number}/comments`,
     )),
-    ...(await listAll<{ user: { login: string } | null; body: string }>(
-      token,
-      `/repos/${repository}/pulls/${pull.number}/reviews`,
-    )),
   ];
+  const reviews = await listAll<{
+    user: { login: string } | null;
+    body: string;
+    commit_id: string;
+  }>(token, `/repos/${repository}/pulls/${pull.number}/reviews`);
+  comments.push(...reviews);
   const plan = planRepair({
     head: pull.head.sha,
     botComments: comments
@@ -666,12 +674,18 @@ async function collect(outputDir: string): Promise<void> {
     ),
     threads: await fetchOpenFindings(token, repository, pull.number),
     reviewRunning: await isReviewRunning(token, repository, pull.number),
+    reviewedHeads: reviews
+      .filter(
+        (review) =>
+          isLogin(review.user?.login, AI_REVIEW_LOGIN) && review.body.includes(AI_REVIEW_MARKER),
+      )
+      .map((review) => review.commit_id),
   });
   setOutput("action", plan.action);
   setOutput("pr", String(pull.number));
   setOutput("head", pull.head.sha);
 
-  if (plan.action === "skip") {
+  if (plan.action === "skip" || plan.action === "approve") {
     console.log(plan.reason);
     return;
   }
