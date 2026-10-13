@@ -14,13 +14,17 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 
+const aiModels: { claude: { haiku: string } } = JSON.parse(
+  await Bun.file(new URL("../../../.github/ai-models.json", import.meta.url)).text(),
+);
+
 const { values } = parseArgs({
   options: {
     tag: { type: "string" },
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    model: { type: "string", default: "claude-haiku-4-5-20251001" },
+    model: { type: "string", default: aiModels.claude.haiku },
   },
   strict: true,
 });

@@ -1,0 +1,11 @@
+{
+  "$comment": "Model IDs by family and tier. A new model can also need the pinned Claude Code or Codex CLI version in .github/workflows/ai-review.yml bumped.",
+  "claude": {
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5"
+  },
+  "codex": {
+    "sol": "gpt-6.1-sol"
+  }
+}

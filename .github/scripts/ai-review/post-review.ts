@@ -603,8 +603,8 @@ export function renderInlineComment(finding: MergedFinding): string {
 export interface ReviewFooterInfo {
   trigger: Trigger;
   runUrl: string;
-  /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Sourced from the workflow's
-   * model env vars so there's one source of truth for the model names. */
+  /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Sourced from
+   * `.github/ai-models.json` through the workflow's model env vars. */
   modelsFooter: string;
 }
 
