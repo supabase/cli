@@ -246,39 +246,61 @@ describe("hidden subcommands", () => {
     ]);
   });
 
-  it.effect("still executes hidden tombstoned subcommands by exact name", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-tombstone-" });
+  it.effect(
+    "still executes hidden tombstoned subcommands by exact name, with or without their old flags",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-hidden-flag-tombstone-",
+        });
 
-      for (const [args, suggestion] of [
-        [["db", "branch", "list"], undefined],
-        [["db", "remote", "changes"], undefined],
-        [["gen", "keys"], undefined],
-        [["db", "remote", "commit"], "Use `supabase db pull` instead."],
-        [["inspect", "db", "total-index-size"], "Use `supabase inspect db index-stats` instead."],
-        [["inspect", "db", "total-table-sizes"], "Use `supabase inspect db table-stats` instead."],
-        [["inspect", "db", "table-index-sizes"], "Use `supabase inspect db table-stats` instead."],
-      ] as const) {
-        const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(
-            Layer.merge(
-              testRootLayer(textCliOutputFormatter(), args),
-              processEnvLayer({ SUPABASE_HOME: home }),
+        for (const [path, flags, suggestion] of [
+          [["db", "branch", "list"], [], undefined],
+          [["db", "remote", "changes"], ["--schema", "public", "--linked"], undefined],
+          [["gen", "keys"], ["--project-ref", "abcdefghijklmnopqrst"], undefined],
+          [["db", "remote", "commit"], [], "Use `supabase db pull` instead."],
+          [
+            ["db", "remote", "commit"],
+            ["--schema", "public", "--linked", "-p", "secret"],
+            "Use `supabase db pull` instead.",
+          ],
+          [
+            ["inspect", "db", "total-index-size"],
+            ["--linked"],
+            "Use `supabase inspect db index-stats` instead.",
+          ],
+          [
+            ["inspect", "db", "total-table-sizes"],
+            ["--db-url", "postgresql://u:p@h/db"],
+            "Use `supabase inspect db table-stats` instead.",
+          ],
+          [
+            ["inspect", "db", "table-index-sizes"],
+            ["--local"],
+            "Use `supabase inspect db table-stats` instead.",
+          ],
+        ] as const) {
+          const args = [...path, ...flags];
+          const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+            Effect.provide(
+              Layer.merge(
+                testRootLayer(textCliOutputFormatter(), args),
+                processEnvLayer({ SUPABASE_HOME: home }),
+              ),
             ),
-          ),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (!Exit.isFailure(exit)) return;
-        const error = Cause.squash(exit.cause);
-        expect(error).toBeInstanceOf(RemovedSurfaceError);
-        if (!(error instanceof RemovedSurfaceError) || suggestion === undefined) continue;
-        expect(error.kind).toBe("command");
-        expect(error.message).toBe(`supabase ${args.join(" ")} was removed.`);
-        expect(error.suggestion).toBe(suggestion);
-      }
-    }).pipe(Effect.provide(BunServices.layer)),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(RemovedSurfaceError);
+          if (!(error instanceof RemovedSurfaceError) || suggestion === undefined) continue;
+          expect(error.kind).toBe("command");
+          expect(error.message).toBe(`supabase ${path.join(" ")} was removed.`);
+          expect(error.suggestion).toBe(suggestion);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it("does not list the removed inspect db aliases in help", () => {
