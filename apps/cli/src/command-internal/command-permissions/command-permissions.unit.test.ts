@@ -144,15 +144,27 @@ describe("command permission mapping completeness", () => {
                 `"${path}"'s \`when\` condition on "${entry.operationId}" names "--${cond.flag}", which doesn't exist${cond.source === undefined ? "" : ` (from building block "${cond.source}")`}`,
               ).toBe(true);
               const info = node.flagInfo.get(cond.flag);
-              if (cond.oneOf === undefined || info === undefined) continue;
               const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
+              if (cond.is !== undefined && info !== undefined) {
+                expect(
+                  info.isBoolean,
+                  `${where} tests --${cond.flag} with \`is\`, but it takes a value — use \`oneOf\``,
+                ).toBe(true);
+              }
+              if (cond.is === undefined && cond.oneOf === undefined && info?.isBoolean === true) {
+                expect(
+                  info.isOptional,
+                  `${where} tests --${cond.flag} by presence, but it has a default and is always present — use \`is\``,
+                ).toBe(true);
+              }
+              if (cond.oneOf === undefined || info === undefined) continue;
               expect(
                 cond.oneOf.length,
                 `${where} lists no values for --${cond.flag}`,
               ).toBeGreaterThan(0);
               expect(
                 info.isBoolean,
-                `${where} checks the value of --${cond.flag}, a switch with no value — use \`present\``,
+                `${where} checks the value of --${cond.flag}, a switch with no value — use \`is\` or \`present\``,
               ).toBe(false);
               for (const value of cond.oneOf) {
                 expect(

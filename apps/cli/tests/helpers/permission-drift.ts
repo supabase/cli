@@ -5,7 +5,10 @@ import type {
   PermissionVariant,
 } from "./permission-registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "./permission-global-flags.ts";
-import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
+import type {
+  CommandPermissions,
+  FlagCondition,
+} from "../../src/command-internal/command-permissions/model.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
 
@@ -39,7 +42,7 @@ export interface AssertPermissionDriftOptions extends DriftCheckOptions {
 
 function describeActiveFlags(activeFlags: ActiveFlags): string {
   const entries = Object.entries(activeFlags).map(([flag, value]) =>
-    value === true ? flag : `${flag}=${value}`,
+    value === true ? flag : `${flag}=${JSON.stringify(value)}`,
   );
   return `[${entries.join(", ")}]`;
 }
@@ -102,18 +105,28 @@ export function assertDriftAgainst(
   }
 
   const known = knownFlagNames(declared);
-  const valueChecked = new Set(
-    declared.operations.flatMap((entry) =>
-      (entry.when ?? []).flatMap((cond) => (cond.oneOf === undefined ? [] : [cond.flag])),
-    ),
-  );
+  const conditionFlags = (pick: (cond: FlagCondition) => boolean) =>
+    new Set(
+      declared.operations.flatMap((entry) =>
+        (entry.when ?? []).flatMap((cond) => (pick(cond) ? [cond.flag] : [])),
+      ),
+    );
+  const valueChecked = conditionFlags((cond) => cond.oneOf !== undefined);
+  const switchChecked = conditionFlags((cond) => cond.is !== undefined);
+  for (const flag of switchChecked) {
+    if (typeof activeFlags[flag] !== "boolean") {
+      throw new Error(
+        `assertPermissionDrift: "${command}": a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,
+      );
+    }
+  }
   for (const [flag, value] of Object.entries(activeFlags)) {
     if (!known.has(flag)) {
       throw new Error(
         `assertPermissionDrift: "${command}": activeFlags names "${flag}", which this command's declaration never classifies — check for a typo.`,
       );
     }
-    if (value === true && valueChecked.has(flag)) {
+    if (typeof value !== "string" && valueChecked.has(flag)) {
       throw new Error(
         `assertPermissionDrift: "${command}": activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
       );

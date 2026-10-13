@@ -50,6 +50,39 @@ describe("applicableOperations", () => {
     expect(applied({})).toEqual([]);
   });
 
+  it("applies a switch condition to the switch's effective value", () => {
+    const permissions = mapped([
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "best-effort",
+        when: [{ flag: "skip-pooler", is: false }],
+      },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+    expect(applied({ "skip-pooler": false })).toEqual(["v1-get-pooler-config"]);
+    expect(applied({ "skip-pooler": true })).toEqual([]);
+  });
+
+  it("treats a flag given an empty value as absent", () => {
+    const permissions = mapped([
+      {
+        operationId: "v1-create-login-role",
+        kind: "required",
+        when: [{ flag: "password", present: false }],
+      },
+      { operationId: "v1-list-all-projects", kind: "required", when: [{ flag: "project-ref" }] },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+    expect(applied({ password: "" })).toEqual(["v1-create-login-role"]);
+    expect(applied({ password: "hunter2" })).toEqual([]);
+    expect(applied({ password: "x", "project-ref": "" })).toEqual([]);
+    expect(applied({ password: "x", "project-ref": "abcdefghijklmnopqrst" })).toEqual([
+      "v1-list-all-projects",
+    ]);
+  });
+
   it("keeps a required entry with no context over a required entry that has one, for the same operationId", () => {
     const permissions = mapped([
       {

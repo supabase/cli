@@ -117,6 +117,37 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/gives "type" no value, but a `when` condition checks its value/);
   });
 
+  it("rejects a switch condition whose flag is missing from activeFlags or given a non-boolean", () => {
+    const switchChecked = declared({
+      status: "mapped",
+      operations: [
+        {
+          operationId: "v1-list-all-secrets",
+          kind: "required",
+          when: [{ flag: "skip", is: false }],
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const rejected: Array<Record<string, boolean | string>> = [{}, { skip: "false" }];
+    for (const activeFlags of rejected) {
+      expect(() =>
+        assertDriftAgainst(switchChecked, {
+          command: "secrets list",
+          activeFlags,
+          requests: [listSecrets],
+        }),
+      ).toThrow(/checks the value of --skip, a switch — pass its effective value as a boolean/);
+    }
+    expect(() =>
+      assertDriftAgainst(switchChecked, {
+        command: "secrets list",
+        activeFlags: { skip: false },
+        requests: [listSecrets],
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects an active flag the command does not accept, even if a declaration condition names it", () => {
     const withBlockCondition = declared({
       status: "mapped",

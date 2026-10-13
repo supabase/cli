@@ -13,10 +13,11 @@ import { findCommand } from "../../src/shared/cli/command-docs.ts";
 export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 
 /**
- * The flags one run uses, keyed by name without the leading `--`: a flag's effective value
- * (its default included) where a value condition checks it, otherwise `true`.
+ * The flags one run uses, keyed by name without the leading `--`: a switch's effective value
+ * (its default included) where an `is` condition checks it, a string where a `oneOf` condition
+ * checks the value, otherwise `true`.
  */
-export type ActiveFlags = Readonly<Record<string, true | string>>;
+export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
 function conditionHolds(condition: FlagCondition, activeFlags: ActiveFlags): boolean {
   const value = Object.hasOwn(activeFlags, condition.flag)
@@ -25,7 +26,8 @@ function conditionHolds(condition: FlagCondition, activeFlags: ActiveFlags): boo
   if (condition.oneOf !== undefined) {
     return typeof value === "string" && condition.oneOf.includes(value);
   }
-  return (value !== undefined) === (condition.present ?? true);
+  if (condition.is !== undefined) return value === condition.is;
+  return (value !== undefined && value !== "") === (condition.present ?? true);
 }
 
 /** Higher wins a dedupe conflict: a required check with no `context` must never lose to one that has one. */

@@ -12,9 +12,20 @@ interface FlagConditionBase {
   readonly source?: string;
 }
 
-/** The flag must be present (or absent, when `present: false`) for an entry to apply. */
+/**
+ * The flag must be present (or absent, when `present: false`) for an entry to apply. A flag given
+ * an empty value counts as absent.
+ */
 interface PresenceCondition extends FlagConditionBase {
   readonly present?: boolean;
+  readonly oneOf?: never;
+  readonly is?: never;
+}
+
+/** The switch's effective value, default included, must equal `is` for an entry to apply. */
+interface SwitchCondition extends FlagConditionBase {
+  readonly is: boolean;
+  readonly present?: never;
   readonly oneOf?: never;
 }
 
@@ -25,9 +36,10 @@ interface PresenceCondition extends FlagConditionBase {
 interface ValueCondition extends FlagConditionBase {
   readonly oneOf: ReadonlyArray<string>;
   readonly present?: never;
+  readonly is?: never;
 }
 
-export type FlagCondition = PresenceCondition | ValueCondition;
+export type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
 
 export interface OperationEntry {
   /** The spec's `operationId`, e.g. `"v1-list-all-secrets"`. */
