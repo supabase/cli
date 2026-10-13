@@ -197,7 +197,8 @@ jobs:
           sticky-disks: "true"
           go-cache: "false"
           tools: node bun pnpm
-          pnpm-store-cache: "false"
+          # Windows unpacks the store archive slower than it downloads the packages.
+          pnpm-store-cache: ${{ matrix.os != 'windows-latest' }}
 
       - name: Run stack integration tests
         working-directory: packages/stack
