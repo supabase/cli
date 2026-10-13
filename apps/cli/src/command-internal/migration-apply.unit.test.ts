@@ -1005,23 +1005,21 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
       }),
   );
 
-  it.effect(
-    "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured",
-    () =>
-      Effect.gen(function* () {
-        // Exceeds the 4096-byte floor the scanner always starts at, regardless of the configured
-        // limit.
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-",
-          "big.sql",
-          `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`,
-        );
-        const { session } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("scanner: token too long");
-        expect(error.message).toContain("After statement 1: SELECT 1;");
-        expect(error.message).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),
+  it.effect("rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured", () =>
+    Effect.gen(function* () {
+      // Exceeds the 4096-byte floor the scanner always starts at, regardless of the configured
+      // limit.
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-",
+        "big.sql",
+        `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`,
+      );
+      const { session } = fakeSession();
+      const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
+      expect(error.message).toContain("scanner: token too long");
+      expect(error.message).toContain("After statement 1: SELECT 1;");
+      expect(error.message).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "100b" }, body)),
   );
 
   it.effect(
@@ -1089,22 +1087,20 @@ layer(BunServices.layer)("applySchemaFiles", (it) => {
     }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "0x1400" }, body)),
   );
 
-  it.effect(
-    "accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE",
-    () =>
-      Effect.gen(function* () {
-        const { workdir } = yield* schemaFile(
-          "schema-files-scanner-underscore-",
-          "big.sql",
-          `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
-        );
-        const { session } = fakeSession();
-        const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
-        expect(error.message).toContain("scanner: token too long");
-        expect(error.message).toContain(
-          "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
-        );
-      }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "5_120" }, body)),
+  it.effect("accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE", () =>
+    Effect.gen(function* () {
+      const { workdir } = yield* schemaFile(
+        "schema-files-scanner-underscore-",
+        "big.sql",
+        `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`,
+      );
+      const { session } = fakeSession();
+      const error = yield* applySchema(session, workdir, "supabase/big.sql").pipe(Effect.flip);
+      expect(error.message).toContain("scanner: token too long");
+      expect(error.message).toContain(
+        "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
+      );
+    }).pipe((body) => withConfigEnv({ SUPABASE_SCANNER_BUFFER_SIZE: "5_120" }, body)),
   );
 
   it.effect(
