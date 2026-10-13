@@ -93,6 +93,7 @@ interface EngineExportCall {
   readonly targetRef: string;
   readonly projectRef: string | undefined;
   readonly strictCoverage: boolean;
+  readonly debug: boolean;
 }
 
 const GENERATE_STACK_ID = "e".repeat(64);
@@ -259,6 +260,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             targetRef: input.target.ref,
             projectRef: input.projectRef,
             strictCoverage: input.strictCoverage,
+            debug: input.debug,
           });
           return opts.exportFails === true
             ? Effect.fail(
@@ -966,6 +968,17 @@ describe("db schema declarative generate integration", () => {
       );
       expect(s.engineExportCalls).toEqual([expect.objectContaining({ strictCoverage: true })]);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('passes PGDELTA_DEBUG="$value" through to the engine export', ({ value, debug }) => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      expect(s.engineExportCalls.map((call) => call.debug)).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
   });
 
   it.effect("fails generate when the engine export fails", () => {

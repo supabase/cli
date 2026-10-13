@@ -3,7 +3,6 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Config,
   ConfigProvider,
   Effect,
   Exit,
@@ -165,6 +164,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     projectRef?: string;
     projectId: string;
     strictCoverage: boolean;
+    debug: boolean;
   }> = [];
   let engineDiffCount = 0;
   const pgDeltaEngine = Layer.succeed(
@@ -178,6 +178,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           projectRef: input.projectRef,
           projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
+          debug: input.debug,
         });
         engineDiffCount += 1;
         if (opts.edgeFailFirstWith !== undefined && engineDiffCount === 1) {
@@ -190,26 +191,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         const stdout = opts.edgeStdout ?? "";
         if (stdout.trim().length === 0) {
-          return Config.option(Config.String("PGDELTA_DEBUG")).pipe(
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
-            ),
-            Effect.mapError((cause) => new PgDeltaEngineError({ message: cause.message, cause })),
-            Effect.map((pgDeltaDebug) => ({
-              changes: false,
-              sql: "",
-              files: [],
-              ...(Option.isSome(pgDeltaDebug)
-                ? {
-                    debug:
-                      opts.nextDebugDirectory !== undefined
-                        ? { directory: opts.nextDebugDirectory }
-                        : {},
-                  }
-                : {}),
-            })),
-          );
+          return Effect.succeed({
+            changes: false,
+            sql: "",
+            files: [],
+            ...(input.debug
+              ? {
+                  debug:
+                    opts.nextDebugDirectory !== undefined
+                      ? { directory: opts.nextDebugDirectory }
+                      : {},
+                }
+              : {}),
+          });
         }
         try {
           const parsed: unknown = JSON.parse(stdout);
@@ -255,6 +249,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           projectRef: input.projectRef,
           projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
+          debug: input.debug,
         });
         if (opts.edgeFailFirstWith !== undefined && engineCalls.length === 1) {
           return Effect.fail(
@@ -977,6 +972,17 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('declarative export passes PGDELTA_DEBUG="$value" to pg-delta', ({ value, debug }) => {
+    const s = setup(tmp.current, {});
+    return Effect.gen(function* () {
+      yield* dbPull(flags({ declarative: Option.some(true) }));
+      expect(s.engineCalls.map((call) => call.debug)).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
+  });
+
   it.effect(
     "pull --declarative writes [db.migrations] schema_paths when pg-delta is disabled",
     () => {
@@ -1419,11 +1425,12 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
+      expect(s.engineCalls.map((call) => call.debug)).toEqual([false]);
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const debugRoot = path.join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
       expect((yield* fs.exists(debugRoot)) ? yield* fs.readDirectory(debugRoot) : []).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("reports the next-generation debug directory for an empty pg-delta diff", () =>
@@ -1444,9 +1451,8 @@ describe("db pull", () => {
         edgeStdout: "",
         nextDebugDirectory: debugDir,
       });
-      const error = yield* withEnvVar(
-        "PGDELTA_DEBUG",
-        "1",
+      const error = yield* withConfigEnv(
+        { PGDELTA_DEBUG: "1" },
         dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
           Effect.flip,
           Effect.provide(s.layer),

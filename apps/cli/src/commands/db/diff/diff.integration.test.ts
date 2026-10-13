@@ -671,6 +671,19 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('passes PGDELTA_DEBUG="$value" to both pg-delta diff modes', ({ value, debug }) => {
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("local") }));
+      expect(s.databaseDiffCalls.map((call) => call.debug)).toEqual([debug]);
+      expect(s.explicitDiffCalls.map((call) => call.debug)).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
+  });
+
   it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
     const s = setup(tmp.current, {
       files: {
