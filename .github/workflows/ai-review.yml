@@ -65,6 +65,9 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       trigger: ${{ steps.resolve.outputs.trigger }}
+      # Read once here so every job in the run uses the same models, even if the file changes mid-run.
+      claude_model: ${{ steps.models.outputs.claude_model }}
+      codex_model: ${{ steps.models.outputs.codex_model }}
     steps:
       # Pinned to the default ref explicitly — this job must keep running only trusted repo code,
       # even though the pull_request trigger above hands it PR-authored event payloads.
@@ -87,6 +90,9 @@ jobs:
           COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: bun .github/scripts/ai-review/resolve.ts
+      - name: Load AI models
+        id: models
+        run: jq -r '"claude_model=\(.claude.opus)", "codex_model=\(.codex.sol)"' .github/ai-models.json >> "$GITHUB_OUTPUT"
 
   claude-review:
     name: Claude review
@@ -102,6 +108,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      CLAUDE_MODEL: ${{ needs.resolve.outputs.claude_model }}
     steps:
       - name: Checkout PR head (untrusted; review subject matter only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,9 +126,6 @@ jobs:
           path: trusted
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Load AI models
-        run: jq -r '"CLAUDE_MODEL=\(.claude.opus)", "CODEX_MODEL=\(.codex.sol)"' trusted/.github/ai-models.json >> "$GITHUB_ENV"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -261,6 +266,8 @@ jobs:
       pull-requests: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
+    env:
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       - name: Checkout default branch (trusted; the only checkout this job needs)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -268,9 +275,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Load AI models
-        run: jq -r '"CLAUDE_MODEL=\(.claude.opus)", "CODEX_MODEL=\(.codex.sol)"' .github/ai-models.json >> "$GITHUB_ENV"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -366,6 +370,8 @@ jobs:
       pull-requests: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
+    env:
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       - name: Checkout PR head (untrusted; read-only, for verify-by-reading)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -382,9 +388,6 @@ jobs:
           path: trusted
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Load AI models
-        run: jq -r '"CLAUDE_MODEL=\(.claude.opus)", "CODEX_MODEL=\(.codex.sol)"' trusted/.github/ai-models.json >> "$GITHUB_ENV"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -522,6 +525,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       pull-requests: write
+    env:
+      CLAUDE_MODEL: ${{ needs.resolve.outputs.claude_model }}
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       # Security-critical: this is the only job with write permission, so it must only ever
       # execute trusted base-branch code — never the PR head. Checking out `develop` explicitly
@@ -534,9 +540,6 @@ jobs:
         with:
           ref: develop
           persist-credentials: false
-
-      - name: Load AI models
-        run: jq -r '"CLAUDE_MODEL=\(.claude.opus)", "CODEX_MODEL=\(.codex.sol)"' .github/ai-models.json >> "$GITHUB_ENV"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -563,6 +566,6 @@ jobs:
           PR_DIFF_PATH: /tmp/ai-review/pr.diff
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # CLAUDE_MODEL / CODEX_MODEL come from the "Load AI models" step, the same source the
-          # review jobs read, so the footer never drifts from what actually ran.
+          # CLAUDE_MODEL / CODEX_MODEL are the job-level values from `resolve`, the same ones the
+          # review jobs ran with, so the footer never drifts from what actually ran.
         run: bun .github/scripts/ai-review/post-review.ts post

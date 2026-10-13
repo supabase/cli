@@ -13,10 +13,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-
-const aiModels: { claude: { haiku: string } } = JSON.parse(
-  await Bun.file(new URL("../../../.github/ai-models.json", import.meta.url)).text(),
-);
+import aiModels from "../../../.github/ai-models.json";
 
 const { values } = parseArgs({
   options: {

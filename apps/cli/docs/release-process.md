@@ -479,6 +479,7 @@ Keep two to three stable majors supported at the same time, roughly six to twelv
 - Live e2e workflows: `live-e2e.yml`, `live-e2e-suite.yml`, `live-e2e-gate.yml`, `live-e2e-notify.yml`.
 - PR gating on `v*.x`: `test.yml`, `lint-pull-request.yml`, `run-ci.yml`, `branch-policy.yml`.
 - Composite action `.github/actions/setup`.
+- Model ids in `.github/ai-models.json`, read by `propose-release-notes.ts`.
 - Scripts in `apps/cli/scripts/`: `build.ts`, `build-binary.ts`, `compile-options.ts`, `macos-signing.ts`, `publish.ts`, `release-channels.ts`, `sync-versions.ts`, `update-homebrew.ts`, `update-scoop.ts`, `upload-release-assets.ts`, `analyze-commits-title.js`, `backfill-release-notes.ts`, `propose-release-notes.ts`.
 - The `release` block in `apps/cli/package.json` and the smoke tests under `apps/cli/tests/`.
 
