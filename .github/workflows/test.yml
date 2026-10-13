@@ -155,7 +155,6 @@ jobs:
           src/port-reservation.e2e.test.ts
           --passWithNoTests=false
 
-
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -362,7 +361,6 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-
   test-stack-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -411,7 +409,6 @@ jobs:
           pnpm --filter @supabase/stack test:e2e:run
           src/public.e2e.test.ts
           --passWithNoTests=false
-
 
   test-stack-podman-integration:
     if: |
