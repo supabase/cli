@@ -838,7 +838,7 @@ describe("gen signing-key integration", () => {
 
         const error = yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(Effect.flip);
         expect(error).toBeInstanceOf(DbConfigLoadError);
-        expect(error.message).toBe("failed to parse environment file: .env");
+        expect(error.message).toBe("failed to parse environment file: supabase/.env");
         expect(telemetry?.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },
