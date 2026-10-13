@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Ref } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -154,7 +154,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // The engine flags (`use-migra use-pgadmin use-pg-schema use-pg-delta`) and the target flags
@@ -254,7 +254,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         if (preflightConnType === "linked") {
           const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
           if (preflightRef !== undefined) {
-            linkedRefForCache = preflightRef;
+            yield* Ref.set(linkedRefForCache, Option.some(preflightRef));
             mergedLinkedRef = preflightRef;
           }
         }
@@ -324,7 +324,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               });
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
-                linkedRefForCache = ref2;
+                yield* Ref.set(linkedRefForCache, Option.some(ref2));
                 mergedLinkedRef = ref2;
                 cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
@@ -351,7 +351,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 // by default, so TLS is used.
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
-            default:
+            case "unknown":
               return yield* new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) });
           }
         });
@@ -477,7 +477,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cached the moment the ref is known, not after `cfg`/`localInputs` below (both
       // fallible) resolve, so the project cache is still written even if a later step fails.
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     }
     const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (cfg.appliedRemote !== undefined) {
@@ -516,7 +516,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+    if (linkedRef !== undefined) yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then the
@@ -851,8 +851,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Ref.get(linkedRefForCache).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

@@ -5,6 +5,7 @@ import {
   Cause,
   Config,
   ConfigProvider,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -12,9 +13,11 @@ import {
   Layer,
   Option,
   Path,
+  Schema,
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -147,6 +150,11 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
+const WrittenMigrations = Schema.Struct({
+  file: Schema.String,
+  files: Schema.Array(Schema.String),
+});
+
 /** `[db] shadow_port`'s schema default — the port every connect to the shadow itself dials. */
 const SHADOW_PORT = 54320;
 
@@ -159,11 +167,13 @@ const SHADOW_PORT = 54320;
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
+  const shadowConnectRefused = Deferred.makeUnsafe<void>();
   const layer = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
       Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
         if (opts.neverConnectableShadow === true && cfg.port === SHADOW_PORT) {
+          yield* Deferred.succeed(shadowConnectRefused, undefined);
           return yield* new DbConnectError({ message: "connection refused" });
         }
         const session: DbSession = {
@@ -180,7 +190,7 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
         return session;
       }),
   });
-  return { layer, connectedDatabases, execCalls };
+  return { layer, connectedDatabases, execCalls, shadowConnectRefused };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -195,6 +205,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
+  const shadowHealthProbed = Deferred.makeUnsafe<void>();
+  const shadowSpawnerLayer = Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (inner) =>
+      ChildProcessSpawner.make((command) =>
+        inner
+          .spawn(command)
+          .pipe(
+            Effect.tap(() =>
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "container" &&
+              command.args[1] === "inspect" &&
+              command.args[2] === FAKE_SHADOW_CONTAINER_ID
+                ? Deferred.succeed(shadowHealthProbed, undefined)
+                : Effect.void,
+            ),
+          ),
+      ),
+    ),
+  ).pipe(Layer.provide(shadowSpawner.layer));
   // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
@@ -291,7 +321,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // Tracks the migra OOM bash fallback's own `runCapture` calls; the native shadow's
   // PG15+ one-shot setup jobs go through `runStream` instead and are tracked
   // separately in `shadowSetupJobCalls`.
-  const dockerCalls: unknown[] = [];
+  const dockerCalls: Array<DockerRunOpts> = [];
   // The pgAdmin differ's own `runCapture` calls, distinguished from `dockerCalls`
   // by `image` (both share the same `DockerRun.runCapture` seam).
   const differCalls: Array<DockerRunOpts> = [];
@@ -422,7 +452,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     shadowDbConnection.layer,
-    dockerDaemon?.layer ?? shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawnerLayer,
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     resolver,
@@ -472,9 +502,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
+    shadowHealthProbed,
     dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
+    shadowConnectRefused: shadowDbConnection.shadowConnectRefused,
   };
 }
 
@@ -1355,7 +1387,7 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }));
         const success = s.out.messages.find((m) => m.type === "success");
-        const data = success?.data as { file: string; files: ReadonlyArray<string> };
+        const data = yield* Schema.decodeUnknownEffect(WrittenMigrations)(success?.data);
         expect(data.file).toMatch(/\d{14}_pgadmin_diff\.sql$/);
         expect(data.files).toEqual([data.file]);
         const fs = yield* FileSystem.FileSystem;
@@ -1419,7 +1451,9 @@ describe("db diff", () => {
       const files = yield* fs.readDirectory(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
-      expect(yield* readFileText(path.join(dir, files[0]!))).toBe("create table live_only ();\n");
+      expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(
+        "create table live_only ();\n",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1494,11 +1528,11 @@ describe("db diff", () => {
       expect(files).toHaveLength(2);
       expect(files[0]).toBe("19700101000000_my_diff_1.sql");
       expect(files[1]).toBe("19700101000001_my_diff_2.sql");
-      expect(yield* readFileText(path.join(dir, files[0]!))).toBe(
+      expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(
         "alter type mood add value 'ok';\n",
       );
       const success = s.out.messages.find((m) => m.type === "success");
-      const data = success?.data as { file: string; files: ReadonlyArray<string> };
+      const data = yield* Schema.decodeUnknownEffect(WrittenMigrations)(success?.data);
       expect(data.files).toHaveLength(2);
       expect(data.file).toBe(data.files[0]);
     }).pipe(Effect.provide(s.layer));
@@ -1514,7 +1548,9 @@ describe("db diff", () => {
       const dirs = yield* fs.readDirectory(migrationsRoot);
       expect(dirs).toHaveLength(1);
       expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0] ?? ""))).toEqual([
+        "remote.sql",
+      ]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1972,7 +2008,7 @@ describe("db diff", () => {
     return Effect.gen(function* () {
       yield* dbDiff(flags({ schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
-      expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
+      expect(s.dockerCalls[0]?.network).toEqual({
         _tag: "named",
         name: "my-net",
       });
@@ -1990,14 +2026,14 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ schema: ["public"] }));
-        const env = (s.dockerCalls[0] as { env: Readonly<Record<string, string>> }).env;
-        expect(new URL(env["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
-        expect(new URL(env["TARGET"] ?? "").host).toBe("host.docker.internal:54322");
+        const env = s.dockerCalls[0]?.env;
+        expect(new URL(env?.["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
+        expect(new URL(env?.["TARGET"] ?? "").host).toBe("host.docker.internal:54322");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.live(
+  it.effect(
     "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
       // `acquire` covers only `createShadowDatabase`; the readiness wait runs in the
@@ -2011,11 +2047,9 @@ describe("db diff", () => {
         );
         // Waits until the shadow's readiness gate has refused a connect at least once,
         // proving the fiber is suspended in `waitForShadowReady`'s retry loop.
-        while (s.shadowConnectedDatabases.length === 0) {
-          yield* Effect.sleep("5 millis");
-        }
-        // `Fiber.interrupt` only resolves once finalizers complete; this would hang for
-        // up to 30s if `acquire` still covered the readiness wait.
+        yield* Deferred.await(s.shadowConnectRefused);
+        // `Fiber.interrupt` only resolves once finalizers complete; this would hang (the readiness
+        // timeout never elapses under the test clock) if `acquire` still covered the readiness wait.
         yield* Fiber.interrupt(fiber);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2070,7 +2104,7 @@ describe("db diff", () => {
         const files = yield* fs.readDirectory(dir);
         expect(files).toHaveLength(1);
         expect(files[0]).toMatch(/^\d{14}_pgadmin_diff\.sql$/);
-        expect(yield* readFileText(path.join(dir, files[0]!))).toBe(PGADMIN_DIFF_SQL);
+        expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(PGADMIN_DIFF_SQL);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2086,7 +2120,7 @@ describe("db diff", () => {
         const dirs = yield* fs.readDirectory(migrationsRoot);
         expect(dirs).toHaveLength(1);
         expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual([
+        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0] ?? ""))).toEqual([
           "remote.sql",
         ]);
       }).pipe(Effect.provide(s.layer));
@@ -2136,21 +2170,21 @@ describe("db diff", () => {
           const projectId = path.basename(tmp.current);
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differCalls).toHaveLength(1);
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.image).toBe(dockerfileServiceImage("differ", false));
-          expect(call.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
-          expect(call.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
-          expect(call.env).toEqual({});
-          expect(call.binds).toEqual([]);
-          expect(call.securityOpt).toEqual([]);
-          expect(call.workingDir).toEqual(Option.none());
-          expect(call.entrypoint).toBeUndefined();
-          expect(call.network).toEqual({ _tag: "named", name: `supabase_network_${projectId}` });
-          expect(call.labels).toEqual({
+          const call = s.differCalls[0];
+          expect(call?.image).toBe(dockerfileServiceImage("differ", false));
+          expect(call?.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
+          expect(call?.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
+          expect(call?.env).toEqual({});
+          expect(call?.binds).toEqual([]);
+          expect(call?.securityOpt).toEqual([]);
+          expect(call?.workingDir).toEqual(Option.none());
+          expect(call?.entrypoint).toBeUndefined();
+          expect(call?.network).toEqual({ _tag: "named", name: `supabase_network_${projectId}` });
+          expect(call?.labels).toEqual({
             "com.supabase.cli.project": projectId,
             "com.docker.compose.project": projectId,
           });
-          expect(call.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+          expect(call?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
           // The differ's stderr is never teed to the parent terminal.
           expect(s.differCaptureOpts[0]).toBeUndefined();
         }).pipe(Effect.provide(s.layer));
@@ -2164,8 +2198,8 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        const call = s.differCalls[0] as DockerRunOpts;
-        expect(call.network).toEqual({ _tag: "named", name: "custom-net" });
+        const call = s.differCalls[0];
+        expect(call?.network).toEqual({ _tag: "named", name: "custom-net" });
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2178,8 +2212,8 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.extraHosts).toEqual([]);
+          const call = s.differCalls[0];
+          expect(call?.extraHosts).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2195,9 +2229,9 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
-          expect(call.cmd.join(" ")).not.toContain("distinctive-pw");
+          const call = s.differCalls[0];
+          expect(call?.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
+          expect(call?.cmd.join(" ")).not.toContain("distinctive-pw");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2273,14 +2307,14 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
           expect(s.differCalls).toHaveLength(2);
-          expect((s.differCalls[0] as DockerRunOpts).cmd).toEqual([
+          expect(s.differCalls[0]?.cmd).toEqual([
             "--schema",
             "public",
             "--json-diff",
             PGADMIN_SOURCE_URL,
             PGADMIN_TARGET_URL,
           ]);
-          expect((s.differCalls[1] as DockerRunOpts).cmd).toEqual([
+          expect(s.differCalls[1]?.cmd).toEqual([
             "--schema",
             "app",
             "--json-diff",
@@ -2332,9 +2366,7 @@ describe("db diff", () => {
           _tag: "DbDiffPgAdminError",
           reason: "invalid_output",
         });
-        expect((error as { message: string }).message).toContain(
-          "failed to parse schema diff output:",
-        );
+        expect(error.message).toContain("failed to parse schema diff output:");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2391,7 +2423,7 @@ describe("db diff", () => {
             message: "error running container: exit 1",
           });
           // The differ's own stderr never reaches the error message.
-          expect((error as { message: string }).message).not.toContain("some differ crash text");
+          expect(error.message).not.toContain("some differ crash text");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -2432,9 +2464,7 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError" });
-          expect(stripAnsi((error as { message: string }).message)).toBe(
-            "supabase start is not running.",
-          );
+          expect(stripAnsi(error.message)).toBe("supabase start is not running.");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
           expect(s.differCalls).toEqual([]);
           expect(s.resolverCalls.length).toBeGreaterThan(0);
@@ -2451,8 +2481,11 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
-          expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError", daemonDown: true });
-          expect((error as { suggestion?: string }).suggestion).toContain("Docker Desktop");
+          expect(error).toMatchObject({
+            _tag: "DbDiffDbNotRunningError",
+            daemonDown: true,
+            suggestion: expect.stringContaining("Docker Desktop"),
+          });
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2491,7 +2524,7 @@ describe("db diff", () => {
           const error = yield* dbDiff(
             flags({ usePgAdmin: Option.some(true), usePgDelta: Option.some(true) }),
           ).pipe(Effect.flip);
-          expect((error as { message: string }).message).toBe(
+          expect(error.message).toBe(
             "if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
           );
         }).pipe(Effect.provide(s.layer));
@@ -2534,7 +2567,7 @@ describe("db diff", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "removes the shadow container on interruption during the health wait for --use-pgadmin too",
       () => {
         const s = setup(tmp.current, { neverHealthyShadow: true });
@@ -2546,16 +2579,7 @@ describe("db diff", () => {
           // Waits for the shadow's own health probe (its 64-hex id); the pgadmin path's
           // separate `supabase_db_test` probe fires first and would satisfy a looser
           // check immediately.
-          while (
-            !s.shadowSpawned.some(
-              (c) =>
-                c.args[0] === "container" &&
-                c.args[1] === "inspect" &&
-                c.args[2] === FAKE_SHADOW_CONTAINER_ID,
-            )
-          ) {
-            yield* Effect.sleep("5 millis");
-          }
+          yield* Deferred.await(s.shadowHealthProbed);
           yield* Fiber.interrupt(fiber);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
