@@ -122,7 +122,7 @@ describe("generateCompletionScript", () => {
     const shells: ReadonlyArray<CompletionShell> = ["bash", "zsh", "fish", "powershell"];
 
     for (const shell of shells) {
-      it.live(
+      it.effect(
         `matches the ${shell} completion script fixture byte-for-byte (with descriptions)`,
         () =>
           Effect.gen(function* () {
@@ -131,7 +131,7 @@ describe("generateCompletionScript", () => {
           }),
       );
 
-      it.live(
+      it.effect(
         `matches the ${shell} completion script fixture byte-for-byte (--no-descriptions)`,
         () =>
           Effect.gen(function* () {

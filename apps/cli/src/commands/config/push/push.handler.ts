@@ -1,7 +1,7 @@
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
 import { diffProjectConfig, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
-import { DateTime, Effect, FileSystem, Option } from "effect";
+import { DateTime, Effect, FileSystem, Option, Ref } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { envReferenceNames } from "../../../config/cli-config-document.ts";
@@ -222,7 +222,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
   // Set once ref resolution succeeds, so the linked-project cache write below only fires for
   // invocations that got that far.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a directory before
@@ -252,7 +252,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       configTargetErrors,
       mapPushBranchResolveError,
     );
-    resolvedRef = ref;
+    yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
       "config.target_is_branch": branch !== undefined,
@@ -817,8 +817,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

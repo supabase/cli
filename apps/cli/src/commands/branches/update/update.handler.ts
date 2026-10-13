@@ -1,4 +1,4 @@
-import type { V1UpdateABranchConfigInput, V1UpdateABranchConfigOutput } from "@supabase/api/effect";
+import type { V1UpdateABranchConfigOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -6,7 +6,6 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
@@ -26,8 +25,6 @@ import { resolveBranchProjectRef } from "../branches.resolver.ts";
 import type { BranchesUpdateFlags } from "./update.command.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
-type UpdateInput = typeof V1UpdateABranchConfigInput.Type;
-type BranchStatus = NonNullable<UpdateInput["status"]>;
 
 const mapUpdateError = mapHttpError({
   networkError: BranchesUpdateNetworkError,
@@ -42,7 +39,6 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
@@ -62,7 +58,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
         ...(Option.isSome(flags.name) ? { branch_name: flags.name.value } : {}),
         ...(Option.isSome(flags.gitBranch) ? { git_branch: flags.gitBranch.value } : {}),
         ...(Option.isSome(flags.persistent) ? { persistent: flags.persistent.value } : {}),
-        ...(Option.isSome(flags.status) ? { status: flags.status.value as BranchStatus } : {}),
+        ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
         ...(Option.isSome(flags.notifyUrl) ? { notify_url: flags.notifyUrl.value } : {}),
       })
       .pipe(
@@ -72,18 +68,18 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
           gateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },
             (cause, upgradeSuggested) =>
-              Effect.gen(function* () {
-                const mapped = yield* Effect.flip(mapUpdateError(cause));
-                if (mapped._tag === "BranchesUpdateUnexpectedStatusError") {
-                  return yield* new BranchesUpdateUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  });
-                }
-                return yield* Effect.fail(mapped);
-              }),
+              mapUpdateError(cause).pipe(
+                Effect.catchTag("BranchesUpdateUnexpectedStatusError", (mapped) =>
+                  Effect.fail(
+                    new BranchesUpdateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  ),
+                ),
+              ),
           ),
         ),
       );

@@ -1,4 +1,4 @@
-import { Effect, Option, Path, Stdio } from "effect";
+import { Effect, Option, Path, Ref, Stdio } from "effect";
 import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -26,7 +26,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
     path.join(cliSettings.workdir, "supabase"),
   );
-  let resolvedProjectRef = Option.none<string>();
+  const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     const result = yield* downloadFunctions(flags, {
@@ -42,13 +42,9 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       // Written to stderr, matching `yellow`'s default TTY gate.
       styleWarning: (text) => yellow(text),
       resolveProjectRef: (projectRef) =>
-        resolver.resolve(projectRef).pipe(
-          Effect.tap((ref) =>
-            Effect.sync(() => {
-              resolvedProjectRef = Option.some(ref);
-            }),
-          ),
-        ),
+        resolver
+          .resolve(projectRef)
+          .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
     });
 
     yield* Effect.annotateCurrentSpan("function.count", result.slugs.length);
@@ -81,14 +77,16 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        Option.match(resolvedProjectRef, {
-          onNone: () => Effect.void,
-          onSome: (ref) =>
-            Effect.annotateCurrentSpan("project.ref", ref).pipe(
-              Effect.andThen(linkedProjectCache.cache(ref)),
-            ),
-        }),
+      Ref.get(resolvedProjectRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) =>
+              Effect.annotateCurrentSpan("project.ref", ref).pipe(
+                Effect.andThen(linkedProjectCache.cache(ref)),
+              ),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

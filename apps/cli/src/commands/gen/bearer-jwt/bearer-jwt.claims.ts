@@ -76,7 +76,7 @@ const JSON_WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
 
 function skipJsonWhitespace(value: string, index: number): number {
   let i = index;
-  while (i < value.length && JSON_WHITESPACE.has(value[i]!)) i++;
+  while (i < value.length && JSON_WHITESPACE.has(value[i] ?? "")) i++;
   return i;
 }
 
@@ -147,15 +147,19 @@ const JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "false"
 function findFirstNonFiniteJsonNumberLiteral(value: string): string | undefined {
   let i = 0;
   while (i < value.length) {
-    const ch = value[i]!;
+    const ch = value[i] ?? "";
     if (ch === '"') {
       // Known-valid JSON, so every string closes; skip it whole so its
       // digits are never mistaken for a number token.
-      i = findJsonStringEnd(value, i)!;
+      i = findJsonStringEnd(value, i) ?? value.length;
       continue;
     }
     if (ch === "-" || (ch >= "0" && ch <= "9")) {
-      const literal = JSON_NUMBER_PATTERN.exec(value.slice(i))![0];
+      const literal = JSON_NUMBER_PATTERN.exec(value.slice(i))?.[0];
+      if (literal === undefined) {
+        i++;
+        continue;
+      }
       if (!Number.isFinite(Number(literal))) {
         return literal;
       }
@@ -197,7 +201,7 @@ function jsonSyntaxErrorMessage(raw: string): string {
     return "unexpected end of JSON input";
   }
 
-  const first = trimmed[0]!;
+  const first = trimmed[0] ?? "";
 
   const literal = JSON_LITERALS[first];
   if (literal !== undefined) {
@@ -269,7 +273,7 @@ export function mergeBearerJwtPayload(
   if (overflowingLiteral !== undefined) {
     throw new Error(`invalid claims: number ${overflowingLiteral} is out of range`);
   }
-  return { ...claims, ...(parsed as Record<string, unknown>) };
+  return { ...claims, ...parsed };
 }
 
 /**

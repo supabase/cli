@@ -1,3 +1,4 @@
+import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -198,7 +199,7 @@ describe("isPrivateCidr", () => {
 
 describe("validateAndPartitionCidrs", () => {
   it("returns empty arrays for empty input", () => {
-    expect(validateAndPartitionCidrs([], false)).toEqual({ ok: true, v4: [], v6: [] });
+    expect(validateAndPartitionCidrs([], false)).toEqual(Result.succeed({ v4: [], v6: [] }));
   });
 
   it("partitions mixed v4/v6 inputs while preserving input order", () => {
@@ -206,87 +207,79 @@ describe("validateAndPartitionCidrs", () => {
       ["12.3.4.5/32", "2001:db8:abcd:0012::0/64", "1.2.3.1/24"],
       false,
     );
-    expect(result).toEqual({
-      ok: true,
-      v4: ["12.3.4.5/32", "1.2.3.1/24"],
-      v6: ["2001:db8:abcd:0012::0/64"],
-    });
+    expect(result).toEqual(
+      Result.succeed({
+        v4: ["12.3.4.5/32", "1.2.3.1/24"],
+        v6: ["2001:db8:abcd:0012::0/64"],
+      }),
+    );
   });
 
   it("rejects an invalid CIDR with the offending input", () => {
-    expect(validateAndPartitionCidrs(["12.3.4.5"], false)).toEqual({
-      ok: false,
-      kind: "invalid",
-      input: "12.3.4.5",
-    });
+    expect(validateAndPartitionCidrs(["12.3.4.5"], false)).toEqual(
+      Result.fail({ kind: "invalid", input: "12.3.4.5" }),
+    );
   });
 
   it("reports the first failing input when multiple inputs are present", () => {
-    expect(validateAndPartitionCidrs(["12.3.4.5", "10.0.0.0/8", "1.2.3.1/24"], false)).toEqual({
-      ok: false,
-      kind: "invalid",
-      input: "12.3.4.5",
-    });
+    expect(validateAndPartitionCidrs(["12.3.4.5", "10.0.0.0/8", "1.2.3.1/24"], false)).toEqual(
+      Result.fail({ kind: "invalid", input: "12.3.4.5" }),
+    );
   });
 
   it("rejects an RFC-1918 IPv4 private address by default", () => {
-    expect(validateAndPartitionCidrs(["12.3.4.5/32", "10.0.0.0/8", "1.2.3.1/24"], false)).toEqual({
-      ok: false,
-      kind: "private",
-      input: "10.0.0.0/8",
-    });
+    expect(validateAndPartitionCidrs(["12.3.4.5/32", "10.0.0.0/8", "1.2.3.1/24"], false)).toEqual(
+      Result.fail({ kind: "private", input: "10.0.0.0/8" }),
+    );
   });
 
   it("rejects each RFC-1918 IPv4 prefix", () => {
-    expect(validateAndPartitionCidrs(["172.16.0.0/12"], false).ok).toBe(false);
-    expect(validateAndPartitionCidrs(["192.168.0.0/16"], false).ok).toBe(false);
+    expect(Result.isFailure(validateAndPartitionCidrs(["172.16.0.0/12"], false))).toBe(true);
+    expect(Result.isFailure(validateAndPartitionCidrs(["192.168.0.0/16"], false))).toBe(true);
   });
 
   it("rejects an RFC-4193 IPv6 private address by default", () => {
-    expect(validateAndPartitionCidrs(["fc00::1/64"], false)).toEqual({
-      ok: false,
-      kind: "private",
-      input: "fc00::1/64",
-    });
+    expect(validateAndPartitionCidrs(["fc00::1/64"], false)).toEqual(
+      Result.fail({ kind: "private", input: "fc00::1/64" }),
+    );
   });
 
   it("bypasses private-IP rejection when bypassCidrChecks=true", () => {
-    expect(validateAndPartitionCidrs(["10.0.0.0/8"], true)).toEqual({
-      ok: true,
-      v4: ["10.0.0.0/8"],
-      v6: [],
-    });
+    expect(validateAndPartitionCidrs(["10.0.0.0/8"], true)).toEqual(
+      Result.succeed({
+        v4: ["10.0.0.0/8"],
+        v6: [],
+      }),
+    );
   });
 
   it("bypasses v6 private-IP rejection when bypassCidrChecks=true", () => {
-    expect(validateAndPartitionCidrs(["fc00::1/64"], true)).toEqual({
-      ok: true,
-      v4: [],
-      v6: ["fc00::1/64"],
-    });
+    expect(validateAndPartitionCidrs(["fc00::1/64"], true)).toEqual(
+      Result.succeed({
+        v4: [],
+        v6: ["fc00::1/64"],
+      }),
+    );
   });
 
   it("bypassCidrChecks does NOT suppress parse failures", () => {
-    expect(validateAndPartitionCidrs(["12.3.4.5"], true)).toEqual({
-      ok: false,
-      kind: "invalid",
-      input: "12.3.4.5",
-    });
+    expect(validateAndPartitionCidrs(["12.3.4.5"], true)).toEqual(
+      Result.fail({ kind: "invalid", input: "12.3.4.5" }),
+    );
   });
 
   it("rejects an IPv4-mapped private IPv6 address by default", () => {
-    expect(validateAndPartitionCidrs(["::ffff:10.0.0.0/104"], false)).toEqual({
-      ok: false,
-      kind: "private",
-      input: "::ffff:10.0.0.0/104",
-    });
+    expect(validateAndPartitionCidrs(["::ffff:10.0.0.0/104"], false)).toEqual(
+      Result.fail({ kind: "private", input: "::ffff:10.0.0.0/104" }),
+    );
   });
 
   it("routes an IPv4-mapped IPv6 input into the v4 bucket (preserves input string)", () => {
-    expect(validateAndPartitionCidrs(["::ffff:1.2.3.4/128"], false)).toEqual({
-      ok: true,
-      v4: ["::ffff:1.2.3.4/128"],
-      v6: [],
-    });
+    expect(validateAndPartitionCidrs(["::ffff:1.2.3.4/128"], false)).toEqual(
+      Result.succeed({
+        v4: ["::ffff:1.2.3.4/128"],
+        v6: [],
+      }),
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 import {
   UrlParseError,
   StorageUrlPatternError,
@@ -123,6 +124,26 @@ describe("parseUrl (host validation)", () => {
 
   it("does not validate a host for a scheme with no authority (ss:///bucket)", () => {
     expect(() => parseUrl("ss:///bucket/x")).not.toThrow();
+  });
+});
+
+describe("storage URL errors", () => {
+  it("keep their names and telemetry fingerprints", () => {
+    const parseError = new UrlParseError(":", "missing protocol scheme");
+    expect(String(parseError)).toBe('GoUrlParseError: parse ":": missing protocol scheme');
+    expect(classifyCliErrorActionability(parseError)).toMatchObject({
+      error_fingerprint: "error:GoUrlParseError",
+      suggestion_type: "provide_flags",
+    });
+
+    const patternError = new StorageUrlPatternError();
+    expect(String(patternError)).toBe(
+      "StorageUrlPatternError: URL must match pattern ss:///bucket/[prefix]",
+    );
+    expect(classifyCliErrorActionability(patternError)).toMatchObject({
+      error_fingerprint: "error:StorageUrlPatternError",
+      suggestion_type: "provide_flags",
+    });
   });
 });
 

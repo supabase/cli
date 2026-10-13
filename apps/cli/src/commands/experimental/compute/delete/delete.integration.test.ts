@@ -46,7 +46,7 @@ const routes = {
 };
 
 describe("compute delete", () => {
-  it.live("deletes after the name is typed back, and keeps the local files", () =>
+  it.effect("deletes after the name is typed back, and keeps the local files", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -88,7 +88,7 @@ describe("compute delete", () => {
   // reads as "the delete failed" and may retry.
   // Deletion never touches local files, so a malformed local config has no
   // business standing between the user and a compute they named explicitly.
-  it.live("deletes a remote compute despite an unparseable local config", () =>
+  it.effect("deletes a remote compute despite an unparseable local config", () =>
     Effect.gen(function* () {
       const repo = yield* project("project_id = [unclosed\n");
       const otherRef = "qrstuvwxyzabcdefghij";
@@ -115,7 +115,7 @@ describe("compute delete", () => {
   // The API grants `edge_functions:read` for the GET and `edge_functions:write`
   // for the DELETE separately, so a credential holding only write could not
   // delete a compute it is entitled to delete.
-  it.live("deletes with --yes when the credential may not read the compute", () =>
+  it.effect("deletes with --yes when the credential may not read the compute", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -135,7 +135,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("still confirms interactively when the compute cannot be read", () =>
+  it.effect("still confirms interactively when the compute cannot be read", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -159,7 +159,7 @@ describe("compute delete", () => {
   );
 
   // A refusal is not an absence: only a real 404 means there was nothing there.
-  it.live("reports an unreadable compute as deleted, not as nothing to delete", () =>
+  it.effect("reports an unreadable compute as deleted, not as nothing to delete", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -180,7 +180,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before deleting anything", () =>
+  it.effect("refuses -o env before deleting anything", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -202,7 +202,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("deletes nothing when the confirmation does not match", () =>
+  it.effect("deletes nothing when the confirmation does not match", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -226,7 +226,7 @@ describe("compute delete", () => {
   // The suggested retry is copy-pasted verbatim and carries `--yes`, so dropping
   // an explicit ref points a no-prompt delete at whatever this checkout is
   // linked to — a same-named compute in a project the user never named.
-  it.live("keeps an explicit --project-ref in the retry it suggests", () =>
+  it.effect("keeps an explicit --project-ref in the retry it suggests", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const otherRef = "qrstuvwxyzabcdefghij";
@@ -255,7 +255,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves the retry bare when the ref came from the link", () =>
+  it.effect("leaves the retry bare when the ref came from the link", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir, format: "json", routes });
@@ -274,7 +274,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps an explicit --project-ref in the confirmation-mismatch retry", () =>
+  it.effect("keeps an explicit --project-ref in the confirmation-mismatch retry", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const otherRef = "qrstuvwxyzabcdefghij";
@@ -302,7 +302,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("skips the confirmation with --yes", () =>
+  it.effect("skips the confirmation with --yes", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({ workdir: repo.dir, routes, yes: true });
@@ -319,7 +319,7 @@ describe("compute delete", () => {
   // `printf 'api\n' | supabase compute delete api`: stdout is still a TTY, so
   // `output.interactive` stayed true and the prompt read the compute name off the
   // pipe — a confirmation the user never typed.
-  it.live("refuses to read the confirmation off a piped stdin", () =>
+  it.effect("refuses to read the confirmation off a piped stdin", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -341,7 +341,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses to delete unattended rather than skipping the confirmation", () =>
+  it.effect("refuses to delete unattended rather than skipping the confirmation", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({ workdir: repo.dir, format: "json", routes });
@@ -360,7 +360,7 @@ describe("compute delete", () => {
 
   // `interactive` follows stdout, so a plain `>` redirect reaches this branch even
   // from a live terminal — the case where deleting without asking would be worst.
-  it.live("refuses when stdout is redirected and no --yes was given", () =>
+  it.effect("refuses when stdout is redirected and no --yes was given", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -381,7 +381,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("deletes unattended when SUPABASE_YES or --yes authorises it", () =>
+  it.effect("deletes unattended when SUPABASE_YES or --yes authorises it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -404,7 +404,7 @@ describe("compute delete", () => {
     body: { error: { code: "not_found.compute.instance", message: "Compute instance not found" } },
   };
 
-  it.live("fails with `not deployed` before asking anything", () =>
+  it.effect("fails with `not deployed` before asking anything", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -438,7 +438,7 @@ describe("compute delete", () => {
     },
   });
 
-  it.live("does not read an unserved route as a compute that was never deployed", () =>
+  it.effect("does not read an unserved route as a compute that was never deployed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -469,7 +469,7 @@ describe("compute delete", () => {
     },
   };
 
-  it.live("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+  it.effect("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -491,7 +491,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not report a delete it never reached as done", () =>
+  it.effect("does not report a delete it never reached as done", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -517,7 +517,7 @@ describe("compute delete", () => {
     body: { error: { code: "not_found", message: "Not Found" } },
   };
 
-  it.live("does not read a missing project as a compute that was never deployed", () =>
+  it.effect("does not read a missing project as a compute that was never deployed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -540,7 +540,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not report a delete against a missing project as done", () =>
+  it.effect("does not report a delete against a missing project as done", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -564,7 +564,7 @@ describe("compute delete", () => {
   // `deleteCompute` already treats a DELETE 404 as done; the pre-flight GET used
   // to contradict that, so a teardown script run twice failed the second time
   // for a compute in exactly the state it asked for.
-  it.live("succeeds under --yes when the compute is already gone", () =>
+  it.effect("succeeds under --yes when the compute is already gone", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -584,7 +584,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits the same payload shape for a no-op delete", () =>
+  it.effect("emits the same payload shape for a no-op delete", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -610,7 +610,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("treats a delete that races another one as done", () =>
+  it.effect("treats a delete that races another one as done", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -627,7 +627,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("surfaces an unexpected delete status", () =>
+  it.effect("surfaces an unexpected delete status", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -647,7 +647,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a structured result in json mode", () =>
+  it.effect("emits a structured result in json mode", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project();
@@ -677,7 +677,7 @@ describe("compute delete", () => {
   // `-o json` leaves `output.format` as `text`, so the interactive check alone
   // still ran the warning and the prompt — onto the stdout the payload was
   // supposed to own.
-  it.live("refuses rather than prompting when -o json asked for the stdout", () =>
+  it.effect("refuses rather than prompting when -o json asked for the stdout", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
@@ -703,7 +703,7 @@ describe("compute delete", () => {
   // The live tally is what is actually running; `spec.instances` is the target.
   // For a compute mid-provision the two differ, and a destructive confirmation is
   // the worst place to overstate.
-  it.live("counts the live instances in the confirmation when the API reports them", () =>
+  it.effect("counts the live instances in the confirmation when the API reports them", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -733,7 +733,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("pluralizes the live instance count in the confirmation", () =>
+  it.effect("pluralizes the live instance count in the confirmation", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -764,7 +764,7 @@ describe("compute delete", () => {
 
   // Scaled to zero: there is a tally, and it says nothing is running. Warning
   // about terminated instances there would invent a consequence.
-  it.live("promises no terminations when nothing is running", () =>
+  it.effect("promises no terminations when nothing is running", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -797,7 +797,7 @@ describe("compute delete", () => {
   // An orphan — deployed from another checkout — has no local entry and no local
   // directory, so there is nothing that was "kept" and `push` has no source to
   // redeploy from.
-  it.live("does not claim to have kept local files it never had", () =>
+  it.effect("does not claim to have kept local files it never had", () =>
     Effect.gen(function* () {
       const repo = yield* project('project_id = "demo"\n');
       const { layer, out } = setupCompute({
@@ -823,7 +823,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("deletes a deployed compute named root", () =>
+  it.effect("deletes a deployed compute named root", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -848,7 +848,7 @@ describe("compute delete", () => {
 
   // A `config.toml` entry on its own is not something `push` can deploy from, so
   // recommending it would send the user at a command that fails.
-  it.live("keeps the config entry but does not advise redeploying without a source", () =>
+  it.effect("keeps the config entry but does not advise redeploying without a source", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -870,7 +870,7 @@ describe("compute delete", () => {
 
   // Deletion never reads the local source, so a `source` that does not resolve
   // inside the project must not block removing the remote compute.
-  it.live("deletes the remote compute even when the configured source is unusable", () =>
+  it.effect("deletes the remote compute even when the configured source is unusable", () =>
     Effect.gen(function* () {
       const repo = yield* project(
         'project_id = "demo"\n\n[compute.api]\nsource = "../../elsewhere"\n',

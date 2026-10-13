@@ -4,7 +4,7 @@ import {
   fromApiProjectConfig,
 } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -87,7 +87,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
 
   // Set once the target ref resolves, so the Effect.ensuring cache write below only fires for
   // invocations that got that far.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Reject `-o/--output` outright: this command only supports `--output-format`. Checked first
@@ -119,7 +119,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       configTargetErrors,
       mapBranchResolveError,
     );
-    resolvedRef = ref;
+    yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
       "config.target_is_branch": branch !== undefined,
@@ -221,8 +221,13 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     // Telemetry flushes on every invocation; the linked-project cache write only fires once a
     // ref has resolved.
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

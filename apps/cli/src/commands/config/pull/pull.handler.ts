@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../../command-internal/git-status.ts";
@@ -227,7 +227,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
 
   // Set once the target resolves, so the linked-project cache write below only fires for
   // invocations that got that far.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Reject -o/--output outright, before anything else: this command only supports
@@ -255,7 +255,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
       configTargetErrors,
       mapBranchResolveError,
     );
-    resolvedRef = ref;
+    yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);
 
     yield* runConfigPull({
@@ -270,8 +270,13 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // Telemetry flushes on every invocation; the linked-project cache write only fires once a
     // ref has resolved.
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

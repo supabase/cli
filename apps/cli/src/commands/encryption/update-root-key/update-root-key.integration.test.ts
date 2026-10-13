@@ -58,7 +58,7 @@ function setup(opts: SetupOpts = {}) {
 const baseFlags = { projectRef: Option.none<string>() };
 
 describe("encryption update-root-key integration", () => {
-  it.live("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
+  it.effect("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
     const { layer, out, api } = setup({ pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -74,7 +74,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts for a masked root key when stdin is a TTY", () => {
+  it.effect("prompts for a masked root key when stdin is a TTY", () => {
     const { layer, api } = setup({
       stdinIsTty: true,
       promptPasswordResponses: ["tty-key"],
@@ -86,7 +86,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends an empty root key when piped stdin is empty", () => {
+  it.effect("sends an empty root key when piped stdin is empty", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -95,7 +95,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the updated config as a structured result in json mode", () => {
+  it.effect("emits the updated config as a structured result in json mode", () => {
     const { layer, out } = setup({ format: "json", pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -107,7 +107,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event in stream-json mode", () => {
+  it.effect("emits a result event in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json", pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -116,7 +116,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a transport error when the network is down", () => {
+  it.effect("fails with a transport error when the network is down", () => {
     const { layer } = setup({ network: "fail", pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -129,7 +129,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on a 503", () => {
+  it.effect("fails with an unexpected-status error on a 503", () => {
     const { layer } = setup({ status: 503, pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -142,7 +142,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not start a spinner in json mode on failure", () => {
+  it.effect("does not start a spinner in json mode on failure", () => {
     const { layer, out } = setup({ format: "json", status: 503, pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -151,7 +151,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when no project ref can be resolved", () => {
+  it.effect("fails when no project ref can be resolved", () => {
     const { layer } = setup({ projectId: Option.none(), pipedInput: "new-key" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
@@ -162,7 +162,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on success", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on success", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ pipedInput: "new-key" });
     return Effect.gen(function* () {
       yield* encryptionUpdateRootKey(baseFlags);
@@ -171,7 +171,7 @@ describe("encryption update-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on failure", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on failure", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       status: 503,
       pipedInput: "new-key",

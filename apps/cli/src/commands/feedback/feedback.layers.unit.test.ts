@@ -28,7 +28,7 @@ function recordingInnerFetch() {
 }
 
 describe("feedbackFetch", () => {
-  it.live("logs every request through the debug logger and delegates to the inner fetch", () =>
+  it.effect("logs every request through the debug logger and delegates to the inner fetch", () =>
     Effect.gen(function* () {
       const { logger, httpLines } = recordingLogger();
       const inner = recordingInnerFetch();
@@ -46,7 +46,7 @@ describe("feedbackFetch", () => {
     }),
   );
 
-  it.live("defaults the logged method to GET when the request carries none", () =>
+  it.effect("defaults the logged method to GET when the request carries none", () =>
     Effect.gen(function* () {
       const { logger, httpLines } = recordingLogger();
       const inner = recordingInnerFetch();
@@ -68,7 +68,7 @@ describe("feedbackFetch", () => {
     }),
   );
 
-  it.live("redacts the delete_token filter from the logged URL but not the request", () =>
+  it.effect("redacts the delete_token filter from the logged URL but not the request", () =>
     Effect.gen(function* () {
       const { logger, httpLines } = recordingLogger();
       const inner = recordingInnerFetch();

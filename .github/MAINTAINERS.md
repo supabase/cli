@@ -134,11 +134,17 @@ Full procedures live in the
 **Resolving a sync PR.** When `Sync branches` cannot merge cleanly it opens
 `sync/<source>-into-<target>` (for example `sync/develop-into-next`); CODEOWNERS
 requests the CLI team, and for `main-into-develop` the release Slack channel is
-also told. Further syncs for that pair skip while it is open. Merge the target into the sync
-branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
-target and deletes the branch. Never use the merge button. If the target or the
-source moved, the bot merges the latest target and source into the approved head and lands
-it directly if the merge is clean, as for a clean sync (the merge commit is
+also told. Further syncs for that pair skip while it is open. For
+`develop-into-next`, Claude resolves the merge on the branch and repairs CI
+failures and AI review findings; check its comments, answer any decision it
+lists, and approve
+([runbook](../apps/cli/docs/release-process.md#claude-resolved-develop-into-next)).
+Otherwise merge the target into the sync branch, resolve, and push; then
+**approve** the PR. Approval fast-forwards the
+target and deletes the branch. Never use the merge button. A moved source does
+not block landing; the next sync run brings its newer commits in. If the target
+moved, the bot merges the latest target into the approved head and lands it
+directly if the merge is clean, as for a clean sync (the merge commit is
 untested); only a new conflict, or a target that keeps moving, sends the PR
 back for a new approval. Only two sync pairs
 exist (`sync/main-into-develop` into `develop`, `sync/develop-into-next` into

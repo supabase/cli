@@ -4,7 +4,6 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
@@ -27,9 +26,6 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // Force `Tty` into the handler's R channel so `promptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management

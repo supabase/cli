@@ -1,6 +1,7 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -14,6 +15,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { DomainsCnameError } from "../domains.errors.ts";
 import { domainsCreate } from "./create.handler.ts";
 
 const CUSTOM_HOSTNAME = "shop.acme.dev";
@@ -46,6 +48,7 @@ interface SetupOpts {
   readonly apiStatus?: number;
   readonly apiNetwork?: "fail";
   readonly apiResponse?: unknown;
+  readonly dnsRequested?: Deferred.Deferred<void>;
 }
 
 const tempRoot = useTempWorkdir("supabase-domains-create-int-");
@@ -56,6 +59,9 @@ function setup(opts: SetupOpts = {}) {
   const api = mockCommandPlatformApi({
     handler: (request) => {
       if (request.url.includes("1.1.1.1")) {
+        if (opts.dnsRequested !== undefined) {
+          return Deferred.succeed(opts.dnsRequested, undefined).pipe(Effect.andThen(Effect.never));
+        }
         if (cname === "transport-fail") {
           return Effect.fail(transportFailure(request));
         }
@@ -105,7 +111,7 @@ function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): 
 }
 
 describe("domains create integration", () => {
-  it.live("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
+  it.effect("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -117,7 +123,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       apiStatus: 400,
       apiResponse: {
@@ -146,7 +152,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 400 without envelope produces no upgrade hint", () => {
+  it.effect("plain 400 without envelope produces no upgrade hint", () => {
     const { layer, out, analytics, api } = setup({
       apiStatus: 400,
       apiResponse: { message: "invalid hostname" },
@@ -160,7 +166,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the CNAME lookup transport fails", () => {
+  it.effect("fails before any POST when the CNAME lookup transport fails", () => {
     const { layer, api } = setup({ cname: "transport-fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -174,7 +180,28 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when no CNAME record resolves", () => {
+  it.effect("fails with a transport CNAME error before any POST when the lookup times out", () =>
+    Effect.gen(function* () {
+      const dnsRequested = yield* Deferred.make<void>();
+      const { layer, api } = setup({ dnsRequested });
+      const fiber = yield* domainsCreate(flags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(dnsRequested);
+      yield* TestClock.adjust("10 seconds");
+      const error = yield* Fiber.join(fiber);
+      expect(error).toBeInstanceOf(DomainsCnameError);
+      expect(error).toMatchObject({
+        transport: true,
+        message: expect.stringContaining("but it failed to resolve: Operation timed out after"),
+      });
+      expect(postedToInitialize(api)).toBe(false);
+    }),
+  );
+
+  it.effect("fails before any POST when no CNAME record resolves", () => {
     const { layer, api } = setup({ cname: "no-cname" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -186,7 +213,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the CNAME points elsewhere", () => {
+  it.effect("fails before any POST when the CNAME points elsewhere", () => {
     const { layer, api, telemetry } = setup({ cname: "mismatch" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -202,7 +229,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the DNS query returns a non-200 status", () => {
+  it.effect("fails before any POST when the DNS query returns a non-200 status", () => {
     const { layer, api } = setup({ cname: "status-error" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -216,7 +243,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout with no status on stderr for -o json", () => {
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -225,7 +252,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout with no status on stderr for -o yaml", () => {
+  it.effect("emits YAML to stdout with no status on stderr for -o yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -235,7 +262,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -244,7 +271,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError when the API returns 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError when the API returns 503", () => {
     const { layer } = setup({ apiStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -255,7 +282,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError when the create request fails", () => {
+  it.effect("fails with DomainsNetworkError when the create request fails", () => {
     const { layer } = setup({ apiNetwork: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -266,7 +293,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an API error without a spinner in json mode", () => {
+  it.effect("maps an API error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", apiStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));

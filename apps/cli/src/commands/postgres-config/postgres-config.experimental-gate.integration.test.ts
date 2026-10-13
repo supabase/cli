@@ -68,7 +68,7 @@ describe("postgres-config experimental gate ", () => {
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -81,7 +81,7 @@ describe("postgres-config experimental gate ", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -122,7 +122,7 @@ describe("postgres-config experimental gate ", () => {
   ];
 
   for (const { name, args, message } of malformedCsvCases) {
-    it.live(
+    it.effect(
       `${name}: malformed --config CSV fails at parse time with the exact diagnostic, before the gate`,
       () => {
         const { layer, api } = setup();

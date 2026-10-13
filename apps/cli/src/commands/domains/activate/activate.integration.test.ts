@@ -68,7 +68,7 @@ function setup(opts: SetupOpts = {}) {
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains activate integration", () => {
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -96,7 +96,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the completion status to stderr in text mode", () => {
+  it.effect("prints the completion status to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
@@ -110,7 +110,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
@@ -119,7 +119,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented JSON to stdout for -o json", () => {
+  it.effect("emits indented JSON to stdout for -o json", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
@@ -127,7 +127,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsActivate(baseFlags));
@@ -139,7 +139,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsActivate(baseFlags));
@@ -150,7 +150,7 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsActivate(baseFlags));

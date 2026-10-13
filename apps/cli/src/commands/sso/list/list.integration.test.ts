@@ -139,7 +139,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("sso list integration", () => {
-  it.live("renders an ASCII table in text mode", () => {
+  it.effect("renders an ASCII table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -153,7 +153,7 @@ describe("sso list integration", () => {
 
   // Some projects still echo nested IDs the schema dropped; these must not
   // break decoding or reach `-o json`.
-  it.live("ignores nested saml.id / domains[].id when the API still sends them", () => {
+  it.effect("ignores nested saml.id / domains[].id when the API still sends them", () => {
     const item = {
       ...PROVIDER_ITEM,
       saml: { ...PROVIDER_ITEM.saml, id: "8682fcf4-4056-455c-bd93-f33295604929" },
@@ -197,17 +197,17 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success payload via --output-format=json", () => {
+  it.effect("emits a success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      expect((success?.data as { providers: ReadonlyArray<unknown> })?.providers).toHaveLength(1);
+      expect(success?.data).toHaveProperty("providers.length", 1);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event via --output-format=stream-json", () => {
+  it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -215,7 +215,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=json wraps response in `{providers: …}`", () => {
+  it.effect("--output=json wraps response in `{providers: …}`", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -225,7 +225,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=yaml emits providers key", () => {
+  it.effect("--output=yaml emits providers key", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -233,7 +233,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml emits provider data", () => {
+  it.effect("--output=toml emits provider data", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -241,7 +241,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml fails on a null attribute-mapping array element", () => {
+  it.effect("--output=toml fails on a null attribute-mapping array element", () => {
     const item = {
       ...PROVIDER_ITEM,
       saml: {
@@ -262,7 +262,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=env emits a flat PROVIDERS= entry", () => {
+  it.effect("--output=env emits a flat PROVIDERS= entry", () => {
     const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -270,7 +270,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=pretty falls through to text rendering", () => {
+  it.effect("--output=pretty falls through to text rendering", () => {
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -278,7 +278,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a 200 response containing a null provider item", () => {
+  it.effect("rejects a 200 response containing a null provider item", () => {
     const { layer } = setup({ body: { items: [null] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -295,7 +295,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output wins over --output-format when both set", () => {
+  it.effect("--output wins over --output-format when both set", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -304,7 +304,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports SAML-disabled error on 404", () => {
+  it.effect("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -317,7 +317,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
+  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -325,7 +325,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
+  it.effect("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -333,7 +333,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports unexpected-status error on 500", () => {
+  it.effect("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -346,7 +346,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports network error on transport failure", () => {
+  it.effect("reports network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -359,7 +359,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over resolver default", () => {
+  it.effect("uses --project-ref flag value over resolver default", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -371,7 +371,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("hits GET /v1/projects/{ref}/config/auth/sso/providers", () => {
+  it.effect("hits GET /v1/projects/{ref}/config/auth/sso/providers", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -380,7 +380,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
@@ -389,7 +389,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even on API failure", () => {
+  it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoList({ projectRef: Option.none() }));
@@ -397,7 +397,7 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 500, body: {} });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);

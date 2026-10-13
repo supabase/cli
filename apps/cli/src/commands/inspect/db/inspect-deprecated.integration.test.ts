@@ -157,8 +157,9 @@ describe("inspect db deprecated aliases", () => {
       return Effect.gen(function* () {
         yield* testCase.handler(flags);
         expect(ctx.out.stderrText).toContain(
-          `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.`,
+          `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`,
         );
+        expect(ctx.out.stdoutText).not.toContain("is deprecated");
         expect(ctx.querySql).toBe(testCase.routedSpec.sql);
       }).pipe(Effect.provide(ctx.layer));
     });

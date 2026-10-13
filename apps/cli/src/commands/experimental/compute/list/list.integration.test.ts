@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Schema } from "effect";
 import {
   makeComputeProject,
@@ -36,7 +36,7 @@ function project(config = CONFIG) {
 const listRoute = `GET ${computeRoute()}`;
 
 describe("compute list", () => {
-  it.live("shows configured and deployed compute as one inventory", () =>
+  it.effect("shows configured and deployed compute as one inventory", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -80,7 +80,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not assert a runtime for a compute that has never been deployed", () =>
+  it.effect("does not assert a runtime for a compute that has never been deployed", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n\n[compute.ghost]\n`);
       const { layer, out } = setupCompute({
@@ -101,7 +101,7 @@ describe("compute list", () => {
 
   // A local directory with no `[compute.<name>]` entry: pushable, and the
   // runtime is the only thing a push would have to work out for itself.
-  it.live("calls out a deployed compute that config.toml does not know about", () =>
+  it.effect("calls out a deployed compute that config.toml does not know about", () =>
     Effect.gen(function* () {
       const created = yield* makeComputeProject({
         "supabase/config.toml": `project_id = "demo"\n`,
@@ -131,7 +131,7 @@ describe("compute list", () => {
 
   // Two of them, so the advisory has to read as a list rather than as one name
   // with a stray verb.
-  it.live("calls out every deployed compute config.toml does not know about", () =>
+  it.effect("calls out every deployed compute config.toml does not know about", () =>
     Effect.gen(function* () {
       const created = yield* makeComputeProject({
         "supabase/config.toml": `project_id = "demo"\n`,
@@ -168,7 +168,7 @@ describe("compute list", () => {
   // Deletion is asynchronous, so a compute can be listed while it is being torn
   // down. Reporting its build state would show `active` for something on its
   // way out.
-  it.live("shows a compute being torn down as deleting", () =>
+  it.effect("shows a compute being torn down as deleting", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n\n[compute.api]\nruntime = "node"\n`);
       const { layer, out } = setupCompute({
@@ -192,7 +192,7 @@ describe("compute list", () => {
   // Nothing local at all: `deployOneCompute` checks the source directory before
   // it ever infers a runtime, so "would have to guess the runtime" named the
   // wrong prerequisite for this one.
-  it.live("tells a compute with no local source to restore it, not to expect a guess", () =>
+  it.effect("tells a compute with no local source to restore it, not to expect a guess", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n`);
       const { layer, out } = setupCompute({
@@ -214,7 +214,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("says so when the project has no compute at all", () =>
+  it.effect("says so when the project has no compute at all", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n`);
       const { layer, out } = setupCompute({
@@ -232,7 +232,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits the inventory as structured data in json mode", () =>
+  it.effect("emits the inventory as structured data in json mode", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -281,7 +281,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("serialises the inventory for the -o flag", () =>
+  it.effect("serialises the inventory for the -o flag", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -311,7 +311,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before making any request at all", () =>
+  it.effect("refuses -o env before making any request at all", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -332,7 +332,7 @@ describe("compute list", () => {
   // Until the Management API ships `not_found.compute.not_enabled`, an unenrolled
   // project answers the shared `generic_not_found`, which no branch claims — so
   // this pins the fallback that carries the alpha refusal until then.
-  it.live("still reports the alpha refusal's pre-rollout body as unavailable", () =>
+  it.effect("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -358,7 +358,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
+  it.effect("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -385,7 +385,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the unserved route instead of the project when the API has no such route", () =>
+  it.effect("names the unserved route instead of the project when the API has no such route", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -406,18 +406,16 @@ describe("compute list", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        assert.instanceOf(error, ComputeRouteNotFoundError);
         expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
-        expect((error as ComputeRouteNotFoundError).detail).toContain(
-          `GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
-        );
-        expect((error as ComputeRouteNotFoundError).suggestion).toContain("supabase issue");
-        expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("supabase link");
+        expect(error.detail).toContain(`GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`);
+        expect(error.suggestion).toContain("supabase issue");
+        expect(error.suggestion).not.toContain("supabase link");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("still reports a missing project when the 404 is the project's own", () =>
+  it.effect("still reports a missing project when the 404 is the project's own", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -434,12 +432,12 @@ describe("compute list", () => {
         const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
-        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("surfaces an unexpected status rather than showing an empty list", () =>
+  it.effect("surfaces an unexpected status rather than showing an empty list", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -455,7 +453,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses an explicit --project-ref without a linked project", () =>
+  it.effect("uses an explicit --project-ref without a linked project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -474,7 +472,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("requires a linked project when no ref is given", () =>
+  it.effect("requires a linked project when no ref is given", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir, linked: false });
@@ -490,7 +488,7 @@ describe("compute list", () => {
   // A directory under the compute root with no `[compute.<name>]` entry is what
   // a bare `push` discovers and deploys, so an inventory that leaves it out can
   // say "No compute found" about a compute `push` would happily deploy.
-  it.live("includes a local compute directory that has no config entry", () =>
+  it.effect("includes a local compute directory that has no config entry", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -522,7 +520,7 @@ describe("compute list", () => {
   // The API omits `spec.runtime` only for a context-only build, so for a
   // deployed compute its absence *is* dockerfile. Falling back to the local
   // config there made `-o json` report a runtime the text table contradicted.
-  it.live("reports a deployed dockerfile compute as dockerfile in both renderings", () =>
+  it.effect("reports a deployed dockerfile compute as dockerfile in both renderings", () =>
     Effect.gen(function* () {
       const repo = yield* project('project_id = "demo"\n\n[compute.api]\nruntime = "node"\n');
       const { layer, out } = setupCompute({
@@ -547,7 +545,7 @@ describe("compute list", () => {
   // An undeployed compute has no `size`/`instances` and a private one no `url`,
   // so a realistic inventory hands the encoder a payload full of holes. Pins
   // that they are omitted rather than rendered or thrown on.
-  it.live("encodes TOML for an inventory holding undeployed and private compute", () =>
+  it.effect("encodes TOML for an inventory holding undeployed and private compute", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -572,7 +570,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("encodes YAML when -o yaml asks for it", () =>
+  it.effect("encodes YAML when -o yaml asks for it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -599,7 +597,7 @@ describe("compute list", () => {
 
   // `table`/`csv` are accepted by the global flag for `db query`'s benefit; every
   // other resource command, including this one, renders text for them too.
-  it.live.each(["pretty", "table", "csv"] as const)(
+  it.effect.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
     (outputFlag) =>
       Effect.gen(function* () {
@@ -624,7 +622,7 @@ describe("compute list", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry when the project config cannot be loaded", () =>
+  it.effect("flushes telemetry when the project config cannot be loaded", () =>
     Effect.gen(function* () {
       const repo = yield* project("project_id = [unclosed\n");
       const { layer, telemetry } = setupCompute({ workdir: repo.dir });
@@ -637,7 +635,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>
       Effect.gen(function* () {
@@ -672,7 +670,7 @@ describe("compute list", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not discover the same config.json-only entry when --workdir is explicit (preserves bare-directory scaffolding semantics)",
     () =>
       Effect.gen(function* () {

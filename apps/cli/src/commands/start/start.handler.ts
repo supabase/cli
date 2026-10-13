@@ -5,7 +5,6 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
-import { FetchHttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
@@ -42,7 +41,7 @@ import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
   resolveStorageCredentials,
-  storageGatewayFetch,
+  withStorageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
 import { decryptSecretMap } from "../../shared/config/vault-decrypt.ts";
 import { parseDuration } from "../../command-internal/duration.ts";
@@ -1476,8 +1475,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         // PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S); when
         // `api.tls.enabled`, Kong's cert is self-signed, so the default `HttpClient` would fail
         // TLS verification and the health check would time out even though the services are
-        // healthy. Overrides only the underlying `FetchHttpClient.Fetch` primitive, so it's a
-        // no-op against a mock `HttpClient` (this file's own tests).
+        // healthy. Overrides only the underlying `FetchHttpClient` fetch and request options, so
+        // it's a no-op against a mock `HttpClient` (this file's own tests).
         //
         // `effectiveLocalStorageConfig` folds the resolved storage values into `config`, reused by
         // both `seedBucketsRun` calls below so bucket seeding never reloads config and drops them.
@@ -1500,11 +1499,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         // Shared by every gateway probe below (the bulk wait and the
         // storage-only recheck), so both trust the same local Kong CA.
         const withLocalKongCa = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          localKongCa === undefined
-            ? effect
-            : effect.pipe(
-                Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(localKongCa)),
-              );
+          localKongCa === undefined ? effect : effect.pipe(withStorageGatewayFetch(localKongCa));
         // Keep the synthetic value out of project dotenv resolution and container environments.
         configureLoopbackProxyBypass();
         const healthResult = yield* withLocalKongCa(

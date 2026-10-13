@@ -4,7 +4,6 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
@@ -29,7 +28,6 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.

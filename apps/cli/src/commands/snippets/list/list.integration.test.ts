@@ -1,11 +1,12 @@
 import { type V1ListAllSnippetsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -13,9 +14,13 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { snippetsList } from "./list.handler.ts";
 
 type SnippetsResponse = typeof V1ListAllSnippetsOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SNIPPET_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -97,7 +102,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("snippets list integration", () => {
-  it.live("renders an ASCII table in text mode with all six columns", () => {
+  it.effect("renders an ASCII table in text mode with all six columns", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -113,7 +118,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves literal `|` characters in snippet name and owner username", () => {
+  it.effect("preserves literal `|` characters in snippet name and owner username", () => {
     const { layer, out } = setup({ response: PIPE_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -123,7 +128,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("formats RFC3339 timestamps as UTC YYYY-MM-DD HH:MM:SS", () => {
+  it.effect("formats RFC3339 timestamps as UTC YYYY-MM-DD HH:MM:SS", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -131,7 +136,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("leaves a non-RFC3339 inserted_at string untouched", () => {
+  it.effect("leaves a non-RFC3339 inserted_at string untouched", () => {
     const { layer, out } = setup({ response: RAW_TIMESTAMP_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -141,18 +146,17 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with the full response under --output-format=json", () => {
+  it.effect("emits a success event with the full response under --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      const data = success?.data as SnippetsResponse | undefined;
-      expect(data?.data).toHaveLength(1);
+      expect(success?.data).toEqual(SINGLE_RESPONSE);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event under --output-format=stream-json", () => {
+  it.effect("emits a result event under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -160,7 +164,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
+  it.effect("--output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
     const { layer, out } = setup({ outputFlag: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -173,7 +177,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=yaml emits a `data:` block", () => {
+  it.effect("--output=yaml emits a `data:` block", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -182,7 +186,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml fails when a snippet carries a description", () => {
+  it.effect("--output=toml fails when a snippet carries a description", () => {
     // The nullable `description` field can't be represented in TOML, so this
     // fails whenever any snippet has a `description` key (present-with-value
     // or explicit null).
@@ -200,7 +204,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output=toml emits the expected bytes when no snippet has a description", () => {
+  it.effect("--output=toml emits the expected bytes when no snippet has a description", () => {
     // The Management API always includes `description`, so this success
     // branch is unreachable in production — kept to pin the encoder bytes
     // for the shape where the key is absent.
@@ -233,7 +237,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "--output=env fails with SnippetsEnvNotSupportedError, flushes telemetry+cache, and does not call the API",
     () => {
       const { layer, api, telemetry, cache } = setup({ outputFlag: "env" });
@@ -252,7 +256,7 @@ describe("snippets list integration", () => {
     },
   );
 
-  it.live("--output=pretty falls through to the text renderer", () => {
+  it.effect("--output=pretty falls through to the text renderer", () => {
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -261,7 +265,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output wins over --output-format when both are set", () => {
+  it.effect("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -270,25 +274,69 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project_ref as a `project_ref` query parameter", () => {
+  it.effect("passes the resolved project_ref as a `project_ref` query parameter", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlWithParams).toContain(`/v1/snippets?project_ref=${VALID_REF}`);
+      assertPermissionDrift({ command: "snippets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over the resolver's linked-project default", () => {
+  it.effect("uses --project-ref flag value over the resolver's linked-project default", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.urlWithParams).toContain(`project_ref=${flagRef}`);
+      assertPermissionDrift({
+        command: "snippets list",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SnippetsListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fills the linked-project cache through the real cache layer", () => {
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`
+            ? jsonResponse(request, 200, {
+                ref: VALID_REF,
+                name: "alpha",
+                organization_id: "org-123",
+                organization_slug: "acme",
+              })
+            : jsonResponse(request, 200, SINGLE_RESPONSE),
+        ),
+    });
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const layer = buildTestRuntime({
+      out: mockOutput(),
+      api,
+      cliSettings,
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* snippetsList({ projectRef: Option.none() });
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/snippets",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      assertPermissionDrift({ command: "snippets list", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with SnippetsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
@@ -301,7 +349,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SnippetsListNetworkError on transport failure", () => {
+  it.effect("fails with SnippetsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
@@ -314,7 +362,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
@@ -323,7 +371,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache even on API failure", () => {
+  it.effect("flushes telemetry and writes linked-project cache even on API failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500 });
     return Effect.gen(function* () {
       yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
@@ -332,7 +380,7 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);

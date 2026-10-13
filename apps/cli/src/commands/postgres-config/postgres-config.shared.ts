@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -106,15 +106,11 @@ export function normalizeTimeoutConfig(config: PostgresConfigMap): void {
 }
 
 function mapTransportMessage<E>(
-  cause: unknown,
+  cause: HttpClientError.HttpClientError,
   message: (description: string) => string,
   wrap: (args: { readonly message: string }) => E,
 ): E {
-  if (HttpClientError.isHttpClientError(cause)) {
-    const description = cause.reason.description ?? cause.reason._tag;
-    return wrap({ message: message(description) });
-  }
-  return wrap({ message: message(String(cause)) });
+  return wrap({ message: message(cause.reason.description ?? cause.reason._tag) });
 }
 
 const decodeJsonObject = Schema.decodeEffect(

@@ -50,6 +50,76 @@ describe("applicableOperations", () => {
     expect(applied({})).toEqual([]);
   });
 
+  it("applies a switch condition to the switch's effective value", () => {
+    const permissions = mapped([
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "best-effort",
+        when: [{ flag: "skip-pooler", is: false }],
+      },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+    expect(applied({ "skip-pooler": false })).toEqual(["v1-get-pooler-config"]);
+    expect(applied({ "skip-pooler": true })).toEqual([]);
+    expect(applied({})).toEqual(["v1-get-pooler-config"]);
+  });
+
+  it("treats a flag given an empty value as absent", () => {
+    const permissions = mapped([
+      {
+        operationId: "v1-create-login-role",
+        kind: "required",
+        when: [{ flag: "password", present: false }],
+      },
+      { operationId: "v1-list-all-projects", kind: "required", when: [{ flag: "project-ref" }] },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+    expect(applied({ password: "" })).toEqual(["v1-create-login-role"]);
+    expect(applied({ password: "hunter2" })).toEqual([]);
+    expect(applied({ password: "x", "project-ref": "" })).toEqual([]);
+    expect(applied({ password: "x", "project-ref": "abcdefghijklmnopqrst" })).toEqual([
+      "v1-list-all-projects",
+    ]);
+  });
+
+  describe("database target", () => {
+    const entries = [
+      { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "required",
+        when: [{ dbTarget: ["local", "db-url"] }],
+      },
+    ] as const;
+    const applied = (
+      activeFlags: Parameters<typeof applicableOperations>[1],
+      dbTargetDefault?: "local" | "linked",
+    ) =>
+      applicableOperations(
+        { ...mapped(entries), ...(dbTargetDefault === undefined ? {} : { dbTargetDefault }) },
+        activeFlags,
+      ).map((e) => e.operationId);
+
+    it("takes --db-url over --local over --linked", () => {
+      expect(applied({ linked: true, local: true, "db-url": true })).toEqual([
+        "v1-get-pooler-config",
+      ]);
+      expect(applied({ linked: true, local: true })).toEqual(["v1-get-pooler-config"]);
+      expect(applied({ linked: true }, "local")).toEqual(["v1-run-a-query"]);
+    });
+
+    it("falls back to the declared default when no target flag is given", () => {
+      expect(applied({}, "linked")).toEqual(["v1-run-a-query"]);
+      expect(applied({}, "local")).toEqual(["v1-get-pooler-config"]);
+    });
+
+    it("rejects a run with no target flag and no default", () => {
+      expect(() => applied({})).toThrow(/sets no default/);
+    });
+  });
+
   it("keeps a required entry with no context over a required entry that has one, for the same operationId", () => {
     const permissions = mapped([
       {

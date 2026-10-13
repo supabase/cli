@@ -371,40 +371,31 @@ async function resyncSyncBranch(
   promotion: Promotion,
   headSha: string,
   syncBranch: string,
-  moved: string,
 ): Promise<FastForwardOutcome> {
   const { git } = io;
-  const { target, source } = promotion;
+  const { target } = promotion;
   const targetRef = `refs/remotes/origin/${target}`;
   let resyncedSha = headSha;
 
   for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt += 1) {
-    gitOrThrow(git, [
-      "fetch",
-      "--no-tags",
-      "origin",
-      `+refs/heads/${target}:${targetRef}`,
-      `+refs/heads/${source}:refs/remotes/origin/${source}`,
-    ]);
+    gitOrThrow(git, ["fetch", "--no-tags", "origin", `+refs/heads/${target}:${targetRef}`]);
     const targetSha = gitOrThrow(git, ["rev-parse", targetRef]);
     gitOrThrow(git, ["checkout", "--detach", headSha]);
-    for (const ref of [target, source]) {
-      const merge = git(["merge", "--no-edit", `refs/remotes/origin/${ref}`]);
-      if (merge.status !== 0) {
-        const files = git(["diff", "--name-only", "--diff-filter=U"]).stdout;
-        git(["merge", "--abort"]);
-        const list = files
-          .split("\n")
-          .filter(Boolean)
-          .map((file) => `- \`${file}\``)
-          .join("\n");
-        return refuse(
-          io,
-          input,
-          `Merging ${ref} into ${syncBranch} conflicts`,
-          `\`${moved}\` moved since approval and merging \`${ref}\` into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
-        );
-      }
+    const merge = git(["merge", "--no-edit", targetRef]);
+    if (merge.status !== 0) {
+      const files = git(["diff", "--name-only", "--diff-filter=U"]).stdout;
+      git(["merge", "--abort"]);
+      const list = files
+        .split("\n")
+        .filter(Boolean)
+        .map((file) => `- \`${file}\``)
+        .join("\n");
+      return refuse(
+        io,
+        input,
+        `Merging ${target} into ${syncBranch} conflicts`,
+        `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
+      );
     }
     resyncedSha = gitOrThrow(git, ["rev-parse", "HEAD"]);
 
@@ -416,7 +407,7 @@ async function resyncSyncBranch(
     if (pushMergedTarget(git, target, targetSha) === "pushed") {
       git(["push", "origin", "--delete", syncBranch]);
       await io.comment(
-        `\`${moved}\` moved since approval, so I merged the latest \`${target}\` and \`${source}\` into the approved head and landed it as ${short(resyncedSha)}.`,
+        `\`${target}\` moved since approval, so I merged the latest \`${target}\` into the approved head and landed it as ${short(resyncedSha)}.`,
       );
       return { status: "merged-after-resync", sha: resyncedSha };
     }
@@ -424,7 +415,7 @@ async function resyncSyncBranch(
 
   gitOrThrow(git, ["push", "origin", `${resyncedSha}:refs/heads/${syncBranch}`]);
   await io.comment(
-    `\`${target}\` kept moving, so I merged the latest \`${target}\` and \`${source}\` into \`${syncBranch}\` (${short(resyncedSha)}). Re-approve once checks pass.`,
+    `\`${target}\` kept moving, so I merged the latest \`${target}\` into \`${syncBranch}\` (${short(resyncedSha)}). Re-approve once checks pass.`,
   );
   return { status: "resynced", sha: resyncedSha };
 }
@@ -482,9 +473,6 @@ export async function runFastForward(
   const fetchRefs = [
     `+refs/heads/${promotion.target}:refs/remotes/origin/${promotion.target}`,
     `+refs/pull/${pullRequest.number}/head:refs/ff/pr-head`,
-    ...(promotion.kind === "sync"
-      ? [`+refs/heads/${promotion.source}:refs/remotes/origin/${promotion.source}`]
-      : []),
   ];
   gitOrThrow(git, ["fetch", "--no-tags", "origin", ...fetchRefs]);
 
@@ -515,18 +503,9 @@ export async function runFastForward(
   const canFastForward = (): boolean =>
     git(["merge-base", "--is-ancestor", targetRef, headSha]).status === 0;
 
-  const sourceCurrent = (): boolean =>
-    promotion.kind !== "sync" ||
-    git(["merge-base", "--is-ancestor", `refs/remotes/origin/${promotion.source}`, headSha])
-      .status === 0;
-
-  let movedBranch: string | null = null;
-  if (!canFastForward()) {
-    movedBranch = promotion.target;
-  } else if (!sourceCurrent()) {
-    movedBranch = promotion.source;
-  }
-  if (movedBranch === null) {
+  // Source commits newer than the approved head reach the target through the next sync run.
+  let targetMoved = !canFastForward();
+  if (!targetMoved) {
     const push = pushSha(io, input, headSha, promotion.target);
     if (!push.ok) {
       gitOrThrow(git, [
@@ -538,13 +517,13 @@ export async function runFastForward(
       if (canFastForward()) {
         throw new Error(`git push to ${promotion.target} failed: ${push.stderr}`);
       }
-      movedBranch = promotion.target;
+      targetMoved = true;
     }
   }
 
-  if (movedBranch !== null) {
+  if (targetMoved) {
     if (promotion.kind === "sync") {
-      return resyncSyncBranch(io, input, promotion, headSha, pullRequest.head.ref, movedBranch);
+      return resyncSyncBranch(io, input, promotion, headSha, pullRequest.head.ref);
     }
     const recovery =
       promotion.kind === "deploy"

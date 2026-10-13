@@ -16,6 +16,18 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "./project-ref.service.ts";
+import { block } from "../command-internal/command-permissions/model.ts";
+
+/** `ProjectRefResolver`'s interactive picker, reached only when no ref comes from a flag, env or the linked workdir. */
+export const projectRefPicker = block("project-ref", [
+  {
+    operationId: "v1-list-all-projects",
+    kind: "required",
+    when: [{ flag: "project-ref", present: false }],
+    context:
+      "an interactive terminal, no SUPABASE_PROJECT_ID and no supabase/.temp/project-ref (`link` ignores that file)",
+  },
+]);
 
 function assertValid(ref: string): Effect.Effect<string, InvalidProjectRefError> {
   if (PROJECT_REF_PATTERN.test(ref)) {

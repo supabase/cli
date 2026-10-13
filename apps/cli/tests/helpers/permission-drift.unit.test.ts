@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import type { DeclaredPermissionsLookup } from "./permission-registry.ts";
-import { assertDriftAgainst } from "./permission-drift.ts";
+import { block } from "../../src/command-internal/command-permissions/model.ts";
+import { assertBlockDrift, assertDriftAgainst } from "./permission-drift.ts";
 import { OPERATIONS } from "./operation-table.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -117,6 +118,37 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/gives "type" no value, but a `when` condition checks its value/);
   });
 
+  it("rejects a switch condition whose flag is missing from activeFlags or given a non-boolean", () => {
+    const switchChecked = declared({
+      status: "mapped",
+      operations: [
+        {
+          operationId: "v1-list-all-secrets",
+          kind: "required",
+          when: [{ flag: "skip", is: false }],
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const rejected: Array<Record<string, boolean | string>> = [{}, { skip: "false" }];
+    for (const activeFlags of rejected) {
+      expect(() =>
+        assertDriftAgainst(switchChecked, {
+          command: "secrets list",
+          activeFlags,
+          requests: [listSecrets],
+        }),
+      ).toThrow(/checks the value of --skip, a switch — pass its effective value as a boolean/);
+    }
+    expect(() =>
+      assertDriftAgainst(switchChecked, {
+        command: "secrets list",
+        activeFlags: { skip: false },
+        requests: [listSecrets],
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects an active flag the command does not accept, even if a declaration condition names it", () => {
     const withBlockCondition = declared({
       status: "mapped",
@@ -159,6 +191,67 @@ describe("assertDriftAgainst", () => {
         requests: [runQuery],
       }),
     ).toThrow(/"v1-run-a-query", which is declared for this command but whose `when` condition/);
+  });
+
+  describe("request qualifiers", () => {
+    const apiKeys = `${API}/v1/projects/${REF}/api-keys`;
+    const withReveal = declared({
+      status: "mapped",
+      operations: [
+        {
+          operationId: "v1-get-project-api-keys",
+          kind: "required",
+          request: { query: { reveal: "true" } },
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const revealOnlyWithFlag = declared({
+      status: "mapped",
+      operations: [
+        { operationId: "v1-get-project-api-keys", kind: "required" },
+        {
+          operationId: "v1-get-project-api-keys",
+          kind: "required",
+          when: [{ flag: "reveal" }],
+          request: { query: { reveal: "true" } },
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const check = (
+      lookup: DeclaredPermissionsLookup,
+      request: { method: string; url: string; urlParams?: string },
+      activeFlags: Record<string, boolean> = {},
+    ) => assertDriftAgainst(lookup, { command: "keys", activeFlags, requests: [request] });
+
+    it("accepts a request carrying the declared qualifier in its url or its urlParams", () => {
+      expect(() =>
+        check(withReveal, { method: "GET", url: `${apiKeys}?reveal=true` }),
+      ).not.toThrow();
+      expect(() =>
+        check(withReveal, { method: "GET", url: apiKeys, urlParams: "reveal=true" }),
+      ).not.toThrow();
+    });
+
+    it("rejects a request sent without the declared qualifier or with another value", () => {
+      expect(() => check(withReveal, { method: "GET", url: apiKeys })).toThrow(
+        /sent without the query qualifiers its declaration lists/,
+      );
+      expect(() =>
+        check(withReveal, { method: "GET", url: apiKeys, urlParams: "reveal=false" }),
+      ).toThrow(/sent without the query qualifiers/);
+    });
+
+    it("rejects a qualifier the declaration lists only under a flag the run does not use", () => {
+      const plain = { method: "GET", url: apiKeys };
+      const revealed = { method: "GET", url: apiKeys, urlParams: "reveal=true" };
+      expect(() => check(revealOnlyWithFlag, plain)).not.toThrow();
+      expect(() => check(revealOnlyWithFlag, revealed)).toThrow(
+        /carries reveal=true, which no applicable declaration entry lists/,
+      );
+      expect(() => check(revealOnlyWithFlag, revealed, { reveal: true })).not.toThrow();
+    });
   });
 
   it("resolves requests against a custom API URL", () => {
@@ -213,5 +306,33 @@ describe("assertDriftAgainst", () => {
         }),
       ).not.toThrow();
     });
+  });
+});
+
+describe("assertBlockDrift", () => {
+  const demo = block("demo", [
+    { operationId: "v1-list-all-secrets", kind: "required" },
+    { operationId: "v1-run-a-query", kind: "required", when: [{ flag: "linked" }] },
+  ]);
+
+  it("names the building block when a request is to an operation it does not declare", () => {
+    expect(() => assertBlockDrift(demo, { requests: [getProject] })).toThrow(
+      /assertBlockDrift: building block "demo": request GET .*"v1-get-project", which is not declared for this building block at all/,
+    );
+  });
+
+  it("rejects a declared operation whose condition does not hold for the active flags", () => {
+    expect(() => assertBlockDrift(demo, { activeFlags: {}, requests: [runQuery] })).toThrow(
+      /assertBlockDrift: building block "demo": .*"v1-run-a-query", which is declared for this building block but whose `when` condition/,
+    );
+  });
+
+  it("names the building block when a switch the block tests is missing from activeFlags", () => {
+    const switched = block("switched", [
+      { operationId: "v1-list-all-secrets", kind: "required", when: [{ flag: "skip", is: false }] },
+    ]);
+    expect(() => assertBlockDrift(switched, { requests: [listSecrets] })).toThrow(
+      /assertBlockDrift: building block "switched": a `when` condition checks the value of --skip/,
+    );
   });
 });

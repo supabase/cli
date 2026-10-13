@@ -5,7 +5,7 @@ import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { ssoAddDomainsFlag } from "./add.command.ts";
 
 describe("sso add --domains flag", () => {
-  it.live("splits a comma-separated value into multiple domains", () =>
+  it.effect("splits a comma-separated value into multiple domains", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
         .parse({
@@ -18,7 +18,7 @@ describe("sso add --domains flag", () => {
     }),
   );
 
-  it.live("accumulates repeated occurrences, each CSV-split", () =>
+  it.effect("accumulates repeated occurrences, each CSV-split", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
         .parse({
@@ -31,7 +31,7 @@ describe("sso add --domains flag", () => {
     }),
   );
 
-  it.live("defaults to an empty array when unset", () =>
+  it.effect("defaults to an empty array when unset", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
         .parse({
@@ -44,7 +44,7 @@ describe("sso add --domains flag", () => {
     }),
   );
 
-  it.live("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, domains] = yield* ssoAddDomainsFlag
         .parse({
@@ -57,7 +57,7 @@ describe("sso add --domains flag", () => {
     }),
   );
 
-  it.live("rejects malformed CSV (unterminated quote) with the exact diagnostic", () =>
+  it.effect("rejects malformed CSV (unterminated quote) with the exact diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoAddDomainsFlag
         .parse({
@@ -75,7 +75,7 @@ describe("sso add --domains flag", () => {
     }),
   );
 
-  it.live("rejects a blank-only value with the EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* ssoAddDomainsFlag
         .parse({

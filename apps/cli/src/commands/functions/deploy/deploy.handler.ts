@@ -1,4 +1,4 @@
-import { Effect, Option, Path, Stdio } from "effect";
+import { Effect, Option, Path, Ref, Stdio } from "effect";
 import { deployFunctions } from "../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
@@ -30,7 +30,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
     path.join(cliSettings.workdir, "supabase"),
   );
-  let resolvedProjectRef = Option.none<string>();
+  const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* deployFunctions(flags, {
     api,
@@ -44,13 +44,9 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     rawArgs,
     edgeRuntimeVersion,
     resolveProjectRef: (projectRef) =>
-      resolver.resolve(projectRef).pipe(
-        Effect.tap((ref) =>
-          Effect.sync(() => {
-            resolvedProjectRef = Option.some(ref);
-          }),
-        ),
-      ),
+      resolver
+        .resolve(projectRef)
+        .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
     // Written to stdout, so the TTY color gate must check stdout.
     styleIdentifier: (text) => aqua(text, process.stdout),
     // Written to stderr, matching `bold`'s default TTY gate.
@@ -59,14 +55,16 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     styleWarning: (text) => yellow(text),
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        Option.match(resolvedProjectRef, {
-          onNone: () => Effect.void,
-          onSome: (ref) =>
-            Effect.annotateCurrentSpan("project.ref", ref).pipe(
-              Effect.andThen(linkedProjectCache.cache(ref)),
-            ),
-        }),
+      Ref.get(resolvedProjectRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) =>
+              Effect.annotateCurrentSpan("project.ref", ref).pipe(
+                Effect.andThen(linkedProjectCache.cache(ref)),
+              ),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

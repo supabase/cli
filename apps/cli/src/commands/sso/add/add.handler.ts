@@ -1,4 +1,4 @@
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Predicate, Redacted, Stdio } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
@@ -22,6 +22,7 @@ import {
 } from "../../../command-internal/struct-output.encoders.ts";
 import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { requestWithAuth } from "../../../command-internal/raw-http.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
@@ -112,24 +113,15 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // required-flag, and mutex checks — the first invalid
     // occurrence fails even if a later one overrides it, and bool parsing
     // excludes `yes`/`no`.
-    yield* Result.match(argvEnumValue(occurrences, "type", ["saml"], "-t, --type"), {
-      onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-      onSuccess: Effect.succeed,
-    });
-    const skipUrlValidation = yield* Result.match(
+    yield* Effect.fromResult(argvEnumValue(occurrences, "type", ["saml"], "-t, --type")).pipe(
+      Effect.mapError((message) => new SsoInvalidFlagValueError({ message })),
+    );
+    const skipUrlValidation = yield* Effect.fromResult(
       argvBoolValue(occurrences, "skip-url-validation"),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
-    );
-    const nameIdFormat = yield* Result.match(
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const nameIdFormat = yield* Effect.fromResult(
       argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
-      {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
-        onSuccess: Effect.succeed,
-      },
-    );
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
 
     // A bare value-taking flag as the final token (e.g. `--domains` with
     // nothing after) is a parse error; the TS parser accepts it as
@@ -249,21 +241,21 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
 
       const tokenOpt =
         reconciledTokenCached !== undefined
-          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
-              Option.isSome(resolved)
-                ? Effect.succeed(resolved)
-                : Effect.fail(new SsoAccessTokenError({ message: missingAccessTokenMessage() })),
+          ? yield* Effect.filterOrFail(
+              reconciledTokenCached,
+              Option.isSome,
+              () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
             )
           : yield* resolveAccessToken;
 
       // `bearerToken(Redacted)` keeps the Authorization header's redaction
       // marker, so any future debug serialization of the request stays
       // opaque about the token.
-      const request = HttpClientRequest.post(
-        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`,
+      const request = requestWithAuth(
+        HttpClientRequest.post(`${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`),
+        tokenOpt,
+        cliSettings.userAgent,
       ).pipe(
-        Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         // Alphabetical key order so the cli-e2e replay server's
         // string-compare body match succeeds.
         HttpClientRequest.bodyText(encodeSortedJsonBody(body), "application/json"),
@@ -342,9 +334,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          parsedJson !== null && typeof parsedJson === "object"
-            ? (parsedJson as Record<string, unknown>)
-            : { value: parsedJson },
+          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
         );
         return;
       }

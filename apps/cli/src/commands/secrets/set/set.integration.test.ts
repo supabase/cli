@@ -1,6 +1,16 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+} from "effect";
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
@@ -107,12 +117,13 @@ const writeConfig = (content: string) => writeSupabaseFile("config.toml", conten
 
 const writeSupabaseDotEnv = (content: string) => writeSupabaseFile(".env", content);
 
-function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
-  return body as Array<{ name: string; value: string }>;
-}
+const decodePostBody = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
+  { onExcessProperty: "error" },
+);
 
 describe("secrets set integration", () => {
-  it.live("sets a single secret via CLI arg FOO=bar", () => {
+  it.effect("sets a single secret via CLI arg FOO=bar", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -121,12 +132,12 @@ describe("secrets set integration", () => {
         secrets: ["FOO=bar"],
       });
       expect(api.requests).toHaveLength(1);
-      expect(parsePostBody(api.requests[0]!.body)).toEqual([{ name: "FOO", value: "bar" }]);
+      expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
       expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sets multiple secrets via CLI args", () => {
+  it.effect("sets multiple secrets via CLI args", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -134,7 +145,7 @@ describe("secrets set integration", () => {
         envFile: Option.none(),
         secrets: ["FOO=bar", "BAZ=qux"],
       });
-      const body = parsePostBody(api.requests[0]!.body);
+      const body = yield* decodePostBody(api.requests[0]?.body);
       expect(body).toEqual(
         expect.arrayContaining([
           { name: "FOO", value: "bar" },
@@ -144,7 +155,7 @@ describe("secrets set integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("batches large secret sets into requests of at most 100", () => {
+  it.effect("batches large secret sets into requests of at most 100", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -153,8 +164,8 @@ describe("secrets set integration", () => {
         secrets: Array.from({ length: 150 }, (_, i) => `KEY${i}=value${i}`),
       });
       expect(api.requests).toHaveLength(2);
-      const first = parsePostBody(api.requests[0]!.body);
-      const second = parsePostBody(api.requests[1]!.body);
+      const first = yield* decodePostBody(api.requests[0]?.body);
+      const second = yield* decodePostBody(api.requests[1]?.body);
       expect(first).toHaveLength(100);
       expect(second).toHaveLength(50);
       const names = new Set([...first, ...second].map((entry) => entry.name));
@@ -165,7 +176,7 @@ describe("secrets set integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("batches 250 secrets into three requests (100/100/50)", () => {
+  it.effect("batches 250 secrets into three requests (100/100/50)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -174,13 +185,13 @@ describe("secrets set integration", () => {
         secrets: Array.from({ length: 250 }, (_, i) => `KEY${i}=value${i}`),
       });
       expect(api.requests).toHaveLength(3);
-      expect(parsePostBody(api.requests[0]!.body)).toHaveLength(100);
-      expect(parsePostBody(api.requests[1]!.body)).toHaveLength(100);
-      expect(parsePostBody(api.requests[2]!.body)).toHaveLength(50);
+      expect(yield* decodePostBody(api.requests[0]?.body)).toHaveLength(100);
+      expect(yield* decodePostBody(api.requests[1]?.body)).toHaveLength(100);
+      expect(yield* decodePostBody(api.requests[2]?.body)).toHaveLength(50);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "rejects the whole upload when a later batch has an invalid entry (no partial update)",
     () => {
       const { layer, api } = setup();
@@ -210,7 +221,7 @@ describe("secrets set integration", () => {
     },
   );
 
-  it.live("sets secrets from --env-file with a relative path (joined to CWD)", () => {
+  it.effect("sets secrets from --env-file with a relative path (joined to CWD)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* writeTempFile("myfile.env", "FROM_FILE=fromvalue\n");
@@ -219,13 +230,11 @@ describe("secrets set integration", () => {
         envFile: Option.some("myfile.env"),
         secrets: [],
       });
-      expect(parsePostBody(api.requests[0]!.body)).toEqual([
-        { name: "FROM_FILE", value: "fromvalue" },
-      ]);
+      expect(api.requests[0]?.body).toEqual([{ name: "FROM_FILE", value: "fromvalue" }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sets secrets from --env-file with an absolute path", () => {
+  it.effect("sets secrets from --env-file with an absolute path", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* writeTempFile("absolute.env", "ABS=value\n");
@@ -235,11 +244,11 @@ describe("secrets set integration", () => {
         envFile: Option.some(abs),
         secrets: [],
       });
-      expect(parsePostBody(api.requests[0]!.body)).toEqual([{ name: "ABS", value: "value" }]);
+      expect(api.requests[0]?.body).toEqual([{ name: "ABS", value: "value" }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("CLI args override --env-file entries for the same key", () => {
+  it.effect("CLI args override --env-file entries for the same key", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* writeTempFile("override.env", "FOO=from-file\n");
@@ -248,11 +257,11 @@ describe("secrets set integration", () => {
         envFile: Option.some("override.env"),
         secrets: ["FOO=from-arg"],
       });
-      expect(parsePostBody(api.requests[0]!.body)).toEqual([{ name: "FOO", value: "from-arg" }]);
+      expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "from-arg" }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "merges entries from supabase/config.toml [edge_runtime.secrets] ahead of env-file and CLI args",
     () => {
       const { layer, api } = setup();
@@ -269,7 +278,7 @@ SHARED = "config-shared"
           envFile: Option.some(".env-file"),
           secrets: ["SHARED=cli-shared"],
         });
-        const body = parsePostBody(api.requests[0]!.body);
+        const body = yield* decodePostBody(api.requests[0]?.body);
         expect(body).toEqual(
           expect.arrayContaining([
             { name: "FROM_CONFIG", value: "config-value" },
@@ -280,7 +289,7 @@ SHARED = "config-shared"
     },
   );
 
-  it.live("interpolates env(VAR) in config.toml secrets when the env var is defined", () => {
+  it.effect("interpolates env(VAR) in config.toml secrets when the env var is defined", () => {
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
       yield* writeConfig(
@@ -293,13 +302,11 @@ DB_URL = "env(MY_DB_URL)"
         envFile: Option.none(),
         secrets: [],
       });
-      expect(parsePostBody(api.requests[0]!.body)).toEqual([
-        { name: "DB_URL", value: "postgres://x" },
-      ]);
+      expect(api.requests[0]?.body).toEqual([{ name: "DB_URL", value: "postgres://x" }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips secrets whose env() reference cannot be resolved", () => {
+  it.effect("skips secrets whose env() reference cannot be resolved", () => {
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
       yield* writeConfig(
@@ -314,7 +321,7 @@ LITERAL = "plain-value"
         envFile: Option.none(),
         secrets: [],
       });
-      const body = parsePostBody(api.requests[0]!.body);
+      const body = yield* decodePostBody(api.requests[0]?.body);
       expect(body).toEqual(
         expect.arrayContaining([
           { name: "RESOLVED", value: "postgres://x" },
@@ -325,7 +332,7 @@ LITERAL = "plain-value"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret",
     () => {
       // An empty `EMPTY = ""` value in config.toml is never sent, which prevents it from
@@ -343,14 +350,12 @@ NON_EMPTY = "config-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "NON_EMPTY", value: "config-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "NON_EMPTY", value: "config-value" }]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "does not crash when config.toml has env(NUMERIC_PORT) on an unrelated numeric field (CLI-1489 regression guard)",
     () => {
       const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
@@ -368,14 +373,12 @@ FOO = "literal-foo"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]!.body)).toEqual([
-          { name: "FOO", value: "literal-foo" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "literal-foo" }]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("skips SUPABASE_-prefixed entries with a stderr warning", () => {
+  it.effect("skips SUPABASE_-prefixed entries with a stderr warning", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -383,15 +386,14 @@ FOO = "literal-foo"
         envFile: Option.none(),
         secrets: ["FOO=bar", "SUPABASE_BAD=x"],
       });
-      const body = parsePostBody(api.requests[0]!.body);
-      expect(body).toEqual([{ name: "FOO", value: "bar" }]);
+      expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
       expect(out.stderrText).toContain(
         "Env name cannot start with SUPABASE_, skipping: SUPABASE_BAD",
       );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "fails with SecretsNoArgumentsError when args and env-file produce zero non-SUPABASE_ entries",
     () => {
       const { layer, api } = setup();
@@ -412,7 +414,7 @@ FOO = "literal-foo"
     },
   );
 
-  it.live("fails with InvalidSecretPairError when an arg has no `=`", () => {
+  it.effect("fails with InvalidSecretPairError when an arg has no `=`", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -432,7 +434,7 @@ FOO = "literal-foo"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsEnvFileOpenError when env-file does not exist", () => {
+  it.effect("fails with SecretsEnvFileOpenError when env-file does not exist", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -456,7 +458,7 @@ FOO = "literal-foo"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("classifies an unreadable env file as a permission failure", () => {
+  it.effect("classifies an unreadable env file as a permission failure", () => {
     const { layer: baseLayer, api } = setup();
     const layer = Layer.mergeAll(baseLayer, permissionDeniedReadLayer("private.env"));
     return Effect.gen(function* () {
@@ -481,7 +483,7 @@ FOO = "literal-foo"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "tolerates a malformed config.toml, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
       const { layer, api, debugLogger } = setup();
@@ -493,14 +495,14 @@ FOO = "literal-foo"
           secrets: ["FOO=bar"],
         });
         expect(api.requests).toHaveLength(1);
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("recovers [edge_runtime.secrets] when an unrelated field fails schema decode", () => {
+  it.effect("recovers [edge_runtime.secrets] when an unrelated field fails schema decode", () => {
     // Valid TOML throughout, but `analytics.port` has the wrong type. The CLI's established
     // per-field decode tolerance means an unrelated type error doesn't stop
     // `edge_runtime.secrets` from being read; Effect Schema's `decodeUnknownSync` is atomic
@@ -520,15 +522,13 @@ port = "not-a-number"
         envFile: Option.none(),
         secrets: [],
       });
-      expect(parsePostBody(api.requests[0]?.body)).toEqual([
-        { name: "FROM_CONFIG", value: "config-value" },
-      ]);
+      expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "config-value" }]);
       expect(debugLogger.messages).toHaveLength(1);
       expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "recovers [edge_runtime.secrets] when a sibling field in the same edge_runtime table fails schema decode",
     () => {
       // Valid TOML throughout, but `edge_runtime.inspector_port` (a sibling of `secrets` in
@@ -550,16 +550,14 @@ FROM_CONFIG = "config-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "FROM_CONFIG", value: "config-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "config-value" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
       // The resolved config load resolves `env(VAR)` references against `.env`/`.env.local` before
@@ -580,14 +578,14 @@ FROM_CONFIG = "config-value"
           secrets: ["FOO=bar"],
         });
         expect(api.requests).toHaveLength(1);
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "recovers valid [edge_runtime.secrets] entries when a sibling entry in the same map fails schema decode",
     () => {
       // `GOOD` is a valid secret value; `BAD` is a non-string TOML value for a field whose
@@ -607,15 +605,14 @@ BAD = 123
           envFile: Option.none(),
           secrets: [],
         });
-        const body = parsePostBody(api.requests[0]?.body);
-        expect(body).toEqual([{ name: "GOOD", value: "config-value" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "GOOD", value: "config-value" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "skips an empty recovered [edge_runtime.secrets] entry alongside an unrelated schema error",
     () => {
       // Same empty-value skip as the happy path, exercised through the recovery path instead:
@@ -637,16 +634,14 @@ port = "not-a-number"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "GOOD", value: "config-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "GOOD", value: "config-value" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("does not fabricate a secret named 0 when [edge_runtime.secrets] is an array", () => {
+  it.effect("does not fabricate a secret named 0 when [edge_runtime.secrets] is an array", () => {
     // `edge_runtime.secrets` as an array (instead of a table) is not recoverable: the whole
     // field is left empty rather than being misread as `{ "0": "actual-secret" }` via
     // `Object.entries`.
@@ -665,14 +660,14 @@ secrets = ["actual-secret"]
         envFile: Option.none(),
         secrets: ["FOO=bar"],
       });
-      const body = parsePostBody(api.requests[0]?.body);
+      const body = yield* decodePostBody(api.requests[0]?.body);
       expect(body).toEqual([{ name: "FOO", value: "bar" }]);
       expect(body.find((entry) => entry.name === "0")).toBeUndefined();
       expect(debugLogger.messages).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "recovers the selected remote's [edge_runtime.secrets] override, not the base, on schema-decode error",
     () => {
       // `analytics.port` triggers the recovery path. `remotes.staging.project_id` matches the
@@ -699,9 +694,7 @@ FROM_CONFIG = "remote-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "FROM_CONFIG", value: "remote-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "remote-value" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
         // The override notice is owed here too, even though the decode that follows fails
@@ -711,7 +704,7 @@ FROM_CONFIG = "remote-value"
     },
   );
 
-  it.live(
+  it.effect(
     "prints the remote override notice to stderr when [remotes.*] matches the resolved ref",
     () => {
       // No decode error here — the plain success path. The override notice still prints
@@ -735,15 +728,13 @@ FROM_CONFIG = "remote-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "FROM_CONFIG", value: "remote-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "remote-value" }]);
         expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID and uses its secrets",
     () => {
       const { layer, out, api } = setup({
@@ -766,15 +757,13 @@ FROM_CONFIG = "remote-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "FROM_CONFIG", value: "remote-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "remote-value" }]);
         expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "does not print a remote override notice when no [remotes.*] block matches the resolved ref",
     () => {
       const { layer, out, api } = setup();
@@ -789,15 +778,13 @@ FROM_CONFIG = "config-value"
           envFile: Option.none(),
           secrets: [],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([
-          { name: "FROM_CONFIG", value: "config-value" },
-        ]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "config-value" }]);
         expect(out.stderrText).not.toContain("Loading config override");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets",
     () => {
       // Swallowed non-fatally like every other load error here. There's no parsed document to
@@ -821,14 +808,14 @@ project_id = "dupe-project-id"
           envFile: Option.none(),
           secrets: ["FOO=bar"],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("duplicate project_id for [remotes.");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets",
     () => {
       // Swallowed non-fatally like every other load error here. There's no parsed document to
@@ -849,14 +836,14 @@ project_id = "not-a-valid-ref"
           envFile: Option.none(),
           secrets: ["FOO=bar"],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("Invalid config for remotes.a.project_id");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
@@ -883,7 +870,7 @@ project_id = "not-a-valid-ref"
     },
   );
 
-  it.live(
+  it.effect(
     "does not echo a literal secret value from config.toml into the debug log on a schema-decode error",
     () => {
       // Unlike the syntax-error case above, a schema-decode failure has no separator to
@@ -902,7 +889,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
           envFile: Option.none(),
           secrets: ["FOO=bar"],
         });
-        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).not.toContain("PLANTED_SECRET");
         expect(debugLogger.messages[0]).not.toContain("sk_live_TOTALLY_REAL_SECRET_VALUE");
@@ -910,7 +897,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     },
   );
 
-  it.live(
+  it.effect(
     "still fails with SecretsNoArgumentsError when a malformed config leaves zero secret sources",
     () => {
       const { layer, api } = setup();
@@ -932,7 +919,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     },
   );
 
-  it.live("fails with SecretsSetNetworkError on transport failure", () => {
+  it.effect("fails with SecretsSetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -951,7 +938,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsSetUnexpectedStatusError on HTTP 500", () => {
+  it.effect("fails with SecretsSetUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -970,7 +957,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { project_ref, count } for --output-format=json", () => {
+  it.effect("emits a success event with { project_ref, count } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* secretsSet({
@@ -984,7 +971,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "text mode prints `Finished supabase secrets set.\\n` regardless of --output value",
     () => {
       const { layer, out } = setup({ outputFlag: "json" });

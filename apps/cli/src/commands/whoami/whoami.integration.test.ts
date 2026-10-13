@@ -66,7 +66,7 @@ function findError(exit: Exit.Exit<unknown, unknown>): unknown {
 }
 
 describe("whoami integration", () => {
-  it.live("fetches the profile and renders all identity fields in text mode", () => {
+  it.effect("fetches the profile and renders all identity fields in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* whoami({});
@@ -86,7 +86,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the bare CLI identity contract for --output-format json", () => {
+  it.effect("emits the bare CLI identity contract for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -104,7 +104,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the bare CLI identity contract for --output-format stream-json", () => {
+  it.effect("emits the bare CLI identity contract for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -126,7 +126,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("points an unauthorized profile request at re-authenticating", () => {
+  it.effect("points an unauthorized profile request at re-authenticating", () => {
     const { layer } = setup({ status: 401, response: { message: "Unauthorized" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -141,7 +141,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves the generic message for other HTTP errors", () => {
+  it.effect("preserves the generic message for other HTTP errors", () => {
     const { layer } = setup({ status: 503, response: { message: "Unavailable" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -154,7 +154,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a transport failure to WhoamiNetworkError", () => {
+  it.effect("maps a transport failure to WhoamiNetworkError", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -166,7 +166,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a malformed successful response to a decoded API response error", () => {
+  it.effect("maps a malformed successful response to a decoded API response error", () => {
     const { layer } = setup({ response: { ...SAMPLE_PROFILE, username: undefined } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -178,7 +178,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps transport failures without task output in machine modes", () => {
+  it.effect("maps transport failures without task output in machine modes", () => {
     const run = (format: "json" | "stream-json") => {
       const { layer, out } = setup({ format, network: "fail" });
       return Effect.gen(function* () {
@@ -194,7 +194,7 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("rejects every -o/--output value before calling the API", () => {
+  it.effect("rejects every -o/--output value before calling the API", () => {
     const run = (outputFlag: (typeof GLOBAL_OUTPUT_FORMATS)[number]) => {
       const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
@@ -216,7 +216,7 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("routes -o table/csv through the command's unsupported-output error", () => {
+  it.effect("routes -o table/csv through the command's unsupported-output error", () => {
     const run = (outputFlag: "table" | "csv") => {
       const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
@@ -241,7 +241,7 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -249,7 +249,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on failure", () => {
+  it.effect("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true, status: 503 });
     return Effect.gen(function* () {
       yield* whoami({}).pipe(Effect.exit);

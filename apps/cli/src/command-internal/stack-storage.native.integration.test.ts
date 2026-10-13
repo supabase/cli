@@ -143,7 +143,7 @@ describe("native stack Storage gateway", () => {
               fileSizeLimit: 0,
               allowedMimeTypes: [],
             });
-            expect((yield* gateway.listBuckets()).some(({ name }) => name === bucket)).toBe(true);
+            expect((yield* gateway.listBuckets).some(({ name }) => name === bucket)).toBe(true);
 
             yield* gateway.uploadObject(`${bucket}/source.txt`, local, {
               contentType: "text/plain",

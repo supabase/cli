@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Predicate } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
@@ -27,10 +27,28 @@ function mvFlags(opts: {
   };
 }
 
+function prefixOf(body: unknown): string | undefined {
+  return Predicate.hasProperty(body, "prefix") && Predicate.isString(body.prefix)
+    ? body.prefix
+    : undefined;
+}
+
+function sourceKeyOf(body: unknown): string | undefined {
+  return Predicate.hasProperty(body, "sourceKey") && Predicate.isString(body.sourceKey)
+    ? body.sourceKey
+    : undefined;
+}
+
+function destinationKeyOf(body: unknown): string | undefined {
+  return Predicate.hasProperty(body, "destinationKey") && Predicate.isString(body.destinationKey)
+    ? body.destinationKey
+    : undefined;
+}
+
 describe("storage mv", () => {
   const tmp = useTempWorkdir("supabase-storage-mv-");
 
-  it.live("moves a single object and prints the response message", () => {
+  it.effect("moves a single object and prints the response message", () => {
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -52,7 +70,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("fails with missing path when both sides are bucket roots", () => {
+  it.effect("fails with missing path when both sides are bucket roots", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -70,7 +88,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("rejects moving between buckets", () => {
+  it.effect("rejects moving between buckets", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -87,7 +105,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("falls back to a recursive move when the direct move is not_found", () => {
+  it.effect("falls back to a recursive move when the direct move is not_found", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -96,7 +114,7 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { destinationKey?: string }).destinationKey === "docs",
+          when: (b) => destinationKeyOf(b) === "docs",
           status: 404,
           body: { error: "not_found" },
         },
@@ -106,7 +124,7 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { sourceKey?: string }).sourceKey === "abstract.pdf",
+          when: (b) => sourceKeyOf(b) === "abstract.pdf",
           body: { message: "ok" },
         },
       ],
@@ -117,8 +135,7 @@ describe("storage mv", () => {
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const perObject = requests.find(
-        (r) =>
-          r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "abstract.pdf",
+        (r) => r.url.includes(MOVE) && sourceKeyOf(r.body) === "abstract.pdf",
       );
       expect(perObject?.body).toEqual({
         bucketId: "private",
@@ -128,7 +145,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("recursively moves a nested directory tree", () => {
+  it.effect("recursively moves a nested directory tree", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -136,7 +153,7 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { sourceKey?: string }).sourceKey === "",
+          when: (b) => sourceKeyOf(b) === "",
           status: 404,
           body: { error: "not_found" },
         },
@@ -144,7 +161,7 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: LIST("private"),
-          when: (b) => (b as { prefix?: string }).prefix === "",
+          when: (b) => prefixOf(b) === "",
           body: [
             { name: "sub", id: null },
             { name: "a.txt", id: "ai" },
@@ -153,20 +170,20 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { sourceKey?: string }).sourceKey === "a.txt",
+          when: (b) => sourceKeyOf(b) === "a.txt",
           body: { message: "ok" },
         },
         // descend into sub/
         {
           method: "POST",
           match: LIST("private"),
-          when: (b) => (b as { prefix?: string }).prefix === "sub/",
+          when: (b) => prefixOf(b) === "sub/",
           body: [{ name: "b.txt", id: "bi" }],
         },
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { sourceKey?: string }).sourceKey === "sub/b.txt",
+          when: (b) => sourceKeyOf(b) === "sub/b.txt",
           body: { message: "ok" },
         },
       ],
@@ -177,7 +194,7 @@ describe("storage mv", () => {
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const nested = requests.find(
-        (r) => r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "sub/b.txt",
+        (r) => r.url.includes(MOVE) && sourceKeyOf(r.body) === "sub/b.txt",
       );
       expect(nested?.body).toEqual({
         bucketId: "private",
@@ -187,7 +204,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("propagates a not_found error when not recursive", () => {
+  it.effect("propagates a not_found error when not recursive", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -204,7 +221,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("fails with Object not found when the recursive move is empty", () => {
+  it.effect("fails with Object not found when the recursive move is empty", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -229,7 +246,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("emits a { message } result in json mode", () => {
+  it.effect("emits a { message } result in json mode", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -246,7 +263,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("targets the linked project's Storage host and flushes telemetry", () => {
+  it.effect("targets the linked project's Storage host and flushes telemetry", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
@@ -263,7 +280,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("moves within the project given via --project-ref, overriding VALID_REF", () => {
+  it.effect("moves within the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
@@ -283,7 +300,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("rejects --project-ref combined with --local", () => {
+  it.effect("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -306,7 +323,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live("propagates a 503 from the move endpoint even when recursive", () => {
+  it.effect("propagates a 503 from the move endpoint even when recursive", () => {
     // Only a `not_found` body triggers the recursive fallback; a 503 must surface.
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -324,7 +341,7 @@ describe("storage mv", () => {
     });
   });
 
-  it.live(
+  it.effect(
     'emits a { message: "", moved } result for the recursive fallback in stream-json mode',
     () => {
       const { layer, out } = setupStorage(tmp.current, {
@@ -335,7 +352,7 @@ describe("storage mv", () => {
           {
             method: "POST",
             match: MOVE,
-            when: (b) => (b as { destinationKey?: string }).destinationKey === "docs",
+            when: (b) => destinationKeyOf(b) === "docs",
             status: 404,
             body: { error: "not_found" },
           },
@@ -343,7 +360,7 @@ describe("storage mv", () => {
           {
             method: "POST",
             match: MOVE,
-            when: (b) => (b as { sourceKey?: string }).sourceKey === "abstract.pdf",
+            when: (b) => sourceKeyOf(b) === "abstract.pdf",
             body: { message: "ok" },
           },
         ],
@@ -360,13 +377,13 @@ describe("storage mv", () => {
     },
   );
 
-  it.live("recursively moves on the linked path when the direct move is not_found", () => {
+  it.effect("recursively moves on the linked path when the direct move is not_found", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       routes: [
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { destinationKey?: string }).destinationKey === "docs",
+          when: (b) => destinationKeyOf(b) === "docs",
           status: 404,
           body: { error: "not_found" },
         },
@@ -374,7 +391,7 @@ describe("storage mv", () => {
         {
           method: "POST",
           match: MOVE,
-          when: (b) => (b as { sourceKey?: string }).sourceKey === "abstract.pdf",
+          when: (b) => sourceKeyOf(b) === "abstract.pdf",
           body: { message: "ok" },
         },
       ],
@@ -385,8 +402,7 @@ describe("storage mv", () => {
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const perObject = requests.find(
-        (r) =>
-          r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "abstract.pdf",
+        (r) => r.url.includes(MOVE) && sourceKeyOf(r.body) === "abstract.pdf",
       );
       expect(perObject?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
       expect(telemetry.flushed).toBe(true);
@@ -398,7 +414,7 @@ describe("storage mv", () => {
 describe("stack backend", () => {
   const tmp = useTempWorkdir("supabase-storage-mv-stack-");
 
-  it.live("moves through the stack's api endpoint and JWT", () => {
+  it.effect("moves through the stack's api endpoint and JWT", () => {
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -419,7 +435,7 @@ describe("stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "fails with StackStorageCapabilityError when Storage is disabled, before any request",
     () => {
       const { layer, requests } = setupStorage(tmp.current, {

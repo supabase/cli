@@ -173,16 +173,24 @@ const transientPullFailure = (error: ContainerError) =>
     error.message,
   );
 
-/** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
+/**
+ * Runs one engine CLI invocation outside the owner's command runner, for resolving its target
+ * itself. `pin` precedes `args` so the failure names the subcommand, not a pin flag.
+ */
 const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   engine: ContainerEngine,
   args: ReadonlyArray<string>,
+  pin: ReadonlyArray<string> = [],
 ): Effect.Effect<string, ContainerError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make(engine, args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(engine, [...pin, ...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -257,12 +265,7 @@ const podmanInfo = (
   argv: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
-    const output = yield* runRaw(spawner, "podman", [
-      ...argv,
-      "info",
-      "--format",
-      PODMAN_INFO_FORMAT,
-    ]);
+    const output = yield* runRaw(spawner, "podman", ["info", "--format", PODMAN_INFO_FORMAT], argv);
     const [remote, rootless, hostname, ...graphRoot] = output.trim().split("|");
     const root = graphRoot.join("|");
     if (hostname === undefined || hostname.length === 0 || root.length === 0)
@@ -326,12 +329,7 @@ export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(fu
   const argv: ReadonlyArray<string> = Option.isSome(host)
     ? ["--host", host.value]
     : ["--context", yield* resolveContextName(spawner)];
-  const daemonId = (yield* runRaw(spawner, "docker", [
-    ...argv,
-    "info",
-    "--format",
-    "{{.ID}}",
-  ])).trim();
+  const daemonId = (yield* runRaw(spawner, "docker", ["info", "--format", "{{.ID}}"], argv)).trim();
   if (daemonId.length === 0) return yield* errorFor("identity", "Engine returned an empty id");
   return { engine: "docker", argv, daemonId };
 });
@@ -651,7 +649,7 @@ export const makeContainerRuntime = (options: {
       Effect.gen(function* () {
         const testRunLabel = yield* testRunLabelArgs;
         const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => errorFor("identity", cause)),
+          Effect.mapError((cause) => errorFor("token", cause)),
         );
         // Not an instance container: no instance label, so it is never mistaken for one.
         const { name } = identifyContainer(spec, token, true);
@@ -771,7 +769,7 @@ export const makeContainerRuntime = (options: {
         )
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       const token = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => errorFor("identity", cause)),
+        Effect.mapError((cause) => errorFor("token", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const hostAlias = yield* hostAliasTarget(image, spec);
@@ -1215,17 +1213,21 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
   readonly stackRoot: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* runRaw(spawner, options.target.engine, [
-    ...options.target.argv,
-    "ps",
-    "--all",
-    "--quiet",
-    "--no-trunc",
-    "--filter",
-    `label=com.supabase.stack=${options.stackId}`,
-    "--filter",
-    `label=com.supabase.stack-root=${options.stackRoot}`,
-  ]);
+  const output = yield* runRaw(
+    spawner,
+    options.target.engine,
+    [
+      "ps",
+      "--all",
+      "--quiet",
+      "--no-trunc",
+      "--filter",
+      `label=com.supabase.stack=${options.stackId}`,
+      "--filter",
+      `label=com.supabase.stack-root=${options.stackRoot}`,
+    ],
+    options.target.argv,
+  );
   return output
     .split("\n")
     .map((line) => line.trim())
@@ -1267,15 +1269,19 @@ export const listStackLabels = Effect.fn("Container.listStackLabels")(function* 
   target: EngineTarget,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* runRaw(spawner, target.engine, [
-    ...target.argv,
-    "ps",
-    "--all",
-    "--filter",
-    "label=com.supabase.stack",
-    "--format",
-    '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
-  ]);
+  const output = yield* runRaw(
+    spawner,
+    target.engine,
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=com.supabase.stack",
+      "--format",
+      '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
+    ],
+    target.argv,
+  );
   const labels = yield* Effect.forEach(
     output.split("\n").filter((line) => line.length > 0),
     (line) => decodeStackLabels(line).pipe(Effect.option),

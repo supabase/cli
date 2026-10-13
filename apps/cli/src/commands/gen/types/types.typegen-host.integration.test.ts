@@ -16,9 +16,10 @@ describe.skipIf(process.platform === "win32")("makeTypegenHost with the real spa
         spawner,
         runPromise,
       });
-      if (host.spawn === undefined) throw new Error("the typegen host must supply spawn");
+      const spawn = host.spawn;
+      if (spawn === undefined) throw new Error("the typegen host must supply spawn");
       return yield* Effect.promise(() =>
-        host.spawn!({ command: "sh", args: ["-c", tool], cwd: process.cwd(), env: {}, stdin }),
+        spawn({ command: "sh", args: ["-c", tool], cwd: process.cwd(), env: {}, stdin }),
       );
     }).pipe(Effect.provide(BunServices.layer));
 

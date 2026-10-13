@@ -1,6 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
@@ -17,51 +14,38 @@ import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
 const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");
 const currentEdgeRuntimeTag = currentEdgeRuntime.split(":")[1] ?? "";
 
-const resolve = (workdir: string, denoVersion: number) =>
+const resolve = (denoVersion: number, pin?: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion);
-  }).pipe(Effect.provide(BunServices.layer));
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "edge-img-" });
+    if (pin !== undefined) {
+      const tempDir = path.join(dir, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "edge-runtime-version"), pin);
+    }
+    return yield* resolveEdgeRuntimeImage(fs, path, dir, denoVersion);
+  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
 describe("resolveEdgeRuntimeImage", () => {
-  it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () => {
-    const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-    return Effect.zip(resolve(dir, 2), slimImagesEnabled).pipe(
-      Effect.tap(([image, slim]) =>
-        Effect.sync(() => {
-          expect(image).toBe(dockerfileServiceImage("edgeruntime", slim));
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () =>
+    Effect.gen(function* () {
+      const [image, slim] = yield* Effect.zip(resolve(2), slimImagesEnabled);
+      expect(image).toBe(dockerfileServiceImage("edgeruntime", slim));
+    }),
+  );
 
-  it.effect("honors the pinned tag in .temp/edge-runtime-version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n");
-    return resolve(dir, 2).pipe(
-      Effect.tap((image) =>
-        Effect.sync(() => {
-          expect(image).toBe("supabase/edge-runtime:v9.9.9");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("honors the pinned tag in .temp/edge-runtime-version", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve(2, "v9.9.9\n")).toBe("supabase/edge-runtime:v9.9.9");
+    }),
+  );
 
-  it.effect("selects the deno1 image when deno_version = 1", () => {
-    const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-    return resolve(dir, 1).pipe(
-      Effect.tap((image) =>
-        Effect.sync(() => {
-          expect(image).toBe("supabase/edge-runtime:v1.68.4");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("selects the deno1 image when deno_version = 1", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve(1)).toBe("supabase/edge-runtime:v1.68.4");
+    }),
+  );
 
   describe("with the slim-images flag on", () => {
     afterEach(() => {
@@ -70,52 +54,25 @@ describe("resolveEdgeRuntimeImage", () => {
 
     it.effect("keeps a historical pin on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(dir, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n");
-      return resolve(dir, 2).pipe(
-        Effect.tap((image) =>
-          Effect.sync(() => {
-            expect(image).toBe("supabase/edge-runtime:v9.9.9");
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+      return Effect.gen(function* () {
+        expect(yield* resolve(2, "v9.9.9\n")).toBe("supabase/edge-runtime:v9.9.9");
+      });
     });
 
     it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(dir, "supabase", ".temp", "edge-runtime-version"),
-        `${currentEdgeRuntimeTag}\n`,
-      );
       const pinned = expectedPinnedImage("edgeruntime", currentEdgeRuntime);
       expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
-      return resolve(dir, 2).pipe(
-        Effect.tap((image) =>
-          Effect.sync(() => {
-            expect(image).toBe(pinned);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+      return Effect.gen(function* () {
+        expect(yield* resolve(2, `${currentEdgeRuntimeTag}\n`)).toBe(pinned);
+      });
     });
 
     it.effect("keeps a deno1-tag pin on docker.io, where that tag exists", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(dir, "supabase", ".temp", "edge-runtime-version"), "v1.68.4\n");
-      return resolve(dir, 2).pipe(
-        Effect.tap((image) =>
-          Effect.sync(() => {
-            expect(image).toBe("supabase/edge-runtime:v1.68.4");
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+      return Effect.gen(function* () {
+        expect(yield* resolve(2, "v1.68.4\n")).toBe("supabase/edge-runtime:v1.68.4");
+      });
     });
   });
 });

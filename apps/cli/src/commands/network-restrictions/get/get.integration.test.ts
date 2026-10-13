@@ -82,7 +82,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("network-restrictions get integration", () => {
-  it.live("prints the formatted text block when the response has v4 and v6 entries", () => {
+  it.effect("prints the formatted text block when the response has v4 and v6 entries", () => {
     const { layer, out } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -94,7 +94,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints `&[]` for both arrays when the API returns empty arrays", () => {
+  it.effect("prints `&[]` for both arrays when the API returns empty arrays", () => {
     const { layer, out } = setup({ response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -106,7 +106,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints `<nil>` when the API omits the dbAllowedCidrs fields", () => {
+  it.effect("prints `<nil>` when the API omits the dbAllowedCidrs fields", () => {
     const { layer, out } = setup({ response: STORED_WITH_OMITTED_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -118,7 +118,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints `Restrictions applied successfully: false` when status is `stored`", () => {
+  it.effect("prints `Restrictions applied successfully: false` when status is `stored`", () => {
     const stored: typeof V1GetNetworkRestrictionsOutput.Type = {
       entitlement: "allowed",
       config: { dbAllowedCidrs: ["1.2.3.0/24"], dbAllowedCidrsV6: [] },
@@ -135,7 +135,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured JSON success payload via --output-format=json", () => {
+  it.effect("emits a structured JSON success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -151,7 +151,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event via --output-format=stream-json", () => {
+  it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -161,7 +161,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits JSON when --output=json", () => {
+  it.effect("emits JSON when --output=json", () => {
     const { layer, out } = setup({ outputFlag: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -172,7 +172,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML when --output=yaml", () => {
+  it.effect("emits YAML when --output=yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -180,7 +180,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits TOML when --output=toml", () => {
+  it.effect("emits TOML when --output=toml", () => {
     const { layer, out } = setup({ outputFlag: "toml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -188,7 +188,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits env output when --output=env", () => {
+  it.effect("emits env output when --output=env", () => {
     const { layer, out } = setup({ outputFlag: "env", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -196,7 +196,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty identically to text mode", () => {
+  it.effect("treats --output pretty identically to text mode", () => {
     const { layer, out } = setup({ outputFlag: "pretty", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -208,7 +208,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output wins over --output-format when both are set", () => {
+  it.effect("--output wins over --output-format when both are set", () => {
     const { layer, out } = setup({
       format: "json",
       outputFlag: "yaml",
@@ -221,7 +221,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("hits the GET /v1/projects/{ref}/network-restrictions URL", () => {
+  it.effect("hits the GET /v1/projects/{ref}/network-restrictions URL", () => {
     const { layer, api } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -231,7 +231,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
@@ -240,7 +240,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports an error message when the API returns a non-200 status", () => {
+  it.effect("reports an error message when the API returns a non-200 status", () => {
     const { layer } = setup({ status: 503, response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
@@ -253,7 +253,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports an error message when the network is unreachable", () => {
+  it.effect("reports an error message when the network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
@@ -266,7 +266,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
@@ -274,7 +274,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
       yield* networkRestrictionsGet({ projectRef: Option.none() });
@@ -283,7 +283,7 @@ describe("network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even on API failure", () => {
+  it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry, cache } = setupTracked({
       status: 500,
       response: APPLIED_WITH_CIDRS,

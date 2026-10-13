@@ -1,5 +1,5 @@
 import { findCliProjectPaths } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import {
@@ -212,7 +212,9 @@ export const validateComputeName = Effect.fnUntraced(function* (name: string) {
  * Sorted, so a bare `push` deploys in a stable order rather than whatever the
  * filesystem happened to return.
  */
-export const discoverComputeNames = Effect.fnUntraced(function* (project: ComputeProject) {
+export const discoverComputeNames = Effect.fn("Compute.discoverNames")(function* (
+  project: ComputeProject,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -222,10 +224,8 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
   const entries = yield* fs
     .readDirectory(project.computeDir)
     .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged(error.reason, "NotFound")
-          ? Effect.succeed<ReadonlyArray<string>>([])
-          : Effect.fail(error),
+      Effect.catchReason("PlatformError", "NotFound", () =>
+        Effect.succeed<ReadonlyArray<string>>([]),
       ),
     );
 
@@ -234,16 +234,16 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
     // Only a name that vanished between the listing and this stat is skipped.
     const info = yield* fs.stat(path.join(project.computeDir, entry)).pipe(
       Effect.map(Option.some),
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),
-      ),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
     );
     if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);
     }
   }
 
-  return [...new Set([...scaffolded, ...Object.keys(project.section.compute)])]
+  const names = [...new Set([...scaffolded, ...Object.keys(project.section.compute)])]
     .filter((name) => validateComputeNameMessage(name) === undefined)
     .sort();
+  yield* Effect.annotateCurrentSpan({ "compute.count": names.length });
+  return names;
 });

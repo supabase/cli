@@ -8,8 +8,9 @@ import type { TreeNode } from "../../../tests/helpers/command-flags.ts";
 import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
-import type { CommandPermissions, FlagCondition, OperationEntry } from "./model.ts";
+import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
 import { PENDING_COMMANDS } from "../../../tests/helpers/permission-pending-commands.ts";
+import { DB_TARGET_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
 /**
@@ -49,7 +50,11 @@ function rootGlobalFlagIds(): ReadonlySet<string> {
 }
 
 function conditionFlagNames(entries: ReadonlyArray<OperationEntry>): ReadonlyArray<string> {
-  return entries.flatMap((entry) => (entry.when ?? []).map((cond: FlagCondition) => cond.flag));
+  return entries.flatMap((entry) =>
+    (entry.when ?? []).flatMap((cond: EntryCondition) =>
+      cond.dbTarget === undefined ? [cond.flag] : DB_TARGET_FLAGS,
+    ),
+  );
 }
 
 function declarationOf(node: TreeNode): CommandPermissions | undefined {
@@ -134,6 +139,21 @@ describe("command permission mapping completeness", () => {
           }
           for (const entry of permissions.operations) {
             for (const cond of entry.when ?? []) {
+              if (cond.dbTarget !== undefined) {
+                const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
+                expect(
+                  permissions.dbTargetDefault,
+                  `${where} checks the database target, but the declaration sets no default — wrap it in withDbTarget`,
+                ).toBeDefined();
+                // A block's condition may name a target the command can't select; a command's own must be reachable.
+                for (const target of cond.source === undefined ? cond.dbTarget : []) {
+                  expect(
+                    target === permissions.dbTargetDefault || node.flags.has(target),
+                    `${where} names the "${target}" target, which --${target} can't select and isn't the default`,
+                  ).toBe(true);
+                }
+                continue;
+              }
               // A condition a building block wrote (`cond.source` set) only has to name a real flag
               // somewhere in the CLI: a command can include a block without accepting every flag
               // its conditions mention. On such a command a presence condition is false and an
@@ -144,15 +164,31 @@ describe("command permission mapping completeness", () => {
                 `"${path}"'s \`when\` condition on "${entry.operationId}" names "--${cond.flag}", which doesn't exist${cond.source === undefined ? "" : ` (from building block "${cond.source}")`}`,
               ).toBe(true);
               const info = node.flagInfo.get(cond.flag);
-              if (cond.oneOf === undefined || info === undefined) continue;
               const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
+              if (cond.is !== undefined && info !== undefined) {
+                expect(
+                  info.isBoolean,
+                  `${where} tests --${cond.flag} with \`is\`, but it takes a value — use \`oneOf\``,
+                ).toBe(true);
+                expect(
+                  info.isOptional,
+                  `${where} tests --${cond.flag} with \`is\`, but it is optional, so "not given" differs from "false" — use \`present\``,
+                ).toBe(false);
+              }
+              if (cond.is === undefined && cond.oneOf === undefined && info?.isBoolean === true) {
+                expect(
+                  info.isOptional,
+                  `${where} tests --${cond.flag} by presence, but it has a default and is always present — use \`is\``,
+                ).toBe(true);
+              }
+              if (cond.oneOf === undefined || info === undefined) continue;
               expect(
                 cond.oneOf.length,
                 `${where} lists no values for --${cond.flag}`,
               ).toBeGreaterThan(0);
               expect(
                 info.isBoolean,
-                `${where} checks the value of --${cond.flag}, a switch with no value — use \`present\``,
+                `${where} checks the value of --${cond.flag}, a switch with no value — use \`is\` or \`present\``,
               ).toBe(false);
               for (const value of cond.oneOf) {
                 expect(

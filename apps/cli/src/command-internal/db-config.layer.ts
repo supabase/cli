@@ -45,6 +45,51 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
+import { block } from "./command-permissions/model.ts";
+
+/**
+ * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
+ * include it with `withDbTarget`. `gen types --project-id` and `db dump`'s container fallback
+ * fetch the pooler config without `--project-ref`, so those commands declare that entry
+ * themselves.
+ */
+export const dbConfig = block("db-config", [
+  {
+    operationId: "v1-create-login-role",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "no database password from --password (an empty value counts as none), SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
+  },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "project-ref" }],
+    context:
+      "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "project-ref", oneOf: [""] }],
+    context:
+      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-list-all-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+  {
+    operationId: "v1-delete-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+]);
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
@@ -219,6 +264,14 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
       return origin.tier;
   }
 };
+
+/**
+ * An explicitly empty `--password` asks for a temporary login role even when
+ * `SUPABASE_DB_PASSWORD` or the project `.env` holds one. The flag binding drops empty strings, so
+ * pass it to {@link resolveLinkedPassword} as the caller's password instead.
+ */
+const emptyPasswordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
+  Option.filter(password ?? Option.none(), (value) => value.length === 0);
 
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
@@ -637,7 +690,7 @@ export const dbConfigResolverLayer = Layer.effect(
               cliSettings.projectHost,
               cliSettings.poolerHost,
               flags.dnsResolver,
-              Option.none(),
+              emptyPasswordFlag(flags.password),
               {
                 adHocProjectRef: flags.adHocProjectRef ?? false,
                 resolveVaultSecrets,
@@ -706,7 +759,7 @@ export const dbConfigResolverLayer = Layer.effect(
           const password = yield* resolveLinkedPassword(
             ref,
             cliSettings.workdir,
-            Option.none(),
+            emptyPasswordFlag(flags.password),
             flags.password !== undefined,
           );
           // Container-fallback: fetch the primary pooler config from the Management API when

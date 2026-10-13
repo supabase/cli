@@ -1,10 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
@@ -88,6 +84,16 @@ function setup(
   return { layer, docker };
 }
 
+const pinnedWorkdir = Effect.fnUntraced(function* (prefix: string, pin: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workdir = yield* fs.makeTempDirectoryScoped({ prefix });
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, "edge-runtime-version"), pin);
+  return workdir;
+});
+
 const runScript = Effect.fnUntraced(function* () {
   const edge = yield* EdgeRuntimeScript;
   return yield* edge.run({
@@ -144,47 +150,30 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
 
   it.effect(
     "resolves the image pin from `opts.workdir`, overriding the layer's own `cliSettings.workdir`",
-    () => {
-      const configWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-config-"));
-      const callerWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-caller-"));
-      mkdirSync(join(configWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(configWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-config\n",
-      );
-      mkdirSync(join(callerWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(callerWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-caller\n",
-      );
+    () =>
+      Effect.gen(function* () {
+        const configWorkdir = yield* pinnedWorkdir("edge-runtime-config-", "v-from-config\n");
+        const callerWorkdir = yield* pinnedWorkdir("edge-runtime-caller-", "v-from-caller\n");
 
-      const { layer, docker } = setup(
-        { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
-        { cliSettingsWorkdir: configWorkdir },
-      );
+        const { layer, docker } = setup(
+          { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+          { cliSettingsWorkdir: configWorkdir },
+        );
 
-      return Effect.gen(function* () {
-        const edge = yield* EdgeRuntimeScript;
-        yield* edge.run({
-          script: "console.log('x')",
-          env: {},
-          binds: [],
-          errPrefix: "error diffing schema",
-          denoVersion: 2,
-          workdir: callerWorkdir,
-        });
+        yield* Effect.gen(function* () {
+          const edge = yield* EdgeRuntimeScript;
+          yield* edge.run({
+            script: "console.log('x')",
+            env: {},
+            binds: [],
+            errPrefix: "error diffing schema",
+            denoVersion: 2,
+            workdir: callerWorkdir,
+          });
+        }).pipe(Effect.provide(layer));
         expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
         expect(docker.lastOpts?.image).not.toContain("v-from-config");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(configWorkdir, { recursive: true, force: true });
-            rmSync(callerWorkdir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("rewrites the runner onto the slim image with the slim-images flag on", () => {

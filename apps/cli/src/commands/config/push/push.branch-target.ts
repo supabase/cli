@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -67,6 +67,13 @@ function isNotFound(cause: unknown): boolean {
   );
 }
 
+type ProbeOutcome = Data.TaggedEnum<{
+  Project: { readonly name: string | undefined };
+  Branch: {};
+  Unknown: {};
+}>;
+const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
+
 /**
  * Resolves what `ref` actually is, so `config push` can tell the user whether they're pushing to
  * the linked project or a branch, and gate a branch push behind confirmation. Never fails: this
@@ -121,40 +128,36 @@ export function resolveConfigPushTarget(
       const probing =
         output.format === "text" ? yield* output.task("Checking project...") : undefined;
 
-      type ProbeOutcome =
-        | { readonly kind: "project"; readonly name: string | undefined }
-        | { readonly kind: "branch" }
-        | { readonly kind: "unknown" };
-
       const probe: ProbeOutcome = yield* Effect.timeoutOrElse(
         api.v1.getProject({ ref }).pipe(
-          Effect.map((project): ProbeOutcome => ({
-            kind: "project",
-            name: normalizeApiName(project.name),
-          })),
+          Effect.map((project) => ProbeOutcome.Project({ name: normalizeApiName(project.name) })),
           Effect.catch((cause) =>
-            Effect.succeed<ProbeOutcome>(
-              isNotFound(cause) ? { kind: "branch" } : { kind: "unknown" },
-            ),
+            Effect.succeed(isNotFound(cause) ? ProbeOutcome.Branch() : ProbeOutcome.Unknown()),
           ),
         ),
         {
           duration: BRANCH_LOOKUP_TIMEOUT,
-          orElse: () => Effect.succeed<ProbeOutcome>({ kind: "unknown" }),
+          orElse: () => Effect.succeed(ProbeOutcome.Unknown()),
         },
       );
       // A definitive answer (200 or 404) clears the task; an uncertain one marks it failed
       // since the diagnostic step didn't complete, though the push proceeds regardless.
-      yield* (probe.kind === "unknown" ? probing?.fail() : probing?.clear) ?? Effect.void;
+      yield* (ProbeOutcome.$is("Unknown")(probe) ? probing?.fail() : probing?.clear) ?? Effect.void;
 
-      if (probe.kind === "project") {
-        return { kind: "project", ref, ...(probe.name === undefined ? {} : { name: probe.name }) };
+      const probed = ProbeOutcome.$match(probe, {
+        Project: ({ name }): ConfigPushTarget => ({
+          kind: "project",
+          ref,
+          ...(name === undefined ? {} : { name }),
+        }),
+        Unknown: (): ConfigPushTarget => ({ kind: "unknown", ref }),
+        // A Branch probe (404) falls into the shared recovery below, same as an
+        // incomplete uuid knownBranch.
+        Branch: () => undefined,
+      });
+      if (probed !== undefined) {
+        return probed;
       }
-      if (probe.kind === "unknown") {
-        return { kind: "unknown", ref };
-      }
-      // probe.kind === "branch" (404) falls into the shared recovery below, same as an
-      // incomplete uuid knownBranch.
     }
 
     // Shared recovery for a confirmed branch whose name/parent aren't known yet. Reads

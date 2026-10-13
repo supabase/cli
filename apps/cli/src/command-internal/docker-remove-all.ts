@@ -141,15 +141,13 @@ export const dockerRemoveAll = (
       (result) => Result.isFailure(result) || result.success !== 0,
     );
     if (failedStop !== undefined) {
-      return yield* Effect.fail(
-        new DockerRemoveAllStopError({
-          message: `failed to stop container: ${
-            Result.isFailure(failedStop)
-              ? describeContainerCliFailure(failedStop.failure)
-              : `exit ${failedStop.success}`
-          }`,
-        }),
-      );
+      return yield* new DockerRemoveAllStopError({
+        message: `failed to stop container: ${
+          Result.isFailure(failedStop)
+            ? describeContainerCliFailure(failedStop.failure)
+            : `exit ${failedStop.success}`
+        }`,
+      });
     }
 
     // Collects stdout instead of ignoring it — reading the pipe avoids the same hang, and the
@@ -169,9 +167,9 @@ export const dockerRemoveAll = (
       ),
     );
     if (containerPrune.exitCode !== 0) {
-      return yield* Effect.fail(
-        new DockerRemoveAllContainerPruneError({ message: "failed to prune containers" }),
-      );
+      return yield* new DockerRemoveAllContainerPruneError({
+        message: "failed to prune containers",
+      });
     }
     yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
     // Containers are confirmed removed only now — see {@link dockerRemoveAll}'s doc comment.
@@ -204,9 +202,7 @@ export const dockerRemoveAll = (
         ),
       );
       if (volumePrune.exitCode !== 0) {
-        return yield* Effect.fail(
-          new DockerRemoveAllVolumePruneError({ message: "failed to prune volumes" }),
-        );
+        return yield* new DockerRemoveAllVolumePruneError({ message: "failed to prune volumes" });
       }
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
@@ -226,9 +222,7 @@ export const dockerRemoveAll = (
       ),
     );
     if (networkPrune.exitCode !== 0) {
-      return yield* Effect.fail(
-        new DockerRemoveAllNetworkPruneError({ message: "failed to prune networks" }),
-      );
+      return yield* new DockerRemoveAllNetworkPruneError({ message: "failed to prune networks" });
     }
     // Established output text: singular "network", unlike the container/volume reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);

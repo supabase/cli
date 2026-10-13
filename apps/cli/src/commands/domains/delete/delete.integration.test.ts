@@ -46,7 +46,7 @@ function setup(opts: SetupOpts = {}) {
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains delete integration", () => {
-  it.live("prints the success line to stderr in text mode", () => {
+  it.effect("prints the success line to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -58,7 +58,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format json", () => {
+  it.effect("emits a structured success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -67,7 +67,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format stream-json", () => {
+  it.effect("emits a structured success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -75,7 +75,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores -o json and still only prints to stderr", () => {
+  it.effect("ignores -o json and still only prints to stderr", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -84,7 +84,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
@@ -97,7 +97,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
@@ -108,7 +108,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));

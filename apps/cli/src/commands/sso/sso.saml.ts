@@ -1,4 +1,4 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Predicate } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { quoteSsoString } from "./sso.format.ts";
@@ -11,8 +11,8 @@ export type SsoFileErrorReason =
   | "other";
 
 function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
-  if (cause.reason._tag === "NotFound") return "not_found";
-  if (cause.reason._tag === "PermissionDenied") return "permission";
+  if (Predicate.isTagged(cause.reason, "NotFound")) return "not_found";
+  if (Predicate.isTagged(cause.reason, "PermissionDenied")) return "permission";
   return "other";
 }
 
@@ -44,16 +44,12 @@ export function validateMetadataXmlBytes<E>(
 ): Effect.Effect<void, E> {
   return Effect.try({
     try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    catch: () => undefined,
-  }).pipe(
-    Effect.mapError(() =>
+    catch: () =>
       nonUtf8Error({
         source,
         message: `SAML Metadata XML at ${quoteSsoString(source)} is not UTF-8 encoded`,
       }),
-    ),
-    Effect.asVoid,
-  );
+  }).pipe(Effect.asVoid);
 }
 
 /**

@@ -1,74 +1,71 @@
+import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { parseSnippetUuid } from "./download.handler.ts";
 
 describe("parseSnippetUuid", () => {
   it("accepts the canonical 36-char hyphenated form, lowercasing uppercase hex", () => {
-    expect(parseSnippetUuid("0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
-    expect(parseSnippetUuid("0B0D48F6-878B-4190-88D7-2CA33ED800BC")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
+    expect(parseSnippetUuid("0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
+    expect(parseSnippetUuid("0B0D48F6-878B-4190-88D7-2CA33ED800BC")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
   });
 
   it("accepts the raw 32-hex form and returns the canonical hyphenated lowercase form", () => {
-    expect(parseSnippetUuid("0b0d48f6878b419088d72ca33ed800bc")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
-    expect(parseSnippetUuid("0B0D48F6878B419088D72CA33ED800BC")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
+    expect(parseSnippetUuid("0b0d48f6878b419088d72ca33ed800bc")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
+    expect(parseSnippetUuid("0B0D48F6878B419088D72CA33ED800BC")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
   });
 
   it("accepts a urn:uuid: prefix, case-insensitively", () => {
-    expect(parseSnippetUuid("urn:uuid:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
-    expect(parseSnippetUuid("URN:UUID:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
+    expect(parseSnippetUuid("urn:uuid:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
+    expect(parseSnippetUuid("URN:UUID:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
   });
 
   it("accepts the braced form, never validating the trailing 38th char (s = s[1:] quirk)", () => {
-    expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc}")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
-    expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc!")).toEqual({
-      canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-    });
+    expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc}")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
+    expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc!")).toEqual(
+      Result.succeed("0b0d48f6-878b-4190-88d7-2ca33ed800bc"),
+    );
   });
 
   it("rejects the wrong length with `invalid UUID length: <n>`", () => {
-    expect(parseSnippetUuid("not-a-uuid")).toEqual({
-      error: "invalid UUID length: 10",
-    });
-    expect(parseSnippetUuid("")).toEqual({
-      error: "invalid UUID length: 0",
-    });
+    expect(parseSnippetUuid("not-a-uuid")).toEqual(Result.fail("invalid UUID length: 10"));
+    expect(parseSnippetUuid("")).toEqual(Result.fail("invalid UUID length: 0"));
   });
 
   it('rejects 45 chars with a bad prefix with `invalid urn prefix: "<first 9 chars>"`', () => {
-    expect(parseSnippetUuid("xrn:uuid:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual({
-      error: 'invalid urn prefix: "xrn:uuid:"',
-    });
+    expect(parseSnippetUuid("xrn:uuid:0b0d48f6-878b-4190-88d7-2ca33ed800bc")).toEqual(
+      Result.fail('invalid urn prefix: "xrn:uuid:"'),
+    );
   });
 
   it("rejects 36 chars with misplaced hyphens or non-hex with `invalid UUID format`", () => {
     // Dots instead of hyphens at the canonical dash positions.
-    expect(parseSnippetUuid("0b0d48f6.878b.4190.88d7.2ca33ed800bc")).toEqual({
-      error: "invalid UUID format",
-    });
+    expect(parseSnippetUuid("0b0d48f6.878b.4190.88d7.2ca33ed800bc")).toEqual(
+      Result.fail("invalid UUID format"),
+    );
     // Correct dash positions, but a non-hex character in the payload.
-    expect(parseSnippetUuid("0b0d48f6-878b-4190-88d7-2ca33ed800bg")).toEqual({
-      error: "invalid UUID format",
-    });
+    expect(parseSnippetUuid("0b0d48f6-878b-4190-88d7-2ca33ed800bg")).toEqual(
+      Result.fail("invalid UUID format"),
+    );
   });
 
   it("rejects 32 non-hex chars with `invalid UUID format`", () => {
-    expect(parseSnippetUuid("0b0d48f6878b419088d72ca33ed800bg")).toEqual({
-      error: "invalid UUID format",
-    });
+    expect(parseSnippetUuid("0b0d48f6878b419088d72ca33ed800bg")).toEqual(
+      Result.fail("invalid UUID format"),
+    );
   });
 
   // Dispatch is on byte length, not JS's UTF-16 code-unit length, so
@@ -80,31 +77,27 @@ describe("parseSnippetUuid", () => {
     it("counts a multibyte char as its byte width, never slipping into the braced branch", () => {
       // JS length 38 (would hit the braced branch and issue a request for the
       // embedded canonical UUID); byte length is 39 → length error.
-      expect(parseSnippetUuid(`é${canonical}}`)).toEqual({
-        error: "invalid UUID length: 39",
-      });
-      expect(parseSnippetUuid(`{${canonical}é`)).toEqual({
-        error: "invalid UUID length: 39",
-      });
+      expect(parseSnippetUuid(`é${canonical}}`)).toEqual(Result.fail("invalid UUID length: 39"));
+      expect(parseSnippetUuid(`{${canonical}é`)).toEqual(Result.fail("invalid UUID length: 39"));
       // JS length 36; byte length is 37.
-      expect(parseSnippetUuid(`é${canonical.slice(1)}`)).toEqual({
-        error: "invalid UUID length: 37",
-      });
+      expect(parseSnippetUuid(`é${canonical.slice(1)}`)).toEqual(
+        Result.fail("invalid UUID length: 37"),
+      );
     });
 
     it("slices the urn prefix by byte and quotes it (printable code point prints literally)", () => {
       // 2 (é) + 7 + 36 = 45 bytes → urn branch; first 9 bytes are "érn:uuid".
-      expect(parseSnippetUuid(`érn:uuid${canonical}`)).toEqual({
-        error: 'invalid urn prefix: "érn:uuid"',
-      });
+      expect(parseSnippetUuid(`érn:uuid${canonical}`)).toEqual(
+        Result.fail('invalid urn prefix: "érn:uuid"'),
+      );
     });
 
     it("renders a code point split by the 9-byte prefix slice as a lone \\xNN escape", () => {
       // 8 ASCII + é (2 bytes) + 35 = 45 bytes; byte 9 splits é, so the escaped
       // form is "12345678\xc3".
-      expect(parseSnippetUuid(`12345678é${canonical.slice(0, 35)}`)).toEqual({
-        error: 'invalid urn prefix: "12345678\\xc3"',
-      });
+      expect(parseSnippetUuid(`12345678é${canonical.slice(0, 35)}`)).toEqual(
+        Result.fail('invalid urn prefix: "12345678\\xc3"'),
+      );
     });
   });
 });

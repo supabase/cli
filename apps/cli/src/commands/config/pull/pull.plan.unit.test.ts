@@ -421,10 +421,10 @@ describe("expandConfigPullChangeSet", () => {
     ]);
     const result = expandConfigPullChangeSet({
       initialChangeSet,
-      baseConfig: {} as EffectiveConfig,
+      baseConfig: {},
       baseDocument: {},
       valueOrigins: undefined,
-      remote: {} as ProjectConfig,
+      remote: {},
     });
     expect(result.changeSet).toEqual(initialChangeSet);
     expect(result.residual).toEqual(initialChangeSet);
@@ -434,17 +434,17 @@ describe("expandConfigPullChangeSet", () => {
     // [auth.sms.twilio] is disabled locally with empty placeholders; remote has it enabled with
     // real credentials. Round 1 only sees `enabled` (the sids are unmanaged pre-write); round 2
     // must absorb both once `enabled: true` un-gates them.
-    const baseConfig = {
+    const baseConfig: EffectiveConfig = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
     };
-    const remote = {
+    const remote: ProjectConfig = {
       auth: {
         sms: { twilio: { enabled: true, account_sid: "AC_REAL", message_service_sid: "MG_REAL" } },
       },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument },
       remote,
@@ -482,13 +482,13 @@ describe("expandConfigPullChangeSet", () => {
   });
 
   test("generalizes to a second, independent registry family (`auth.captcha`)", () => {
-    const baseConfig = {
+    const baseConfig: EffectiveConfig = {
       auth: { captcha: { enabled: false, provider: "hcaptcha" } },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = { auth: { captcha: { enabled: false, provider: "hcaptcha" } } };
-    const remote = {
+    const remote: ProjectConfig = {
       auth: { captcha: { enabled: true, provider: "turnstile" } },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument },
       remote,
@@ -513,11 +513,11 @@ describe("expandConfigPullChangeSet", () => {
   });
 
   test("never re-projects a change that can't be written (env-sourced), so it doesn't loop forever chasing it", () => {
-    const baseConfig = {
+    const baseConfig: EffectiveConfig = {
       auth: {
         sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "MG_SAME" } },
       },
-    } as unknown as EffectiveConfig;
+    };
     const baseDocument = {
       auth: {
         sms: {
@@ -536,11 +536,11 @@ describe("expandConfigPullChangeSet", () => {
         envVariables: ["MY_VAR"],
       },
     ];
-    const remote = {
+    const remote: ProjectConfig = {
       auth: {
         sms: { twilio: { enabled: true, account_sid: "AC_REAL", message_service_sid: "MG_SAME" } },
       },
-    } as unknown as ProjectConfig;
+    };
     const initialChangeSet = diffProjectConfig({
       local: { config: baseConfig, document: baseDocument, valueOrigins },
       remote,

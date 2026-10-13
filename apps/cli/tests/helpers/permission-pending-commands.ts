@@ -40,7 +40,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db lint",
   "db pull",
   "db push",
-  "db query",
   "db remote changes",
   "db remote commit",
   "db reset",
@@ -143,7 +142,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "pull",
 
-  "secrets list",
   "secrets set",
   "secrets unset",
 
@@ -152,7 +150,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "services",
 
   "snippets download",
-  "snippets list",
 
   "ssl-enforcement get",
   "ssl-enforcement update",

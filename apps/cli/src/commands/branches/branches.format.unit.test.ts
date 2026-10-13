@@ -1,3 +1,4 @@
+import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
@@ -220,30 +221,22 @@ describe("parsePoolerConnectionString", () => {
     const parsed = parsePoolerConnectionString(
       "postgresql://postgres.refxxxxxxxxxxxxxxxxxx:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
     );
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) {
-      expect(parsed.parts.host).toBe("aws-0-us-east-1.pooler.supabase.com");
-      expect(parsed.parts.port).toBe(6543);
-      expect(parsed.parts.database).toBe("postgres");
-      expect(parsed.parts.user).toBe("postgres.refxxxxxxxxxxxxxxxxxx");
-    }
+    const parts = Result.getOrThrow(parsed);
+    expect(parts.host).toBe("aws-0-us-east-1.pooler.supabase.com");
+    expect(parts.port).toBe(6543);
+    expect(parts.database).toBe("postgres");
+    expect(parts.user).toBe("postgres.refxxxxxxxxxxxxxxxxxx");
   });
 
   it("returns an error description (not the raw URL) for unparseable input", () => {
-    const parsed = parsePoolerConnectionString("not a url");
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.error).not.toContain("not a url");
-      expect(parsed.error.length).toBeGreaterThan(0);
-    }
+    const error = Result.getOrThrow(Result.flip(parsePoolerConnectionString("not a url")));
+    expect(error).not.toContain("not a url");
+    expect(error.length).toBeGreaterThan(0);
   });
 
   it("rejects a non-postgresql scheme with the scheme in the error", () => {
-    const parsed = parsePoolerConnectionString("http://example.com");
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.error).toContain("http:");
-    }
+    const error = Result.getOrThrow(Result.flip(parsePoolerConnectionString("http://example.com")));
+    expect(error).toContain("http:");
   });
 });
 
