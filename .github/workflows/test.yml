@@ -152,6 +152,11 @@ jobs:
           src/port-reservation.e2e.test.ts
           --passWithNoTests=false
 
+      # The image disk only commits once nothing holds /var/lib/docker open.
+      - name: Stop Docker so its image disk can be saved
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -340,6 +345,11 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # The image disk only commits once nothing holds /var/lib/docker open.
+      - name: Stop Docker so its image disk can be saved
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -382,6 +392,11 @@ jobs:
           pnpm --filter @supabase/stack test:e2e:run
           src/public.e2e.test.ts
           --passWithNoTests=false
+
+      # The image disk only commits once nothing holds /var/lib/docker open.
+      - name: Stop Docker so its image disk can be saved
+        if: always() && matrix.runtime == 'docker'
+        run: sudo systemctl stop docker.socket docker.service
 
   test-stack-podman-integration:
     if: |
