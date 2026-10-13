@@ -28,11 +28,11 @@ concurrency:
 jobs:
   repair:
     name: Repair with Claude
-    # AI Review runs are dispatched from the default branch, so their head branch is not the sync branch.
+    # AI Review runs are dispatched from the default branch, and their run name carries the PR number, so match the file.
     if: >-
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.head_branch == 'sync/develop-into-next' ||
-      github.event.workflow_run.name == 'AI Review'
+      github.event.workflow_run.path == '.github/workflows/ai-review.yml'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     permissions:
