@@ -6,7 +6,7 @@ import {
   type SpawnRequest,
   type SpawnResult,
 } from "@supabase/typegen";
-import { Effect, Predicate, Stream } from "effect";
+import { Data, Effect, Stream } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 
 import { collectText } from "../../../command-internal/container-cli.ts";
@@ -26,13 +26,12 @@ export interface TypegenHostOptions {
   ) => Promise<A>;
 }
 
-type TypegenSpawnOutcome =
-  | { readonly _tag: "Exited"; readonly result: SpawnResult }
-  | { readonly _tag: "NotFound" }
-  | { readonly _tag: "Failed"; readonly error: unknown };
-
-const isNotFound = (error: unknown): boolean =>
-  Predicate.hasProperty(error, "reason") && Predicate.isTagged(error.reason, "NotFound");
+type TypegenSpawnOutcome = Data.TaggedEnum<{
+  Exited: { readonly result: SpawnResult };
+  NotFound: {};
+  Failed: { readonly error: unknown };
+}>;
+const TypegenSpawnOutcome = Data.taggedEnum<TypegenSpawnOutcome>();
 
 const spawnForTypegen = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -47,7 +46,7 @@ const spawnForTypegen = (
       if (platform === "win32") {
         // `spawn` cannot start the `.bat` Flutter ships `dart` as without a shell.
         const resolved = resolveWindowsCommand(request.command, request.env);
-        if (resolved === undefined) return { _tag: "NotFound" } as const;
+        if (resolved === undefined) return TypegenSpawnOutcome.NotFound();
         shell = isWindowsScript(resolved);
         command = shell ? quoteForCmd(resolved) : resolved;
         if (shell) args = request.args.map(quoteForCmd);
@@ -90,13 +89,14 @@ const spawnForTypegen = (
         ],
         { concurrency: "unbounded" },
       );
-      return { _tag: "Exited", result: { exitCode, stdout, stderr } } as const;
+      return TypegenSpawnOutcome.Exited({ result: { exitCode, stdout, stderr } });
     }),
   ).pipe(
-    Effect.catch((error) =>
-      Effect.succeed<TypegenSpawnOutcome>(
-        isNotFound(error) ? { _tag: "NotFound" } : { _tag: "Failed", error },
-      ),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(TypegenSpawnOutcome.NotFound()),
+      (_reason, error) => Effect.succeed(TypegenSpawnOutcome.Failed({ error })),
     ),
   );
 
@@ -116,15 +116,16 @@ export const makeTypegenHost = (options: TypegenHostOptions): Host => ({
       .runPromise(spawnForTypegen(options.spawner, request, options.platform), {
         signal: request.signal,
       })
-      .then((outcome) => {
-        switch (outcome._tag) {
-          case "Exited":
-            return outcome.result;
-          case "NotFound":
+      .then(
+        TypegenSpawnOutcome.$match({
+          Exited: ({ result }) => result,
+          NotFound: () => {
             throw commandNotFound(request.command);
-          case "Failed":
-            throw outcome.error;
-        }
-      }),
+          },
+          Failed: ({ error }) => {
+            throw error;
+          },
+        }),
+      ),
   format: (code) => Promise.resolve(code),
 });

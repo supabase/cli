@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { Result } from "effect";
 
 export interface ParsedCidr {
   readonly kind: "v4" | "v6";
@@ -59,8 +60,8 @@ export function isPrivateCidr(cidr: ParsedCidr): boolean {
     const octets = cidr.v4MappedAddress ?? cidr.address;
     const parts = octets.split(".");
     if (parts.length !== 4) return false;
-    const a = Number.parseInt(parts[0]!, 10);
-    const b = Number.parseInt(parts[1]!, 10);
+    const a = Number.parseInt(parts[0] ?? "", 10);
+    const b = Number.parseInt(parts[1] ?? "", 10);
     if (a === 10) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
@@ -113,18 +114,19 @@ function parseFirstIpv6Byte(address: string): number | null {
 export function validateAndPartitionCidrs(
   inputs: readonly string[],
   bypassCidrChecks: boolean,
-):
-  | { readonly ok: true; readonly v4: readonly string[]; readonly v6: readonly string[] }
-  | { readonly ok: false; readonly kind: "invalid" | "private"; readonly input: string } {
+): Result.Result<
+  { readonly v4: readonly string[]; readonly v6: readonly string[] },
+  { readonly kind: "invalid" | "private"; readonly input: string }
+> {
   const v4: string[] = [];
   const v6: string[] = [];
   for (const cidr of inputs) {
     const parsed = parseCidr(cidr);
     if (parsed === null) {
-      return { ok: false, kind: "invalid", input: cidr };
+      return Result.fail({ kind: "invalid", input: cidr });
     }
     if (!bypassCidrChecks && isPrivateCidr(parsed)) {
-      return { ok: false, kind: "private", input: cidr };
+      return Result.fail({ kind: "private", input: cidr });
     }
     if (parsed.kind === "v4") {
       v4.push(cidr);
@@ -132,7 +134,7 @@ export function validateAndPartitionCidrs(
       v6.push(cidr);
     }
   }
-  return { ok: true, v4, v6 };
+  return Result.succeed({ v4, v6 });
 }
 
 /**

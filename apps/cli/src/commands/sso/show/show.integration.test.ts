@@ -64,7 +64,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("sso show integration", () => {
-  it.live("rejects bad UUID with Go-format message", () => {
+  it.effect("rejects bad UUID with Go-format message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -83,7 +83,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders single-provider markdown for valid UUID + 200", () => {
+  it.effect("renders single-provider markdown for valid UUID + 200", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -97,7 +97,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with NotFound on 404", () => {
+  it.effect("fails with NotFound on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -117,7 +117,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with Unexpected on 500", () => {
+  it.effect("fails with Unexpected on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -136,7 +136,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with network error on transport failure", () => {
+  it.effect("fails with network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -153,7 +153,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env returns env-not-supported error with Go-format message", () => {
+  it.effect("Go --output=env returns env-not-supported error with Go-format message", () => {
     const { layer } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -172,7 +172,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response with Go's HTML escaping", () => {
+  it.effect("Go --output=json encodes response with Go's HTML escaping", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -187,7 +187,7 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
+  it.effect("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -212,7 +212,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
+  it.effect("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -235,7 +235,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits success", () => {
+  it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -248,7 +248,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=pretty matches text mode", () => {
+  it.effect("Go --output=pretty matches text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -260,7 +260,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--metadata short-circuits and prints raw XML", () => {
+  it.effect("--metadata short-circuits and prints raw XML", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -272,7 +272,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--metadata prints empty string + newline when metadata_xml absent", () => {
+  it.effect("--metadata prints empty string + newline when metadata_xml absent", () => {
     const { layer, out } = setup({ body: { id: VALID_PROVIDER_ID } });
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -284,7 +284,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire cli_upgrade_suggested on 404 (Go's `show` omits it)", () => {
+  it.effect("does NOT fire cli_upgrade_suggested on 404 (Go's `show` omits it)", () => {
     const { layer, analytics } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -298,7 +298,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
@@ -311,7 +311,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("hits GET /v1/projects/{ref}/config/auth/sso/providers/{id}", () => {
+  it.effect("hits GET /v1/projects/{ref}/config/auth/sso/providers/{id}", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({

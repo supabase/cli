@@ -57,7 +57,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("projects api-keys integration", () => {
-  it.live("lists api keys as a NAME / KEY VALUE table and masks null values", () => {
+  it.effect("lists api keys as a NAME / KEY VALUE table and masks null values", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -68,7 +68,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the ref from --project-ref", () => {
+  it.effect("resolves the ref from --project-ref", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.some(FLAG_REF), reveal: false });
@@ -76,7 +76,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the ref from the linked project when --project-ref is omitted", () => {
+  it.effect("resolves the ref from the linked project when --project-ref is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -84,7 +84,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the reveal query param by default (Go request parity)", () => {
+  it.effect("omits the reveal query param by default (Go request parity)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -92,7 +92,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends reveal=true when --reveal is passed", () => {
+  it.effect("sends reveal=true when --reveal is passed", () => {
     const { layer, api } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
@@ -100,7 +100,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders the revealed secret key in full in the text table", () => {
+  it.effect("renders the revealed secret key in full in the text table", () => {
     const { layer, out } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
@@ -109,7 +109,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("includes the revealed secret in the env map for --output env --reveal", () => {
+  it.effect("includes the revealed secret in the env map for --output env --reveal", () => {
     const { layer, out } = setup({ goOutput: "env", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
@@ -117,7 +117,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("carries the revealed secret in the { keys } payload for --output-format json", () => {
+  it.effect("carries the revealed secret in the { keys } payload for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
@@ -126,7 +126,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the revealed secret in the Go json array for --output json --reveal", () => {
+  it.effect("emits the revealed secret in the Go json array for --output json --reveal", () => {
     const { layer, out } = setup({ goOutput: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
@@ -134,7 +134,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError when no ref can be resolved", () => {
+  it.effect("fails with ProjectRefNotLinkedError when no ref can be resolved", () => {
     const { layer } = setup({ projectId: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -147,7 +147,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { keys } for --output-format json", () => {
+  it.effect("emits a success event with { keys } for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -156,7 +156,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format stream-json", () => {
+  it.effect("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -164,7 +164,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the SUPABASE_<NAME>_KEY map for --output env", () => {
+  it.effect("encodes the SUPABASE_<NAME>_KEY map for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -173,7 +173,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("encodes the SUPABASE_<NAME>_KEY map for --output toml", () => {
+  it.effect("encodes the SUPABASE_<NAME>_KEY map for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -181,7 +181,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON array of api keys for --output json", () => {
+  it.effect("emits a JSON array of api keys for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -190,7 +190,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array for --output yaml", () => {
+  it.effect("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
@@ -198,7 +198,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectsApiKeysNetworkError on transport failure", () => {
+  it.effect("fails with ProjectsApiKeysNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -213,7 +213,7 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps HTTP 503 to `unexpected get api keys status 503`", () => {
+  it.effect("maps HTTP 503 to `unexpected get api keys status 503`", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

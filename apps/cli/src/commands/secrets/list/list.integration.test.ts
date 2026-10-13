@@ -51,7 +51,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("secrets list integration", () => {
-  it.live("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {
+  it.effect("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {
     const { layer, out } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -63,7 +63,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sorts secrets alphabetically by name regardless of API response order", () => {
+  it.effect("sorts secrets alphabetically by name regardless of API response order", () => {
     const { layer, out } = setup({
       response: [
         { name: "ZED", value: "z-digest" },
@@ -82,7 +82,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in secret names without escaping (Go parity)", () => {
+  it.effect("renders literal `|` characters in secret names without escaping (Go parity)", () => {
     const { layer, out } = setup({
       response: [{ name: "with|pipe", value: "digest" }],
     });
@@ -93,7 +93,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { secrets } for --output-format=json", () => {
+  it.effect("emits a success event with { secrets } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -108,7 +108,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -117,7 +117,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON to stdout for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON to stdout for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -137,7 +137,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a YAML array to stdout for --output yaml", () => {
+  it.effect("emits a YAML array to stdout for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -147,7 +147,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps the array as { secrets = [...] } for --output toml", () => {
+  it.effect("wraps the array as { secrets = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -157,7 +157,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsEnvNotSupportedError for --output env", () => {
+  it.effect("fails with SecretsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
@@ -170,7 +170,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
+  it.effect("treats --output pretty as identical to text mode (Glamour table)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -178,7 +178,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag value wins over --output-format when both provided", () => {
+  it.effect("--output flag value wins over --output-format when both provided", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -191,7 +191,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref into the listAllSecrets URL", () => {
+  it.effect("passes the resolved project ref into the listAllSecrets URL", () => {
     const { layer, api } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
@@ -200,7 +200,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over CommandSettings.projectId env", () => {
+  it.effect("uses --project-ref flag value over CommandSettings.projectId env", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
@@ -209,7 +209,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with SecretsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
@@ -222,7 +222,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with SecretsListNetworkError on transport failure", () => {
+  it.effect("fails with SecretsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
@@ -235,7 +235,7 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("withJsonErrorHandling emits a fail event in JSON mode on 503", () => {
+  it.effect("withJsonErrorHandling emits a fail event in JSON mode on 503", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: [] });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);

@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   Stdio,
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -93,10 +94,11 @@ const writeLocalFunction = Effect.fnUntraced(function* (
 
 function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   const outputIndex = args.indexOf("--output");
-  if (outputIndex < 0 || args[outputIndex + 1] === undefined) {
+  const outputPath = outputIndex < 0 ? undefined : args[outputIndex + 1];
+  if (outputPath === undefined) {
     throw new Error("missing docker bundle output flag");
   }
-  return args[outputIndex + 1]!;
+  return outputPath;
 }
 
 /**
@@ -124,7 +126,7 @@ function mockDockerBundleSpawner() {
 }
 
 describe("functions deploy", () => {
-  it.live("deploys a function natively through the Management API", () => {
+  it.effect("deploys a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -190,7 +192,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+  it.effect("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -250,7 +252,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("uses an explicit project ref when provided", () => {
+  it.effect("uses an explicit project ref when provided", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -313,7 +315,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("resolves --import-map relative to the caller cwd", () => {
+  it.effect("resolves --import-map relative to the caller cwd", () => {
     const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
@@ -378,7 +380,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("loads project config from the resolved workdir", () => {
+  it.effect("loads project config from the resolved workdir", () => {
     const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
@@ -433,90 +435,93 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
-    // Uploaded paths are anchored at the workdir, not the git root, so this
-    // monorepo import fails the `fs.FS` boundary check before upload.
-    const repoRoot = tempRoot.current;
-    const workdir = `${repoRoot}/app`;
-    const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.body._tag === "FormData") {
-          const metadata = request.body.formData.get("metadata");
-          multiparts.push({
-            metadata: typeof metadata === "string" ? metadata : undefined,
-            fileNames: request.body.formData
-              .getAll("file")
-              .flatMap((part) => (part instanceof File ? [part.name] : [])),
-          });
-        }
-        if (request.method === "GET") {
-          return Effect.succeed(jsonResponse(request, 200, []));
-        }
-        return Effect.succeed(
-          jsonResponse(request, 201, {
-            id: "function-id",
-            slug: "hello-world",
-            name: "hello-world",
-            status: "ACTIVE",
-            version: 2,
-            created_at: 1_687_423_025_152,
-            updated_at: 1_687_423_025_152,
-            verify_jwt: true,
-            import_map: true,
-            entrypoint_path: "supabase/functions/hello-world/index.ts",
-            import_map_path: "supabase/functions/hello-world/deno.json",
-          }),
-        );
-      },
-    });
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir }),
-        runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
-      }),
-      Layer.succeed(YesFlag, false),
-      Stdio.layerTest({
-        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
-      yield* writeCliConfig(workdir);
-      yield* writeLocalFunction(
-        workdir,
-        "hello-world",
-        'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
-      );
-      yield* fs.makeDirectory(path.join(repoRoot, "packages", "shared", "src"), {
-        recursive: true,
+  it.effect(
+    "rejects a bundled file whose workdir-relative name escapes with a `..` segment",
+    () => {
+      // Uploaded paths are anchored at the workdir, not the git root, so this
+      // monorepo import fails the `fs.FS` boundary check before upload.
+      const repoRoot = tempRoot.current;
+      const workdir = `${repoRoot}/app`;
+      const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (Predicate.isTagged(request.body, "FormData")) {
+            const metadata = request.body.formData.get("metadata");
+            multiparts.push({
+              metadata: typeof metadata === "string" ? metadata : undefined,
+              fileNames: request.body.formData
+                .getAll("file")
+                .flatMap((part) => (part instanceof File ? [part.name] : [])),
+            });
+          }
+          if (request.method === "GET") {
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }
+          return Effect.succeed(
+            jsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 2,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: true,
+              entrypoint_path: "supabase/functions/hello-world/index.ts",
+              import_map_path: "supabase/functions/hello-world/deno.json",
+            }),
+          );
+        },
       });
-      yield* fs.writeFileString(
-        path.join(repoRoot, "packages", "shared", "src", "index.ts"),
-        'export const shared = "ok"\n',
-      );
-      yield* fs.writeFileString(
-        path.join(workdir, "supabase", "functions", "hello-world", "deno.json"),
-        '{"imports":{"@repo/shared":"../../../../packages/shared/src/index.ts"}}',
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir }),
+          runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
       );
 
-      const exit = yield* Effect.exit(functionsDeploy(baseFlags));
-
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain(
-          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+        yield* writeCliConfig(workdir);
+        yield* writeLocalFunction(
+          workdir,
+          "hello-world",
+          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
         );
-      }
-      expect(multiparts).toHaveLength(0);
-    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-  });
+        yield* fs.makeDirectory(path.join(repoRoot, "packages", "shared", "src"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(repoRoot, "packages", "shared", "src", "index.ts"),
+          'export const shared = "ok"\n',
+        );
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+          '{"imports":{"@repo/shared":"../../../../packages/shared/src/index.ts"}}',
+        );
+
+        const exit = yield* Effect.exit(functionsDeploy(baseFlags));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+          );
+        }
+        expect(multiparts).toHaveLength(0);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
 
   function apiDeployHarness(handler: ApiHandler) {
     const out = mockOutput({ format: "text" });
@@ -549,7 +554,7 @@ describe("functions deploy", () => {
           }),
     );
 
-  it.live("warns about an invalid static_files glob instead of failing the deploy", () => {
+  it.effect("warns about an invalid static_files glob instead of failing the deploy", () => {
     const { out, api, layer } = apiDeployHarness(deployedHelloWorld);
 
     return Effect.gen(function* () {
@@ -570,7 +575,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("reports a malformed deno.json with the schema decoder's message", () => {
+  it.effect("reports a malformed deno.json with the schema decoder's message", () => {
     const { api, layer } = apiDeployHarness(deployedHelloWorld);
 
     return Effect.gen(function* () {
@@ -591,7 +596,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live(
+  it.effect(
     "reports a failed progress write while collecting upload files as a typed failure",
     () => {
       const out = mockOutput({ format: "text" });
@@ -637,7 +642,7 @@ describe("functions deploy", () => {
     },
   );
 
-  it.live("keeps collecting upload files after the deploy is interrupted", () => {
+  it.effect("keeps collecting upload files after the deploy is interrupted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
     const started = Deferred.makeUnsafe<void>();
@@ -698,7 +703,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("reports a malformed deploy response with the schema decoder's message", () => {
+  it.effect("reports a malformed deploy response with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(
         request.method === "GET"
@@ -722,7 +727,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("reports a malformed functions list with the schema decoder's message", () => {
+  it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(
         request.method === "GET" && request.url.endsWith("/functions")
@@ -791,7 +796,7 @@ describe("functions deploy", () => {
     },
   );
 
-  it.live("reports a NUL byte in an imported path as the raw host TypeError", () => {
+  it.effect("reports a NUL byte in an imported path as the raw host TypeError", () => {
     const { layer } = apiDeployHarness(deployedHelloWorld);
 
     return Effect.gen(function* () {
@@ -848,7 +853,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
+  it.effect("deploys config-declared custom entrypoints when deploying all functions", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -926,7 +931,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.live("honors global --yes when pruning remote functions", () => {
+  it.effect("honors global --yes when pruning remote functions", () => {
     const out = mockOutput({ format: "text", promptConfirmFail: true });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -1069,7 +1074,7 @@ describe("functions deploy", () => {
       return { out, api, layer };
     }
 
-    it.live("still persists the functions that uploaded when one upload fails", () => {
+    it.effect("still persists the functions that uploaded when one upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [201, 409] });
 
       return Effect.gen(function* () {
@@ -1083,9 +1088,9 @@ describe("functions deploy", () => {
         }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe(
-          'unexpected deploy status 409: {"message":"rejected bye-world"}',
-        );
+        expect(error).toMatchObject({
+          message: 'unexpected deploy status 409: {"message":"rejected bye-world"}',
+        });
 
         expect(
           api.requests.filter(
@@ -1098,7 +1103,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
-    it.live("skips the bulk update entirely when every upload fails", () => {
+    it.effect("skips the bulk update entirely when every upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
       return Effect.gen(function* () {
@@ -1111,18 +1116,18 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        expect((error as Error).message).toBe(
-          [
+        expect(error).toMatchObject({
+          message: [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',
             'unexpected deploy status 400: {"message":"rejected bye-world"}',
           ].join("\n"),
-        );
+        });
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
-    it.live("reports the upload failure and the bulk update failure together", () => {
+    it.effect("reports the upload failure and the bulk update failure together", () => {
       const { api, layer } = setupBulkDeploy({
         deployStatuses: [201, 409],
         bulkStatuses: [400],
@@ -1139,18 +1144,18 @@ describe("functions deploy", () => {
         }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe(
-          [
+        expect(error).toMatchObject({
+          message: [
             'unexpected deploy status 409: {"message":"rejected bye-world"}',
             'unexpected bulk update status 400: {"message":"bulk update rejected"}',
           ].join("\n"),
-        );
+        });
         expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
 
-  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
@@ -1199,7 +1204,7 @@ describe("functions deploy", () => {
       return { out, api, layer };
     }
 
-    it.live("rejects --jobs > 1 without --use-api, even with default --use-docker", () => {
+    it.effect("rejects --jobs > 1 without --use-api, even with default --use-docker", () => {
       const { layer } = setupJobsTest(["functions", "deploy", "hello-world", "--jobs", "2"]);
 
       return Effect.gen(function* () {
@@ -1211,11 +1216,11 @@ describe("functions deploy", () => {
         }).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe("--jobs must be used together with --use-api");
+        expect(error).toMatchObject({ message: "--jobs must be used together with --use-api" });
       });
     });
 
-    it.live("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
+    it.effect("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1234,11 +1239,11 @@ describe("functions deploy", () => {
         }).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe("--jobs must be used together with --use-api");
+        expect(error).toMatchObject({ message: "--jobs must be used together with --use-api" });
       });
     });
 
-    it.live("allows --jobs > 1 together with --use-api", () => {
+    it.effect("allows --jobs > 1 together with --use-api", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => {
@@ -1291,7 +1296,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
-    it.live("treats --jobs 0 as 1 and does not require --use-api", () => {
+    it.effect("treats --jobs 0 as 1 and does not require --use-api", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => {
@@ -1407,7 +1412,7 @@ describe("functions deploy", () => {
   });
 
   describe("Docker bundle output permissions", () => {
-    it.live("skips the POSIX chmod on Windows only", () =>
+    it.effect("skips the POSIX chmod on Windows only", () =>
       Effect.sync(() => {
         expect(shouldChmodBundleOutputDirectory("win32")).toBe(false);
         expect(shouldChmodBundleOutputDirectory("darwin")).toBe(true);
@@ -1456,7 +1461,7 @@ describe("functions deploy", () => {
       return { out, layer, deployNoFunctions };
     }
 
-    it.live("keeps the injected styling out of the json error payload", () => {
+    it.effect("keeps the injected styling out of the json error payload", () => {
       const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
       return Effect.gen(function* () {
         yield* writeCliConfig(tempRoot.current);
@@ -1470,7 +1475,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
-    it.live("still emphasizes the functions dir in the text-mode error", () => {
+    it.effect("still emphasizes the functions dir in the text-mode error", () => {
       const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
       return Effect.gen(function* () {
         yield* writeCliConfig(tempRoot.current);
@@ -1489,7 +1494,7 @@ describe("functions deploy", () => {
   });
 
   describe("Config.Validate parity (CLI-1963)", () => {
-    it.live(
+    it.effect(
       "fails before any Docker/API work when config.toml has an explicit empty project_id",
       () => {
         const out = mockOutput({ format: "text" });
@@ -1514,13 +1519,13 @@ describe("functions deploy", () => {
           const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
           expect(api.requests).toEqual([]);
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
-    it.live(
+    it.effect(
       "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
       () => {
         const out = mockOutput({ format: "text" });
@@ -1548,15 +1553,16 @@ describe("functions deploy", () => {
           const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe(
-            "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
-          );
+          expect(error).toMatchObject({
+            message:
+              "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+          });
           expect(api.requests).toEqual([]);
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
-    it.live(
+    it.effect(
       "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
       () => {
         const out = mockOutput({ format: "text" });
@@ -1583,13 +1589,13 @@ describe("functions deploy", () => {
           }).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
           expect(api.requests).toEqual([]);
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
 
-    it.live("still rejects an invalid slug once the config itself is valid", () => {
+    it.effect("still rejects an invalid slug once the config itself is valid", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
@@ -1924,7 +1930,7 @@ describe("functions deploy", () => {
     );
   });
 
-  it.live(
+  it.effect(
     "does not treat an ancestor project's deno.json as this project's own import map when --workdir names a config-less subdirectory of it",
     () => {
       const nestedWorkdir = `${tempRoot.current}/nested`;

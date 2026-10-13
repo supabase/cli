@@ -17,12 +17,10 @@ import {
   Stdio,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
   type ApiHandler,
   buildTestRuntime,
@@ -35,7 +33,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
@@ -89,8 +87,8 @@ function mockDockerRunSpawnFailure() {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const cmd = command._tag === "StandardCommand" ? command.command : "";
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const cmd = ChildProcess.isStandardCommand(command) ? command.command : "";
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {
@@ -131,25 +129,6 @@ function mockDockerRunSpawnFailure() {
 
 const tempRoot = useTempWorkdir("supabase-functions-download-legacy-");
 
-// `withCommandTelemetry` threads `flags`/`command` through
-// `CurrentAnalyticsContext`, not `capture()`'s own args, so this merges it manually.
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
 const baseFlags: FunctionsDownloadFlags = {
   functionName: Option.some("hello-world"),
   projectRef: Option.none(),
@@ -215,7 +194,7 @@ function mockProxy() {
 }
 
 describe("functions download", () => {
-  it.live("downloads a function natively into the legacy workdir", () => {
+  it.effect("downloads a function natively into the legacy workdir", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -286,7 +265,7 @@ describe("functions download", () => {
     );
   }
 
-  it.live("downloads an empty function file as an empty file", () =>
+  it.effect("downloads an empty function file as an empty file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -308,7 +287,7 @@ describe("functions download", () => {
     ),
   );
 
-  it.live("removes the temporary file when a downloaded file cannot be moved into place", () =>
+  it.effect("removes the temporary file when a downloaded file cannot be moved into place", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -334,7 +313,7 @@ describe("functions download", () => {
     ),
   );
 
-  it.live("reports malformed function metadata JSON", () =>
+  it.effect("reports malformed function metadata JSON", () =>
     Effect.gen(function* () {
       const error = yield* functionsDownload(baseFlags).pipe(Effect.flip);
 
@@ -354,7 +333,7 @@ describe("functions download", () => {
     ),
   );
 
-  it.live.each([
+  it.effect.each([
     {
       name: "malformed JSON",
       body: "{",
@@ -559,7 +538,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "does not treat the --use-docker default as conflicting with an explicit --use-api",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1369,7 +1348,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on an invalid project config before falling back when Docker is not running",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1409,9 +1388,9 @@ describe("functions download", () => {
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe(
-          "Failed reading config: Invalid edge_runtime.deno_version: 3.",
-        );
+        expect(error).toMatchObject({
+          message: "Failed reading config: Invalid edge_runtime.deno_version: 3.",
+        });
         expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
@@ -1447,10 +1426,11 @@ describe("functions download", () => {
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe("error running container: exit 1");
-        expect((error as Error & { suggestion?: string }).suggestion).toBe(
-          "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
-        );
+        expect(error).toMatchObject({
+          message: "error running container: exit 1",
+          suggestion:
+            "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+        });
       }).pipe(Effect.provide(layer));
     });
 
@@ -1500,11 +1480,12 @@ describe("functions download", () => {
           );
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe("error running container: exit 1");
-          expect((error as Error & { suggestion?: string }).suggestion).toBe(
-            "Please use deno v2 in supabase/config.toml to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n" +
+          expect(error).toMatchObject({
+            message: "error running container: exit 1",
+            suggestion:
+              "Please use deno v2 in supabase/config.toml to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n" +
               "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
-          );
+          });
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1549,9 +1530,10 @@ describe("functions download", () => {
             Effect.flip,
           );
 
-          expect((error as Error & { suggestion?: string }).suggestion).toBe(
-            "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
-          );
+          expect(error).toMatchObject({
+            suggestion:
+              "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+          });
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1597,9 +1579,9 @@ describe("functions download", () => {
       const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe(
-        `failed to create docker network: supabase_network_${PROJECT_ID}`,
-      );
+      expect(error).toMatchObject({
+        message: `failed to create docker network: supabase_network_${PROJECT_ID}`,
+      });
       expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(false);
       // `Effect.ensuring` wraps the whole Docker-extraction sequence, so the
@@ -1613,7 +1595,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "fails with the docker-step prefix when the unbundle container itself cannot be spawned",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1649,12 +1631,11 @@ describe("functions download", () => {
         // `ensureDockerNamedVolume` failures above: a bare spawn/runtime-not-found
         // failure carries no context of its own, so `withDockerStepFailure` adds one.
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe(
-          `failed to run the edge-runtime unbundle container: ${containerRuntimeNotFoundMessage}`,
-        );
-        expect((error as Error & { suggestion?: string }).suggestion).toBe(
-          "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
-        );
+        expect(error).toMatchObject({
+          message: `failed to run the edge-runtime unbundle container: ${containerRuntimeNotFoundMessage}`,
+          suggestion:
+            "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+        });
         expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(true);
         expect(
           yield* fs.exists(
@@ -1811,7 +1792,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "attaches the first function's on-disk directory to the failure when a later function's download fails",
     () => {
       // The failure must carry the first function's already-written directory
@@ -1854,10 +1835,10 @@ describe("functions download", () => {
         }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(FunctionsApiStatusError);
-        expect((error as FunctionsApiStatusError).status).toBe(500);
-        expect((error as unknown as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual(
-          [path.resolve(tempRoot.current, "supabase", "functions", "hello-world")],
-        );
+        expect(error).toMatchObject({
+          status: 500,
+          writtenSoFar: [path.resolve(tempRoot.current, "supabase", "functions", "hello-world")],
+        });
         expect(
           yield* fs.readFileString(
             path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
@@ -1867,50 +1848,53 @@ describe("functions download", () => {
     },
   );
 
-  it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      }),
-      proxy.layer,
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "download",
-          "hello-world",
-          "--legacy-bundle",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-        ]),
-      }),
-    );
+  it.effect(
+    "forwards only --legacy-bundle to the Go proxy, not the --use-docker default too",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--legacy-bundle",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+          ]),
+        }),
+      );
 
-    return Effect.gen(function* () {
-      // `useDocker: true` mirrors the flag's own default even though only
-      // `--legacy-bundle` was passed; forwarding both would make the Go
-      // binary's own MarkFlagsMutuallyExclusive reject the combination.
-      yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
+      return Effect.gen(function* () {
+        // `useDocker: true` mirrors the flag's own default even though only
+        // `--legacy-bundle` was passed; forwarding both would make the Go
+        // binary's own MarkFlagsMutuallyExclusive reject the combination.
+        yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
 
-      expect(proxy.calls).toEqual([
-        [
-          "functions",
-          "download",
-          "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-          "--legacy-bundle",
-        ],
-      ]);
-      expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
-    }).pipe(Effect.provide(layer));
-  });
+        expect(proxy.calls).toEqual([
+          [
+            "functions",
+            "download",
+            "hello-world",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--legacy-bundle",
+          ],
+        ]);
+        expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("rejects an invalid slug before ever reaching the Go proxy", () => {
+  it.effect("rejects an invalid slug before ever reaching the Go proxy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -1946,7 +1930,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:178)",
     () => {
       const out = mockOutput({ format: "text" });
@@ -1990,7 +1974,7 @@ describe("functions download", () => {
     },
   );
 
-  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -2025,7 +2009,7 @@ describe("functions download", () => {
   });
 
   describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
-    it.live(
+    it.effect(
       "fails before any Docker/API work when config.toml has an explicit empty project_id",
       () => {
         const out = mockOutput({ format: "text" });
@@ -2065,14 +2049,14 @@ describe("functions download", () => {
           );
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
           expect(api.requests).toEqual([]);
           expect(child.spawned).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
       () => {
         const out = mockOutput({ format: "text" });
@@ -2112,9 +2096,10 @@ describe("functions download", () => {
           );
 
           expect(error).toBeInstanceOf(Error);
-          expect((error as Error).message).toBe(
-            "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
-          );
+          expect(error).toMatchObject({
+            message:
+              "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+          });
           expect(api.requests).toEqual([]);
           expect(child.spawned).toEqual([]);
         }).pipe(Effect.provide(layer));

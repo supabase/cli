@@ -69,7 +69,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("network-bans remove integration", () => {
-  it.live("removes bans and prints the success line in text mode", () => {
+  it.effect("removes bans and prints the success line in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -84,7 +84,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends the expected request body when explicit IPs are provided", () => {
+  it.effect("sends the expected request body when explicit IPs are provided", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -98,7 +98,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("unbans every IP in a comma-separated --db-unban-ip value (pflag CSV parity)", () => {
+  it.effect("unbans every IP in a comma-separated --db-unban-ip value (pflag CSV parity)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
@@ -110,7 +110,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("appends IPs across repeated --db-unban-ip flags", () => {
+  it.effect("appends IPs across repeated --db-unban-ip flags", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5", "5.6.7.8"]);
@@ -122,7 +122,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("combines comma-separated and repeated --db-unban-ip occurrences", () => {
+  it.effect("combines comma-separated and repeated --db-unban-ip occurrences", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8", "9.9.9.9"]);
@@ -134,7 +134,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("still unbans a single --db-unban-ip value", () => {
+  it.effect("still unbans a single --db-unban-ip value", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5"]);
@@ -146,7 +146,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an invalid IP produced by a comma split before any API call", () => {
+  it.effect("rejects an invalid IP produced by a comma split before any API call", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,notanip"]);
@@ -159,7 +159,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --output values and still prints the success line", () => {
+  it.effect("ignores --output values and still prints the success line", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -170,7 +170,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --output yaml and still prints the success line", () => {
+  it.effect("ignores --output yaml and still prints the success line", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -181,7 +181,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a JSON success event for --output-format=json", () => {
+  it.effect("emits a JSON success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -193,7 +193,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event for --output-format=stream-json", () => {
+  it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -205,7 +205,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output wins over TS --output-format when both are set", () => {
+  it.effect("Go --output wins over TS --output-format when both are set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -217,7 +217,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any API call when an IP is invalid", () => {
+  it.effect("fails before any API call when an IP is invalid", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -236,7 +236,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "surfaces the unresolved-ref error, not the invalid-IP error, when both are wrong",
     () => {
       const out = mockOutput({ format: "text" });
@@ -265,7 +265,7 @@ describe("network-bans remove integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "surfaces the invalid-project-ref error, not the invalid-IP error, when both are wrong",
     () => {
       const { layer, api } = setup();
@@ -287,7 +287,7 @@ describe("network-bans remove integration", () => {
     },
   );
 
-  it.live("fails with NetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with NetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -305,7 +305,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a network error when the API transport fails", () => {
+  it.effect("reports a network error when the API transport fails", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -323,7 +323,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
+  it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -334,7 +334,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry and writes linked-project cache on success", () => {
+  it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -346,7 +346,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even on API failure", () => {
+  it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

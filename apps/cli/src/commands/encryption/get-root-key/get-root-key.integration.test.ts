@@ -49,7 +49,7 @@ function setup(opts: SetupOpts = {}) {
 const baseFlags = { projectRef: Option.none<string>() };
 
 describe("encryption get-root-key integration", () => {
-  it.live("prints the root key to stdout in text mode", () => {
+  it.effect("prints the root key to stdout in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
@@ -58,7 +58,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the root key as a structured result in json mode", () => {
+  it.effect("emits the root key as a structured result in json mode", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
@@ -68,7 +68,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("streams the root key as a result event in stream-json mode", () => {
+  it.effect("streams the root key as a result event in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
@@ -77,7 +77,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the ref from the --project-ref flag", () => {
+  it.effect("resolves the ref from the --project-ref flag", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -86,7 +86,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a transport error when the network is down", () => {
+  it.effect("fails with a transport error when the network is down", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
@@ -99,7 +99,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with an unexpected-status error on a 503", () => {
+  it.effect("fails with an unexpected-status error on a 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
@@ -112,7 +112,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not start a spinner in json mode on failure", () => {
+  it.effect("does not start a spinner in json mode on failure", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
@@ -121,7 +121,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when no project ref can be resolved", () => {
+  it.effect("fails when no project ref can be resolved", () => {
     const { layer } = setup({ projectId: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
@@ -132,7 +132,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on success", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on success", () => {
     const { layer, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
@@ -141,7 +141,7 @@ describe("encryption get-root-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache and flushes telemetry on failure", () => {
+  it.effect("writes the linked-project cache and flushes telemetry on failure", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));

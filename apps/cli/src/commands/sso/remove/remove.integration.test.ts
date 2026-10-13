@@ -122,7 +122,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("sso remove integration", () => {
-  it.live("rejects bad UUID", () => {
+  it.effect("rejects bad UUID", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -135,7 +135,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("DELETEs the correct path and renders provider in text mode", () => {
+  it.effect("DELETEs the correct path and renders provider in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -147,7 +147,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with NotFound on 404", () => {
+  it.effect("fails with NotFound on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -160,7 +160,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with Unexpected on 500", () => {
+  it.effect("fails with Unexpected on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -175,7 +175,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fires cli_upgrade_suggested when gated on 4xx", () => {
+  it.effect("fires cli_upgrade_suggested when gated on 4xx", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }));
@@ -183,7 +183,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits nothing", () => {
+  it.effect("Go --output=env emits nothing", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -191,7 +191,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response verbatim", () => {
+  it.effect("Go --output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -199,7 +199,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml fails like Go's EncodeOutput on an unencodable payload", () => {
+  it.effect("Go --output=toml fails like Go's EncodeOutput on an unencodable payload", () => {
     // BurntSushi rejects a nil array element; Go surfaces it as an ordinary
     // `failed to output toml: …` command error, not a crash (review
     // r3684270640 — the same wrapping list/show gained in the prior round).
@@ -225,7 +225,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits success", () => {
+  it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -233,7 +233,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
@@ -242,7 +242,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with network error on transport failure", () => {
+  it.effect("fails with network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -255,7 +255,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("classifies malformed 200 response as an API status error", () => {
+  it.effect("classifies malformed 200 response as an API status error", () => {
     const { layer } = setup({ rawBody: "{not json" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -274,7 +274,7 @@ describe("sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a structurally invalid 200 response", () => {
+  it.effect("rejects a structurally invalid 200 response", () => {
     const { layer } = setup({ body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

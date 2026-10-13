@@ -44,7 +44,7 @@ const baseFlags: BranchesUnpauseFlags = {
 };
 
 describe("branches unpause integration", () => {
-  it.live("unpauses a branch given a project-ref pattern", () => {
+  it.effect("unpauses a branch given a project-ref pattern", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) });
@@ -54,7 +54,7 @@ describe("branches unpause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("is silent on stdout/stderr on success", () => {
+  it.effect("is silent on stdout/stderr on success", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) });
@@ -63,7 +63,7 @@ describe("branches unpause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesUnpauseUnexpectedStatusError on non-200", () => {
+  it.effect("fails with BranchesUnpauseUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ restoreStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

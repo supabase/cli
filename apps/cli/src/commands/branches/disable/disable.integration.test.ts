@@ -53,7 +53,7 @@ const baseFlags: BranchesDisableFlags = {
 };
 
 describe("branches disable integration", () => {
-  it.live("disables preview branching and emits header to stdout", () => {
+  it.effect("disables preview branching and emits header to stdout", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* branchesDisable(baseFlags);
@@ -64,7 +64,7 @@ describe("branches disable integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesDisableUnexpectedStatusError on non-200", () => {
+  it.effect("fails with BranchesDisableUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesDisable(baseFlags));
@@ -77,7 +77,7 @@ describe("branches disable integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesDisable(baseFlags);

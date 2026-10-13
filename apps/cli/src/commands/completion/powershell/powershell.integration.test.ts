@@ -17,7 +17,7 @@ function testRoot() {
 }
 
 describe("completion powershell", () => {
-  it.live("prints the native powershell completion script", () => {
+  it.effect("prints the native powershell completion script", () => {
     const out = setupCompletionPowershell();
     return Effect.gen(function* () {
       yield* completionPowershell({ noDescriptions: false });
@@ -27,7 +27,7 @@ describe("completion powershell", () => {
     }).pipe(Effect.provide(out.layer));
   });
 
-  it.live(
+  it.effect(
     "prints the native powershell completion script without descriptions when --no-descriptions is set",
     () => {
       const out = setupCompletionPowershell();
@@ -38,7 +38,7 @@ describe("completion powershell", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
       const out = setupCompletionPowershell();
@@ -61,7 +61,7 @@ describe("completion powershell", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
     () => {
       const out = setupCompletionPowershell();

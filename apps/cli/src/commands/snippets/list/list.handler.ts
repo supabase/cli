@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
@@ -19,6 +19,7 @@ import {
   goStruct,
 } from "../../../command-internal/go-struct-output.encoders.ts";
 import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { requestWithAuth } from "../../../command-internal/raw-http.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -35,15 +36,15 @@ import type { SnippetsListFlags } from "./list.command.ts";
 // payload omits optional fields the generated schema declares required, so
 // routing through the typed client fails with `SchemaError: Missing key …`.
 function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
+  if (Predicate.hasProperty(obj, key)) {
+    const value = obj[key];
     return typeof value === "string" ? value : "";
   }
   return "";
 }
 
 function asRecord(obj: unknown): Record<string, unknown> {
-  return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
+  return Predicate.isObjectOrArray(obj) ? { ...obj } : {};
 }
 
 /**
@@ -96,21 +97,19 @@ interface SnippetsResponseBody {
 }
 
 function parseSnippetsResponse(body: unknown): SnippetsResponseBody {
-  const root = asRecord(body);
-  const data = Array.isArray(root["data"]) ? root["data"] : [];
+  const data = Predicate.hasProperty(body, "data") && Array.isArray(body.data) ? body.data : [];
   return { data };
 }
 
 function toSnippetRow(raw: unknown): SnippetRow {
-  const item = asRecord(raw);
-  const owner = asRecord(item["owner"]);
+  const owner = Predicate.hasProperty(raw, "owner") ? raw.owner : undefined;
   return {
-    id: readString(item, "id"),
-    name: readString(item, "name"),
-    visibility: readString(item, "visibility"),
+    id: readString(raw, "id"),
+    name: readString(raw, "name"),
+    visibility: readString(raw, "visibility"),
     owner: { username: readString(owner, "username") },
-    inserted_at: readString(item, "inserted_at"),
-    updated_at: readString(item, "updated_at"),
+    inserted_at: readString(raw, "inserted_at"),
+    updated_at: readString(raw, "updated_at"),
   };
 }
 
@@ -139,22 +138,19 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       }
 
       const tokenOpt = yield* resolveAccessToken;
-      const authHeader: (
-        req: HttpClientRequest.HttpClientRequest,
-      ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
-        ? HttpClientRequest.bearerToken(tokenOpt.value)
-        : (req) => req;
-      const request = HttpClientRequest.get(`${cliSettings.apiUrl}/v1/snippets`).pipe(
-        HttpClientRequest.setUrlParams({ project_ref: ref }),
-        authHeader,
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
+      const request = requestWithAuth(
+        HttpClientRequest.get(`${cliSettings.apiUrl}/v1/snippets`).pipe(
+          HttpClientRequest.setUrlParams({ project_ref: ref }),
+        ),
+        tokenOpt,
+        cliSettings.userAgent,
       );
 
       const fetching =
         output.format === "text" ? yield* output.task("Fetching snippets...") : undefined;
       const response = yield* httpClient.execute(request).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsListNetworkError({
               message: `failed to list snippets: ${cause.reason.description ?? cause.reason._tag}`,
@@ -174,7 +170,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       }
 
       const rawBody = yield* response.json.pipe(
-        Effect.catch(
+        Effect.mapError(
           (cause) =>
             new SnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,

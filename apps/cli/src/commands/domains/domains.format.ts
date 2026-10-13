@@ -79,7 +79,7 @@ ${customHostname} CNAME -> ${customOriginServer}`;
     }
     case "1_not_started":
       return "Custom hostname configuration not started.\n";
-    default:
+    case undefined:
       return "";
   }
 }
