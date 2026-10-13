@@ -344,7 +344,7 @@ describe("leftoverConflictMarkers", () => {
 
 test("failure excerpt keeps an early test failure that the log tail would drop", () => {
   const log = [
-    "2026-10-13T10:48:27.3385710Z \x1b[41m FAIL \x1b[49m src/signing-key.integration.test.ts > flushes telemetry",
+    "2026-10-13T10:48:27.3385710Z supabase:test:integration: \x1b[41m FAIL \x1b[49m src/signing-key.integration.test.ts > flushes telemetry",
     "2026-10-13T10:48:27.3386440Z AssertionError: expected 'supabase/.env' to be '.env'",
     ...Array.from(
       { length: 1000 },
@@ -358,4 +358,7 @@ test("failure excerpt keeps an early test failure that the log tail would drop",
   expect(excerpt).toContain("AssertionError: expected 'supabase/.env' to be '.env'");
   expect(excerpt).toContain("##[error]Process completed with exit code 1.");
   expect(excerpt).not.toContain("stack output 100\n");
+  expect(excerpt).toContain("[...]");
+  expect(excerpt).not.toContain("\x1b");
+  expect(excerpt).not.toMatch(/^\S+Z /m);
 });

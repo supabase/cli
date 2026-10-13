@@ -584,7 +584,11 @@ async function fetchOpenFindings(
   });
 }
 
-async function logTail(token: string, repository: string, jobId: number): Promise<string> {
+async function jobFailureExcerpt(
+  token: string,
+  repository: string,
+  jobId: number,
+): Promise<string> {
   const response = await fetch(
     `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`,
     {
@@ -598,6 +602,7 @@ async function logTail(token: string, repository: string, jobId: number): Promis
 }
 
 const ERROR_CONTEXT_LINES = 40;
+const MAX_ERROR_WINDOWS = 10;
 
 /**
  * Keeps the lines after each error annotation plus the log tail, because Turbo interleaves packages and the failing
@@ -610,8 +615,11 @@ export function failureExcerpt(log: string): string {
     .split("\n")
     .map((line) => line.replace(/^\S+Z /, ""));
   const kept = new Set<number>();
+  let windows = 0;
   lines.forEach((line, index) => {
-    if (line.startsWith("##[error]") || /^\s*FAIL\s/.test(line)) {
+    // Turbo prefixes each line with its task name when it streams several packages.
+    if (windows < MAX_ERROR_WINDOWS && /^(\S+:\s)?\s*(##\[error\]|FAIL\s)/.test(line)) {
+      windows += 1;
       for (let at = index; at < Math.min(index + ERROR_CONTEXT_LINES, lines.length); at += 1) {
         kept.add(at);
       }
@@ -723,7 +731,7 @@ async function collect(outputDir: string): Promise<void> {
   const failures = await Promise.all(
     plan.failures.map(
       async (run) =>
-        `## ${run.name} (${run.conclusion})\n\n\`\`\`\`text\n${await logTail(token, repository, run.id)}\n\`\`\`\`\n`,
+        `## ${run.name} (${run.conclusion})\n\n\`\`\`\`text\n${await jobFailureExcerpt(token, repository, run.id)}\n\`\`\`\`\n`,
     ),
   );
   writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n") || "No CI job failed.\n");
