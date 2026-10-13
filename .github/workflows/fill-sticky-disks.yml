@@ -25,6 +25,8 @@ concurrency:
 jobs:
   fill:
     name: Fill sticky disks
+    # Manual dispatches from other branches would commit unreviewed caches.
+    if: contains(fromJSON('["develop", "next", "main"]'), github.ref_name)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -40,7 +42,6 @@ jobs:
 
       # The nightly fill clears artifacts of older service versions.
       - name: Download native stack artifacts
-        env:
         run: |
           if [ "$GITHUB_EVENT_NAME" = schedule ]; then
             rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts/"*
