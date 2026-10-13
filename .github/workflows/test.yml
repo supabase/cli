@@ -369,7 +369,9 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [native, docker, podman]
-        suite: [lifecycle, idle-parallel]
+        # Confinement watches the whole temp tree, so it gets a job of its own
+        # instead of sharing one with concurrently running scenarios.
+        suite: [lifecycle, idle-parallel, confinement]
     env:
       SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
     steps:
@@ -391,7 +393,8 @@ jobs:
       - name: Run stack end-to-end tests
         run: >-
           pnpm --filter @supabase/stack test:e2e:run
-          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite }}.e2e.test.ts
+          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite == 'idle-parallel' && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
+          --testNamePattern='${{ matrix.suite == 'confinement' && 'writes stay confined' || matrix.suite == 'lifecycle' && '^(?!.*writes stay confined)' || '.' }}'
           --sequence.concurrent
           --passWithNoTests=false
 
