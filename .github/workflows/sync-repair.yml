@@ -1,0 +1,142 @@
+name: Sync repair
+
+# Once CI and the AI review finish on a Claude-resolved sync/develop-into-next pull request, lets Claude fix what
+# the merge broke and answer the review. See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Test
+      - AI Review
+      - GitHub Scripts CI
+      - Lint Pull Request
+      - CodeQL
+      - run-ci
+    types:
+      - completed
+  # A run started by the job token, such as the dispatched AI review, may not emit `workflow_run`.
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync-repair-develop-into-next
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    name: Repair with Claude
+    # AI Review runs are dispatched from the default branch, so their head branch is not the sync branch.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.head_branch == 'sync/develop-into-next' ||
+      github.event.workflow_run.name == 'AI Review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+    env:
+      CLAUDE_MODEL: claude-opus-5-5
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: trusted/.bun-version
+
+      - name: Collect
+        id: collect
+        working-directory: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun .github/scripts/sync-agent.ts collect
+
+      - if: steps.collect.outputs.action == 'repair'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: work
+          ref: ${{ steps.collect.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Same pinned release and isolated npm config as the AI review workflow.
+      - name: Install Claude Code CLI
+        if: steps.collect.outputs.action == 'repair'
+        run: |
+          npm install -g \
+            --userconfig "${RUNNER_TEMP}/sync-npmrc-user" \
+            --globalconfig "${RUNNER_TEMP}/sync-npmrc-global" \
+            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
+
+      - name: Repair
+        id: repair
+        if: steps.collect.outputs.action == 'repair'
+        working-directory: trusted
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WORK_DIR: ${{ github.workspace }}/work
+          HEAD_SHA: ${{ steps.collect.outputs.head }}
+        run: |
+          git -C "$WORK_DIR" config user.name "github-actions[bot]"
+          git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun .github/scripts/sync-agent.ts repair
+
+      - id: app-token
+        if: steps.collect.outputs.action == 'repair' || steps.collect.outputs.action == 'exhausted'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Stops when the branch moved or was deleted since the checks settled; the next completed run starts over. The round
+      # comment is posted before the push and the replies, so neither failing can hide a round from the limit.
+      - name: Publish
+        if: steps.collect.outputs.action == 'repair' || steps.collect.outputs.action == 'exhausted'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.collect.outputs.pr }}
+          HEAD_SHA: ${{ steps.collect.outputs.head }}
+          CHANGED: ${{ steps.repair.outputs.changed }}
+        run: |
+          if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
+            echo "::notice::The sync branch moved since the checks settled; skipping."
+            exit 0
+          fi
+          if [ "$CHANGED" = true ] && ! git -C work diff --quiet "$HEAD_SHA" HEAD -- .github/; then
+            echo "::error::The repair commit changes .github/; workflow edits must come from a maintainer."
+            exit 1
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$OUTPUT_DIR/comment.md"
+          if [ "$CHANGED" = true ]; then
+            git -C work -c core.hooksPath=/dev/null push \
+              --force-with-lease="refs/heads/sync/develop-into-next:$HEAD_SHA" \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
+          fi
+          if [ -f "$OUTPUT_DIR/replies.json" ]; then
+            jq -c '.[]' "$OUTPUT_DIR/replies.json" | while read -r reply; do
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments/$(jq -r .commentId <<<"$reply")/replies" \
+                -f body="$(jq -r .body <<<"$reply")" > /dev/null
+              if [ "$(jq -r .resolve <<<"$reply")" = true ]; then
+                # shellcheck disable=SC2016 # `$threadId` is a GraphQL variable.
+                gh api graphql -f threadId="$(jq -r .threadId <<<"$reply")" \
+                  -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id } } }' > /dev/null
+              fi
+            done
+          fi
+          if [ "$CHANGED" != "" ]; then
+            cd trusted
+            REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
+              bun .github/scripts/sync-agent.ts suggest
+          fi

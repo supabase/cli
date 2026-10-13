@@ -1,4 +1,6 @@
 name: AI Review
+# Names the pull request, so `Sync repair` can wait for the review of its own pull request.
+run-name: "AI Review #${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}"
 
 # One-shot AI code review: replaces the Codex GitHub App's automatic per-push reviews with a
 # single exhaustive pass that runs at most once per PR. See .github/ai-review/README.md for the
@@ -319,6 +321,9 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          # `Sync branches` dispatches the review of the sync pull request as github-actions[bot], which has no
+          # collaborator permission; only this repository's workflows can act as that bot.
+          allow-bots: true
 
       - name: Validate Codex findings
         run: bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/codex-findings.json
@@ -473,6 +478,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          allow-bots: true
 
       - name: Validate merged review
         working-directory: trusted
