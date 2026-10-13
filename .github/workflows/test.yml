@@ -65,6 +65,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
       - name: Unlock keyring (for cli-go keyring tests)
         uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
@@ -100,6 +101,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Run unit tests
@@ -133,6 +135,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
           docker-images: "true"
 
@@ -181,6 +184,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Run stack integration tests
@@ -242,6 +246,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Run stack native whole-stack scenarios
@@ -300,6 +305,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           docker-images: "true"
 
       - name: Cache Go CLI binary
@@ -374,6 +380,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
           docker-images: ${{ matrix.runtime == 'docker' }}
 
@@ -418,6 +425,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Setup Podman

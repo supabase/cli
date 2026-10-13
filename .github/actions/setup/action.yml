@@ -20,37 +20,57 @@ inputs:
       that never run Go.
     required: false
     default: "true"
+  sticky-disks:
+    description: >-
+      Whether to mount dependency caches from Blacksmith sticky disks on
+      Blacksmith Linux runners. Pull request runs mount them read-only.
+    required: false
+    default: "false"
   docker-images:
     description: >-
       Whether to keep Docker's image store on a Blacksmith sticky disk so
-      stack images are not pulled again on every job.
+      stack images are not pulled again on every job. Requires sticky-disks.
     required: false
     default: "false"
 
 runs:
   using: "composite"
   steps:
-    - name: Stop Docker before mounting its image disk
-      id: docker-disk
-      if: inputs.docker-images == 'true'
+    # Sticky disks are shared by every run in the repository, so only trusted
+    # events (merge queue, pushes) may commit to them; pull request code could
+    # otherwise plant dependencies or images that trusted runs later execute.
+    # Bump the -v2 key segment to reset a disk that grew stale.
+    - name: Detect sticky disks
+      id: sticky
+      if: inputs.sticky-disks == 'true'
       shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
       run: |
         if [ -z "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] || [ "$RUNNER_OS" != Linux ]; then
           exit 0
         fi
-        sudo systemctl stop docker.socket docker.service
-        echo "mount=true" >> "$GITHUB_OUTPUT"
+        echo "enabled=true" >> "$GITHUB_OUTPUT"
+        case "$EVENT_NAME" in
+          pull_request*) echo "commit=false" >> "$GITHUB_OUTPUT" ;;
+          *) echo "commit=on-change" >> "$GITHUB_OUTPUT" ;;
+        esac
+
+    - name: Stop Docker before mounting its image disk
+      if: inputs.docker-images == 'true' && steps.sticky.outputs.enabled == 'true'
+      shell: bash
+      run: sudo systemctl stop docker.socket docker.service
 
     - name: Mount Docker image disk
-      if: steps.docker-disk.outputs.mount == 'true'
+      if: inputs.docker-images == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-docker-images-${{ runner.arch }}
+        key: ${{ github.repository }}-docker-images-v2-${{ runner.arch }}
         path: /var/lib/docker
-        commit: on-change
+        commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Restart Docker on the image disk
-      if: steps.docker-disk.outputs.mount == 'true'
+      if: inputs.docker-images == 'true' && steps.sticky.outputs.enabled == 'true'
       shell: bash
       run: |
         sudo systemctl start docker.socket docker.service
@@ -68,19 +88,23 @@ runs:
       shell: bash
       run: |
         echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-        if [ -n "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] && [ "$RUNNER_OS" = Linux ]; then
-          echo "sticky=true" >> "$GITHUB_OUTPUT"
-        fi
 
     # A sticky disk mounts a block-level snapshot in seconds, while
     # actions/cache downloads and untars the whole store on every job.
     - name: Mount pnpm store disk
-      if: steps.pnpm-store.outputs.sticky == 'true'
+      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-pnpm-store-${{ runner.arch }}
+        key: ${{ github.repository }}-pnpm-store-v2-${{ runner.arch }}
         path: ${{ steps.pnpm-store.outputs.path }}
-        commit: on-change
+        commit: ${{ steps.sticky.outputs.commit }}
+
+    # The disk keeps only files and the index, like the cache below: a links/
+    # tree left by an interrupted install would otherwise be trusted as complete.
+    - name: Reset pnpm global virtual store
+      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled == 'true'
+      shell: bash
+      run: rm -rf "${{ steps.pnpm-store.outputs.path }}/links"
 
     # Cache only the content-addressable half of the store (package files plus
     # the SQLite index), never the global virtual store under links/. That
@@ -95,7 +119,7 @@ runs:
     # so restores never match the earlier whole-store archives, which still
     # carry a links/ tree.
     - name: Configure pnpm dependency cache
-      if: inputs.dependency-cache == 'true' && steps.pnpm-store.outputs.sticky != 'true'
+      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -131,23 +155,23 @@ runs:
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
 
     - name: Mount Go module disk
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky == 'true'
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-go-mod-${{ runner.arch }}
+        key: ${{ github.repository }}-go-mod-v2-${{ runner.arch }}
         path: ${{ steps.go-cache.outputs.mod }}
-        commit: on-change
+        commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Mount Go build disk
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky == 'true'
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-go-build-${{ runner.arch }}
+        key: ${{ github.repository }}-go-build-v2-${{ runner.arch }}
         path: ${{ steps.go-cache.outputs.build }}
-        commit: on-change
+        commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Configure Go dependency cache
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky != 'true'
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
