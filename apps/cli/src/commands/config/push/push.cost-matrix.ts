@@ -1,11 +1,7 @@
-import { Effect, Predicate } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { Effect } from "effect";
 
-import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { requestWithAuth } from "../../../command-internal/raw-http.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   ConfigPushListAddonsNetworkError,
   ConfigPushListAddonsStatusError,
@@ -18,58 +14,23 @@ export interface CostItem {
   readonly price: string;
 }
 
+const mapListAddonsError = mapHttpError({
+  networkError: ConfigPushListAddonsNetworkError,
+  statusError: ConfigPushListAddonsStatusError,
+  networkMessage: (cause) => `failed to list addons: ${cause}`,
+  statusMessage: (status, body) => `unexpected list addons status ${status}: ${body}`,
+});
+
 /**
- * GETs `/v1/projects/{ref}/billing/addons` and builds a map of `addon.type` →
- * `{ name, price }` for every addon that has exactly one variant.
- *
- * Uses raw HTTP rather than the typed client: the generated
- * `available_addons[].type` is a closed enum (`custom_domain |
- * compute_instance | …`) that rejects values accepted as a plain string
- * (e.g. the `"api"` GraphQL addon). Mirrors the `sso add` /
- * `postgres-config` raw-HTTP precedent.
+ * Lists the project's addons and builds a map of `addon.type` → `{ name, price }` for every
+ * addon that has exactly one variant.
  */
 export const getCostMatrix = Effect.fn("config.push.fetchCostMatrix")(function* (ref: string) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
-  const tokenOpt = yield* resolveAccessToken;
-
-  const request = requestWithAuth(
-    HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/billing/addons`),
-    tokenOpt,
-    cliSettings.userAgent,
-  );
-
-  const response = yield* httpClient.execute(request).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ConfigPushListAddonsNetworkError({
-          message: `failed to list addons: ${cause.reason.description ?? cause.reason._tag}`,
-        }),
-    ),
-  );
-
-  if (response.status !== 200) {
-    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const body = sanitizeErrorBody(rawBody);
-    return yield* new ConfigPushListAddonsStatusError({
-      status: response.status,
-      body,
-      message: `unexpected list addons status ${response.status}: ${body}`,
-    });
-  }
-
-  const rawBody = yield* response.text;
-  const parsed = yield* Effect.try({
-    try: () => parseAddonsBody(rawBody),
-    catch: (cause) =>
-      new ConfigPushListAddonsNetworkError({
-        message: `failed to list addons: ${String(cause)}`,
-        decode: true,
-      }),
-  });
+  const api = yield* CommandPlatformApi;
+  const addons = yield* api.v1.listProjectAddons({ ref }).pipe(Effect.catch(mapListAddonsError));
 
   const costMatrix = new Map<string, CostItem>();
-  for (const addon of readAddons(parsed)) {
+  for (const addon of addons.available_addons) {
     const variant = addon.variants.length === 1 ? addon.variants[0] : undefined;
     if (variant !== undefined) {
       costMatrix.set(addon.type, { name: variant.name, price: variant.price.description });
@@ -78,43 +39,3 @@ export const getCostMatrix = Effect.fn("config.push.fetchCostMatrix")(function* 
   yield* Effect.annotateCurrentSpan("addon.count", costMatrix.size);
   return costMatrix;
 });
-
-// Native `JSON.parse` keeps the runtime's syntax-error text in the `failed to list addons` message.
-function parseAddonsBody(text: string): unknown {
-  return JSON.parse(text);
-}
-
-interface ParsedAddon {
-  readonly type: string;
-  readonly variants: ReadonlyArray<{
-    readonly name: string;
-    readonly price: { readonly description: string };
-  }>;
-}
-
-/** Tolerantly extracts `available_addons` with a string `type`, since the API response itself
- *  uses a plain string, not the enum the generated client declares. */
-function readAddons(parsed: unknown): ReadonlyArray<ParsedAddon> {
-  if (typeof parsed !== "object" || parsed === null) return [];
-  const available = Predicate.hasProperty(parsed, "available_addons")
-    ? parsed.available_addons
-    : undefined;
-  if (!Array.isArray(available)) return [];
-  const addons: Array<ParsedAddon> = [];
-  for (const entry of available) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const type = Predicate.hasProperty(entry, "type") ? entry.type : undefined;
-    const variantsRaw = Predicate.hasProperty(entry, "variants") ? entry.variants : undefined;
-    if (typeof type !== "string" || !Array.isArray(variantsRaw)) continue;
-    const variants = variantsRaw.map((v) => {
-      const name: unknown = v.name;
-      const description: unknown = v.price?.description;
-      return {
-        name: typeof name === "string" ? name : "",
-        price: { description: typeof description === "string" ? description : "" },
-      };
-    });
-    addons.push({ type, variants });
-  }
-  return addons;
-}

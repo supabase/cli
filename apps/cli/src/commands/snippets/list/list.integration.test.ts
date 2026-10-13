@@ -1,6 +1,6 @@
 import { type V1ListAllSnippetsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -66,13 +66,12 @@ const EMPTY_RESPONSE: SnippetsResponse = {
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  // The handler consumes the raw JSON body (schema-bypass, see the handler's
-  // tolerant accessors), so tests may pass shapes the generated schema would
-  // reject — e.g. snippets without the `description` key.
-  response?: SnippetsResponse | { readonly data: ReadonlyArray<Record<string, unknown>> };
+  response?: unknown;
   status?: number;
   network?: "fail";
 }
+
+const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-snippets-list-int-");
 
@@ -154,6 +153,80 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("emits the raw response body, keys and unknown fields intact, under json", () => {
+    const body = {
+      cursor: "next-page",
+      data: [
+        {
+          favorite: true,
+          id: SNIPPET_ID,
+          project: { name: "Proj", id: 1, ref: "extra-ref" },
+          name: "Create table",
+          type: "sql",
+          visibility: "user",
+          description: null,
+          inserted_at: "2023-10-13T17:48:58.491Z",
+          updated_at: "2023-10-13T17:48:58.491Z",
+          owner: null,
+          updated_by: null,
+        },
+      ],
+    };
+    const { layer, out } = setup({ format: "json", response: body });
+    return Effect.gen(function* () {
+      yield* snippetsList({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(toJson(success?.data)).toBe(toJson(body));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps an empty data array empty under json", () => {
+    const { layer, out } = setup({ format: "json", response: EMPTY_RESPONSE });
+    return Effect.gen(function* () {
+      yield* snippetsList({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(toJson(success?.data)).toBe('{"data":[]}');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "renders a snippet whose owner and updated_by are null with an empty owner cell",
+    () => {
+      const { layer, out } = setup({
+        response: { data: [{ ...SNIPPET_BASE, owner: null, updated_by: null }] },
+      });
+      return Effect.gen(function* () {
+        yield* snippetsList({ projectRef: Option.none() });
+        expect(out.stdoutText).toContain(SNIPPET_ID);
+        expect(out.stdoutText).toContain("Create table");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("renders a snippet with a visibility the contract does not list", () => {
+    const { layer, out } = setup({
+      response: { data: [{ ...SNIPPET_BASE, visibility: "team" }] },
+    });
+    return Effect.gen(function* () {
+      yield* snippetsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("team");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with a decode network error when the body does not match the contract", () => {
+    const { layer } = setup({ response: { data: [{ id: SNIPPET_ID }] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "SnippetsListNetworkError",
+          decode: true,
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("emits a result event under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
@@ -202,36 +275,11 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml emits Go-shaped bytes when no snippet has a description", () => {
-    // The Management API always includes `description`, so this success
-    // branch is unreachable in production — kept to pin the encoder bytes
-    // for the shape where the key is absent.
-    const { description: _omitted, ...withoutDescription } = SNIPPET_BASE;
-    const { layer, out } = setup({
-      goOutput: "toml",
-      response: { data: [withoutDescription] },
-    });
+  it.effect("Go --output=toml encodes an empty snippet list", () => {
+    const { layer, out } = setup({ goOutput: "toml", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
-      // PascalCase field names, sub-tables after primitives, 2-space indent.
-      expect(out.stdoutText).toBe(`[[Data]]
-  Favorite = false
-  Id = "${SNIPPET_ID}"
-  InsertedAt = "2023-10-13T17:48:58.491Z"
-  Name = "Create table"
-  Type = "sql"
-  UpdatedAt = "2023-10-13T17:48:58.491Z"
-  Visibility = "user"
-  [Data.Owner]
-    Id = 7.0
-    Username = "supaseed"
-  [Data.Project]
-    Id = 1.0
-    Name = "Proj"
-  [Data.UpdatedBy]
-    Id = 7.0
-    Username = "supaseed"
-`);
+      expect(out.stdoutText).toBe("Data = []\n");
     }).pipe(Effect.provide(layer));
   });
 

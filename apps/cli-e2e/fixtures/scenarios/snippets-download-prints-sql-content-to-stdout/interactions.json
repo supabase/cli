@@ -29,6 +29,7 @@
         "favorite": false,
         "id": "__UUID__",
         "inserted_at": "2000-01-01T00:00:00Z",
+        "description": null,
         "name": "test-snippet",
         "owner": {
           "id": 1,

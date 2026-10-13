@@ -44,9 +44,12 @@ export class PostgresConfigUpdateNetworkError extends Data.TaggedError(
   "PostgresConfigUpdateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -59,18 +62,6 @@ export class PostgresConfigUpdateUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
-  }
-}
-
-export class PostgresConfigUpdateUnmarshalError extends Data.TaggedError(
-  "PostgresConfigUpdateUnmarshalError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Constructed only after a 200 status check when `parseJsonObject` fails —
-    // an API response problem, not a raw status failure.
-    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 
@@ -88,9 +79,12 @@ export class PostgresConfigDeleteNetworkError extends Data.TaggedError(
   "PostgresConfigDeleteNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -103,18 +97,6 @@ export class PostgresConfigDeleteUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
-  }
-}
-
-export class PostgresConfigDeleteUnmarshalError extends Data.TaggedError(
-  "PostgresConfigDeleteUnmarshalError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Constructed only after a 200 status check when `parseJsonObject` fails —
-    // an API response problem, not a raw status failure.
-    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

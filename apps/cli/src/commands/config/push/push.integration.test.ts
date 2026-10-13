@@ -13,7 +13,6 @@ import {
   Schema,
   Stdio,
 } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -294,7 +293,10 @@ function setup(opts: {
     handler: (request) => {
       const url = request.url;
       if (url.includes("/billing/addons")) {
-        const a = opts.addons ?? { status: 200, body: { available_addons: [] } };
+        const a = opts.addons ?? {
+          status: 200,
+          body: { selected_addons: [], available_addons: [] },
+        };
         return Effect.succeed(jsonResponse(request, a.status, a.body));
       }
       if (url.includes("/v2/projects/")) {
@@ -1366,25 +1368,6 @@ otp_expiry = 120
 // fields (`V1UpdateAuthServiceConfigOutput`) no test should have to hand-author. Storage's write
 // goes through the real client instead, since its output schema is `Schema.Void`.
 
-function addonsHttpLayer(
-  body: unknown = { available_addons: [] },
-): Layer.Layer<HttpClient.HttpClient> {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(JSON.stringify(body), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        ),
-      ),
-    ),
-  );
-}
-
 const BASE_DISABLED = `project_id = "test"\n`;
 
 function setupService(opts: {
@@ -1416,6 +1399,11 @@ function setupService(opts: {
       // gated-service scenario keeps working without opting in; overridable via
       // `opts.v1.getProject`.
       getProject: () => Effect.succeed(PUSH_TEST_PROJECT),
+      listProjectAddons: () =>
+        Effect.succeed({
+          selected_addons: [],
+          available_addons: opts.addons?.available_addons ?? [],
+        }),
       ...opts.v1,
     },
     raw: {
@@ -1428,7 +1416,7 @@ function setupService(opts: {
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer(opts.addons) },
+      api: { layer: apiMock.layer },
       cliSettings: mockCommandSettings({
         workdir: opts.workdir ?? tempRoot.current,
         explicitWorkdir: opts.explicitWorkdir ?? false,

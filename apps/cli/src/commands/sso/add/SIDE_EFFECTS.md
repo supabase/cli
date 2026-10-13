@@ -22,13 +22,17 @@
 
 | Method | Path                                           | Auth         | Request body                                                                          | Response (used fields)                                             |
 | ------ | ---------------------------------------------- | ------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `POST` | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | `{type, metadata_xml?, metadata_url?, domains?, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, created_at?, updated_at?}` (parsed loosely) |
+| `POST` | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | `{type, metadata_xml?, metadata_url?, domains?, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, created_at?, updated_at?}` (typed schema)   |
 | `GET`  | `<metadata-url>`                               | none         | `Accept: application/xml`, 10s timeout                                                | XML body (UTF-8) — validation when `--skip-url-validation` not set |
 | `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                                                                                  | `{organization_slug}` — upgrade-gate side-call on 4xx              |
 | `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none                                                                                  | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate          |
 
-Bypasses the typed Management API client for the POST so user-supplied keys inside
-`attribute_mapping.keys.<x>` (e.g. `default`) are preserved verbatim.
+The POST goes through the typed Management API client. `--attribute-mapping-file` is validated
+against the API's `attribute_mapping` schema before the request: a key the schema does not model
+fails with `failed to parse attribute mapping: Expected no excess property at [...]` and nothing
+is sent. A 2xx response whose body does not match the provider schema fails as
+`SsoAddNetworkError` (API-response classification). Transport failures read
+`failed to create sso provider: <reason>`.
 
 ## Environment Variables
 
@@ -50,10 +54,10 @@ Bypasses the typed Management API client for the POST so user-supplied keys insi
 | `1`  | `SsoAddRequiredFlagError` — pflag consumed the `--type`/`-t` token as another flag's value (cobra `ValidateRequiredFlags`)                                                                                                                                                                                     |
 | `1`  | `SsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                                                                                                                                                                          |
 | `1`  | `SsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                                                                                                                                 |
-| `1`  | `SsoAddAttributeMappingFileError` — JSON file unreadable or malformed                                                                                                                                                                                                                                          |
+| `1`  | `SsoAddAttributeMappingFileError` — JSON file unreadable, malformed, or not matching the schema                                                                                                                                                                                                                |
 | `1`  | `SsoAddSamlDisabledError` — 404 from POST                                                                                                                                                                                                                                                                      |
 | `1`  | `SsoAddUnexpectedStatusError` — other non-2xx                                                                                                                                                                                                                                                                  |
-| `1`  | `SsoAddNetworkError` — transport-level failure                                                                                                                                                                                                                                                                 |
+| `1`  | `SsoAddNetworkError` — transport failure or undecodable 2xx body                                                                                                                                                                                                                                               |
 
 ## Telemetry Events Fired
 

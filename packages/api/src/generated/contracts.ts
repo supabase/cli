@@ -2733,24 +2733,33 @@ export const V1GetASnippetOutput = Schema.Struct({
     id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     name: Schema.String,
   }),
-  owner: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    username: Schema.String,
-  }),
-  updated_by: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    username: Schema.String,
-  }),
+  owner: Schema.Union([
+    Schema.Struct({
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      username: Schema.String,
+    }),
+    Schema.Null,
+  ]),
+  updated_by: Schema.Union([
+    Schema.Struct({
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      username: Schema.String,
+    }),
+    Schema.Null,
+  ]),
   favorite: Schema.Boolean,
-  content: Schema.Struct({
-    favorite: Schema.optionalKey(
-      Schema.Boolean.annotate({
-        description: "Deprecated: Rely on root-level favorite property instead.",
-      }),
-    ),
-    schema_version: Schema.optionalKey(Schema.String),
-    sql: Schema.String,
-  }),
+  content: Schema.Union([
+    Schema.Struct({
+      favorite: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Deprecated: Rely on root-level favorite property instead.",
+        }),
+      ),
+      schema_version: Schema.optionalKey(Schema.String),
+      sql: Schema.String,
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GetASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(
@@ -6452,14 +6461,20 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
         id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         name: Schema.String,
       }),
-      owner: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        username: Schema.String,
-      }),
-      updated_by: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        username: Schema.String,
-      }),
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }),
+        Schema.Null,
+      ]),
       favorite: Schema.Boolean,
     }),
   ),

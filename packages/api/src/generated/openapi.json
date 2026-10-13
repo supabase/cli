@@ -32438,7 +32438,8 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "username"]
+                  "required": ["id", "username"],
+                  "nullable": true
                 },
                 "updated_by": {
                   "type": "object",
@@ -32450,7 +32451,8 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "username"]
+                  "required": ["id", "username"],
+                  "nullable": true
                 },
                 "favorite": {
                   "type": "boolean"
@@ -32526,7 +32528,8 @@
                 "type": "string"
               }
             },
-            "required": ["id", "username"]
+            "required": ["id", "username"],
+            "nullable": true
           },
           "updated_by": {
             "type": "object",
@@ -32538,7 +32541,8 @@
                 "type": "string"
               }
             },
-            "required": ["id", "username"]
+            "required": ["id", "username"],
+            "nullable": true
           },
           "favorite": {
             "type": "boolean"
@@ -32558,7 +32562,8 @@
                 "type": "string"
               }
             },
-            "required": ["sql"]
+            "required": ["sql"],
+            "nullable": true
           }
         },
         "required": [

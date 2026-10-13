@@ -21,7 +21,6 @@ import { InvalidAccessTokenError } from "../../../auth/errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -48,15 +47,6 @@ const LOCAL_CONN: PgConnInput = {
 };
 
 const [SETUP_SQL, QUERY_SQL] = splitLintsSql();
-
-function jsonParseErrorText(raw: string): string {
-  try {
-    JSON.parse(raw);
-    return "";
-  } catch (cause) {
-    return String(cause);
-  }
-}
 
 /** A local lint row keyed by the column names the `lints.sql` query aliases. */
 function lintRow(over: Partial<Record<string, unknown>> = {}) {
@@ -197,24 +187,6 @@ function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   return { layer };
 }
 
-/** Tracks the raw-HTTP advisor path running the identity stitch. */
-function mockIdentityStitch() {
-  let calls = 0;
-  const layer = Layer.succeed(IdentityStitch, {
-    stitch: () =>
-      Effect.sync(() => {
-        calls += 1;
-      }),
-    stitchedDistinctId: () => undefined,
-  });
-  return {
-    layer,
-    get calls() {
-      return calls;
-    },
-  };
-}
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
@@ -224,8 +196,7 @@ interface SetupOpts {
   invalidToken?: boolean;
   ipv6Error?: boolean;
   securityStatus?: number;
-  securityNonJson?: boolean;
-  securityJsonBody?: string;
+  securityRawBody?: string;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
@@ -253,23 +224,11 @@ function setup(opts: SetupOpts = {}) {
         if (status !== 200) {
           return Effect.succeed(jsonResponse(request, status, { message: "boom" }));
         }
-        if (opts.securityNonJson === true) {
-          // 200 with a non-JSON content-type (proxy/header regression).
+        if (opts.securityRawBody !== undefined) {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              new Response(JSON.stringify({ lints: [] }), {
-                status: 200,
-                headers: { "content-type": "text/plain" },
-              }),
-            ),
-          );
-        }
-        if (opts.securityJsonBody !== undefined) {
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(opts.securityJsonBody, {
+              new Response(opts.securityRawBody, {
                 status: 200,
                 headers: { "content-type": "application/json" },
               }),
@@ -292,7 +251,6 @@ function setup(opts: SetupOpts = {}) {
   const credentials = mockCredentials({
     token: opts.invalidToken === true ? "invalid" : opts.loggedIn === false ? "none" : "valid",
   });
-  const identityStitch = mockIdentityStitch();
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -304,8 +262,7 @@ function setup(opts: SetupOpts = {}) {
     cache.layer,
     cliSettings,
     credentials.layer,
-    identityStitch.layer,
-    api.httpClientLayer,
+    api.factoryLayer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
@@ -318,7 +275,6 @@ function setup(opts: SetupOpts = {}) {
     cache,
     api,
     projectRef,
-    identityStitch,
     resolver,
   };
 }
@@ -536,6 +492,9 @@ describe("db advisors — linked", () => {
     level: "ERROR",
     facing: "EXTERNAL",
     categories: ["SECURITY"],
+    description: "Detects tables without RLS.",
+    detail: "Table public.users has RLS disabled",
+    remediation: "https://supabase.com/docs",
     cache_key: "sec",
   };
   const performanceLint = {
@@ -544,6 +503,9 @@ describe("db advisors — linked", () => {
     level: "INFO",
     facing: "EXTERNAL",
     categories: ["PERFORMANCE"],
+    description: "Detects unindexed foreign keys.",
+    detail: "Table public.posts has an unindexed foreign key",
+    remediation: "https://supabase.com/docs",
     cache_key: "perf",
   };
 
@@ -640,20 +602,6 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("runs the identity stitch on each advisor response (Go identityTransport)", () => {
-    // Every Management API response is wrapped in identity stitching; the raw-HTTP advisor path
-    // must run the same stitch, once per response.
-    const { layer, identityStitch } = setup({
-      securityLints: [securityLint],
-      performanceLints: [performanceLint],
-      args: ["--linked"],
-    });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ level: Option.some("info") }));
-      expect(identityStitch.calls).toBe(2);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
     // `resolve` opens an interactive project picker on a TTY; `--linked` must avoid it.
     const { layer, projectRef } = setup({
@@ -723,31 +671,63 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
-    // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
-    // status-200 error.
-    const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("unexpected security advisors status 200");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails with the JSON parse error when a JSON advisors body is malformed", () => {
-    const { layer } = setup({ securityJsonBody: "{ not json", args: ["--linked"] });
+  it.live("fails with a status-200 error when the advisors body is not JSON", () => {
+    const { layer } = setup({ securityRawBody: "<html>gateway</html>", args: ["--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
-          message: `failed to fetch security advisors: ${jsonParseErrorText("{ not json")}`,
+          _tag: "DbAdvisorsSecurityStatusError",
+          status: 200,
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails as a decode error when the advisors body has the wrong shape", () => {
+    const { layer } = setup({ securityRawBody: '{"lints":"nope"}', args: ["--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "DbAdvisorsSecurityNetworkError",
           decode: true,
         });
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("renders advisors whose name and metadata type the contract does not list", () => {
+    const { layer, out } = setup({
+      format: "json",
+      securityLints: [
+        {
+          ...securityLint,
+          name: "public_bucket_allows_listing",
+          categories: ["SECURITY", "COMPLIANCE"],
+          metadata: { name: "avatars", type: "bucket", extra: "dropped" },
+        },
+      ],
+      args: ["--linked"],
+    });
+    return Effect.gen(function* () {
+      yield* dbAdvisors(flags({ type: Option.some("security") }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          data: {
+            results: [
+              expect.objectContaining({
+                name: "public_bucket_allows_listing",
+                categories: ["SECURITY", "COMPLIANCE"],
+                metadata: { name: "avatars", type: "bucket" },
+              }),
+            ],
+          },
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 

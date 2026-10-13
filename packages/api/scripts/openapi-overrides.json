@@ -122,5 +122,35 @@
       "enum": ["15", "17", "17-oriole"],
       "description": "Postgres engine version. If not provided, the latest version will be used."
     }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/SnippetList_Output/properties/data/items/properties/owner/nullable",
+    "value": true,
+    "$comment": "The platform LEFT JOINs the owner and last-updated-by users, so these are null when the user row is gone."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/SnippetList_Output/properties/data/items/properties/updated_by/nullable",
+    "value": true,
+    "$comment": "The platform LEFT JOINs the owner and last-updated-by users, so these are null when the user row is gone."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/SnippetResponse_Output/properties/owner/nullable",
+    "value": true,
+    "$comment": "The platform LEFT JOINs the owner and last-updated-by users, so these are null when the user row is gone."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/SnippetResponse_Output/properties/updated_by/nullable",
+    "value": true,
+    "$comment": "The platform LEFT JOINs the owner and last-updated-by users, so these are null when the user row is gone."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/SnippetResponse_Output/properties/content/nullable",
+    "value": true,
+    "$comment": "The platform returns a null `content` for a snippet that has no stored content."
   }
 ]

@@ -52,7 +52,7 @@ export const PROVIDER_ID =
 // In replay mode any UUID normalises to __UUID__ in fixture paths.
 // In record mode supply a real snippet UUID via env.
 export const SNIPPET_ID =
-  process.env["SUPABASE_TEST_SNIPPET_ID"] ?? "00000000-0000-0000-0000-000000000001";
+  process.env["SUPABASE_TEST_SNIPPET_ID"] ?? "00000000-0000-4000-8000-000000000001";
 
 // Unix epoch seconds for a PITR restore timestamp within the staging project's backup window.
 // In replay mode the replay server serves responses in order regardless of the request body value.

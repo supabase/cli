@@ -72,7 +72,7 @@ describe("supabase config push", () => {
                     return new Response("unavailable", { status: 503 });
                   }
                   if (request.method === "GET" && url.pathname.endsWith("/billing/addons")) {
-                    return Response.json({ available_addons: [] });
+                    return Response.json({ available_addons: [], selected_addons: [] });
                   }
                   if (request.method === "PATCH" && url.pathname.endsWith("/postgrest")) {
                     return request.text().then((body) => {

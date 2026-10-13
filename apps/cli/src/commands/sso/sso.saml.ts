@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Predicate } from "effect";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Effect, FileSystem, Predicate, Schema, SchemaIssue } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { quoteSsoString } from "./sso.format.ts";
@@ -16,6 +17,8 @@ function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
   return "other";
 }
 
+export type SsoNameIdFormat = (typeof SSO_NAME_ID_FORMATS)[number];
+
 /**
  * The `--name-id-format` value set, shared by `sso add` and `sso update`.
  * Order matters: it drives the CLI help text and is joined verbatim into
@@ -28,6 +31,10 @@ export const SSO_NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
   "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
 ] as const;
+
+/** Narrows a pflag-validated `--name-id-format` value to the API's literal union. */
+export const toNameIdFormat = (value: string): SsoNameIdFormat | undefined =>
+  SSO_NAME_ID_FORMATS.find((format) => format === value);
 
 /**
  * Validates that raw bytes decode as strict UTF-8. Using
@@ -82,10 +89,16 @@ export const readMetadataFile =
       return new TextDecoder("utf-8").decode(bytes);
     });
 
+const attributeMappingSchema =
+  operationDefinitions.v1CreateASsoProvider.inputSchema.fields.attribute_mapping;
+const decodeAttributeMapping = Schema.decodeUnknownEffect(attributeMappingSchema);
+const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
+
+export type SsoAttributeMapping = Schema.Schema.Type<typeof attributeMappingSchema>;
+
 /**
- * Reads an attribute mapping JSON file. Returns the parsed value as
- * `unknown` so the raw POST/PUT payload preserves user-defined keys like
- * `default` that aren't in the generated `attribute_mapping` schema.
+ * Reads an attribute mapping JSON file and validates it against the Management
+ * API `attribute_mapping` schema; keys the API does not model are rejected.
  */
 export const readAttributeMappingFile =
   <E>(factory: {
@@ -94,7 +107,7 @@ export const readAttributeMappingFile =
       readonly reason: SsoFileErrorReason;
     }) => E;
   }) =>
-  (path: string): Effect.Effect<unknown, E, FileSystem.FileSystem> =>
+  (path: string): Effect.Effect<SsoAttributeMapping, E, FileSystem.FileSystem> =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const content = yield* fs.readFileString(path).pipe(
@@ -114,5 +127,15 @@ export const readAttributeMappingFile =
             reason: "invalid_content",
           }),
       });
-      return parsed;
+      return yield* decodeAttributeMapping(parsed, {
+        onExcessProperty: "error",
+        errors: "all",
+      }).pipe(
+        Effect.mapError((cause) =>
+          factory.openError({
+            message: `failed to parse attribute mapping: ${formatSchemaIssue(cause.issue).replace(/\s*\n\s*/g, " ")}`,
+            reason: "invalid_content",
+          }),
+        ),
+      );
     });

@@ -23,6 +23,8 @@
 
 The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwise the command fetches current overrides first, merges the new values locally, then sends the final merged object back via `PUT`.
 
+The `PUT` goes through the typed client, so the merged object is validated against the API's request schema before sending: unknown keys (including unknown keys already stored in the project's overrides) and out-of-range or wrongly typed values fail locally and no `PUT` is sent. A stored unknown key can be dropped with `delete --config <key>` or `--replace-existing-overrides`.
+
 ## Environment Variables
 
 | Variable                | Purpose                                                  | Required?                                                      |
@@ -44,9 +46,9 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                            |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                           |
 | `1`  | PUT non-2xx (`PostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                                 |
-| `1`  | PUT transport failure (`PostgresConfigUpdateNetworkError`)                                                                                                                                                                                                                                                                                |
-| `1`  | request serialization failure (`PostgresConfigUpdateSerializeError`)                                                                                                                                                                                                                                                                      |
-| `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError` / `PostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                                                                          |
+| `1`  | PUT transport failure (`PostgresConfigUpdateNetworkError`); GET and PUT retry on 5xx and transport errors first                                                                                                                                                                                                                           |
+| `1`  | rejected before the PUT: unknown or out-of-range config parameter (`PostgresConfigUpdateSerializeError`, e.g. `unknown Postgres config parameter: foo`, `invalid Postgres config value for max_connections: ...`)                                                                                                                         |
+| `1`  | GET body is not a JSON object (`PostgresConfigGetUnmarshalError`); PUT 2xx body fails the response schema (`PostgresConfigUpdateNetworkError`, API-response classification)                                                                                                                                                               |
 
 ## Telemetry Events Fired
 
