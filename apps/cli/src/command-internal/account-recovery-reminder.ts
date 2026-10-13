@@ -1,6 +1,7 @@
 import process from "node:process";
 import { Config, ConfigProvider, Effect, Option } from "effect";
 import type { OutputFormat } from "../shared/output/types.ts";
+import { red, yellow } from "./colors.ts";
 import {
   hasRootHelpOrVersionFlag,
   lastGlobalFlagValue,
@@ -9,12 +10,19 @@ import {
 
 type MockRecoveryState = "exhausted" | "missing" | "low";
 
-const messages: Readonly<Record<MockRecoveryState, string>> = {
-  exhausted:
-    "[mock account security] Your recovery codes are exhausted. Open https://supabase.com/dashboard/account/security to generate and save new codes.",
-  missing:
-    "[mock account security] You have no recovery codes. Open https://supabase.com/dashboard/account/security to generate and save codes.",
-  low: "[mock account security] You have few recovery codes left. Open https://supabase.com/dashboard/account/security to generate and save new codes.",
+const accountSecurityPrefix = (state: MockRecoveryState): string =>
+  state === "exhausted" ? red("Account security:") : yellow("Account security:");
+
+const message = (state: MockRecoveryState): string => {
+  const prefix = `[mock] ${accountSecurityPrefix(state)}`;
+  switch (state) {
+    case "exhausted":
+      return `${prefix} Your recovery codes are exhausted. Generate and save a new set in Account Security: https://supabase.com/dashboard/account/security`;
+    case "missing":
+      return `${prefix} You have no recovery codes. Generate and save a set in Account Security: https://supabase.com/dashboard/account/security`;
+    case "low":
+      return `${prefix} You have few recovery codes left. Generate and save a new set in Account Security: https://supabase.com/dashboard/account/security`;
+  }
 };
 
 interface ReminderContext {
@@ -50,7 +58,7 @@ export const accountRecoveryReminderHook = (
     for (const { token } of rootFlagTokens(args, info.isValueTakingFlagToken)) {
       if (token === "-o" || token.startsWith("-o=")) return;
     }
-    yield* Effect.sync(() => process.stderr.write(`${messages[state]}\n`));
+    yield* Effect.sync(() => process.stderr.write(`${message(state)}\n`));
   }).pipe(
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv())),
     Effect.withSpan("AccountRecoveryReminder.show"),

@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import { runSupabase } from "../../tests/helpers/cli.ts";
 
 const binary = fileURLToPath(new URL("../../dist/supabase", import.meta.url));
-const reminder = "[mock account security]";
+const reminder = "[mock] Account security:";
 
 function runWithTerminal(args: ReadonlyArray<string>, extraEnv: Record<string, string> = {}) {
   const home = mkdtempSync(join(tmpdir(), "supabase-account-reminder-"));
@@ -36,19 +37,19 @@ describe("mock account recovery reminder", () => {
   test.skipIf(process.platform !== "darwin")(
     "shows the mock after an interactive command and suppresses help, machine output, agents, and CI",
     () => {
-      const regular = runWithTerminal(["telemetry", "status"]);
+      const regular = stripAnsi(runWithTerminal(["telemetry", "status"]));
       expect(regular).toContain("Telemetry is");
       expect(regular.split(reminder)).toHaveLength(2);
       expect(regular).toContain("https://supabase.com/dashboard/account/security");
       expect(
-        runWithTerminal(["telemetry", "status"], {
+        stripAnsi(runWithTerminal(["telemetry", "status"], {
           SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "missing",
-        }),
+        })),
       ).toContain("You have no recovery codes");
       expect(
-        runWithTerminal(["telemetry", "status"], {
+        stripAnsi(runWithTerminal(["telemetry", "status"], {
           SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "low",
-        }),
+        })),
       ).toContain("You have few recovery codes left");
 
       for (const args of [
@@ -67,6 +68,9 @@ describe("mock account recovery reminder", () => {
       const failed = runWithTerminal(["telemetry", "status", "--unknown-flag"]);
       expect(failed).toContain("Unrecognized flag: --unknown-flag");
       expect(failed).not.toContain(reminder);
+
+      const forcedColor = runWithTerminal(["telemetry", "status"], { CLICOLOR_FORCE: "1" });
+      expect(forcedColor).toContain("\u001B[31mAccount security:\u001B[39m");
     },
   );
 
