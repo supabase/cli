@@ -66,10 +66,16 @@ Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
 | traffic-profile      | traffic_profile.sql      | no                          |
 
 Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
-`index-usage`/`total-index-size`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
-`table-sizes`/`table-index-sizes`/`total-table-sizes`→table-stats;
+`index-usage`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
+`table-sizes`→table-stats;
 `role-configs`/`role-connections`→role-stats. (`table-record-counts` warns
 "table-stats" but runs index-stats — an inconsistency that is preserved.)
+
+`total-index-size` (→ `index-stats`), `total-table-sizes` and `table-index-sizes`
+(→ `table-stats`) are removed and unlisted. They still accept the `inspect`
+flags, run no query and open no connection, and exit 1 with
+`supabase inspect db <name> was removed.` plus the replacement suggestion
+(`RemovedSurfaceError`, `error_fingerprint` ending in `:removed_command`).
 
 ## Exit Codes
 

@@ -1,24 +1,17 @@
 import { Command, Flag } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
-
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
-import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
-import { dbRemoteCommit } from "./commit.handler.ts";
-import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    Flag.mapTryCatch(
-      (rawValues) => parseSchemaFlags(rawValues),
-      (err) => (err instanceof Error ? err.message : String(err)),
-    ),
   ),
   dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
@@ -36,29 +29,16 @@ const config = {
   }),
 } as const;
 
-export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
-  Command.withDescription(
-    "Deprecated: use db pull instead. Commit remote changes as a new migration.",
-  ),
-  Command.withShortDescription("Commit remote changes as a new migration"),
-  Command.withHandler((flags) =>
-    dbRemoteCommit(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          schema: flags.schema,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          password: flags.password,
-        },
-        aliases: { s: "schema", p: "password" },
-        config,
-      }),
+  Command.withDescription("Removed: use `supabase db pull` instead."),
+  Command.withShortDescription("Removed: use `db pull` instead"),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase db pull` instead.").pipe(
+      withCommandTelemetry(),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(dbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
-  Command.provide(cliConfigValuesLayer),
+  Command.provide(commandRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(telemetryStateLayer),
   withCliConfigFlags(config),
 );

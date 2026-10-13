@@ -108,8 +108,6 @@ const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
   "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
-  /** Skip printing `Finished supabase db pull.` for callers that must not emit it. */
-  readonly skipFinishedLine?: boolean;
   /**
    * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
    * in-process caller that already ran its own aggregated confirmation.

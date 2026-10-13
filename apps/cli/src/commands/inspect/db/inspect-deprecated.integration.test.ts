@@ -19,11 +19,8 @@ import { inspectDbIndexUsage } from "./index-usage/index-usage.handler.ts";
 import { inspectDbRoleConfigs } from "./role-configs/role-configs.handler.ts";
 import { inspectDbRoleConnections } from "./role-connections/role-connections.handler.ts";
 import { inspectDbSeqScans } from "./seq-scans/seq-scans.handler.ts";
-import { inspectDbTableIndexSizes } from "./table-index-sizes/table-index-sizes.handler.ts";
 import { inspectDbTableRecordCounts } from "./table-record-counts/table-record-counts.handler.ts";
 import { inspectDbTableSizes } from "./table-sizes/table-sizes.handler.ts";
-import { inspectDbTotalIndexSize } from "./total-index-size/total-index-size.handler.ts";
-import { inspectDbTotalTableSizes } from "./total-table-sizes/total-table-sizes.handler.ts";
 import { inspectDbUnusedIndexes } from "./unused-indexes/unused-indexes.handler.ts";
 
 const LOCAL_CONN: PgConnInput = {
@@ -106,12 +103,6 @@ const cases: ReadonlyArray<AliasCase> = [
     target: "index-stats",
   },
   {
-    alias: "total-index-size",
-    handler: inspectDbTotalIndexSize,
-    routedSpec: indexStatsSpec,
-    target: "index-stats",
-  },
-  {
     alias: "index-sizes",
     handler: inspectDbIndexSizes,
     routedSpec: indexStatsSpec,
@@ -142,18 +133,6 @@ const cases: ReadonlyArray<AliasCase> = [
     target: "table-stats",
   },
   {
-    alias: "table-index-sizes",
-    handler: inspectDbTableIndexSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-  },
-  {
-    alias: "total-table-sizes",
-    handler: inspectDbTotalTableSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-  },
-  {
     alias: "role-configs",
     handler: inspectDbRoleConfigs,
     routedSpec: roleStatsSpec,
@@ -168,8 +147,8 @@ const cases: ReadonlyArray<AliasCase> = [
 ];
 
 describe("inspect db deprecated aliases", () => {
-  it("covers all 12 deprecated aliases", () => {
-    expect(cases).toHaveLength(12);
+  it("covers all 9 deprecated aliases", () => {
+    expect(cases).toHaveLength(9);
   });
 
   for (const testCase of cases) {

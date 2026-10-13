@@ -1,20 +1,24 @@
 import { Command } from "effect/cli";
-import { inspectDbTotalTableSizes } from "./total-table-sizes.handler.ts";
-import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
-import { inspectDbRuntimeLayer } from "../db.layers.ts";
-import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
-import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { INSPECT_DB_FLAGS } from "../inspect-db-command.ts";
+import { inspectDbCommandPath } from "../db.layers.ts";
 
 export const inspectDbTotalTableSizesCommand = Command.make(
   "total-table-sizes",
   INSPECT_DB_FLAGS,
 ).pipe(
-  Command.withDescription(
-    'Show total table sizes, including table index sizes. Deprecated: use "table-stats" instead.',
+  Command.withDescription("Removed: use `supabase inspect db table-stats` instead."),
+  Command.withShortDescription("Removed: use `inspect db table-stats` instead"),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase inspect db table-stats` instead.").pipe(
+      withCommandTelemetry(),
+      withJsonErrorHandling,
+    ),
   ),
-  Command.withShortDescription("Show total table sizes (deprecated)"),
-  Command.withHandler(inspectDbCommandHandler(inspectDbTotalTableSizes)),
-  Command.provide(inspectDbRuntimeLayer("total-table-sizes")),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(INSPECT_DB_FLAGS),
+  Command.provide(commandRuntimeLayer(inspectDbCommandPath("total-table-sizes"))),
+  Command.provide(telemetryStateLayer),
 );

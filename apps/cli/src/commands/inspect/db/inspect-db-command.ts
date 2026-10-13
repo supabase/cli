@@ -34,7 +34,6 @@ export const INSPECT_DB_FLAGS = {
 /**
  * Wraps an `inspect db` handler with the standard command-level pipeline: telemetry
  * instrumentation with the three connection flags, and the machine-format JSON error envelope.
- * Shared by all 25 command files so the wiring is defined once.
  */
 export function inspectDbCommandHandler<E, R>(
   handler: (flags: InspectConnectionFlags) => Effect.Effect<void, E, R>,

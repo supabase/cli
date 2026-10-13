@@ -82,6 +82,23 @@ Every applicable command must preserve these invariants:
    `--output-format`, as established by `config diff` and `config pull`.
 7. Preserve telemetry names, timing, identity, and payloads; see [Telemetry](#telemetry).
 
+### Removing a command or flag
+
+Removal is breaking. First ship a stable deprecation warning on stderr that names the replacement
+and the major that removes it, then remove on `next`. Replace a removed command with a tombstone
+rather than deleting it; `db remote commit` is the reference:
+
+- Fail with `removedCommand(suggestion)` (or `removedFlag` for a flag) from
+  `command-internal/removed-command.ts`, wrapped in `withCommandTelemetry()` and
+  `withJsonErrorHandling`. Provide only `commandRuntimeLayer` and `telemetryStateLayer`.
+- Keep the old flag and argument config so existing invocations reach the removal error, not a
+  parse error, and register the command with `Command.unlisted`.
+- Delete the handler, its tests, and its docs pages, and drop it from `DOCS_EXCLUDED`.
+- `SIDE_EFFECTS.md` documents exit 1, the removal message and suggestion, and the post-run
+  `telemetry.json` read and write under `SUPABASE_HOME`.
+- Test every tombstone through the real parser with and without its old flags, asserting the
+  `RemovedSurfaceError` message and suggestion.
+
 ## Config values
 
 Every config value resolves in one order for every command: flag > shell env > project `.env*`

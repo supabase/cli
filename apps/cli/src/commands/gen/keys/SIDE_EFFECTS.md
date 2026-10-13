@@ -5,15 +5,15 @@ and a replacement suggestion instead of contacting the Management API.
 
 ## Files Read
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                     |
+| ----------------------------------------------- | ------ | ---------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (post-run `TelemetryState.flush`) |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                                                                       |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (post-run `TelemetryState.flush`), created if missing, even with telemetry disabled |
 
 ## API Routes
 
@@ -23,9 +23,9 @@ and a replacement suggestion instead of contacting the Management API.
 
 ## Environment Variables
 
-| Variable | Purpose | Required? |
-| -------- | ------- | --------- |
-| —        | —       | —         |
+| Variable        | Purpose                            | Required?                      |
+| --------------- | ---------------------------------- | ------------------------------ |
+| `SUPABASE_HOME` | directory holding `telemetry.json` | no (defaults to `~/.supabase`) |
 
 ## Exit Codes
 

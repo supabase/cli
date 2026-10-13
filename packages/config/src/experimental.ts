@@ -94,7 +94,7 @@ export const experimental = Schema.Struct({
       enabled: Schema.Boolean.annotate({
         default: true,
         description:
-          "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit (the default). Set false to fall back to the legacy migra engine.",
+          "Use pg-delta as the schema diff engine for db diff / db pull (the default). Set false to fall back to the legacy migra engine.",
         tags,
       }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
       declarative_schema_path: Schema.optionalKey(
