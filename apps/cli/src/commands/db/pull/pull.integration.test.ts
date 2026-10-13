@@ -2387,12 +2387,13 @@ describe("db remote commit", () => {
         "create table remote ();",
       );
       expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
       expect(streamText(s.out, "stderr")).toContain(
         `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
       );
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
       expect(s.engineCalls).toHaveLength(1);
       expect(s.engineCalls[0]?.operation).toBe("diff");
     }).pipe(Effect.provide(s.layer));
@@ -2408,7 +2409,9 @@ describe("db remote commit", () => {
       yield* dbRemoteCommit(commitFlags());
       expect(s.engineCalls[0]?.operation).toBe("export");
       const err = streamText(s.out, "stderr");
-      expect(err).toContain(`Command "commit" is deprecated, use "db pull" instead.\n`);
+      expect(err).toContain(
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
+      );
       expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2416,6 +2419,7 @@ describe("db remote commit", () => {
         yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2433,8 +2437,9 @@ describe("db remote commit", () => {
         );
       }
       expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
   });
 });

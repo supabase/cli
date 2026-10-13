@@ -8,7 +8,7 @@ export const inspectDbTableIndexSizesCommand = Command.make(
   INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription(
-    'Show index sizes of individual tables. Deprecated: use "table-stats" instead.',
+    'Show index sizes of individual tables. Deprecated: use "table-stats" instead; removed in v3.',
   ),
   Command.withShortDescription("Show table index sizes (deprecated)"),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableIndexSizes)),

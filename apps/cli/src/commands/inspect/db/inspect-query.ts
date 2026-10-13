@@ -209,6 +209,11 @@ export function inspectDeprecationNotice(alias: string, target: string): string 
   return `Command "${alias}" is deprecated, use "${target}" instead.\n`;
 }
 
+/** Deprecation line for aliases scheduled for removal in v3. */
+export function inspectRemovalNotice(alias: string, target: string): string {
+  return `Command "${alias}" is deprecated and will be removed in v3, use "${target}" instead.\n`;
+}
+
 /**
  * Builds an `inspect db <name>` handler from its spec, with its own `Effect.fn` trace span and
  * telemetry flush on completion — callers must not add a second `Effect.ensuring(flush)`.
