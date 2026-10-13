@@ -2,11 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import { VALID_REF, mockCommandPlatformApi } from "../../tests/helpers/command-mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { getProjectApiKeys, projectApiKeys } from "./get-api-keys.ts";
-import { mapped } from "./command-permissions/model.ts";
 
-const declared = { _tag: "Declared", permissions: mapped(projectApiKeys) } as const;
 const apiKeys = [{ name: "anon", api_key: "anon-key", type: "legacy" }];
 const apiKeysUrl = `https://api.supabase.com/v1/projects/${VALID_REF}/api-keys`;
 
@@ -26,8 +24,7 @@ describe("getProjectApiKeys", () => {
       expect(plain.requests.map((request) => request.urlParams)).toEqual([""]);
       for (const { requests } of [revealed, plain]) {
         expect(requests.map((request) => request.url)).toEqual([apiKeysUrl]);
-        assertDriftAgainst(declared, {
-          command: "project-api-keys block",
+        assertBlockDrift(projectApiKeys, {
           activeFlags: {},
           requests,
           exact: true,

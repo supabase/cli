@@ -584,7 +584,11 @@ async function fetchOpenFindings(
   });
 }
 
-async function logTail(token: string, repository: string, jobId: number): Promise<string> {
+async function jobFailureExcerpt(
+  token: string,
+  repository: string,
+  jobId: number,
+): Promise<string> {
   const response = await fetch(
     `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`,
     {
@@ -594,7 +598,46 @@ async function logTail(token: string, repository: string, jobId: number): Promis
   if (!response.ok) {
     return `(log unavailable: ${response.status})`;
   }
-  return (await response.text()).split("\n").slice(-LOG_TAIL_LINES).join("\n");
+  return failureExcerpt(await response.text());
+}
+
+const ERROR_CONTEXT_LINES = 40;
+const MAX_ERROR_WINDOWS = 10;
+
+/**
+ * Keeps the lines after each error annotation plus the log tail, because Turbo interleaves packages and the failing
+ * one's output often ends long before the job does.
+ */
+export function failureExcerpt(log: string): string {
+  const lines = log
+    // oxlint-disable-next-line no-control-regex -- strips ANSI colour codes from job logs
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((line) => line.replace(/^\S+Z /, ""));
+  const kept = new Set<number>();
+  let windows = 0;
+  lines.forEach((line, index) => {
+    // Turbo prefixes each line with its task name when it streams several packages.
+    if (windows < MAX_ERROR_WINDOWS && /^(\S+:\s)?\s*(##\[error\]|FAIL\s)/.test(line)) {
+      windows += 1;
+      for (let at = index; at < Math.min(index + ERROR_CONTEXT_LINES, lines.length); at += 1) {
+        kept.add(at);
+      }
+    }
+  });
+  for (let at = Math.max(0, lines.length - LOG_TAIL_LINES); at < lines.length; at += 1) {
+    kept.add(at);
+  }
+  let previous = -1;
+  const excerpt: string[] = [];
+  for (const index of [...kept].sort((a, b) => a - b)) {
+    if (index !== previous + 1) {
+      excerpt.push("[...]");
+    }
+    excerpt.push(lines[index] ?? "");
+    previous = index;
+  }
+  return excerpt.join("\n");
 }
 
 /** Whether an `AI Review` run for this pull request is queued or running; its run name carries the PR number. */
@@ -688,7 +731,7 @@ async function collect(outputDir: string): Promise<void> {
   const failures = await Promise.all(
     plan.failures.map(
       async (run) =>
-        `## ${run.name} (${run.conclusion})\n\n\`\`\`\`text\n${await logTail(token, repository, run.id)}\n\`\`\`\`\n`,
+        `## ${run.name} (${run.conclusion})\n\n\`\`\`\`text\n${await jobFailureExcerpt(token, repository, run.id)}\n\`\`\`\`\n`,
     ),
   );
   writeFileSync(join(contextDir, "ci-failures.md"), failures.join("\n") || "No CI job failed.\n");

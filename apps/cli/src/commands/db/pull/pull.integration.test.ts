@@ -1038,7 +1038,9 @@ describe("db pull", () => {
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags({ usePgDelta: Option.some(true) }));
-        expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
+        expect(streamText(s.out, "stderr")).toContain(
+          "Flag --use-pg-delta is deprecated and will be removed in v3, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.\n",
+        );
         const path = yield* Path.Path;
         expect(streamText(s.out, "stderr")).toContain(
           `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
@@ -1752,7 +1754,7 @@ describe("db pull", () => {
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
         );
         expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
       }).pipe(Effect.provide(s.layer));
@@ -1807,7 +1809,7 @@ describe("db pull", () => {
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(s.proxyCalls).toHaveLength(0);
       expect(streamText(s.out, "stderr")).toContain(
-        "The --experimental structured-dump mode for `db pull` is deprecated",
+        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
       );
     }).pipe(Effect.provide(s.layer));
   });
@@ -1831,7 +1833,7 @@ describe("db pull", () => {
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
         );
       }).pipe(Effect.provide(s.layer));
     },
@@ -2401,7 +2403,9 @@ describe("db remote commit", () => {
       expect(err).toContain(
         `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
-      expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
+      expect(err).toContain(
+        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
+      );
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       expect(

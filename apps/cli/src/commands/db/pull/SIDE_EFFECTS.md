@@ -163,7 +163,7 @@ Progress to stderr. Migration path: `Creating shadow database...`,
 `Diffing schemas[: <list>]`, `Schema written to <path>`. Declarative path:
 `Preparing declarative schema export using pg-delta...`, `Declarative schema
 written to <dir>`. Plus the `--use-pg-delta` deprecation line, the
-`--experimental` structured-dump deprecation line, and the history-update
+`--experimental` structured-dump deprecation line (both name v3), and the history-update
 prompt. On success the PostRun line `Finished supabase db pull.` is printed to
 stdout.
 
@@ -190,7 +190,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   env var simply leaves unused on a non-linked target). The deprecated
   `--experimental` export honors `--project-ref` the same way `--declarative`
   does.
-- `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
+- `--use-pg-delta` is hidden and emits `Flag --use-pg-delta is deprecated and will be removed in v3, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.` to stderr.
 - Migration-style pulls always compare migrations with the live target;
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with
@@ -201,8 +201,8 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   empty diff is "No schema changes found". Stack-backed pulls never take this path.
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) now runs the same in-process declarative export
-  as `--declarative`. It is deprecated: a warning pointing at `--declarative`
-  prints to stderr before the export. `--experimental --declarative` does not
+  as `--declarative`. It is deprecated and will be removed in v3: a warning pointing
+  at `--declarative` prints to stderr before the export. `--experimental --declarative` does not
   print that line. Output is the pg-delta declarative tree under
   `supabase/schemas` (plus `.pgdelta-export.json`), not Go's former
   `schemas/` + `cluster/` AST split.

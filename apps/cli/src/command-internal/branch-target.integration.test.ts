@@ -4,11 +4,8 @@ import { Effect, Layer } from "effect";
 
 import { jsonResponse, mockCommandPlatformApi } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { branchTarget, findBranchName } from "./branch-target.ts";
-import { mapped } from "./command-permissions/model.ts";
-
-const branchTargetDeclared = { _tag: "Declared", permissions: mapped(branchTarget) } as const;
 
 const PARENT_REF = "abcdefghijklmnopqrst";
 const BRANCH_REF = "cccccccccccccccccccc";
@@ -46,8 +43,7 @@ describe("findBranchName integration", () => {
       expect(api.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${PARENT_REF}/branches`,
       ]);
-      assertDriftAgainst(branchTargetDeclared, {
-        command: "branch-target block",
+      assertBlockDrift(branchTarget, {
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -59,8 +55,7 @@ describe("findBranchName integration", () => {
       const name = yield* findBranchName(PARENT_REF, BRANCH_REF);
       expect(api.requests).toHaveLength(1);
       expect(name).toBeUndefined();
-      assertDriftAgainst(branchTargetDeclared, {
-        command: "branch-target block",
+      assertBlockDrift(branchTarget, {
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
