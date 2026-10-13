@@ -51,9 +51,7 @@ jobs:
           pnpm --filter @supabase/stack prepare:test-artifacts
 
       - name: Build CLI
-        run: |
-          (cd apps/cli-go && go build -o supabase-go .)
-          pnpm exec turbo run supabase#build
+        run: pnpm exec turbo run supabase#build
 
       # Starting a default project pulls every image `supabase start` uses.
       - name: Pull CLI images

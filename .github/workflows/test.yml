@@ -155,6 +155,11 @@ jobs:
           src/port-reservation.e2e.test.ts
           --passWithNoTests=false
 
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -368,6 +373,11 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -416,6 +426,11 @@ jobs:
           pnpm --filter @supabase/stack test:e2e:run
           src/public.e2e.test.ts
           --passWithNoTests=false
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always() && matrix.runtime == 'docker'
+        run: sudo systemctl stop docker.socket docker.service
 
   test-stack-podman-integration:
     if: |
