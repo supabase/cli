@@ -63,8 +63,6 @@ import {
 } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
-import { dbRemoteCommit } from "../remote/commit/commit.handler.ts";
-import type { DbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
 import { runDbPull } from "../../../command-internal/db-pull-run.ts";
@@ -524,13 +522,6 @@ const flags = (over: Partial<DbPullFlags> = {}): DbPullFlags => ({
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
   projectRef: over.projectRef ?? Option.none(),
-  password: over.password ?? Option.none(),
-});
-
-const commitFlags = (over: Partial<DbRemoteCommitFlags> = {}): DbRemoteCommitFlags => ({
-  schema: over.schema ?? [],
-  dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? false,
   password: over.password ?? Option.none(),
 });
 
@@ -2418,115 +2409,5 @@ describe("db pull", () => {
         expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
       }).pipe(Effect.provide(BunServices.layer));
     });
-  });
-});
-
-describe("db remote commit", () => {
-  it.effect(
-    "writes a remote_commit migration with pg-delta by default and skips the pull PostRun line",
-    () => {
-      const s = setup(tmp.current, {
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        edgeStdout: pgDeltaDiffEnvelope([
-          {
-            name: "schema_changes",
-            sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
-          },
-        ]),
-        yes: true,
-        args: ["db", "remote", "commit"],
-      });
-      return Effect.gen(function* () {
-        yield* dbRemoteCommit(commitFlags());
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const dir = path.join(tmp.current, "supabase", "migrations");
-        const written = (yield* fs.readDirectory(dir)).filter((f) =>
-          f.endsWith("_remote_commit.sql"),
-        );
-        expect(written).toHaveLength(1);
-        expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
-          "create table remote ();",
-        );
-        expect(streamText(s.out, "stderr")).toContain(
-          `Command "commit" is deprecated, use "db pull" instead.\n`,
-        );
-        expect(streamText(s.out, "stderr")).toContain(
-          `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
-        );
-        expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
-        expect(s.engineCalls).toHaveLength(1);
-        expect(s.engineCalls[0]?.operation).toBe("diff");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect("diffs with migra when config sets enabled = false", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      files: {
-        "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n",
-      },
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      yes: true,
-      args: ["db", "remote", "commit"],
-    });
-    return Effect.gen(function* () {
-      yield* dbRemoteCommit(commitFlags());
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = path.join(tmp.current, "supabase", "migrations");
-      const written = (yield* fs.readDirectory(dir)).filter((f) =>
-        f.endsWith("_remote_commit.sql"),
-      );
-      expect(written).toHaveLength(1);
-      expect(yield* readFileText(path.join(dir, written[0] ?? ""))).toContain(
-        "create table remote ();",
-      );
-      expect(s.engineCalls).toHaveLength(0);
-      expect(s.edgeCalls).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("honors --experimental as the same in-process export as db pull", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      edgeStdout: EXPORT_JSON,
-      args: ["db", "remote", "commit", "--experimental"],
-    });
-    return Effect.gen(function* () {
-      yield* dbRemoteCommit(commitFlags());
-      expect(s.engineCalls[0]?.operation).toBe("export");
-      const err = streamText(s.out, "stderr");
-      expect(err).toContain(`Command "commit" is deprecated, use "db pull" instead.\n`);
-      expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      expect(
-        yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
-      ).toBe(true);
-      expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("rejects --linked together with --db-url", () => {
-    const s = setup(tmp.current, {});
-    return Effect.gen(function* () {
-      const exit = yield* dbRemoteCommit(
-        commitFlags({ linked: true, dbUrl: Option.some("postgresql://u:p@h/db") }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be",
-        );
-      }
-      expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
-      );
-    }).pipe(Effect.provide(s.layer));
   });
 });

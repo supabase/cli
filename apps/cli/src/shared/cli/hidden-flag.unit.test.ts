@@ -11,6 +11,8 @@ import { functionsDownloadCommand } from "../../commands/functions/download/down
 import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
 import { genCommand } from "../../commands/gen/gen.command.ts";
 import { initCommand } from "../../commands/init/init.command.ts";
+import { inspectDbCommand } from "../../commands/inspect/db/db.command.ts";
+import { inspectCommand } from "../../commands/inspect/inspect.command.ts";
 import { issueCommand } from "../../commands/issue/issue.command.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
@@ -59,6 +61,7 @@ const testRoot = Command.make("supabase").pipe(
     initCommand,
     functionsCommand,
     genCommand,
+    inspectCommand,
     projectsCommand,
     branchesCommand,
     dbCommand,
@@ -248,11 +251,15 @@ describe("hidden subcommands", () => {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-tombstone-" });
 
-      for (const args of [
-        ["db", "branch", "list"],
-        ["db", "remote", "changes"],
-        ["gen", "keys"],
-      ]) {
+      for (const [args, suggestion] of [
+        [["db", "branch", "list"], undefined],
+        [["db", "remote", "changes"], undefined],
+        [["gen", "keys"], undefined],
+        [["db", "remote", "commit"], "Use `supabase db pull` instead."],
+        [["inspect", "db", "total-index-size"], "Use `supabase inspect db index-stats` instead."],
+        [["inspect", "db", "total-table-sizes"], "Use `supabase inspect db table-stats` instead."],
+        [["inspect", "db", "table-index-sizes"], "Use `supabase inspect db table-stats` instead."],
+      ] as const) {
         const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
           Effect.provide(
             Layer.merge(
@@ -264,10 +271,26 @@ describe("hidden subcommands", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (!Exit.isFailure(exit)) return;
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(RemovedSurfaceError);
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(RemovedSurfaceError);
+        if (!(error instanceof RemovedSurfaceError) || suggestion === undefined) continue;
+        expect(error.kind).toBe("command");
+        expect(error.message).toBe(`supabase ${args.join(" ")} was removed.`);
+        expect(error.suggestion).toBe(suggestion);
       }
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it("does not list the removed inspect db aliases in help", () => {
+    const names = buildHelpDoc(inspectDbCommand).subcommands?.[0]?.commands.map(
+      (command) => command.name,
+    );
+    expect(names).toContain("index-stats");
+    expect(names).toContain("table-sizes");
+    expect(names).not.toContain("total-index-size");
+    expect(names).not.toContain("total-table-sizes");
+    expect(names).not.toContain("table-index-sizes");
+  });
 
   it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
     Effect.gen(function* () {

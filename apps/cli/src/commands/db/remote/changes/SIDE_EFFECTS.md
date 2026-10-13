@@ -60,4 +60,3 @@ One `cli_command_executed` event per invocation, with `exit_code: 1` and an
 
 - No flag value is read; the command fails identically regardless of
   `--schema`/`--db-url`/`--linked`/`--password`.
-- The native sibling `db remote commit` is unaffected.

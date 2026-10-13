@@ -1,71 +1,62 @@
 # `supabase db remote commit`
 
-Deprecated wrapper around native `db pull`. Commits remote schema changes as
-`<timestamp>_remote_commit.sql` using the in-process pg-delta (or migra) engine.
-`--experimental` / `SUPABASE_EXPERIMENTAL` take the same in-process declarative
-export as `db pull --experimental` (the same gate applies to commit). Does not print `Finished supabase db pull.` Every invocation
-prints `Command "commit" is deprecated, use "db pull" instead.` to
-stderr.
-
-See [`db/pull/SIDE_EFFECTS.md`](../../pull/SIDE_EFFECTS.md) for the shared
-migration-style pull surface (shadow, cache, API, history repair). Differences
-from `db pull`:
-
-- Migration stem is always `remote_commit` (not `remote_schema` or a `--name`).
-- No `--declarative` / `--use-pg-delta` / `--diff-engine` / `--local` / `--project-ref`.
-- `--linked` defaults to false in the TS flag parser; omitting it still targets
-  the linked project. Passing `--linked`
-  is explicit.
-- No edge-runtime pg-delta, no `pgdelta-version` / `PGDELTA_NPM_REGISTRY`.
+Removed. The command is a tombstone: it fails with a removal error and a
+replacement suggestion instead of connecting to any database.
 
 ## Files Read
 
-Same as migration-style `db pull`.
+| Path | Format | When |
+| ---- | ------ | ---- |
+| —    | —      | —    |
 
 ## Files Written
 
-| Path                                                          | Format | When                                                 |
-| ------------------------------------------------------------- | ------ | ---------------------------------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_remote_commit.sql` | SQL    | non-empty diff (or the initial-migra `pg_dump` seed) |
-| `<workdir>/supabase/schemas/**`                               | SQL    | `--experimental` / `SUPABASE_EXPERIMENTAL` export    |
-| `<workdir>/supabase/schemas/.pgdelta-export.json`             | JSON   | experimental export metadata                         |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`       | JSON   | bundled engine with `PGDELTA_DEBUG`                  |
+| Path | Format | When |
+| ---- | ------ | ---- |
+| —    | —      | —    |
 
-Plus the shared pull post-run writes (linked-project cache, telemetry, shadow
-baseline cache).
+## API Routes
 
-## API Routes / DB
-
-Same as migration-style `db pull`.
+| Method | Path | Auth | Request body | Response (used fields) |
+| ------ | ---- | ---- | ------------ | ---------------------- |
+| —      | —    | —    | —            | —                      |
 
 ## Environment Variables
 
-Same as `db pull`. `SUPABASE_EXPERIMENTAL` selects the deprecated in-process
-declarative export.
+| Variable | Purpose | Required? |
+| -------- | ------- | --------- |
+| —        | —       | —         |
 
 ## Exit Codes
 
-| Code | Condition                                                |
-| ---- | -------------------------------------------------------- |
-| `0`  | success                                                  |
-| `1`  | same as migration-style `db pull` (including empty diff) |
+| Code | Condition                          |
+| ---- | ---------------------------------- |
+| `1`  | every invocation (removed command) |
 
 ## Output
 
 ### `--output-format text`
 
-Prints the deprecation line, then `Schema written to <path>` (or the
-declarative export lines) to stderr on success. No stdout confirmation and no
-`Finished supabase db pull.` PostRun line.
+Writes the removal message and the replacement suggestion to stderr, two lines,
+regardless of `-o`/`--output`:
+
+```
+supabase db remote commit was removed.
+Use `supabase db pull` instead.
+```
 
 ### `--output-format json` / `stream-json`
 
-Same envelope as migration-style `db pull`.
+Emits the JSON error envelope on stdout instead of the stderr lines above; the
+envelope's `code` is `RemovedSurfaceError` and `suggestion` carries the same
+replacement text.
+
+## Telemetry Events Fired
+
+One `cli_command_executed` event per invocation, with `exit_code: 1` and an
+`error_fingerprint` ending in `:removed_command` (`RemovedSurfaceError`).
 
 ## Notes
 
-- Deprecated: use `db pull` instead.
-- pg-delta is the default shadow-diff engine, as for migration-style `db pull`. This
-  command has no engine flag; `[experimental.pgdelta] enabled = false` selects migra.
-- `--schema` / `-s` restricts the commit to specific schemas.
-- `--db-url` and `--linked` are mutually exclusive.
+- No flag value is read; the command fails identically regardless of
+  `--schema`/`--db-url`/`--linked`/`--password`.

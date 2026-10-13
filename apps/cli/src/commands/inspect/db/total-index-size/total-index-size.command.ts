@@ -1,18 +1,24 @@
 import { Command } from "effect/cli";
-import { inspectDbTotalIndexSize } from "./total-index-size.handler.ts";
-import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
-import { inspectDbRuntimeLayer } from "../db.layers.ts";
-import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
-import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { INSPECT_DB_FLAGS } from "../inspect-db-command.ts";
+import { inspectDbCommandPath } from "../db.layers.ts";
 
 export const inspectDbTotalIndexSizeCommand = Command.make(
   "total-index-size",
   INSPECT_DB_FLAGS,
 ).pipe(
-  Command.withDescription('Show total size of all indexes. Deprecated: use "index-stats" instead.'),
-  Command.withShortDescription("Show total index size (deprecated)"),
-  Command.withHandler(inspectDbCommandHandler(inspectDbTotalIndexSize)),
-  Command.provide(inspectDbRuntimeLayer("total-index-size")),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(INSPECT_DB_FLAGS),
+  Command.withDescription("Removed: use `supabase inspect db index-stats` instead."),
+  Command.withShortDescription("Removed: use `inspect db index-stats` instead"),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase inspect db index-stats` instead.").pipe(
+      withCommandTelemetry(),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(commandRuntimeLayer(inspectDbCommandPath("total-index-size"))),
+  Command.provide(telemetryStateLayer),
 );

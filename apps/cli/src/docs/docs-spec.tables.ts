@@ -107,11 +107,8 @@ export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
   "supabase-inspect-db-role-configs",
   "supabase-inspect-db-role-connections",
   "supabase-inspect-db-seq-scans",
-  "supabase-inspect-db-table-index-sizes",
   "supabase-inspect-db-table-record-counts",
   "supabase-inspect-db-table-sizes",
-  "supabase-inspect-db-total-index-size",
-  "supabase-inspect-db-total-table-sizes",
   "supabase-inspect-db-unused-indexes",
 ]);
 
