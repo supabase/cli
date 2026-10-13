@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -51,6 +51,9 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
       );
     yield* creating?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(
+      response,
+      Option.getOrElse(flags.includeRawOutput, () => false),
+    );
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

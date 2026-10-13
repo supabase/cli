@@ -78,7 +78,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
@@ -343,15 +343,29 @@ describe("domains get integration", () => {
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
+        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stderrText).toBe(
           "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
         );
         const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
         expect(parsed.custom_hostname).toBe("shop.acme.dev");
+        expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
+      expect(
+        out.stderrText.startsWith(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        ),
+      ).toBe(true);
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("does not warn when --include-raw-output is not set", () => {
     const { layer, out } = setup();
@@ -361,21 +375,12 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("forces Go JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
     "forces Go JSON even when -o is explicitly pretty and --include-raw-output is set",
     () => {
       const { layer, out } = setup({ goOutput: "pretty" });
       return Effect.gen(function* () {
-        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
+        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stdoutText.startsWith("{")).toBe(true);
       }).pipe(Effect.provide(layer));
     },

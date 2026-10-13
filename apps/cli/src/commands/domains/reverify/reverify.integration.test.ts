@@ -65,7 +65,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
@@ -133,7 +133,7 @@ describe("domains reverify integration", () => {
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
+        yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stderrText).toBe(
           "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
         );
@@ -143,19 +143,24 @@ describe("domains reverify integration", () => {
     },
   );
 
+  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
+      expect(
+        out.stderrText.startsWith(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        ),
+      ).toBe(true);
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("does not warn when --include-raw-output is not set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
       expect(out.stderrText).not.toContain("deprecated");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("forces Go JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
