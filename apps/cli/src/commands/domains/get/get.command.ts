@@ -13,7 +13,7 @@ const config = {
   ),
   includeRawOutput: Flag.Boolean("include-raw-output").pipe(
     Flag.withDescription("(Deprecated) use -o json instead."),
-    Flag.withDefault(false),
+    Flag.optional,
   ),
 } as const;
 
