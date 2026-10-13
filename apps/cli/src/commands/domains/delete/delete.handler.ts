@@ -5,6 +5,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { warnIncludeRawOutputDeprecated } from "../domains.deprecation.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
 import type { DomainsDeleteFlags } from "./delete.command.ts";
 
@@ -12,15 +13,16 @@ const mapDeleteError = mapDomainsHttpError("delete");
 
 const DELETE_SUCCESS_MESSAGE = "Deleted custom hostname config successfully.";
 
-// `flags.includeRawOutput` is unread: `--include-raw-output` is a persistent flag on the
-// `domains` group, so it's accepted on `delete` too, but ignored — delete has no response
-// body to encode. Asserted by the "ignores --include-raw-output" integration test.
+// `--include-raw-output` is accepted on `delete` but inert (only the deprecation warning fires):
+// delete has no response body to encode.
 export const domainsDelete = Effect.fn("domains.delete")(function* (flags: DomainsDeleteFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
+
+  yield* warnIncludeRawOutputDeprecated(flags.includeRawOutput);
 
   const ref = yield* resolver.resolve(flags.projectRef);
 

@@ -8,11 +8,8 @@ import {
   mockCommandPlatformApi,
   mockCommandSettings,
 } from "../../tests/helpers/command-mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { loginApiLayer, loginProfile } from "./login-api.layer.ts";
-import { mapped } from "./command-permissions/model.ts";
-
-const declared = { _tag: "Declared", permissions: mapped(loginProfile) } as const;
 
 describe("loginApiLayer", () => {
   it.effect("fetches the account identity from GET /v1/profile after login", () => {
@@ -30,8 +27,7 @@ describe("loginApiLayer", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/profile",
       ]);
-      assertDriftAgainst(declared, {
-        command: "login-profile block",
+      assertBlockDrift(loginProfile, {
         activeFlags: {},
         requests: api.requests,
       });

@@ -43,7 +43,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains delete integration", () => {
   it.effect("prints the success line to stderr in text mode", () => {
@@ -84,12 +84,30 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("ignores --include-raw-output (inert on delete, Go parity)", () => {
+  it.effect(
+    "is inert apart from the stderr deprecation warning when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup({ goOutput: "json" });
+      return Effect.gen(function* () {
+        yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
+        expect(out.stdoutText).toBe("");
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+            "Deleted custom hostname config successfully.\n",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("warns when --include-raw-output=false", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
+      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+          "Deleted custom hostname config successfully.\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 

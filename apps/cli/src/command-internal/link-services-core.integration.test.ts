@@ -10,11 +10,9 @@ import {
   mockCommandSettings,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { linkServices, linkServicesCore } from "./link-services-core.ts";
-import { mapped } from "./command-permissions/model.ts";
 
-const declared = { _tag: "Declared", permissions: mapped(linkServices) } as const;
 const storageConfigUrl = `https://api.supabase.com/v1/projects/${VALID_REF}/config/storage`;
 const poolerConfigUrl = `https://api.supabase.com/v1/projects/${VALID_REF}/config/database/pooler`;
 
@@ -91,8 +89,7 @@ describe("linkServicesCore", () => {
       const urls = requests.map((request) => request.url);
       expect(urls).toContain(storageConfigUrl);
       expect(urls).toContain(poolerConfigUrl);
-      assertDriftAgainst(declared, {
-        command: "link-services block",
+      assertBlockDrift(linkServices, {
         activeFlags: { "skip-pooler": false },
         requests,
       });
@@ -120,8 +117,7 @@ describe("linkServicesCore", () => {
       expect(yield* fs.readFileString(`${temp}/pooler-url`)).toBe(
         `postgres://postgres.${VALID_REF}@aws-0-us-east-1.pooler.supabase.com:5432/postgres`,
       );
-      assertDriftAgainst(declared, {
-        command: "link-services block",
+      assertBlockDrift(linkServices, {
         activeFlags: { "skip-pooler": false },
         requests,
       });
@@ -153,8 +149,7 @@ describe("linkServicesCore", () => {
       const urls = requests.map((request) => request.url);
       expect(urls).toContain(storageConfigUrl);
       expect(urls).not.toContain(poolerConfigUrl);
-      assertDriftAgainst(declared, {
-        command: "link-services block",
+      assertBlockDrift(linkServices, {
         activeFlags: { "skip-pooler": true },
         requests,
       });
