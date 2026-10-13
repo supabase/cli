@@ -8,7 +8,7 @@ import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import { runSupabase } from "../../tests/helpers/cli.ts";
 
 const binary = fileURLToPath(new URL("../../dist/supabase", import.meta.url));
-const reminder = "[mock] ⚠ Secure your account";
+const reminder = "⚠ Secure your account";
 
 function runWithTerminal(args: ReadonlyArray<string>, extraEnv: Record<string, string> = {}) {
   const home = mkdtempSync(join(tmpdir(), "supabase-account-reminder-"));

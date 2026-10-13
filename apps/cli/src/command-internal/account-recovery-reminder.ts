@@ -14,14 +14,14 @@ const accountSecurityHeading = (state: MockRecoveryState): string =>
   state === "exhausted" ? red("⚠ Secure your account") : yellow("⚠ Secure your account");
 
 const message = (state: MockRecoveryState): string => {
-  const heading = `[mock] ${accountSecurityHeading(state)}`;
+  const heading = accountSecurityHeading(state);
   switch (state) {
     case "exhausted":
-      return `${heading}\n\nYour recovery codes are exhausted. Generate and save a new set:\nhttps://supabase.com/dashboard/account/security`;
+      return `${heading}\n│\n│ Your recovery codes are exhausted.\n│ Generate and save a new set:\n│ https://supabase.com/dashboard/account/security`;
     case "missing":
-      return `${heading}\n\nYou have no recovery codes. Generate and save a set:\nhttps://supabase.com/dashboard/account/security`;
+      return `${heading}\n│\n│ You have no recovery codes.\n│ Generate and save a set:\n│ https://supabase.com/dashboard/account/security`;
     case "low":
-      return `${heading}\n\nYou have few recovery codes left. Generate and save a new set:\nhttps://supabase.com/dashboard/account/security`;
+      return `${heading}\n│\n│ You have few recovery codes left.\n│ Generate and save a new set:\n│ https://supabase.com/dashboard/account/security`;
   }
 };
 
