@@ -28,14 +28,12 @@ function mockSpawner(
       spawned.push({ command: cmd, args });
 
       if ((opts.dockerMissing && cmd === "docker") || opts.bothMissing === true) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();

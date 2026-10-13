@@ -17,6 +17,7 @@ import {
 import {
   blockingStage,
   initialState,
+  hasDemand,
   LifecycleEvent,
   makeGraph,
   reduce,
@@ -482,7 +483,11 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   ) {
     const service = state.services.get(id);
     const operation =
-      service?.intent === "stopped" ? "stop" : service?.relaunchForced ? "restart" : "sleep";
+      service?.intent === "stopped"
+        ? "stop"
+        : service?.relaunchForced || hasDemand(state, id)
+          ? "restart"
+          : "sleep";
     const discard = service?.destroy !== undefined;
     yield* fork(
       node(id).pipe(

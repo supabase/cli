@@ -358,7 +358,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
       const explicitCtx: PgDeltaContext = {
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -522,7 +522,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then the
       // workdir basename fallback; the matched `[remotes.<ref>]` block's own `project_id`
       // suppresses the raw env argument on the linked path — see `readDbToml`'s doc comment.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,

@@ -763,6 +763,69 @@ describe("service composition", () => {
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.live(
+    "restarts a running dependent on its prerequisite's new generation after the prerequisite crashes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* makeTestOrchestrator();
+          const events = yield* Ref.make<ReadonlyArray<string>>([]);
+          const crashed = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
+          const restRelaunched = yield* Deferred.make<void>();
+          const restLaunches = yield* Ref.make(0);
+          const database = yield* makeInstance(orchestrator, "database", { events, exit: crashed });
+          const rest = yield* makeInstance(orchestrator, "rest", {
+            events,
+            launch: Ref.updateAndGet(restLaunches, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 2 ? Deferred.succeed(restRelaunched, undefined) : Effect.void,
+              ),
+            ),
+          });
+          yield* orchestrator.configure({
+            members: [
+              { id: "database", activation: "lazy", idleMillis: 10_000 },
+              { id: "rest", activation: "lazy", idleMillis: 10_000 },
+            ],
+            dependencies: [{ from: "database", to: "rest" }],
+          });
+          yield* orchestrator.startComposition;
+          const requestScope = yield* Scope.make();
+          yield* orchestrator.acquire("rest").pipe(Scope.provide(requestScope));
+
+          const subscribed = yield* Deferred.make<void>();
+          const labelledRestart = yield* rest.observation.pipe(
+            Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+            Stream.filter((state) => state.currentOperation === "restart"),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(subscribed);
+          yield* Deferred.succeed(
+            crashed,
+            Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
+          );
+          yield* Deferred.await(restRelaunched);
+          yield* rest.ready;
+          yield* Fiber.join(labelledRestart);
+
+          const recorded = yield* Ref.get(events);
+          expect(recorded.filter((name) => name.endsWith(":rest"))).toEqual([
+            "start:rest",
+            "stop:rest",
+            "start:rest",
+          ]);
+          expect(yield* Ref.get(database.starts)).toHaveLength(2);
+          expect(recorded.lastIndexOf("start:database")).toBeLessThan(
+            recorded.lastIndexOf("start:rest"),
+          );
+          yield* Scope.close(requestScope, Exit.void);
+          yield* orchestrator.stopNamespace;
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.live("continues namespace destruction after a service data removal fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1772,39 +1835,36 @@ describe("failed and crashed services", () => {
     ),
   );
 
-  it.live("relaunches a crashed prerequisite without replacing its healthy dependent", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const orchestrator = yield* makeTestOrchestrator();
-        const crash = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
-        const launched = yield* Queue.unbounded<void>();
-        const database = yield* makeInstance(orchestrator, "database", {
-          exit: crash,
-          onReport: (event) =>
-            event._tag === "LaunchSucceeded" ? Queue.offer(launched, undefined) : Effect.void,
-        });
-        const rest = yield* makeInstance(orchestrator, "rest");
-        yield* orchestrator.configure({
-          members: [
-            { id: "database", activation: "lazy" },
-            { id: "rest", activation: "lazy" },
-          ],
-          dependencies: [{ from: "database", to: "rest" }],
-        });
-        yield* orchestrator.startComposition;
-        yield* Effect.scoped(orchestrator.acquire("rest"));
-        yield* Queue.take(launched);
+  it.live(
+    "stops an idle dependent of a crashed prerequisite and wakes both on the next request",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* makeTestOrchestrator();
+          const crash = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
+          const database = yield* makeInstance(orchestrator, "database", { exit: crash });
+          const rest = yield* makeInstance(orchestrator, "rest");
+          yield* orchestrator.configure({
+            members: [
+              { id: "database", activation: "lazy" },
+              { id: "rest", activation: "lazy" },
+            ],
+            dependencies: [{ from: "database", to: "rest" }],
+          });
+          yield* orchestrator.startComposition;
+          yield* Effect.scoped(orchestrator.acquire("rest"));
 
-        yield* Deferred.succeed(crash, Exit.fail(failure("segfault")));
-        yield* Queue.take(launched);
+          const restStopped = yield* stopped(rest).pipe(Effect.forkChild);
+          yield* Deferred.succeed(crash, Exit.fail(failure("segfault")));
+          yield* Fiber.join(restStopped);
 
-        expect((yield* rest.status).lifecycle).toBe("running");
-        expect(yield* Ref.get(database.starts)).toHaveLength(2);
-        expect(yield* Ref.get(rest.starts)).toHaveLength(1);
-        yield* Effect.scoped(orchestrator.acquire("rest"));
-        yield* orchestrator.stopNamespace;
-      }),
-    ),
+          yield* Effect.scoped(orchestrator.acquire("rest"));
+          expect((yield* rest.status).lifecycle).toBe("running");
+          expect(yield* Ref.get(database.starts)).toHaveLength(2);
+          expect(yield* Ref.get(rest.starts)).toHaveLength(2);
+          yield* orchestrator.stopNamespace;
+        }),
+      ),
   );
 });
 

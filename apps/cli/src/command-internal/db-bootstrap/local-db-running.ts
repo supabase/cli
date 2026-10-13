@@ -334,6 +334,7 @@ export function isLocalDbRunning(
         Effect.orElseSucceed(() => Option.none<string>()),
       );
       const projectId = resolveLocalProjectId(
+        path,
         configuredProjectId,
         Option.getOrUndefined(tomlProjectId),
         workdir,

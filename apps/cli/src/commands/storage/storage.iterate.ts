@@ -19,13 +19,11 @@ export const storagePaths = (
   const [bucket, prefix] = splitBucketPrefix(remotePath);
   if (bucket.length === 0 || (prefix.length === 0 && !remotePath.endsWith("/"))) {
     return Stream.fromArrayEffect(
-      gateway
-        .listBuckets()
-        .pipe(
-          Effect.map((buckets) =>
-            buckets.filter((b) => b.name.startsWith(bucket)).map((b) => `${b.name}/`),
-          ),
+      gateway.listBuckets.pipe(
+        Effect.map((buckets) =>
+          buckets.filter((b) => b.name.startsWith(bucket)).map((b) => `${b.name}/`),
         ),
+      ),
     );
   }
   return Stream.paginate(0, (page) =>

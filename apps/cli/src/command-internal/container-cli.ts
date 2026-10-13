@@ -64,12 +64,8 @@ export const spawnContainerCliWithRuntime = (
     Effect.catch(() =>
       spawnRuntime(spawner, podmanRuntime, args, options).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -175,12 +171,8 @@ export const containerCliExitCode = (
   runtimeExitCode(spawner, dockerRuntime, args, options).pipe(
     Effect.catch(() =>
       runtimeExitCode(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -268,12 +260,8 @@ export const containerCliExitCodeAndStdout = (
       const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
           spawnRuntime(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
-            Effect.catch(() =>
-              Effect.fail(
-                new ContainerRuntimeNotFoundError({
-                  message: containerRuntimeNotFoundMessage,
-                }),
-              ),
+            Effect.mapError(
+              () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
             ),
           ),
         ),

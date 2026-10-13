@@ -118,7 +118,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
             if (!flags.recursive) {
               return yield* new StorageMissingFlagError();
             }
-            const buckets = yield* gateway.listBuckets();
+            const buckets = yield* gateway.listBuckets;
             for (const b of buckets) groups.set(b.name, [""]);
           }
 
