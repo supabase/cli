@@ -20,10 +20,43 @@ inputs:
       that never run Go.
     required: false
     default: "true"
+  docker-images:
+    description: >-
+      Whether to keep Docker's image store on a Blacksmith sticky disk so
+      stack images are not pulled again on every job.
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
   steps:
+    - name: Stop Docker before mounting its image disk
+      id: docker-disk
+      if: inputs.docker-images == 'true'
+      shell: bash
+      run: |
+        if [ -z "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] || [ "$RUNNER_OS" != Linux ]; then
+          exit 0
+        fi
+        sudo systemctl stop docker.socket docker.service
+        echo "mount=true" >> "$GITHUB_OUTPUT"
+
+    - name: Mount Docker image disk
+      if: steps.docker-disk.outputs.mount == 'true'
+      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
+      with:
+        key: ${{ github.repository }}-docker-images-${{ runner.arch }}
+        path: /var/lib/docker
+        commit: on-change
+
+    - name: Restart Docker on the image disk
+      if: steps.docker-disk.outputs.mount == 'true'
+      shell: bash
+      run: |
+        sudo systemctl start docker.socket docker.service
+        docker info --format '{{.DockerRootDir}} {{.Driver}}'
+        docker image ls --format '{{.Repository}}:{{.Tag}}' | wc -l
+
     - name: Install toolchains
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
