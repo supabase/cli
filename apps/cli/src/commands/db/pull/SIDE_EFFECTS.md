@@ -220,4 +220,4 @@ Both fail with `RemovedSurfaceError` (exit 1). Telemetry records `cli_command_ex
   --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull."
   `--experimental --declarative` runs the declarative export without an error, and an explicit
   `--experimental=false` beats the env. The check lives in the `db pull` command handler, not in
-  the shared pull runner, so `supabase pull` is unaffected by `SUPABASE_EXPERIMENTAL`.
+  the shared pull runner, so `supabase pull` does not reject `SUPABASE_EXPERIMENTAL`.

@@ -98,6 +98,8 @@ export type DbPullInvoke = {
    * `undefined` keeps the existing resolution.
    */
   readonly assumeYes?: boolean;
+  /** Project `.env*` values the caller already loaded; `undefined` loads them here. */
+  readonly projectEnv?: Record<string, string>;
 };
 
 export type DbPullOutcome =
@@ -139,7 +141,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
   // the native initial-migra history repair too.
-  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
+  const projectEnv =
+    invoke?.projectEnv ?? (yield* loadProjectEnvValues(fs, path, cliSettings.workdir));
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
   let linkedRefForCache: string | undefined;

@@ -5,6 +5,7 @@ import { CliOutput, Command } from "effect/cli";
 
 import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/project-ref.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
@@ -80,6 +81,20 @@ const removedError = (exit: Exit.Exit<unknown, unknown>) => {
   return error as RemovedSurfaceError;
 };
 
+const passedRemovalGuard = (exit: Exit.Exit<unknown, unknown>) => {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (!Exit.isFailure(exit)) throw new Error("expected failure");
+  const error = Cause.squash(exit.cause);
+  expect(error).not.toBeInstanceOf(RemovedSurfaceError);
+  return error;
+};
+
+const expectNotLinked = (exit: Exit.Exit<unknown, unknown>) =>
+  expect(passedRemovalGuard(exit)).toMatchObject({
+    _tag: "ProjectRefNotLinkedError",
+    message: PROJECT_NOT_LINKED_MESSAGE,
+  });
+
 describe("db pull removed surfaces through command dispatch", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -129,13 +144,11 @@ describe("db pull removed surfaces through command dispatch", () => {
     }),
   );
 
-  it.live("a missing profile still fails plain db pull with a different error", () =>
+  it.live("a missing profile fails plain db pull with a profile load error", () =>
     Effect.gen(function* () {
       const { exit } = yield* runDbPull([], { env: { SUPABASE_PROFILE: "missing-profile" } });
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      expect(Cause.squash(exit.cause)).not.toBeInstanceOf(RemovedSurfaceError);
+      expect(passedRemovalGuard(exit)).toMatchObject({ _tag: "ProfileLoadError" });
     }),
   );
 
@@ -143,9 +156,7 @@ describe("db pull removed surfaces through command dispatch", () => {
     Effect.gen(function* () {
       const { exit } = yield* runDbPull([]);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      expect(Cause.squash(exit.cause)).not.toBeInstanceOf(RemovedSurfaceError);
+      expectNotLinked(exit);
     }),
   );
 
@@ -155,9 +166,7 @@ describe("db pull removed surfaces through command dispatch", () => {
         env: { SUPABASE_EXPERIMENTAL: "true" },
       });
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      expect(Cause.squash(exit.cause)).not.toBeInstanceOf(RemovedSurfaceError);
+      expectNotLinked(exit);
     }),
   );
 
@@ -165,9 +174,7 @@ describe("db pull removed surfaces through command dispatch", () => {
     Effect.gen(function* () {
       const { exit } = yield* runDbPull(["--experimental", "--declarative"]);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      expect(Cause.squash(exit.cause)).not.toBeInstanceOf(RemovedSurfaceError);
+      expectNotLinked(exit);
     }),
   );
 

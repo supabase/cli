@@ -315,8 +315,8 @@ pull`/`migration fetch`'s own internal resolution) — this doesn't matter in pr
   confirmation is accepted.
 - **The db step always runs in migration mode when orchestrated by `pull`, never the declarative
   path.** `pull` never sets `--declarative`/`--diff-engine` on its own db-step invocation and calls
-  `runDbPull` (`command-internal/db-pull-run.ts`), which never reads `--experimental` or
-  `SUPABASE_EXPERIMENTAL`. Only the standalone `db pull` command rejects an ambient experimental
-  gate without `--declarative` (see `db/pull/SIDE_EFFECTS.md`), so `pull` keeps working when it is
-  set. The retry hint for the db step ends in `--experimental=false` so that command does not hit
+  `runDbPull` (`command-internal/db-pull-run.ts`), where the experimental gate no longer selects
+  the pull mode (its local-container prelude still resolves the gate for the local stack). Only the
+  standalone `db pull` command rejects an ambient experimental gate without `--declarative` (see
+  `db/pull/SIDE_EFFECTS.md`), so `pull` keeps working when it is set. The retry hint for the db step ends in `--experimental=false` so that command does not hit
   that rejection either.

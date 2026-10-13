@@ -20,11 +20,12 @@ const EXPERIMENTAL_SUGGESTION =
 export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags) {
   // Checked here rather than in `runDbPull` so the `pull` orchestrator, which calls `runDbPull`
   // directly, keeps working when `SUPABASE_EXPERIMENTAL` is set.
+  let projectEnv: Record<string, string> | undefined;
   if (!Option.getOrElse(flags.declarative, () => false)) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const cliSettings = yield* CommandSettings;
-    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
+    projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
     if (yield* resolveExperimentalWithProjectEnv(projectEnv)) {
       return yield* removedFlag(
         "The --experimental structured-dump mode of db pull",
@@ -33,7 +34,7 @@ export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags) {
     }
   }
   const output = yield* Output;
-  const outcome = yield* runDbPull(flags);
+  const outcome = yield* runDbPull(flags, { projectEnv });
 
   yield* Effect.annotateCurrentSpan({
     "db.pull.outcome": outcome.kind,
