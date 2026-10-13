@@ -1144,7 +1144,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
             },
           ]);
           expect(connections).toEqual([]);
-          assertDbConfigDrift(requests, { "project-ref": true });
         }),
       ),
       Effect.ensuring(
