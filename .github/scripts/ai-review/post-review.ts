@@ -649,9 +649,7 @@ export function renderReviewBody(
   const state = footer.headSha
     ? `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete === true, findings: posted.length })}\n`
     : "";
-  const sections: string[] = [
-    `${state}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`,
-  ];
+  const sections: string[] = [`${state}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
 
   if (posted.length > 0) {
     const rows = posted.map(
