@@ -8,7 +8,7 @@ major; `next` collects breaking changes for the following major. The working dir
 sync branch: `develop` with `next` merged in and its conflicts already resolved, but some checks
 fail. Repository conventions live in `CLAUDE.md`, `AGENTS.md`, and `docs/adr/`. Read these first:
 
-- `ci-failures.md` in the added context directory: the failed checks and the end of their output.
+- `ci-failures.md` in the added context directory: the failed checks, the output after each error, and the end of their logs.
 - `review-findings.md` in the same directory: the AI review's open findings, numbered.
 
 ## Your task
