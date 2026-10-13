@@ -1,6 +1,20 @@
+import { BunSink } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { Writable } from "node:stream";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
@@ -1010,6 +1024,41 @@ describe("Output", () => {
         }).pipe(Effect.provide(layer));
       },
     );
+
+    it.effect("fails the envelope write after the result write hit a closed pipe", () => {
+      const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+      /* Guards the NodeSink patch: destroyed before the result write and settled only after both
+         writes, which find only `errored`; its `error` then arrives late, as on a dead pipe. */
+      let settleDestroy = () => {};
+      const writable = new Writable({
+        write: (_chunk, _encoding, callback) => callback(),
+        destroy: (error, callback) => {
+          settleDestroy = () => callback(error);
+        },
+      });
+      const stdout = BunSink.fromWritable({
+        evaluate: () => writable.destroy(epipe),
+        onError: (cause) =>
+          PlatformError.systemError({ module: "Stdio", method: "stdout", _tag: "Unknown", cause }),
+      });
+      const layer = jsonOutputLayer.pipe(Layer.provide(Stdio.layerTest({ stdout: () => stdout })));
+      const failure = (exit: Exit.Exit<void>) =>
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        expect(failure(yield* Effect.exit(out.success("Listed.")))).toMatchObject({ cause: epipe });
+        expect(failure(yield* Effect.exit(out.fail({ code: "E", message: "x" })))).toMatchObject({
+          cause: epipe,
+        });
+        /* Settling the destroy emits the late `error` and then `close`, so an unhandled one fails. */
+        yield* Effect.callback<void>((resume) => {
+          const onClose = () => resume(Effect.void);
+          writable.once("close", onClose);
+          settleDestroy();
+          return Effect.sync(() => writable.off("close", onClose));
+        });
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("stream-json layer", () => {

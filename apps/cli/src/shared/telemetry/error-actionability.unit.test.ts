@@ -198,6 +198,15 @@ describe("classifyCliErrorActionability", () => {
       ).error_category,
     ).toBe("invalid_input");
     expect(
+      classifyCliCauseActionability(
+        Cause.die(
+          externalError("PlatformError", {
+            reason: { _tag: "Unknown", module: "Stdio", cause: { code: "EPIPE" } },
+          }),
+        ),
+      ).error_category,
+    ).toBe("cancelled");
+    expect(
       classifyCliErrorActionability(externalError("HttpClientError", { response: { status: 403 } }))
         .error_category,
     ).toBe("permission");

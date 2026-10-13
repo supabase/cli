@@ -889,6 +889,15 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     if (reasonTag === "NotFound") {
       return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
     }
+    /* A stdout/stderr pipe whose reader exited ends the run like SIGPIPE (exit 141 in run.ts),
+       a stop on the consumer's side rather than a CLI bug. */
+    const stdioCause =
+      isErrorRecord(reason) && readString(reason, "module") === "Stdio"
+        ? reason["cause"]
+        : undefined;
+    if (isErrorRecord(stdioCause) && readString(stdioCause, "code") === "EPIPE") {
+      return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
+    }
     // The remaining closed SystemError reasons are context-dependent. Keep
     // them unknown until a command boundary supplies a more specific wrapper
     // instead of misreporting every local I/O failure as a permission issue.

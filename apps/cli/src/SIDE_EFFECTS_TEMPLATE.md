@@ -12,6 +12,12 @@
 > `src/commands/<command>/<subcommand>/SIDE_EFFECTS.md` for subcommands).
 > Fill in every section. Use `—` for "none" rather than leaving a section empty.
 > See `src/commands/orgs/list/SIDE_EFFECTS.md` for a complete example.
+>
+> **Shared exit code:** if a write through `Output` (the command's own, the machine-readable error
+> report, or the follow-up messages printed after a successful command) finds stdout or stderr is a pipe
+> whose reader has exited, the CLI exits `141` (128 + SIGPIPE) without an error report, unless another
+> failure also occurred; finalizers still run. Text-mode log lines and error report, `--debug` and the upgrade notice do not fail the command or
+> change its exit code, though Bun may print an `EPIPE` trace to a live stderr.
 
 ---
 

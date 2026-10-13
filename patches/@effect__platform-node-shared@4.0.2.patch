@@ -13,3 +13,31 @@ index b3e4deaa75124184262437280a97bad2b9e07c9d..4b1f5f5f4c119e738991b6d8b84d59fd
        sink = NodeSink.fromWritable({
          evaluate: () => childProcess.stdin,
          onError: error => toPlatformError("fromWritable(stdin)", toError(error), command),
+diff --git a/dist/NodeSink.js b/dist/NodeSink.js
+index 917fc2c37ee6f47063c59f268ddc2c40375e4ae1..f5afc8558e3b93ee5a1fad700add8129503c073d 100644
+--- a/dist/NodeSink.js
++++ b/dist/NodeSink.js
+@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
+ import { identity } from "effect/Function";
+ import * as Pull from "effect/Pull";
+ import * as Sink from "effect/Sink";
++const ignoreError = () => {};
+ /**
+  * Creates a `Sink` that writes chunks to a Node writable stream, respecting
+  * backpressure, mapping writable errors with `onError`, and ending the stream
+@@ -57,6 +58,15 @@ export const pullIntoWritable = options => options.pull.pipe(Effect.flatMap(chun
+         if (cancelled) {
+           return;
+         }
++        /* A write to an errored writable never emits `drain`, so fail now. The no-op listener
++           keeps a late `error` from a pending destroy from going unhandled. */
++        if (options.writable.errored) {
++          if (!options.writable.listeners("error").includes(ignoreError)) {
++            options.writable.on("error", ignoreError);
++          }
++          resume(Effect.fail(options.onError(options.writable.errored)));
++          return;
++        }
+         const success = options.writable.write(chunk[i++], options.encoding);
+         if (!success) {
+           if (!cancelled) {

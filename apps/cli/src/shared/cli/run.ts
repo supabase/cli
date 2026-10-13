@@ -12,6 +12,7 @@ import {
   Layer,
   Path,
   PlatformError,
+  Predicate,
   Runtime,
   Scope,
   Stdio,
@@ -337,15 +338,37 @@ function formatterLayerFor(
 }
 
 /**
- * Process exit code for a failed CLI run. Delegates to Effect's own `Runtime` exit-code protocol
- * rather than hand-rolling classification: a bare group command's default handler failing with
+ * Process exit code for a failed CLI run. An interrupt exits `130` and a write to a closed stdio
+ * pipe exits `141`, as SIGPIPE would. Everything else follows Effect's own `Runtime` exit-code
+ * protocol: a bare group command's default handler failing with
  * `ShowHelp({ errors: [] })` (no subcommand given) reads as exit `0`; a `ShowHelp` with a
  * non-empty `errors` array, or any other failure, falls back to exit `1`. An explicit `--help`
  * invocation never reaches this function — it exits 0 via the success path.
  */
 export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
   if (Cause.hasInterruptsOnly(cause)) return 130;
+  if (isClosedStdioPipe(cause)) return 141;
   return Runtime.getErrorExitCode(Cause.squash(cause));
+}
+
+/**
+ * Every failure or defect in the cause is a stdout/stderr write that hit EPIPE: the reader is
+ * gone, so exit as SIGPIPE would, unreported. Interrupts are left to the caller.
+ */
+function isClosedStdioPipe(cause: Cause.Cause<unknown>): boolean {
+  const errors = cause.reasons.flatMap((reason) =>
+    Cause.isFailReason(reason) ? [reason.error] : Cause.isDieReason(reason) ? [reason.defect] : [],
+  );
+  return (
+    errors.length > 0 &&
+    errors.every(
+      (error) =>
+        error instanceof PlatformError.PlatformError &&
+        error.reason.module === "Stdio" &&
+        Predicate.hasProperty(error.reason.cause, "code") &&
+        error.reason.cause.code === "EPIPE",
+    )
+  );
 }
 
 /**
@@ -354,10 +377,11 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
  * child already wrote its own failure to the inherited stderr, so a second line here would be
  * redundant. Checked by concrete type rather than Effect's shared `[Runtime.errorReported]`
  * marker, since `CliError.ShowHelp` also sets that marker `false` for an unrelated reason and
- * would otherwise suppress real error rendering too.
+ * would otherwise suppress real error rendering too. A closed stdio pipe is not reported either,
+ * matching SIGPIPE.
  */
 export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
-  if (exitCode === 0 || exitCode === 130) return false;
+  if (exitCode === 0 || exitCode === 130 || isClosedStdioPipe(cause)) return false;
   return !(Cause.squash(cause) instanceof GoChildExitError);
 }
 
@@ -761,7 +785,16 @@ export const runCli = Effect.fnUntraced(function* <
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
       return exitCode ?? 0;
-    }).pipe(Effect.provide(runToExitCodeLayer));
+    }).pipe(
+      /* The program's exit is already captured, so only the final report and trailer writes fail
+         here; one that hit a closed stdio pipe exits 141, as SIGPIPE would. */
+      Effect.catchCause((cause) =>
+        !Cause.hasInterrupts(cause) && isClosedStdioPipe(cause)
+          ? Effect.succeed(141)
+          : Effect.failCause(cause),
+      ),
+      Effect.provide(runToExitCodeLayer),
+    );
 
   // The exit code is resolved inside the traced scope so its flush completes before
   // `processControl.exit`, which skips finalizers.

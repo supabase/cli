@@ -371,6 +371,8 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** POSIX only: start the CLI with these streams on a pipe that has no reader. */
+    closedPipe?: "stdout" | "stderr" | "stdout-and-stderr";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -403,6 +405,20 @@ export function spawnSupabase(
   env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
+  if (options?.closedPipe) {
+    /* The shell opens the FIFO's only reader on fd 3 and closes it before the CLI starts, so
+       writes to it fail with EPIPE (as after `| true`) with no reader process exit to race. */
+    const redirect = { stdout: '> "$1"', stderr: '2> "$1"', "stdout-and-stderr": '> "$1" 2>&1' };
+    execArgs = [
+      "-c",
+      `mkfifo "$1" || exit; exec 3<> "$1"; exec ${redirect[options.closedPipe]}; exec 3>&-; shift; exec "$@"`,
+      "sh",
+      path.join(homeDir, `closed-pipe-${crypto.randomUUID()}.fifo`),
+      execCmd,
+      ...execArgs,
+    ];
+    execCmd = "/bin/sh";
+  }
   const proc = spawn(execCmd, execArgs, {
     cwd: options?.cwd,
     env,
