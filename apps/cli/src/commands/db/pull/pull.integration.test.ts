@@ -1772,7 +1772,7 @@ describe("db pull", () => {
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
         );
         expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
       }).pipe(Effect.provide(s.layer));
@@ -1827,7 +1827,7 @@ describe("db pull", () => {
       yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(streamText(s.out, "stderr")).toContain(
-        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
+        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
       );
     }).pipe(Effect.provide(s.layer));
   });
@@ -1849,7 +1849,7 @@ describe("db pull", () => {
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
         );
       }).pipe(Effect.provide(s.layer));
     },

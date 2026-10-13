@@ -265,6 +265,14 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
   }
 };
 
+/**
+ * An explicitly empty `--password` asks for a temporary login role even when
+ * `SUPABASE_DB_PASSWORD` or the project `.env` holds one. The flag binding drops empty strings, so
+ * pass it to {@link resolveLinkedPassword} as the caller's password instead.
+ */
+const emptyPasswordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
+  Option.filter(password ?? Option.none(), (value) => value.length === 0);
+
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
 ) =>
@@ -682,7 +690,7 @@ export const dbConfigResolverLayer = Layer.effect(
               cliSettings.projectHost,
               cliSettings.poolerHost,
               flags.dnsResolver,
-              Option.none(),
+              emptyPasswordFlag(flags.password),
               {
                 adHocProjectRef: flags.adHocProjectRef ?? false,
                 resolveVaultSecrets,
@@ -751,7 +759,7 @@ export const dbConfigResolverLayer = Layer.effect(
           const password = yield* resolveLinkedPassword(
             ref,
             cliSettings.workdir,
-            Option.none(),
+            emptyPasswordFlag(flags.password),
             flags.password !== undefined,
           );
           // Container-fallback: fetch the primary pooler config from the Management API when

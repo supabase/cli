@@ -18,6 +18,8 @@ import { DebugLogger } from "../../src/shared/output/debug-logger.service.ts";
 import { linkedProjectCacheLayer } from "../../src/telemetry/linked-project-cache.layer.ts";
 import type { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { mockCommandCredentialsLayer, mockCommandSettings } from "./command-mocks.ts";
+import { definedEnv } from "./config-env-pins.ts";
+import { configValuesLayer } from "./config-values-layer.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -86,6 +88,7 @@ export function realDbConfigResolver(opts: {
     ),
     BunServices.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(opts.env, { preserveEmptyStrings: true })),
+    configValuesLayer({ env: definedEnv(opts.env) }),
   );
   return dbConfigLayer.pipe(Layer.provide(deps));
 }

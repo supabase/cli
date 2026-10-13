@@ -343,7 +343,7 @@ describe("domains get integration", () => {
       return Effect.gen(function* () {
         yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n",
         );
         const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
         expect(parsed.custom_hostname).toBe("shop.acme.dev");
@@ -358,7 +358,7 @@ describe("domains get integration", () => {
       yield* domainsGet({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
       expect(
         out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n",
         ),
       ).toBe(true);
       expect(out.stdoutText).toBe("");

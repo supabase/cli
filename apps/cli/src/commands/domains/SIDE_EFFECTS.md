@@ -93,7 +93,7 @@ suppressed on stderr. `delete` ignores `-o`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
 - All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file.
 - The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
-- `--include-raw-output` is deprecated: passing it with any value (including `--include-raw-output=false`) prints `Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.` to stderr before the API call, in every output mode, on all five subcommands (including `delete`). stdout is unaffected.
+- `--include-raw-output` is deprecated: passing it with any value (including `--include-raw-output=false`) prints `Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.` to stderr before the API call, in every output mode, on all five subcommands (including `delete`). stdout is unaffected.
 - **Notes:**
   - `--include-raw-output` is declared as an optional boolean **on each subcommand**. Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it is not hidden from help. It forces `-o json` when the value is `true` and `-o` is unset/pretty; on `delete` it is inert.
   - The degenerate `validation_records != 1` status message is an approximate struct dump (the exact text is not stable).

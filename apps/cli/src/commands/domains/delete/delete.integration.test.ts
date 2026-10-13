@@ -92,7 +92,7 @@ describe("domains delete integration", () => {
         yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stdoutText).toBe("");
         expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n" +
             "Deleted custom hostname config successfully.\n",
         );
       }).pipe(Effect.provide(layer));
@@ -105,7 +105,7 @@ describe("domains delete integration", () => {
       yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe(
-        "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+        "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n" +
           "Deleted custom hostname config successfully.\n",
       );
     }).pipe(Effect.provide(layer));

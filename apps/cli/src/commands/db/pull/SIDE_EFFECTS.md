@@ -209,7 +209,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   empty diff is "No schema changes found". Stack-backed pulls never take this path.
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) now runs the same in-process declarative export
-  as `--declarative`. It is deprecated and will be removed in v3: a warning pointing
+  as `--declarative`. It is deprecated and will be removed in a future release: a warning pointing
   at `--declarative` prints to stderr before the export. `--experimental --declarative` does not
   print that line. Output is the pg-delta declarative tree under
   `supabase/schemas` (plus `.pgdelta-export.json`).

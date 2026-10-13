@@ -105,7 +105,7 @@ const MIGRATION_FILE_MODE = 0o644;
 // export covers the same per-object-files outcome. Printed only when the experimental gate
 // selected this branch, not when `--declarative` already did.
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
-  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3. Use --declarative instead to pull the remote schema as per-object files.";
+  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
   /**
