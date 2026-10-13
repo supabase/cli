@@ -177,23 +177,20 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "fails on an invalid SUPABASE_API_PORT without creating the function directory",
-    () => {
-      const { layer, workdir } = setup();
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+  it.effect("fails on an invalid SUPABASE_API_PORT without creating the function directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
 
-        const error = yield* functionsNew({ functionName: "hello", auth: "apikey" }).pipe(
-          Effect.flip,
-        );
+      const error = yield* functionsNew({ functionName: "hello", auth: "apikey" }).pipe(
+        Effect.flip,
+      );
 
-        expect(error).toBeInstanceOf(CliConfigValueError);
-        expect(yield* fs.exists(path.join(workdir, "supabase", "functions", "hello"))).toBe(false);
-      }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_API_PORT: "abc" }, body));
-    },
-  );
+      expect(error).toBeInstanceOf(CliConfigValueError);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "functions", "hello"))).toBe(false);
+    }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_API_PORT: "abc" }, body));
+  });
 
   it.effect("warns and skips the config append when the function is already declared", () => {
     const { layer, out, workdir } = setup();
