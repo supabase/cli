@@ -7,6 +7,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import {
+  CONTAINER_CLI_CONCURRENCY,
   containerCliExitCode,
   containerCliExitCodeAndStdout,
   describeContainerCliFailure,
@@ -135,7 +136,7 @@ export const dockerRemoveAll = (
           stderr: "ignore",
         }).pipe(Effect.result),
       ),
-      { concurrency: "unbounded" },
+      { concurrency: CONTAINER_CLI_CONCURRENCY },
     );
     const failedStop = stopResults.find(
       (result) => Result.isFailure(result) || result.success !== 0,

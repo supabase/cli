@@ -10,6 +10,7 @@ import {
   Option,
   Path,
   PlatformError,
+  Ref,
   Sink,
   Stream,
 } from "effect";
@@ -23,6 +24,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import { CONTAINER_CLI_CONCURRENCY } from "../../command-internal/container-cli.ts";
 import { DebugFlag } from "../../command-internal/global-flags.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { stop } from "./stop.handler.ts";
@@ -87,6 +89,8 @@ function mockRoutedContainerCliSpawner(
     // Fails both docker and podman spawn attempts matching this predicate, simulating a
     // runtime that cannot be spawned at all (vs. a spawned process exiting non-zero).
     readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
+    // Runs inside each spawn before it returns, so a test can hold calls in flight.
+    readonly onSpawn?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
   } = {},
 ) {
   const spawned: Array<SpawnRecord> = [];
@@ -99,6 +103,7 @@ function mockRoutedContainerCliSpawner(
         const cmd = standard ? command.command : "";
         const args = standard ? command.args : [];
         spawned.push({ command: cmd, args });
+        if (opts.onSpawn !== undefined) yield* opts.onSpawn(args);
 
         if (opts.dockerMissing === true && cmd === "docker") {
           return yield* PlatformError.systemError({
@@ -186,6 +191,7 @@ interface SetupOpts {
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
   readonly dockerMissing?: boolean;
   readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
+  readonly onSpawn?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly configuredProjectId?: string;
   readonly skipConfig?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
@@ -209,6 +215,7 @@ const setup = (opts: SetupOpts = {}) =>
     const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
       dockerMissing: opts.dockerMissing,
       failSpawnFor: opts.failSpawnFor,
+      onSpawn: opts.onSpawn,
     });
 
     const layer = Layer.mergeAll(
@@ -1083,6 +1090,42 @@ enabled = true
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopListError");
       }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stops many containers in order, at most CONTAINER_CLI_CONCURRENCY at a time", () =>
+    Effect.gen(function* () {
+      const containerIds = Array.from(
+        { length: CONTAINER_CLI_CONCURRENCY + 6 },
+        (_, index) => `c${index + 1}`,
+      );
+      const inFlight = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const capReached = yield* Deferred.make<void>();
+      const { layer, out, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ containerIds }),
+        onSpawn: (args) =>
+          args[0] !== "stop"
+            ? Effect.void
+            : Effect.gen(function* () {
+                const count = yield* Ref.updateAndGet(inFlight, (n) => n + 1);
+                yield* Ref.update(peak, (n) => Math.max(n, count));
+                if (count === CONTAINER_CLI_CONCURRENCY) {
+                  yield* Deferred.succeed(capReached, undefined);
+                }
+                // Hold every stop until the cap is in flight, then yield once so an uncapped
+                // fan-out spawns the next stop before this one finishes.
+                yield* Deferred.await(capReached);
+                yield* Effect.yieldNow;
+                yield* Ref.update(inFlight, (n) => n - 1);
+              }),
+      });
+      yield* stop(flags()).pipe(Effect.provide(layer));
+      const stopCalls = child.spawned.filter((s) => s.args[0] === "stop");
+      expect(stopCalls.map((s) => s.args)).toEqual(containerIds.map((id) => ["stop", id]));
+      expect(yield* Ref.get(peak)).toBe(CONTAINER_CLI_CONCURRENCY);
+      expect(out.stdoutText).toContain("Stopped");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

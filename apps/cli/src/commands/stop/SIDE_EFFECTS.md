@@ -171,7 +171,10 @@ flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   volume by default, so dropping it there is lossless. Podman itself is a TS-only fallback
   (the old Go CLI talked to the Docker Engine API directly rather than shelling out to a
   `docker`/`podman` binary), so there's no parity concern here either way.
-- Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`).
+- Containers are stopped concurrently, at most `CONTAINER_CLI_CONCURRENCY` (8) in flight: on a
+  Podman machine every call opens its own ssh connection, and the VM's sshd refuses new ones
+  once ten are mid-handshake. Docker stops are capped too, so stopping more than 8 containers that
+  ignore SIGTERM can take more than one 10 s grace period.
   Every container's failure is checked before failing the command (rather than stopping
   at the first failure) — though the surfaced message is a single fixed string rather
   than a joined list of per-container errors, since Docker CLI subprocess stderr isn't

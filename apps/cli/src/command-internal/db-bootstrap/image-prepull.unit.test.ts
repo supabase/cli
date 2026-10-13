@@ -3,6 +3,7 @@ import { Deferred, Effect, Fiber, Ref, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
+import { CONTAINER_CLI_CONCURRENCY } from "../container-cli.ts";
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 
 /** Per-call variant of `docker-lifecycle.unit.test.ts`'s `mockSpawner`, so each argv can respond differently. */
@@ -105,23 +106,24 @@ describe("ensureImagesCached", () => {
     );
   });
 
-  it.live("resolves every image concurrently rather than one at a time", () =>
+  it.live("resolves images concurrently, at most CONTAINER_CLI_CONCURRENCY at a time", () =>
     Effect.gen(function* () {
-      const started = yield* Ref.make(0);
-      const bothStarted = yield* Deferred.make<void>();
+      const inFlight = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const capReached = yield* Deferred.make<void>();
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const args = command._tag === "StandardCommand" ? command.args : [];
           if (args[0] === "image" && args[1] === "inspect") {
-            const count = yield* Ref.updateAndGet(started, (n) => n + 1);
-            if (count < 2) {
-              // A sequential implementation would hang here forever, since the second call
-              // never starts until this one returns.
-              yield* Deferred.await(bothStarted);
-            } else {
-              yield* Deferred.succeed(bothStarted, undefined);
-            }
+            const count = yield* Ref.updateAndGet(inFlight, (n) => n + 1);
+            yield* Ref.update(peak, (n) => Math.max(n, count));
+            if (count === CONTAINER_CLI_CONCURRENCY) yield* Deferred.succeed(capReached, undefined);
+            // Hold every call until the cap is in flight, then yield once so an uncapped fan-out
+            // starts the next call before this one finishes.
+            yield* Deferred.await(capReached);
+            yield* Effect.yieldNow;
+            yield* Ref.update(inFlight, (n) => n - 1);
           }
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
@@ -141,8 +143,15 @@ describe("ensureImagesCached", () => {
         }),
       );
 
-      const resolved = yield* ensureImagesCached(spawner, ["supabase/a:1", "supabase/b:1"]);
-      expect(resolved.size).toBe(2);
+      const images = Array.from(
+        { length: CONTAINER_CLI_CONCURRENCY + 4 },
+        (_, index) => `supabase/image-${index}:1`,
+      );
+      const resolved = yield* ensureImagesCached(spawner, images);
+      expect(resolved.size).toBe(images.length);
+      expect(yield* Ref.get(peak)).toBe(CONTAINER_CLI_CONCURRENCY);
+      expect(yield* Ref.get(peak)).toBeGreaterThan(1);
+      expect(yield* Ref.get(peak)).toBeLessThan(10);
     }),
   );
 

@@ -12,6 +12,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { CONTAINER_CLI_CONCURRENCY } from "../container-cli.ts";
 import { makeDockerImageResolver } from "../docker-image-resolve.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 
@@ -40,7 +41,8 @@ export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
 }
 
 /**
- * Resolves every image in `images` concurrently through the shared registry-fallback resolver.
+ * Resolves every image in `images` concurrently, at most {@link CONTAINER_CLI_CONCURRENCY} at a
+ * time, through the shared registry-fallback resolver.
  *
  * Returns a map from each original image reference to the resolved image URL callers must use
  * to reference that image afterward — re-resolving the same image could land on a different
@@ -62,7 +64,7 @@ export function ensureImagesCached(
           Effect.withSpan("ImagePrepull.resolveImage", { attributes: { "image.name": image } }),
         ),
       ),
-      { concurrency: "unbounded" },
+      { concurrency: CONTAINER_CLI_CONCURRENCY },
     );
 
     const resolved = new Map<string, string>();
