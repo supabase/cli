@@ -163,7 +163,7 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker image prune --force
+            docker system prune --force --volumes
           fi
           sudo systemctl stop docker.socket docker.service
 
@@ -367,7 +367,7 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker image prune --force
+            docker system prune --force --volumes
           fi
           sudo systemctl stop docker.socket docker.service
 
@@ -427,7 +427,7 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker image prune --force
+            docker system prune --force --volumes
           fi
           sudo systemctl stop docker.socket docker.service
 
