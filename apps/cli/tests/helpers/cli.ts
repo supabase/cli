@@ -276,6 +276,10 @@ export async function makeTempCliStackProject(
   return stackProject;
 }
 
+/** Concurrent e2e files each run a stack, and Docker names its containers after the project id. */
+const projectIdFor = (dir: string) =>
+  `e2e-${path.basename(dir).toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8)}`;
+
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
   const project = await makeTempProject(prefix);
   const ports = {
@@ -304,7 +308,7 @@ export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
   await writeFile(
     path.join(supabaseDir, "config.toml"),
     [
-      'project_id = "e2e"',
+      `project_id = "${projectIdFor(project.dir)}"`,
       "",
       "[api]",
       `port = ${ports.apiPort}`,

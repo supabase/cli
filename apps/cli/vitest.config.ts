@@ -3,7 +3,7 @@ import { defaultClientConditions, defaultServerConditions } from "vite";
 import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
-/** E2e files that run concurrently; stacks already take unique ports and project ids. */
+/** E2e files that run concurrently; each stack project picks free ports and its own project id. */
 const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS ?? "1");
 if (!Number.isSafeInteger(e2eWorkers) || e2eWorkers < 1) {
   throw new Error(

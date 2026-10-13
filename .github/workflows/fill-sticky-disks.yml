@@ -38,12 +38,11 @@ jobs:
           docker-images: "true"
           native-artifacts: "true"
 
-      # Clearing on the default branch drops artifacts of older service versions.
+      # The nightly fill clears artifacts of older service versions.
       - name: Download native stack artifacts
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
         run: |
-          if [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
             rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts/"*
           fi
           pnpm --filter @supabase/stack prepare:test-artifacts
@@ -58,15 +57,14 @@ jobs:
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
           SUPABASE_CLI_BINARY_OVERRIDE: ${{ github.workspace }}/apps/cli/dist/supabase
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
         run: |
           project="$(mktemp -d)"
           cli="$GITHUB_WORKSPACE/apps/cli/dist/supabase.js"
           cd "$project"
           node "$cli" init
           node "$cli" start
-          # Drops images of older stack versions; images other branches use come back on their next fill.
-          if [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+          # The nightly fill drops images of older versions; the next step pulls the catalog back.
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
             docker image prune --all --force
           fi
           node "$cli" stop --no-backup
