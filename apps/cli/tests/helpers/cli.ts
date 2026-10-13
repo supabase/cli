@@ -278,7 +278,11 @@ export async function makeTempCliStackProject(
 
 /** Concurrent e2e files each run a stack, and Docker names its containers after the project id. */
 const projectIdFor = (dir: string) =>
-  `e2e-${path.basename(dir).toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8)}`;
+  `e2e-${path
+    .basename(dir)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(-8)}`;
 
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
   const project = await makeTempProject(prefix);
