@@ -326,4 +326,13 @@ describe("assertBlockDrift", () => {
       /assertBlockDrift: building block "demo": .*"v1-run-a-query", which is declared for this building block but whose `when` condition/,
     );
   });
+
+  it("names the building block when a switch the block tests is missing from activeFlags", () => {
+    const switched = block("switched", [
+      { operationId: "v1-list-all-secrets", kind: "required", when: [{ flag: "skip", is: false }] },
+    ]);
+    expect(() => assertBlockDrift(switched, { requests: [listSecrets] })).toThrow(
+      /assertBlockDrift: building block "switched": a `when` condition checks the value of --skip/,
+    );
+  });
 });

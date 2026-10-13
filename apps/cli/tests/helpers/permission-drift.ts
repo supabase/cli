@@ -205,7 +205,7 @@ export function assertDriftAgainst(
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) continue;
     if (typeof activeFlags[flag] !== "boolean") {
       throw new Error(
-        `assertPermissionDrift: "${command}": a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,
+        `${helper}: ${label}: a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,
       );
     }
   }
