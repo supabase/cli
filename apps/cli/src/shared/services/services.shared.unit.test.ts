@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "@effect/vitest";
+import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -57,9 +58,21 @@ const ACCESS_TOKEN = Redacted.make(`sbp_${"a".repeat(40)}`);
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
 // `fetchLinkedServiceVersions` reads the ambient HttpClient from context instead
-// of self-provisioning one, so each invocation needs a concrete transport.
+// of self-provisioning one, so each invocation needs a concrete transport. The API client
+// skips retries so the 500 fixtures fail at once instead of backing off in real time.
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
-  fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer));
+  Effect.gen(function* () {
+    const api = yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: 0 } },
+    );
+    return yield* fetchLinkedServiceVersions({ ...input, api });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
 
 const linkedServiceVersionsDeclared = {
   _tag: "Declared",

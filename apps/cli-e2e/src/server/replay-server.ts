@@ -240,14 +240,14 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
 
       // Global error override — returned for all API requests regardless of endpoint.
       if (globalErrorRef.value) {
-        return Response.json(globalErrorRef.value.body, { status: globalErrorRef.value.status });
+        return injectedErrorResponse(globalErrorRef.value);
       }
 
       // Per-endpoint error overrides
       const errKey = overrideKey(method, pathname);
       const errorOverride = errorOverrides.get(errKey);
       if (errorOverride) {
-        return Response.json(errorOverride.body, { status: errorOverride.status });
+        return injectedErrorResponse(errorOverride);
       }
 
       const rateLimitOverride = rateLimitOverrides.get(pathname);
@@ -740,6 +740,15 @@ function nextFixtureIndex(keyDir: string): number {
     if (file.startsWith("default.")) max = Math.max(max, 1);
   }
   return max + 1;
+}
+
+/** Injected 429/5xx responses ask the typed client to retry at once so tests skip its backoff. */
+function injectedErrorResponse(error: { status: number; body: unknown }): Response {
+  const retryable = error.status === 429 || error.status >= 500;
+  return Response.json(error.body, {
+    status: error.status,
+    ...(retryable ? { headers: { "Retry-After": "0" } } : {}),
+  });
 }
 
 /** Build an API response, respecting HTTP no-body status codes (204, 304, 205). */
