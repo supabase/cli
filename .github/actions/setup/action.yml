@@ -39,7 +39,8 @@ runs:
     # Sticky disks are shared by every run in the repository, so only trusted
     # events (merge queue, pushes) may commit to them; pull request code could
     # otherwise plant dependencies or images that trusted runs later execute.
-    # Bump the -v2 key segment to reset a disk that grew stale.
+    # Committing runs prune what the current lockfile no longer uses; bump the
+    # -v2 key segment to reset a disk outright.
     - name: Detect sticky disks
       id: sticky
       if: inputs.sticky-disks == 'true'
@@ -98,13 +99,6 @@ runs:
         key: ${{ github.repository }}-pnpm-store-v2-${{ runner.arch }}
         path: ${{ steps.pnpm-store.outputs.path }}
         commit: ${{ steps.sticky.outputs.commit }}
-
-    # The disk keeps only files and the index, like the cache below: a links/
-    # tree left by an interrupted install would otherwise be trusted as complete.
-    - name: Reset pnpm global virtual store
-      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled == 'true'
-      shell: bash
-      run: rm -rf "${{ steps.pnpm-store.outputs.path }}/links"
 
     # Cache only the content-addressable half of the store (package files plus
     # the SQLite index), never the global virtual store under links/. That
@@ -203,3 +197,8 @@ runs:
           echo "//firewall.depthfirst.com/npm/:_authToken=${DEPENDENCY_FIREWALL_TOKEN}"
         } > "$npmrc"
         NPM_CONFIG_USERCONFIG="$npmrc" pnpm install --frozen-lockfile
+
+    - name: Prune pnpm store disk
+      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.commit == 'on-change'
+      shell: bash
+      run: pnpm store prune

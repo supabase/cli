@@ -158,7 +158,13 @@ jobs:
       # The image disk only commits once nothing holds /var/lib/docker open.
       - name: Stop Docker so its image disk can be saved
         if: always()
-        run: sudo systemctl stop docker.socket docker.service
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker image prune --force
+          fi
+          sudo systemctl stop docker.socket docker.service
 
   test-stack-ports:
     if: |
@@ -355,7 +361,13 @@ jobs:
       # The image disk only commits once nothing holds /var/lib/docker open.
       - name: Stop Docker so its image disk can be saved
         if: always()
-        run: sudo systemctl stop docker.socket docker.service
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker image prune --force
+          fi
+          sudo systemctl stop docker.socket docker.service
 
   test-stack-e2e:
     if: |
@@ -408,7 +420,13 @@ jobs:
       # The image disk only commits once nothing holds /var/lib/docker open.
       - name: Stop Docker so its image disk can be saved
         if: always() && matrix.runtime == 'docker'
-        run: sudo systemctl stop docker.socket docker.service
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker image prune --force
+          fi
+          sudo systemctl stop docker.socket docker.service
 
   test-stack-podman-integration:
     if: |
