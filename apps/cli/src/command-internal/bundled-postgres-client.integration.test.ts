@@ -19,7 +19,7 @@ const processControl = Layer.succeed(ProcessControl, {
   holdSignals: () => Effect.void,
   exit: () => Effect.die("unused"),
   setExitCode: () => Effect.void,
-  getExitCode: Effect.succeed(undefined),
+  getExitCode: Effect.undefined,
 });
 
 const base = Layer.mergeAll(BunServices.layer, processControl);
