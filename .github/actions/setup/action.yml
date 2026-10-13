@@ -49,8 +49,9 @@ runs:
   using: "composite"
   steps:
     # Sticky disks are shared by every run in the repository, so only trusted
-    # events (merge queue, pushes) may commit to them; pull request code could
-    # otherwise plant dependencies or images that trusted runs later execute.
+    # events (pushes, schedules, manual runs) may commit to them; pull request
+    # and merge queue code could otherwise plant dependencies or images that
+    # trusted runs later execute.
     # Committing runs prune what the current lockfile no longer uses; bump the
     # -v2 key segment to reset a disk outright.
     - name: Detect sticky disks
@@ -65,8 +66,8 @@ runs:
         fi
         echo "enabled=true" >> "$GITHUB_OUTPUT"
         case "$EVENT_NAME" in
-          pull_request*) echo "commit=false" >> "$GITHUB_OUTPUT" ;;
-          *) echo "commit=on-change" >> "$GITHUB_OUTPUT" ;;
+          push | schedule | workflow_dispatch) echo "commit=on-change" >> "$GITHUB_OUTPUT" ;;
+          *) echo "commit=false" >> "$GITHUB_OUTPUT" ;;
         esac
 
     - name: Stop Docker before mounting its image disk
