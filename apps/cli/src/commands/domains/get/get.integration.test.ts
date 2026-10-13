@@ -78,7 +78,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains get integration", () => {
   it.live("prints the hostname status to stderr in text mode", () => {
@@ -331,23 +331,6 @@ describe("domains get integration", () => {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("forces JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("forces JSON even when -o is explicitly pretty and --include-raw-output is set", () => {
-    const { layer, out } = setup({ outputFlag: "pretty" });
-    return Effect.gen(function* () {
-      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

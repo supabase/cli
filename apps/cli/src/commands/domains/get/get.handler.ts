@@ -34,6 +34,6 @@ export const domainsGet = Effect.fn("domains.get")(function* (flags: DomainsGetF
     );
     yield* fetching?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

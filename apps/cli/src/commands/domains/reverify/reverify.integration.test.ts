@@ -65,7 +65,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains reverify integration", () => {
   it.live("suggests upgrade from entitlement_required envelope on 400", () => {
@@ -123,14 +123,6 @@ describe("domains reverify integration", () => {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("forces JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

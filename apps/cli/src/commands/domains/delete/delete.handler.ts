@@ -12,9 +12,6 @@ const mapDeleteError = mapDomainsHttpError("delete");
 
 const DELETE_SUCCESS_MESSAGE = "Deleted custom hostname config successfully.";
 
-// `flags.includeRawOutput` is unread: `--include-raw-output` is a persistent flag on the
-// `domains` group, so it's accepted on `delete` too, but ignored — delete has no response
-// body to encode. Asserted by the "ignores --include-raw-output" integration test.
 export const domainsDelete = Effect.fn("domains.delete")(function* (flags: DomainsDeleteFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;

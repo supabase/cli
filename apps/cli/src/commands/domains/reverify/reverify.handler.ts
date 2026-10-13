@@ -32,6 +32,6 @@ export const domainsReverify = Effect.fn("domains.reverify")(function* (
     );
     yield* reverifying?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

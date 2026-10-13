@@ -5,10 +5,8 @@ import {
   DebugFlag,
   DnsResolverFlag,
   NetworkIdFlag,
-  resolveExperimentalWithProjectEnv,
   resolveYesWithProjectEnv,
 } from "./global-flags.ts";
-import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -25,10 +23,7 @@ import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-co
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
-import {
-  buildLocalDbContainerInputs,
-  type LocalDbContainerInputs,
-} from "./db-bootstrap/local-container-inputs.ts";
+import { buildLocalDbContainerInputs } from "./db-bootstrap/local-container-inputs.ts";
 import { withShadowDatabase } from "./db-bootstrap/shadow-cache.ts";
 import { shadowRunInputFromLocalContainerInputs } from "./db-bootstrap/shadow-database.ts";
 import { LinkedProjectCache } from "../telemetry/linked-project-cache.service.ts";
@@ -38,11 +33,7 @@ import {
   warnPreservedUnmanagedDeclarativeFiles,
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
-import {
-  resolveDeclarativeFromArgs,
-  resolvePullDiffEngine,
-  schemaPathsTransitionWarning,
-} from "./diff-engine.ts";
+import { resolvePullDiffEngine, schemaPathsTransitionWarning } from "./diff-engine.ts";
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
@@ -68,7 +59,7 @@ import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
-import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
+import type { DbPullFlags as DbPullCommandFlags } from "../commands/db/pull/pull.command.ts";
 import {
   DbPullDumpError,
   DbPullEngineConflictError,
@@ -83,13 +74,12 @@ import {
 } from "./migration-history.ts";
 import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 
-// `DbPullFlags` is `runDbPull`'s own parameter type, defined alongside the standalone
-// `db pull` command that also constructs it — re-exported here so an in-process caller
-// (`pull`) can build one without reaching into `commands/db/**` directly.
-export type { DbPullFlags };
-
-// Established output contract; ends with a `.`.
-const DEPRECATION_LINE = "Flag --use-pg-delta has been deprecated, use --declarative instead.";
+/**
+ * `runDbPull`'s parameter type: the `db pull` command flags without the tombstoned
+ * `--use-pg-delta`, so an in-process caller (`pull`) can build one without reaching into
+ * `commands/db/**` directly.
+ */
+export type DbPullRunFlags = Omit<DbPullCommandFlags, "usePgDelta">;
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
@@ -101,12 +91,6 @@ const IN_SYNC_SUGGESTION =
 /** Migration-file mode for the initial pg_dump seed. */
 const MIGRATION_FILE_MODE = 0o644;
 
-// `--experimental` without `--declarative` is a deprecated path: the in-process declarative
-// export covers the same per-object-files outcome. Printed only when the experimental gate
-// selected this branch, not when `--declarative` already did.
-const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
-  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
-
 export type DbPullInvoke = {
   /**
    * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
@@ -114,15 +98,6 @@ export type DbPullInvoke = {
    * `undefined` keeps the existing resolution.
    */
   readonly assumeYes?: boolean;
-  /**
-   * Forces migration mode regardless of the ambient `--experimental`/`SUPABASE_EXPERIMENTAL`
-   * gate, for an in-process caller (`pull`) whose dirty-guard, confirmation message, and
-   * SIDE_EFFECTS.md all assume this step only ever writes into `supabase/migrations`. Without
-   * this override, an ambient experimental flag would silently switch to the declarative export
-   * path, writing `supabase/schemas/**` and potentially `config.toml`'s `schema_paths`
-   * unguarded. `undefined` keeps the existing resolution.
-   */
-  readonly forceMigrationMode?: boolean;
 };
 
 export type DbPullOutcome =
@@ -145,7 +120,7 @@ export type DbPullOutcome =
  * owns that emission based on the returned {@link DbPullOutcome}.
  */
 export const runDbPull = Effect.fn("db.pull.run")(function* (
-  flags: DbPullFlags,
+  flags: DbPullRunFlags,
   invoke?: DbPullInvoke,
 ) {
   const output = yield* Output;
@@ -159,7 +134,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
-  const cliArgs = yield* CliArgs;
   const configValues = yield* CliConfigValues;
 
   // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
@@ -167,42 +141,15 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   // the native initial-migra history repair too.
   const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
-  // `EXPERIMENTAL` resolves from either the global `--experimental` flag or
-  // `SUPABASE_EXPERIMENTAL`, reusing `resolveExperimentalWithProjectEnv`'s flag-over-env
-  // precedence instead of re-deriving it. Resolved once, same as `yes` above; declarative mode
-  // ignores it. `invoke?.forceMigrationMode` overrides this for an in-process caller that must
-  // never take the declarative export path — see {@link DbPullInvoke.forceMigrationMode}.
-  const experimental = invoke?.forceMigrationMode
-    ? false
-    : yield* resolveExperimentalWithProjectEnv(projectEnv);
 
   let linkedRefForCache: string | undefined;
 
   return yield* Effect.gen(function* () {
     const name = Option.getOrElse(flags.name, () => "remote_schema");
-    // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
-    // `useDeclarative` outcome. When both are passed, the last occurrence in argv wins
-    // (e.g. `--declarative --use-pg-delta=false` => migration mode); since parsed Options don't
-    // carry order, the both-present case replays that rule off the raw argv instead of ORing the
-    // two, which would diverge on conflicting values.
-    const useDeclarative =
-      Option.isSome(flags.declarative) && Option.isSome(flags.usePgDelta)
-        ? (resolveDeclarativeFromArgs(cliArgs.args) ?? false)
-        : Option.getOrElse(flags.declarative, () => false) ||
-          Option.getOrElse(flags.usePgDelta, () => false);
-    if (Option.isSome(flags.usePgDelta)) {
-      yield* output.raw(`${DEPRECATION_LINE}\n`, "stderr");
-    }
-    // Deprecated `--experimental` dump: same in-process export as `--declarative`.
-    const useExperimentalExport = experimental && !useDeclarative;
-    if (useExperimentalExport) {
-      yield* output.raw(`${EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE}\n`, "stderr");
-    }
-    const useDeclarativeExport = useDeclarative || useExperimentalExport;
+    const useDeclarative = Option.getOrElse(flags.declarative, () => false);
 
-    // Mutually exclusive flag groups: `[db-url linked local]`, `[declarative
-    // diff-engine]`, `[use-pg-delta diff-engine]`. "set" means the flag was
-    // explicitly passed.
+    // Mutually exclusive flag groups: `[db-url linked local]`, `[declarative diff-engine]`.
+    // "set" means the flag was explicitly passed.
     const targetSet: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
     if (Option.isSome(flags.linked)) targetSet.push("linked");
@@ -212,15 +159,11 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
       });
     }
-    for (const [flagName, present] of [
-      ["declarative", Option.isSome(flags.declarative)],
-      ["use-pg-delta", Option.isSome(flags.usePgDelta)],
-    ] as const) {
-      if (present && Option.isSome(flags.diffEngine)) {
-        return yield* new DbPullEngineConflictError({
-          message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
-        });
-      }
+    if (Option.isSome(flags.declarative) && Option.isSome(flags.diffEngine)) {
+      return yield* new DbPullEngineConflictError({
+        message:
+          "if any flags in the group [declarative diff-engine] are set none of the others can be; [declarative diff-engine] were all set",
+      });
     }
 
     const connType: DbConnType = Option.isSome(flags.dbUrl)
@@ -230,7 +173,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         : "linked";
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": connType,
-      "db.pull.mode": useDeclarativeExport ? "declarative" : "migration",
+      "db.pull.mode": useDeclarative ? "declarative" : "migration",
     });
 
     // `--project-ref` never implies `--linked` and must not be silently
@@ -270,20 +213,16 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
     // Validate native shadow inputs before target resolution performs remote side effects.
-    const localInputs: Option.Option<LocalDbContainerInputs> = useExperimentalExport
-      ? Option.none()
-      : Option.some(
-          yield* buildLocalDbContainerInputs(
-            spawner,
-            cliSettings.workdir,
-            networkIdFlag,
-            runtimeInfo.platform,
-            debug,
-            // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
-            // override, same as `toml` above.
-            connType === "linked" ? linkedRef : undefined,
-          ),
-        );
+    const localInputs = yield* buildLocalDbContainerInputs(
+      spawner,
+      cliSettings.workdir,
+      networkIdFlag,
+      runtimeInfo.platform,
+      debug,
+      // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
+      // override, same as `toml` above.
+      connType === "linked" ? linkedRef : undefined,
+    );
 
     const resolved = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
@@ -379,8 +318,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           dnsResolver,
         });
 
-        // Declarative export path (`--declarative` or deprecated `--experimental`).
-        if (useDeclarativeExport) {
+        if (useDeclarative) {
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
@@ -459,10 +397,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         // Tracks whether the pg_dump seed wrote any bytes: an empty dump + empty diff
         // is "in sync", a non-empty dump is a valid initial migration on its own.
         let seedWroteBytes = false;
-
-        // `Option.getOrThrow` is safe here: this point is only reached after the
-        // declarative-export branch already returned, so `localInputs` was always built.
-        const pullLocalInputs = Option.getOrThrow(localInputs);
 
         if (seededFromDump) {
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
@@ -593,13 +527,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             const stackBackend = (yield* currentStackBackend).kind === "stack";
             const resolvedPullShadowImage = stackBackend
               ? "stack-ephemeral"
-              : yield* pullLocalInputs.resolvePostgresImage;
+              : yield* localInputs.resolvePostgresImage;
             const migrationMode: "legacy" | "pgdelta-next" = usePgDeltaDiff
               ? "pgdelta-next"
               : "legacy";
             const shadowInput = {
               ...shadowRunInputFromLocalContainerInputs(
-                pullLocalInputs,
+                localInputs,
                 resolvedPullShadowImage,
                 toml,
                 fs,
@@ -608,7 +542,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               targetLocal: resolved.isLocal,
               migrationMode,
               // `toml.schemaPathPatterns` is used here, not the raw `@supabase/config` field on
-              // `pullLocalInputs`, since only `toml` (via `readDbToml`) resolves the
+              // `localInputs`, since only `toml` (via `readDbToml`) resolves the
               // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,

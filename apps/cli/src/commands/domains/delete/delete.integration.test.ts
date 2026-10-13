@@ -43,7 +43,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains delete integration", () => {
   it.live("prints the success line to stderr in text mode", () => {
@@ -79,15 +79,6 @@ describe("domains delete integration", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("ignores --include-raw-output (inert on delete)", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
     }).pipe(Effect.provide(layer));

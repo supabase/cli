@@ -32,6 +32,6 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
     );
     yield* activating?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

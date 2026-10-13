@@ -92,11 +92,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-function flags(over: Partial<{ includeRawOutput: boolean }> = {}) {
+function flags() {
   return {
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
-    includeRawOutput: over.includeRawOutput ?? false,
+    includeRawOutput: Option.none<boolean>(),
   };
 }
 
@@ -232,14 +232,6 @@ describe("domains create integration", () => {
       // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("forces JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags({ includeRawOutput: true }));
-      expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
