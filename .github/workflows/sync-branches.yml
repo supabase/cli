@@ -206,7 +206,7 @@ jobs:
         env:
           WORK_DIR: ${{ github.workspace }}/work
         run: |
-          git -C "$WORK_DIR" fetch "$OUTPUT_DIR/sync.bundle" HEAD
+          git -C "$WORK_DIR" fetch --no-tags "$OUTPUT_DIR/sync.bundle" HEAD
           git -C "$WORK_DIR" checkout --detach FETCH_HEAD
           git -C "$WORK_DIR" config user.name "github-actions[bot]"
           git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -267,7 +267,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WORK_DIR: ${{ github.workspace }}/work
         run: |
-          git -C "$WORK_DIR" fetch "$OUTPUT_DIR/sync.bundle" HEAD
+          git -C "$WORK_DIR" fetch --no-tags "$OUTPUT_DIR/sync.bundle" HEAD
           git -C "$WORK_DIR" checkout --detach FETCH_HEAD
           git -C "$WORK_DIR" config user.name "github-actions[bot]"
           git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -347,9 +347,9 @@ jobs:
           if [ "$RESOLVED" = true ]; then
             export REPO_DIR="$GITHUB_WORKSPACE" OUTPUT_DIR="$stage" HEAD_SHA
             if ! {
-              git fetch "$stage/sync.bundle" HEAD:refs/sync/resolution &&
+              git fetch --no-tags "$stage/sync.bundle" HEAD:refs/sync/resolution &&
                 HEAD_SHA="$(git rev-parse refs/sync/resolution)" &&
-                BASE_REF=origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify &&
+                BASE_REF=refs/remotes/origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify &&
                 git -c core.hooksPath=/dev/null push \
                   "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/sync/resolution:refs/heads/sync/develop-into-next
             }; then

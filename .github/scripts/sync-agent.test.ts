@@ -252,6 +252,7 @@ describe("buildSuggestions", () => {
 });
 
 describe("verifyWorkflows", () => {
+  const BASE = "refs/remotes/origin/sync/develop-into-next";
   const repos: TestRepo[] = [];
   afterEach(() => {
     for (const repo of repos.splice(0)) {
@@ -278,7 +279,7 @@ describe("verifyWorkflows", () => {
   test("accepts git's merge of next", () => {
     const { checkout } = syncCheckout();
 
-    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).not.toThrow();
+    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).not.toThrow();
   });
 
   test("rejects a workflow added through a merge of a commit outside next", () => {
@@ -288,8 +289,22 @@ describe("verifyWorkflows", () => {
     git(checkout, "switch", "sync/develop-into-next");
     git(checkout, "merge", "--no-ff", "--no-edit", "forged");
 
-    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).toThrow(
-      "merges a commit outside origin/next",
+    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
+      "merges a commit outside refs/remotes/origin/next",
+    );
+  });
+
+  test("ignores tags named like the remote branches", () => {
+    const { repo, checkout } = syncCheckout();
+    git(checkout, "switch", "-c", "forged", "HEAD~1");
+    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+    git(checkout, "tag", "origin/next");
+    git(checkout, "switch", "sync/develop-into-next");
+    git(checkout, "merge", "--no-ff", "--no-edit", "forged");
+    git(checkout, "tag", "origin/sync/develop-into-next");
+
+    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
+      "merges a commit outside refs/remotes/origin/next",
     );
   });
 
@@ -297,7 +312,7 @@ describe("verifyWorkflows", () => {
     const { repo, checkout } = syncCheckout();
     repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
 
-    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).toThrow(
+    expect(() => verifyWorkflows(checkout, BASE, "HEAD")).toThrow(
       "workflow edits must come from a maintainer",
     );
   });

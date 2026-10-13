@@ -26,7 +26,7 @@ const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
 /** Workflows on the sync branch run with repository secrets, so Claude's edits there are only proposed. */
 const WORKFLOWS = ".github/";
 /** Every merge in a pushed resolution brings in reviewed `next` commits, never a commit made during the run. */
-const MERGED_BRANCH = "origin/next";
+const MERGED_BRANCH = "refs/remotes/origin/next";
 const WORKFLOW_DIFF = "github.diff";
 const MAX_REPAIR_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
@@ -745,7 +745,7 @@ function repair(workDir: string, outputDir: string, head: string): void {
       "",
       summary,
       "",
-      `${findings.filter((finding) => finding.fixed).length} findings fixed, ${findings.filter((finding) => !finding.fixed).length} declined${withheld ? "; fixed threads stay open until the workflow suggestions are committed" : ""} (${runLink()}).`,
+      `${findings.filter((finding) => finding.fixed).length} findings fixed, ${findings.filter((finding) => !finding.fixed).length} declined${withheld ? "; a maintainer resolves the fixed threads after committing the workflow suggestions" : ""} (${runLink()}).`,
       "",
     ].join("\n"),
   );
