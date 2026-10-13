@@ -2393,6 +2393,7 @@ describe("db remote commit", () => {
         `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
       );
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
       expect(s.engineCalls).toHaveLength(1);
       expect(s.engineCalls[0]?.operation).toBe("diff");
     }).pipe(Effect.provide(s.layer));
@@ -2418,6 +2419,7 @@ describe("db remote commit", () => {
         yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2437,6 +2439,7 @@ describe("db remote commit", () => {
       expect(streamText(s.out, "stderr")).toContain(
         `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
   });
 });
