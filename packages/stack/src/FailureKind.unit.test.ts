@@ -77,8 +77,17 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
     "image-pull",
   ],
   [
-    "any other engine failure as engine-command",
-    new ContainerError({ operation: "rm", message: "removal failed" }),
+    "a failed container creation by its engine operation",
+    new ContainerError({
+      operation: "create",
+      message: "creation failed (container name db)",
+      cause: new ContainerError({ operation: "create", message: "creation failed" }),
+    }),
+    "engine-create",
+  ],
+  [
+    "an engine failure in an ungrouped operation as engine-command",
+    new ContainerError({ operation: "logs", message: "log stream failed" }),
     "engine-command",
   ],
   [

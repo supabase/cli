@@ -216,7 +216,7 @@ it.live("keeps a stack registered when its container engine is reachable but cle
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     expect(destroyFailure.message).toContain("container removal failed");
-    expect(destroyFailure.kind).toBe("engine-command");
+    expect(destroyFailure.kind).toBe("engine-remove");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
