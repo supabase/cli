@@ -86,6 +86,26 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
     "engine-create",
   ],
   [
+    "a failed container start by its engine operation",
+    new ContainerError({ operation: "start", message: "start failed" }),
+    "engine-start",
+  ],
+  [
+    "a failed container listing by its engine operation",
+    new ContainerError({ operation: "ps", message: "listing failed" }),
+    "engine-inspect",
+  ],
+  [
+    "a failed engine target lookup by its engine operation",
+    new ContainerError({ operation: "info", message: "permission denied" }),
+    "engine-target",
+  ],
+  [
+    "a failed container wait by its engine operation",
+    new ContainerError({ operation: "wait", message: "wait failed" }),
+    "engine-wait",
+  ],
+  [
     "an engine failure in an ungrouped operation as engine-command",
     new ContainerError({ operation: "logs", message: "log stream failed" }),
     "engine-command",

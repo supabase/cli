@@ -173,7 +173,7 @@ it.live("keeps a stack registered when its container engine rejects the listing"
     // The socket itself refuses the owner's own startup, resolving its pinned engine target:
     // the owner never starts, so the stack stays registered for a later retry.
     expect(destroyFailure.message).toContain("permission denied");
-    expect(destroyFailure.kind).toBe("engine-command");
+    expect(destroyFailure.kind).toBe("engine-target");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
