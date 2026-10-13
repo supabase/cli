@@ -5,6 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
   FileSystem,
@@ -230,6 +231,14 @@ function mockRoutedContainerCliSpawner(
 
         const encoder = new TextEncoder();
         const result = route(args);
+        const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        yield* Effect.forkDetach(
+          Effect.yieldNow.pipe(
+            Effect.andThen(
+              Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+            ),
+          ),
+        );
         const stdoutBytes = (result.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
         const stderrBytes = (result.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
 
@@ -238,7 +247,7 @@ function mockRoutedContainerCliSpawner(
           stdout: Stream.fromIterable(stdoutBytes),
           stderr: Stream.fromIterable(stderrBytes),
           all: Stream.empty,
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+          exitCode: Deferred.await(exitDeferred),
           isRunning: Effect.succeed(false),
           stdin: Sink.drain,
           kill: () => Effect.void,
