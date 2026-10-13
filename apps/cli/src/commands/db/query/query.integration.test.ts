@@ -707,7 +707,7 @@ describe("db query integration", () => {
       expect(cache.cachedRef).toBe(FLAG_REF);
       assertPermissionDrift({
         command: "db query",
-        activeFlags: { linked: true, "project-ref": true },
+        activeFlags: { linked: true, "project-ref": FLAG_REF },
         requests: httpClient.calls,
         exact: true,
       });

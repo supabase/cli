@@ -88,20 +88,20 @@ function queryOf(request: RecordedMethodUrl, apiUrl: string | undefined): URLSea
  * qualifier value the declaration names for the operation without an applicable entry declaring it.
  */
 function assertQualifiersMatch(
-  command: string,
+  prefix: string,
   request: RecordedMethodUrl,
   sent: URLSearchParams,
   applicable: ReadonlyArray<OperationEntry>,
   declaredForOperation: ReadonlyArray<OperationEntry>,
 ): void {
-  const label = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
+  const target = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
   if (
     !applicable.some((entry) =>
       Object.entries(entry.request?.query ?? {}).every(([key, value]) => sent.get(key) === value),
     )
   ) {
     throw new Error(
-      `assertPermissionDrift: "${command}": request ${label} was sent without the query qualifiers its declaration lists (${applicable
+      `${prefix}: request ${target} was sent without the query qualifiers its declaration lists (${applicable
         .map((entry) => JSON.stringify(entry.request?.query))
         .join(" or ")}).`,
     );
@@ -113,7 +113,7 @@ function assertQualifiersMatch(
     const value = sent.get(key);
     if (value !== null && !applicable.some((entry) => entry.request?.query?.[key] === value)) {
       throw new Error(
-        `assertPermissionDrift: "${command}": request ${label} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
+        `${prefix}: request ${target} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
       );
     }
   }
@@ -243,7 +243,7 @@ export function assertDriftAgainst(
     requestedIds.add(match.operation.operationId);
     if (activeIds.has(match.operation.operationId)) {
       assertQualifiersMatch(
-        command,
+        `${helper}: ${label}`,
         request,
         queryOf(request, options.apiUrl),
         applicableByOperation.get(match.operation.operationId) ?? [],
