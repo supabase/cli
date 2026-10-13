@@ -8,6 +8,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { verifyCname } from "../domains.cname.ts";
+import { warnIncludeRawOutputDeprecated } from "../domains.deprecation.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
@@ -23,6 +24,8 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
+
+  yield* warnIncludeRawOutputDeprecated(flags.includeRawOutput);
 
   const ref = yield* resolver.resolve(flags.projectRef);
 

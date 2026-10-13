@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -109,6 +109,8 @@ function flags(over: Partial<{ includeRawOutput: boolean }> = {}) {
 function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): boolean {
   return api.requests.some((r) => r.url.includes("/custom-hostname/initialize"));
 }
+
+const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 describe("domains create integration", () => {
   it.effect("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
@@ -259,6 +261,29 @@ describe("domains create integration", () => {
       // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* domainsCreate(flags({ includeRawOutput: true }));
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        );
+        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
+        expect(parsed.custom_hostname).toBe(CUSTOM_HOSTNAME);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not warn when --include-raw-output is not set", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsCreate(flags());
+      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 

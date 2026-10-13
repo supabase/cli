@@ -84,12 +84,26 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("ignores --include-raw-output (inert on delete, Go parity)", () => {
+  it.effect(
+    "is inert apart from the stderr deprecation warning when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup({ goOutput: "json" });
+      return Effect.gen(function* () {
+        yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
+        expect(out.stdoutText).toBe("");
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+            "Deleted custom hostname config successfully.\n",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not warn when --include-raw-output is not set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      yield* domainsDelete(baseFlags);
+      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 

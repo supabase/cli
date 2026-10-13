@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -67,6 +67,8 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
+const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+
 describe("domains reverify integration", () => {
   it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
@@ -123,6 +125,29 @@ describe("domains reverify integration", () => {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        );
+        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
+        expect(parsed.custom_hostname).toBe("shop.acme.dev");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not warn when --include-raw-output is not set", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsReverify(baseFlags);
+      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 

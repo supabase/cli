@@ -80,6 +80,8 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
+const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+
 describe("domains get integration", () => {
   it.effect("prints the hostname status to stderr in text mode", () => {
     const { layer, out, telemetry, linkedProjectCache } = setup();
@@ -333,6 +335,29 @@ describe("domains get integration", () => {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        );
+        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
+        expect(parsed.custom_hostname).toBe("shop.acme.dev");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not warn when --include-raw-output is not set", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 
