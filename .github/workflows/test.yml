@@ -212,7 +212,7 @@ jobs:
       matrix:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
-        os: [macos-latest]
+        os: [macos-latest-xlarge]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
