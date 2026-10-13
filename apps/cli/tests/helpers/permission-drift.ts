@@ -45,7 +45,9 @@ function describeActiveFlags(activeFlags: ActiveFlags): string {
 }
 
 /** Every flag name `command`'s declaration classifies anywhere — a global, a no-effect flag, or a `when` condition. */
-function knownFlagNames(permissions: CommandPermissions): Set<string> {
+function knownFlagNames(
+  permissions: Extract<CommandPermissions, { status: "mapped" }>,
+): Set<string> {
   const names = new Set(GLOBAL_NO_API_EFFECT_FLAGS);
   for (const flag of permissions.noApiEffectFlags) names.add(flag);
   for (const entry of permissions.operations) {
@@ -85,6 +87,11 @@ export function assertDriftAgainst(
     );
   }
   const declared = lookup.permissions;
+  if (declared.status === "unmapped") {
+    throw new Error(
+      `assertPermissionDrift: "${command}" is declared unmapped (${declared.reason}) — it makes no CLI-side permission claims to assert drift against.`,
+    );
+  }
 
   for (const flag of Object.keys(activeFlags)) {
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) {

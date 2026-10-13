@@ -31,12 +31,17 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "config push",
 
   "db advisors",
+  "db branch create",
+  "db branch delete",
+  "db branch list",
+  "db branch switch",
   "db diff",
   "db dump",
   "db lint",
   "db pull",
   "db push",
   "db query",
+  "db remote changes",
   "db remote commit",
   "db reset",
   "db schema declarative generate",
@@ -64,6 +69,7 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "functions serve",
 
   "gen bearer-jwt",
+  "gen keys",
   "gen signing-key",
   "gen types",
 

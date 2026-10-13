@@ -65,6 +65,16 @@ describe("withPermissions", () => {
     });
   });
 
+  it("stores an unmapped declaration as given", () => {
+    const delegated = Command.make("create").pipe(
+      withPermissions({ status: "unmapped", reason: "go-delegated" }),
+    );
+    expect(Option.getOrUndefined(readPermissions(delegated))).toEqual({
+      status: "unmapped",
+      reason: "go-delegated",
+    });
+  });
+
   it("reads no declaration from a command without one", () => {
     expect(Option.isNone(readPermissions(Command.make("bare")))).toBe(true);
   });

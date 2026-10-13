@@ -49,11 +49,13 @@ export interface PermissionFragment {
   readonly noApiEffectFlags?: ReadonlyArray<string>;
 }
 
-export interface CommandPermissions {
-  readonly status: "mapped";
-  readonly operations: ReadonlyArray<OperationEntry>;
-  readonly noApiEffectFlags: ReadonlyArray<string>;
-}
+export type CommandPermissions =
+  | {
+      readonly status: "mapped";
+      readonly operations: ReadonlyArray<OperationEntry>;
+      readonly noApiEffectFlags: ReadonlyArray<string>;
+    }
+  | { readonly status: "unmapped"; readonly reason: "go-delegated" };
 
 /**
  * Builds a named building block, tagging every entry and each of its conditions with `source`

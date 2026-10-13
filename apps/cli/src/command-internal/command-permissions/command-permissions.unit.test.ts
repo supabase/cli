@@ -13,10 +13,9 @@ import { PENDING_COMMANDS } from "../../../tests/helpers/permission-pending-comm
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
 /**
- * Leaves still delegated to the Go binary, per `docs/go-cli-porting-status.md`. They carry no
- * declaration and are exempt from the mapping requirement; mapping one means removing it here.
- * Flag-gated delegation (`db diff --use-pg-schema`, `functions download --legacy-bundle`) stays
- * mapped, with the Go flag in `noApiEffectFlags`.
+ * Whole-command Go delegation, per `docs/go-cli-porting-status.md`. Flag-gated delegation
+ * (`db diff --use-pg-schema`, `functions download --legacy-bundle`) stays mapped with a
+ * `context` note instead.
  */
 const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
   "db branch create",
@@ -82,10 +81,9 @@ describe("command permission mapping completeness", () => {
   for (const { name, tree } of trees) {
     describe(name, () => {
       const leaves = [...tree].filter(([, node]) => node.isLeaf);
-      const mappableLeaves = leaves.filter(([path]) => !GO_DELEGATED_PATHS.has(path));
 
-      it("declares or pends every leaf that isn't go-delegated, never both", () => {
-        for (const [path, node] of mappableLeaves) {
+      it("declares or pends every leaf, never both", () => {
+        for (const [path, node] of leaves) {
           const isDeclared = declarationOf(node) !== undefined;
           const isPending = pendingPaths.has(path);
           expect(isDeclared || isPending, `"${path}" is neither declared nor pending`).toBe(true);
@@ -111,7 +109,7 @@ describe("command permission mapping completeness", () => {
 
         for (const [path, node] of leaves) {
           const permissions = declarationOf(node);
-          if (permissions === undefined) continue;
+          if (permissions?.status !== "mapped") continue;
 
           const classified = new Set([
             ...globalFlags,
@@ -170,7 +168,7 @@ describe("command permission mapping completeness", () => {
       it("references only operationIds that exist in the bundled spec and declare FGA permissions", () => {
         for (const [path, node] of leaves) {
           const permissions = declarationOf(node);
-          if (permissions === undefined) continue;
+          if (permissions?.status !== "mapped") continue;
           for (const entry of permissions.operations) {
             const operation = OPERATIONS.get(entry.operationId);
             expect(
@@ -185,18 +183,14 @@ describe("command permission mapping completeness", () => {
         }
       });
 
-      it("leaves every go-delegated path as a real leaf with no declaration and no pending entry", () => {
-        for (const path of GO_DELEGATED_PATHS) {
-          const node = tree.get(path);
-          expect(node?.isLeaf, `go-delegated path "${path}" is not a leaf in this tree`).toBe(true);
+      it("only marks a leaf unmapped when it's on the known go-delegation allowlist", () => {
+        for (const [path, node] of leaves) {
+          const permissions = declarationOf(node);
+          if (permissions?.status !== "unmapped") continue;
           expect(
-            declarationOf(node!),
-            `"${path}" is go-delegated, so it must not carry a declaration — remove it from GO_DELEGATED_PATHS to map it`,
-          ).toBeUndefined();
-          expect(
-            pendingPaths.has(path),
-            `"${path}" is go-delegated, so it doesn't belong in PENDING_COMMANDS`,
-          ).toBe(false);
+            GO_DELEGATED_PATHS.has(path),
+            `"${path}" is declared unmapped (${permissions.reason}), but isn't on the go-delegation allowlist — add it there if docs/go-cli-porting-status.md confirms it, otherwise map it`,
+          ).toBe(true);
         }
       });
     });

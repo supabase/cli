@@ -76,6 +76,15 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/no permission mapping declared for command "secrets list"/);
   });
 
+  it("rejects a command declared unmapped, which makes no claims to check", () => {
+    expect(() =>
+      assertDriftAgainst(declared({ status: "unmapped", reason: "go-delegated" }), {
+        command: "gen keys",
+        requests: [],
+      }),
+    ).toThrow(/declared unmapped \(go-delegated\)/);
+  });
+
   it("rejects an active flag the declaration never classifies", () => {
     expect(() =>
       assertDriftAgainst(mappedCommand, {
