@@ -157,7 +157,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       declarativeDirDisplay: declarativeDirRel,
       schema: flags.schema,
       noCache: flags.noCache,
-      debug: isPgDeltaDebugEnabled(),
+      debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
     };

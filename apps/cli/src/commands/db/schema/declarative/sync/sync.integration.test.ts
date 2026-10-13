@@ -303,6 +303,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const nextFiles = opts.renderedFiles ?? [];
   const planErrors = [...(opts.planErrors ?? [])];
   let planCalls = 0;
+  const planDebug: Array<boolean> = [];
   const declarativeExportCalls: Array<ReadonlyArray<string>> = [];
   const engine = Layer.succeed(
     PgDeltaEngine,
@@ -317,9 +318,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
           };
         }),
-      planDeclarativeSchema: () =>
+      planDeclarativeSchema: (input) =>
         Effect.gen(function* () {
           planCalls += 1;
+          planDebug.push(input.debug);
           const planError = planErrors.shift();
           if (planError !== undefined) return yield* planError;
           const fs = yield* FileSystem.FileSystem;
@@ -403,6 +405,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     localPostgresImageChecks,
     declarativeExportCalls,
+    planDebug,
     get planCalls() {
       return planCalls;
     },
@@ -946,6 +949,18 @@ describe("db schema declarative sync integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('passes PGDELTA_DEBUG="$value" through to the pg-delta planner', ({ value, debug }) => {
+    const s = setup(tmp.current, { experimental: true, diffSql: "" });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.planDebug).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
   });
 
   it.effect(
