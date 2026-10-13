@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   type CheckRun,
+  AUTO_APPROVER_LOGIN,
   type FastForwardIo,
   type GraphqlQuery,
   type Promotion,
@@ -427,6 +428,7 @@ function scenarioIo(
   const io: FastForwardIo = {
     git: makeGit(checkout),
     getPullRequest: async () => pullRequest,
+    listReviews: async () => [],
     listCheckRuns: async () => checks,
     findOpenPullRequest: async (base, head) => {
       lookups.push(`${base}<-${head}`);
@@ -731,6 +733,30 @@ describe("runFastForward sync", () => {
     expect(outcome.status).toBe("fast-forwarded");
     expect(repo.remoteTip("develop")).toBe(head);
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+  });
+
+  test("refuses the sync bot's approval while a collaborator requests changes, not an outsider", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    const before = repo.remoteTip("develop");
+    const review = (author_association: string) => ({
+      user: { login: author_association.toLowerCase() },
+      state: "CHANGES_REQUESTED",
+      author_association,
+    });
+
+    const held = await runFastForward(
+      { ...io, listReviews: async () => [review("COLLABORATOR")] },
+      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+    );
+    expect(held.status).toBe("refused");
+    expect(comments[0]).toContain("requested changes");
+    expect(repo.remoteTip("develop")).toBe(before);
+
+    const landed = await runFastForward(
+      { ...io, listReviews: async () => [review("NONE")] },
+      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+    );
+    expect(landed.status).toBe("fast-forwarded");
   });
 
   test("lands the approved head merged with a target move without pulling in the moved source", async () => {

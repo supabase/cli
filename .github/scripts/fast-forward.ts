@@ -199,9 +199,37 @@ export type CheckEvaluation =
       failing: { name: string; conclusion: string }[];
     };
 
+/** Account `Sync repair` approves eligible sync pull requests as. */
+export const AUTO_APPROVER_LOGIN = "supabase-oss";
+
+export interface PullRequestReview {
+  user: { login: string } | null;
+  state: string;
+  author_association: string;
+}
+
+/**
+ * Whether a collaborator's latest approving or blocking review requests changes; comments do not change a verdict,
+ * and reviews from people outside the repository never hold automation.
+ */
+export function hasChangesRequested(reviews: PullRequestReview[]): boolean {
+  const verdicts = new Map<string, string>();
+  for (const review of reviews) {
+    if (
+      review.user &&
+      ["OWNER", "MEMBER", "COLLABORATOR"].includes(review.author_association) &&
+      ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)
+    ) {
+      verdicts.set(review.user.login, review.state);
+    }
+  }
+  return [...verdicts.values()].includes("CHANGES_REQUESTED");
+}
+
 export interface FastForwardIo {
   git: GitRunner;
   getPullRequest(): Promise<PullRequest>;
+  listReviews(): Promise<PullRequestReview[]>;
   listCheckRuns(sha: string): Promise<CheckRun[]>;
   findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
   comment(body: string): Promise<void>;
@@ -210,6 +238,8 @@ export interface FastForwardIo {
 export interface FastForwardInput {
   /** The commit the approving review was submitted against; a local dry run defaults to the live head. */
   reviewCommitId?: string;
+  /** Login of the approving reviewer. */
+  approver?: string;
   dryRun?: boolean;
 }
 
@@ -448,6 +478,15 @@ export async function runFastForward(
   if (pullRequest.draft) {
     return refuse(io, input, "pull request is a draft");
   }
+  // Sync repair decides to approve before posting, so a change request can land in between.
+  if (input.approver === AUTO_APPROVER_LOGIN && hasChangesRequested(await io.listReviews())) {
+    return refuse(
+      io,
+      input,
+      "a reviewer requested changes",
+      `Not fast-forwarding \`${promotion.target}\`: a reviewer requested changes after \`${AUTO_APPROVER_LOGIN}\` decided to approve. A maintainer approves once they are addressed.`,
+    );
+  }
   if (approvedSha !== headSha) {
     return refuse(
       io,
@@ -567,6 +606,19 @@ function makeIo(token: string, repository: string, prNumber: number): FastForwar
     git: makeGit(process.cwd()),
     getPullRequest: () =>
       githubRequest<PullRequest>(token, `/repos/${repository}/pulls/${prNumber}`),
+    async listReviews() {
+      const reviews: PullRequestReview[] = [];
+      for (let page = 1; ; page += 1) {
+        const batch = await githubRequest<PullRequestReview[]>(
+          token,
+          `/repos/${repository}/pulls/${prNumber}/reviews?per_page=100&page=${page}`,
+        );
+        reviews.push(...batch);
+        if (batch.length < 100) {
+          return reviews;
+        }
+      }
+    },
     listCheckRuns: (sha) =>
       fetchPullRequestCheckRuns(
         (query, variables) => githubGraphql(token, query, variables),
@@ -608,7 +660,8 @@ async function main(): Promise<void> {
   if (!reviewCommitId && !dryRun) {
     throw new Error("REVIEW_COMMIT_ID is required");
   }
-  const outcome = await runFastForward(io, { reviewCommitId, dryRun });
+  const approver = process.env.REVIEWER_LOGIN || undefined;
+  const outcome = await runFastForward(io, { reviewCommitId, approver, dryRun });
   console.log(JSON.stringify(outcome));
   if (outcome.status === "refused") {
     console.error(`::error::${outcome.reason}`);

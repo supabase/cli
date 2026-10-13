@@ -706,7 +706,7 @@ describe("buildReviewPayload", () => {
     expect(
       parseAiReviewState(truncateReviewBody(`${payload.body}${"x".repeat(70_000)}`, footer.runUrl)),
     ).toEqual({
-      head: footer.headSha,
+      head: "a".repeat(40),
       complete: false,
       findings: 2,
     });
@@ -1240,17 +1240,28 @@ describe("post flow via injected ReviewIo", () => {
     expect(postedReviews[1]?.body).toContain("Inline comments (GitHub rejected");
   });
 
-  test("never retries with the fold when there were no inline comments to fold", async () => {
+  test("retries a rejected pinned review on the current head, still naming the reviewed commit", async () => {
     const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      postReviewStatuses: [422],
-    });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422, 200] });
 
-    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
-      /Review POST failed \(status 422\)/,
-    );
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+
+    expect(postedReviews.map((posted) => posted.commit_id)).toEqual([footer.headSha, undefined]);
+    expect(parseAiReviewState(postedReviews[1]?.body ?? "")?.head).toBe(footer.headSha);
+  });
+
+  test("an older workflow's review carries no state, so it never retries a body-only 422", async () => {
+    const finding = makeFinding({ file: "file.ts", line: 999 });
+    const review = makeMergedReview({ findings: [finding] });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422] });
+    const unpinned = { ...footer, headSha: undefined, reviewsComplete: undefined };
+
+    await expect(
+      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, unpinned),
+    ).rejects.toThrow(/Review POST failed \(status 422\)/);
     expect(postedReviews).toHaveLength(1);
+    expect(parseAiReviewState(postedReviews[0]?.body ?? "")).toBeNull();
   });
 
   test("throws with GitHub's response body when the retry also 422s, instead of swallowing it", async () => {

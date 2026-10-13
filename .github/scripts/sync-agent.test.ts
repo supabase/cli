@@ -8,7 +8,6 @@ import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
 import {
   buildSuggestions,
   failureExcerpt,
-  hasChangesRequested,
   leftoverConflictMarkers,
   planRepair,
   type ReviewThread,
@@ -222,25 +221,6 @@ describe("planRepair", () => {
     ]) {
       expect(plan.action).toBe("skip");
     }
-  });
-});
-
-describe("hasChangesRequested", () => {
-  const review = (login: string, state: string) => ({ user: { login }, state });
-
-  test("holds while a reviewer's latest verdict requests changes, ignoring later comments", () => {
-    expect(
-      hasChangesRequested([
-        review("maintainer", "CHANGES_REQUESTED"),
-        review("maintainer", "COMMENTED"),
-      ]),
-    ).toBe(true);
-    expect(
-      hasChangesRequested([
-        review("maintainer", "CHANGES_REQUESTED"),
-        review("maintainer", "APPROVED"),
-      ]),
-    ).toBe(false);
   });
 });
 

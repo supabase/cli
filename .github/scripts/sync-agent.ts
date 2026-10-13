@@ -11,7 +11,13 @@ import {
   type AiReviewState,
   parseAiReviewState,
 } from "./ai-review/post-review.ts";
-import { type CheckRun, fetchPullRequestCheckRuns, REQUIRED_CHECKS } from "./fast-forward.ts";
+import {
+  type CheckRun,
+  fetchPullRequestCheckRuns,
+  hasChangesRequested,
+  type PullRequestReview,
+  REQUIRED_CHECKS,
+} from "./fast-forward.ts";
 import {
   githubGraphql,
   githubRequest,
@@ -626,19 +632,6 @@ async function fetchAiReviewThreads(
   });
 }
 
-/** Whether any reviewer's latest approving or blocking review requests changes; comments do not change a verdict. */
-export function hasChangesRequested(
-  reviews: { user: { login: string } | null; state: string }[],
-): boolean {
-  const verdicts = new Map<string, string>();
-  for (const review of reviews) {
-    if (review.user && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) {
-      verdicts.set(review.user.login, review.state);
-    }
-  }
-  return [...verdicts.values()].includes("CHANGES_REQUESTED");
-}
-
 async function jobFailureExcerpt(
   token: string,
   repository: string,
@@ -747,12 +740,10 @@ async function collect(outputDir: string): Promise<void> {
       `/repos/${repository}/issues/${pull.number}/comments`,
     )),
   ];
-  const reviews = await listAll<{
-    id: number;
-    user: { login: string } | null;
-    body: string;
-    state: string;
-  }>(token, `/repos/${repository}/pulls/${pull.number}/reviews`);
+  const reviews = await listAll<PullRequestReview & { id: number; body: string }>(
+    token,
+    `/repos/${repository}/pulls/${pull.number}/reviews`,
+  );
   comments.push(...reviews);
   const aiReview = reviews.findLast(
     (review) =>
