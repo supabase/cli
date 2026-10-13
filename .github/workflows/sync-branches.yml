@@ -345,12 +345,18 @@ jobs:
             fi
           done
           if [ "$RESOLVED" = true ]; then
-            git fetch "$stage/sync.bundle" HEAD:refs/sync/resolution
             export REPO_DIR="$GITHUB_WORKSPACE" OUTPUT_DIR="$stage" HEAD_SHA
-            HEAD_SHA="$(git rev-parse refs/sync/resolution)"
-            BASE_REF=origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify
-            git -c core.hooksPath=/dev/null push \
-              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/sync/resolution:refs/heads/sync/develop-into-next
+            if ! {
+              git fetch "$stage/sync.bundle" HEAD:refs/sync/resolution &&
+                HEAD_SHA="$(git rev-parse refs/sync/resolution)" &&
+                BASE_REF=origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify &&
+                git -c core.hooksPath=/dev/null push \
+                  "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/sync/resolution:refs/heads/sync/develop-into-next
+            }; then
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+                --body "@supabase/cli Publishing Claude's resolution failed; resolve this merge by hand as described above ([workflow run](${RUN_URL}))."
+              exit 1
+            fi
             printf "Approve to fast-forward \`next\` once checks pass ([workflow run](%s)).\n" "$RUN_URL" >> "$stage/comment.md"
           fi
           if [ -n "$stage" ]; then

@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type CheckRun, REQUIRED_CHECKS } from "./fast-forward.ts";
 import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
-import { buildSuggestions, planRepair, type ReviewThread, verifyWorkflows } from "./sync-agent.ts";
+import {
+  buildSuggestions,
+  leftoverConflictMarkers,
+  planRepair,
+  type ReviewThread,
+  verifyWorkflows,
+} from "./sync-agent.ts";
 
 const HEAD = "a".repeat(40);
 const RESOLVED = "<!-- sync-agent resolve -->\nClaude resolved the merge.";
@@ -35,6 +42,19 @@ describe("planRepair", () => {
     });
 
     expect(plan).toEqual({ action: "repair", failures: [failed], threads: [] });
+  });
+
+  test("repairs a required check that ended without succeeding, such as a cancelled one", () => {
+    const cancelled = run(99, REQUIRED_CHECKS[0] ?? "", "cancelled");
+    const plan = planRepair({
+      head: HEAD,
+      reviewRunning: false,
+      botComments: [RESOLVED],
+      runs: [...green, cancelled],
+      threads: [],
+    });
+
+    expect(plan).toEqual({ action: "repair", failures: [cancelled], threads: [] });
   });
 
   test("waits while a check runs or a required check has not started", () => {
@@ -163,6 +183,38 @@ describe("buildSuggestions", () => {
     "",
   ].join("\n");
 
+  test("fences replacement text that contains backticks and leaves mode changes to apply by hand", () => {
+    const { comments, leftover } = buildSuggestions(
+      [
+        "diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml",
+        "--- a/.github/workflows/test.yml",
+        "+++ b/.github/workflows/test.yml",
+        "@@ -3 +3 @@",
+        "-          run: echo",
+        "+          run: echo ```",
+        "diff --git a/.github/run.sh b/.github/run.sh",
+        "old mode 100644",
+        "new mode 100755",
+        "--- a/.github/run.sh",
+        "+++ b/.github/run.sh",
+        "@@ -1 +1 @@",
+        "-echo a",
+        "+echo b",
+        "",
+      ].join("\n"),
+      new Map([
+        [".github/workflows/test.yml", [[1, 10]]],
+        [".github/run.sh", [[1, 10]]],
+      ]),
+      () => "",
+    );
+
+    expect(comments.map((comment) => comment.body)).toEqual([
+      "````suggestion\n          run: echo ```\n````",
+    ]);
+    expect(leftover).toContain("new mode 100755");
+  });
+
   test("suggests edits inside the pull request's diff and leaves the rest to apply by hand", () => {
     const { comments, leftover } = buildSuggestions(
       diff,
@@ -234,5 +286,28 @@ describe("verifyWorkflows", () => {
     expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).toThrow(
       "workflow edits must come from a maintainer",
     );
+  });
+});
+
+describe("leftoverConflictMarkers", () => {
+  test("finds every zdiff3 marker line and ignores marker-like text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sync-agent-"));
+    writeFileSync(
+      join(dir, "a.ts"),
+      ["ok", "<<<<<<< HEAD", "|||||||", "=======", ">>>>>>> next", "======= not a marker"].join(
+        "\n",
+      ),
+    );
+
+    try {
+      expect(leftoverConflictMarkers(dir, ["a.ts", "missing.ts"])).toEqual([
+        "a.ts:2",
+        "a.ts:3",
+        "a.ts:4",
+        "a.ts:5",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

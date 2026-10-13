@@ -117,7 +117,7 @@ export function planRepair(state: {
     };
   }
   const failures = runs.filter(
-    (run) => run.conclusion === "failure" || run.conclusion === "timed_out",
+    (run) => !["success", "neutral", "skipped"].includes(run.conclusion ?? ""),
   );
   if (threads.length === 0 && failures.length === 0) {
     return { action: "skip", reason: "Nothing to repair." };
@@ -139,7 +139,9 @@ export function leftoverConflictMarkers(workDir: string, paths: string[]): strin
     }
     return readFileSync(file, "utf8")
       .split("\n")
-      .flatMap((line, index) => (/^(<{7}|>{7}) /.test(line) ? [`${path}:${index + 1}`] : []));
+      .flatMap((line, index) =>
+        /^(<{7}|\|{7}|>{7})( |$)|^={7}$/.test(line) ? [`${path}:${index + 1}`] : [],
+      );
   });
 }
 
@@ -251,8 +253,15 @@ function commitOutsideWorkflows(
   if (committed) {
     commit(git, message);
   }
-  const diff = gitOrThrow(git, ["diff", "--unified=0", "HEAD", proposed, "--", WORKFLOWS]);
-  writeFileSync(join(outputDir, WORKFLOW_DIFF), diff ? `${diff}\n` : "");
+  gitOrThrow(git, [
+    "diff",
+    "--unified=0",
+    `--output=${join(outputDir, WORKFLOW_DIFF)}`,
+    "HEAD",
+    proposed,
+    "--",
+    WORKFLOWS,
+  ]);
   return committed;
 }
 
@@ -607,6 +616,17 @@ async function isReviewRunning(
   return false;
 }
 
+async function listAll<T>(token: string, path: string): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await githubRequest<T[]>(token, `${path}?per_page=100&page=${page}`);
+    items.push(...batch);
+    if (batch.length < 100) {
+      return items;
+    }
+  }
+}
+
 /** Reads the sync pull request's state with the job's read-only token and writes the repair context. */
 async function collect(outputDir: string): Promise<void> {
   const token = requireEnv("GH_TOKEN");
@@ -623,13 +643,13 @@ async function collect(outputDir: string): Promise<void> {
     return;
   }
   const comments = [
-    ...(await githubRequest<{ user: { login: string } | null; body: string }[]>(
+    ...(await listAll<{ user: { login: string } | null; body: string }>(
       token,
-      `/repos/${repository}/issues/${pull.number}/comments?per_page=100`,
+      `/repos/${repository}/issues/${pull.number}/comments`,
     )),
-    ...(await githubRequest<{ user: { login: string } | null; body: string }[]>(
+    ...(await listAll<{ user: { login: string } | null; body: string }>(
       token,
-      `/repos/${repository}/pulls/${pull.number}/reviews?per_page=100`,
+      `/repos/${repository}/pulls/${pull.number}/reviews`,
     )),
   ];
   const plan = planRepair({
@@ -698,10 +718,21 @@ function repair(workDir: string, outputDir: string, head: string): void {
     outputDir,
     "chore(repo): repair the develop-into-next sync",
   );
-  const replies = (result?.findings ?? []).flatMap(({ id, fixed, reply }) => {
+  // A fix may depend on workflow edits that are only suggested, so threads stay open until a maintainer commits them.
+  const diffFile = join(outputDir, WORKFLOW_DIFF);
+  const withheld = existsSync(diffFile) && readFileSync(diffFile, "utf8") !== "";
+  const findings = result?.findings ?? [];
+  const replies = findings.flatMap(({ id, fixed, reply }) => {
     const thread = threads[id - 1];
     return thread
-      ? [{ commentId: thread.commentId, threadId: thread.threadId, body: reply, resolve: fixed }]
+      ? [
+          {
+            commentId: thread.commentId,
+            threadId: thread.threadId,
+            body: reply,
+            resolve: fixed && !withheld,
+          },
+        ]
       : [];
   });
   writeFileSync(join(outputDir, "replies.json"), JSON.stringify(replies));
@@ -713,7 +744,7 @@ function repair(workDir: string, outputDir: string, head: string): void {
       "",
       summary,
       "",
-      `${replies.filter((reply) => reply.resolve).length} findings fixed, ${replies.filter((reply) => !reply.resolve).length} declined (${runLink()}).`,
+      `${findings.filter((finding) => finding.fixed).length} findings fixed, ${findings.filter((finding) => !finding.fixed).length} declined${withheld ? "; fixed threads stay open until the workflow suggestions are committed" : ""} (${runLink()}).`,
       "",
     ].join("\n"),
   );
@@ -744,7 +775,7 @@ export function buildSuggestions(
     .filter((part) => part.startsWith("diff --git "))) {
     const [header = "", ...hunks] = section.split(/^(?=@@ )/m);
     const path = header.match(/^\+\+\+ b\/(.+)$/m)?.[1];
-    if (!path || /^(new|deleted) file mode/m.test(header)) {
+    if (!path || /^(new file|deleted file|old) mode/m.test(header)) {
       leftover.push(section);
       continue;
     }
@@ -772,7 +803,9 @@ export function buildSuggestions(
           line: end,
           ...(start < end ? { start_line: start } : {}),
           side: "RIGHT",
-          body: ["```suggestion", ...lines, "```"].join("\n"),
+          body: [`${fence(lines.join("\n"))}suggestion`, ...lines, fence(lines.join("\n"))].join(
+            "\n",
+          ),
         });
       } else {
         manual.push(hunk);
@@ -808,6 +841,15 @@ function pullRequestAnchors(git: GitRunner, head: string): Map<string, [number, 
   return anchors;
 }
 
+/** A file's content at a revision, untrimmed so indentation survives into suggestions. */
+function showFile(repoDir: string, spec: string): string {
+  const result = spawnSync("git", ["show", spec], { cwd: repoDir, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git show ${spec} failed: ${result.stderr}`);
+  }
+  return result.stdout;
+}
+
 /** Posts the proposed workflow edits on the pushed head as one review a maintainer commits from. */
 async function suggest(repoDir: string, outputDir: string): Promise<void> {
   const file = join(outputDir, WORKFLOW_DIFF);
@@ -822,7 +864,7 @@ async function suggest(repoDir: string, outputDir: string): Promise<void> {
   const { comments, leftover } = buildSuggestions(
     diff,
     pullRequestAnchors(git, head),
-    (path, line) => gitOrThrow(git, ["show", `${head}:${path}`]).split("\n")[line - 1] ?? "",
+    (path, line) => showFile(repoDir, `${head}:${path}`).split("\n")[line - 1] ?? "",
   );
   const body = (rest: string) =>
     [
@@ -848,8 +890,11 @@ async function suggest(repoDir: string, outputDir: string): Promise<void> {
 
 /** A code fence longer than any backtick run in `text`, so the text cannot close it. */
 function codeFence(text: string, language: string): string[] {
-  const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
-  return [`${fence}${language}`, text.trimEnd(), fence];
+  return [`${fence(text)}${language}`, text.trimEnd(), fence(text)];
+}
+
+function fence(text: string): string {
+  return "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
 }
 
 /**
