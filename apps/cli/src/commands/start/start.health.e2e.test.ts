@@ -79,15 +79,9 @@ describe("supabase start health (e2e)", () => {
           'FROM scratch\nCOPY mailpit /mailpit\nENTRYPOINT ["/mailpit"]\n',
         );
         yield* Effect.acquireRelease(
-          runDockerEffect([
-            "build",
-            "-q",
-            "--label",
-            "com.supabase.cli.e2e.broken-image=true",
-            "-t",
-            mailpitImage,
-            buildDir,
-          ]).pipe(Effect.as(mailpitImage)),
+          runDockerEffect(["build", "-q", "-t", mailpitImage, buildDir]).pipe(
+            Effect.as(mailpitImage),
+          ),
           // Never leave a poisoned tag behind for later jobs on this runner.
           (image) => runDockerEffect(["image", "rm", "-f", image]).pipe(Effect.ignore),
         );

@@ -77,6 +77,13 @@ jobs:
           pnpm --silent --filter @supabase/stack prepare:test-artifacts --images |
             xargs --max-procs 4 --max-args 1 docker pull --quiet
 
-      - name: Save Docker image disk
+      - name: Prune Docker before saving its image disk
+        run: |
+          docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
+          docker system prune --force
+          docker volume prune --all --force
+
+      # The image disk only commits once nothing holds /var/lib/docker open.
+      - name: Stop Docker so its image disk can be saved
         if: always()
-        uses: ./.github/actions/save-docker-disk
+        run: sudo systemctl stop docker.socket docker.service

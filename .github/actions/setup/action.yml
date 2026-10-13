@@ -75,7 +75,11 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         COMMIT: ${{ inputs.commit-sticky-disks }}
       run: |
-        if [ -z "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] || [ "$RUNNER_OS" != Linux ]; then
+        if [ "$RUNNER_OS" != Linux ]; then
+          exit 0
+        fi
+        if [ -z "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ]; then
+          echo "::notice::Sticky disks requested but this is not a Blacksmith runner; using actions/cache."
           exit 0
         fi
         echo "enabled=true" >> "$GITHUB_OUTPUT"

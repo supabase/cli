@@ -155,9 +155,6 @@ jobs:
           src/port-reservation.e2e.test.ts
           --passWithNoTests=false
 
-      - name: Save Docker image disk
-        if: always()
-        uses: ./.github/actions/save-docker-disk
 
   test-stack-ports:
     if: |
@@ -365,9 +362,6 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Save Docker image disk
-        if: always()
-        uses: ./.github/actions/save-docker-disk
 
   test-stack-e2e:
     if: |
@@ -418,9 +412,6 @@ jobs:
           src/public.e2e.test.ts
           --passWithNoTests=false
 
-      - name: Save Docker image disk
-        if: always() && matrix.runtime == 'docker'
-        uses: ./.github/actions/save-docker-disk
 
   test-stack-podman-integration:
     if: |
