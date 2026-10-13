@@ -1,3 +1,5 @@
+import { REPLAY_PROJECT_REF } from "../server/placeholder.ts";
+
 type CliE2eMode = "replay" | "record";
 
 // Runtime mode. `replay` (default) serves recorded fixtures; `record` proxies to
@@ -34,13 +36,12 @@ export const ACCESS_TOKEN =
 // Region for the fresh recording project.
 export const REGION = process.env["CLI_E2E_REGION"] ?? "us-east-1";
 
-// In replay mode any 20-char lowercase alpha string normalises to __PROJECT_REF__
-// in the fixture key. In record mode supply a real project ref via env.
-export const PROJECT_REF = process.env["SUPABASE_TEST_PROJECT_REF"] ?? "aaaaaaaaaaaaaaaaaaaa";
+// Recorded fixtures store every project ref and org slug as REPLAY_PROJECT_REF, so replay
+// requests use it too. In record mode supply a real project ref via env.
+export const PROJECT_REF = process.env["SUPABASE_TEST_PROJECT_REF"] ?? REPLAY_PROJECT_REF;
 
-// In replay mode any 20-char lowercase alpha string normalises to __PROJECT_REF__.
 // In record mode supply a real org slug via env, or let the resolver derive it.
-export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? "bbbbbbbbbbbbbbbbbbbb";
+export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? REPLAY_PROJECT_REF;
 
 // UUID of an existing SAML provider on the staging project.
 // In replay mode any UUID normalises to __UUID__ in fixture paths.

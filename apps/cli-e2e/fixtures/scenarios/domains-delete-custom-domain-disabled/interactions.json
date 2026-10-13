@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/__PROJECT_REF__/custom-hostname",
+      "path": "/v1/projects/replayfixtureprojref/custom-hostname",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -29,7 +29,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__",
+      "path": "/v1/projects/replayfixtureprojref",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",

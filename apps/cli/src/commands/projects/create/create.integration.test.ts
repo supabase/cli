@@ -533,13 +533,10 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
-    // The typed client validates refs to be 20+ chars; `executeRaw` bypasses that to render
-    // placeholders verbatim.
+  it.effect("passes through created-project fields the schema does not declare", () => {
     const { layer, out } = setup({
-      byMethod: {
-        POST: { status: 201, body: { ...CREATED, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" } },
-      },
+      goOutput: "json",
+      byMethod: { POST: { status: 201, body: { ...CREATED, undeclared_field: "kept" } } },
     });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -549,9 +546,7 @@ describe("projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      expect(out.stderrText).toContain(
-        "Created a new project at https://supabase.com/dashboard/project/__PROJECT_REF__",
-      );
+      expect(out.stdoutText).toContain('"undeclared_field": "kept"');
     }).pipe(Effect.provide(layer));
   });
 

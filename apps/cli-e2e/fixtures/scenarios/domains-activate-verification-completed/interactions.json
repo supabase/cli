@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/__PROJECT_REF__/custom-hostname/activate",
+      "path": "/v1/projects/replayfixtureprojref/custom-hostname/activate",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -28,7 +28,7 @@
           "errors": [],
           "messages": [],
           "result": {
-            "custom_origin_server": "__PROJECT_REF__.supabase.red",
+            "custom_origin_server": "replayfixtureprojref.supabase.red",
             "hostname": "www.urgsimurksi.xyz",
             "id": "00000000-0000-0000-0000-000000000000",
             "ownership_verification": {
