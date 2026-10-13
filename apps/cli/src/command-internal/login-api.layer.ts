@@ -36,7 +36,7 @@ export const loginApiLayer = Layer.effect(
     return LoginApi.of({
       fetchLoginSession: (apiHost: string, sessionId: string, deviceCode: string) =>
         Effect.gen(function* () {
-          // Not in the Management API OpenAPI spec, so it stays a raw request.
+          // oxlint-disable-next-line supabase/no-raw-management-api-url -- not in the Management API OpenAPI spec, so no typed operation exists
           const url = `${apiHost}/platform/cli/login/${encodeURIComponent(sessionId)}?device_code=${encodeURIComponent(deviceCode)}`;
           const request = HttpClientRequest.get(url).pipe(
             HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
