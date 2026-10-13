@@ -87,6 +87,7 @@ interface AliasCase {
   readonly handler: AliasHandler;
   readonly routedSpec: InspectQuerySpec;
   readonly target: string;
+  readonly removedInV3?: boolean;
 }
 
 // One row per deprecated alias: the deprecation target text and the active
@@ -110,6 +111,7 @@ const cases: ReadonlyArray<AliasCase> = [
     handler: inspectDbTotalIndexSize,
     routedSpec: indexStatsSpec,
     target: "index-stats",
+    removedInV3: true,
   },
   {
     alias: "index-sizes",
@@ -146,12 +148,14 @@ const cases: ReadonlyArray<AliasCase> = [
     handler: inspectDbTableIndexSizes,
     routedSpec: tableStatsSpec,
     target: "table-stats",
+    removedInV3: true,
   },
   {
     alias: "total-table-sizes",
     handler: inspectDbTotalTableSizes,
     routedSpec: tableStatsSpec,
     target: "table-stats",
+    removedInV3: true,
   },
   {
     alias: "role-configs",
@@ -177,9 +181,11 @@ describe("inspect db deprecated aliases", () => {
       const ctx = setup();
       return Effect.gen(function* () {
         yield* testCase.handler(flags);
-        expect(ctx.out.stderrText).toContain(
-          `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.`,
-        );
+        const expected = testCase.removedInV3
+          ? `Command "${testCase.alias}" is deprecated and will be removed in v3, use "${testCase.target}" instead.\n`
+          : `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`;
+        expect(ctx.out.stderrText).toContain(expected);
+        expect(ctx.out.stdoutText).not.toContain("is deprecated");
         expect(ctx.querySql).toBe(testCase.routedSpec.sql);
       }).pipe(Effect.provide(ctx.layer));
     });

@@ -36,7 +36,7 @@ export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>
 
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
   Command.withDescription(
-    "Deprecated: use db pull instead. Commit remote changes as a new migration.",
+    "Deprecated: use db pull instead; removed in v3. Commit remote changes as a new migration.",
   ),
   Command.withShortDescription("Commit remote changes as a new migration"),
   Command.withHandler((flags) =>
