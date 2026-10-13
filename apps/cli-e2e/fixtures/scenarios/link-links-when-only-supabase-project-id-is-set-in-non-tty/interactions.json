@@ -355,6 +355,7 @@
         "hook_before_user_created_secrets": null,
         "nimbus_oauth_client_id": null,
         "nimbus_oauth_client_secret": null,
+        "nimbus_oauth_email_optional": null,
         "external_anonymous_users_enabled": false,
         "external_apple_additional_client_ids": null,
         "external_apple_client_id": null,

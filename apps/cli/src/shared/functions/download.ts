@@ -797,7 +797,7 @@ const downloadBody = Effect.fnUntraced(function* (
         ref: projectRef,
         function_slug: slug,
       },
-      { Accept: "multipart/form-data" },
+      { headers: { Accept: "multipart/form-data" } },
     )
     .pipe(Effect.mapError((error) => mapTransportError("failed to download function", error)));
 
@@ -830,7 +830,7 @@ const downloadEszipBody = Effect.fnUntraced(function* (
         ref: projectRef,
         function_slug: slug,
       },
-      { Accept: "*/*" },
+      { headers: { Accept: "*/*" } },
     )
     .pipe(Effect.mapError((error) => mapTransportError("failed to get function body", error)));
 

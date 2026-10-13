@@ -4,7 +4,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as UrlParams from "effect/http/UrlParams";
 import * as Schema from "effect/Schema";
 
@@ -204,6 +204,142 @@ describe("makeSupabaseApiClient", () => {
     expect(markSupabaseApiInputErrorAsUserInput(executeRawError)).toBe(executeRawError);
     expect(executeRawError.source).toBe("user_input");
     expect(requests).toBe(0);
+  });
+
+  test("rejects unknown request keys at any depth before sending a request", async () => {
+    let requests = 0;
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+    const ref = "abcdefghijklmnopqrst";
+    const topLevelExcess = { ref, requestedConfig: { database: true }, junk: 1 };
+    const nestedExcess = { ref, requestedConfig: { database: true, junk: 1 } };
+
+    const errors = await Promise.all([
+      Effect.runPromise(
+        client
+          .execute(operationDefinitions.v1UpdateSslEnforcementConfig, topLevelExcess)
+          .pipe(Effect.flip),
+      ),
+      Effect.runPromise(
+        client
+          .executeRaw(operationDefinitions.v1UpdateSslEnforcementConfig, nestedExcess)
+          .pipe(Effect.flip),
+      ),
+    ]);
+
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(SupabaseApiInputError);
+    }
+    expect(errors[0]?.message).toContain('["junk"]');
+    expect(errors[1]?.message).toContain('["requestedConfig"]["junk"]');
+    expect(requests).toBe(0);
+  });
+
+  test("per-request options override the base URL, token, and headers for that request only", async () => {
+    const seen: Array<{
+      url: string;
+      authorization: string | undefined;
+      userAgent: string | undefined;
+      custom: string | undefined;
+    }> = [];
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient({ ...config, headers: { "X-Custom": "default" } }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seen.push({
+              url: request.url,
+              authorization: request.headers.authorization,
+              userAgent: request.headers["user-agent"],
+              custom: request.headers["x-custom"],
+            });
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        {
+          baseUrl: "https://api.example.test/prefix",
+          accessToken: Redacted.make("override-token"),
+          headers: { "X-Custom": "override" },
+        },
+      ),
+    );
+    await Effect.runPromise(
+      client.executeRaw(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        { baseUrl: "https://raw.example.test", accessToken: "raw-token" },
+      ),
+    );
+    await Effect.runPromise(client.execute(operationDefinitions.v1ListAllProjects, {}));
+
+    expect(seen).toEqual([
+      {
+        url: "https://api.example.test/prefix/v1/projects",
+        authorization: "Bearer override-token",
+        userAgent: "supabase-api/test",
+        custom: "override",
+      },
+      {
+        url: "https://raw.example.test/v1/projects",
+        authorization: "Bearer raw-token",
+        userAgent: "supabase-api/test",
+        custom: "default",
+      },
+      {
+        url: "https://api.supabase.com/v1/projects",
+        authorization: "Bearer test-token",
+        userAgent: "supabase-api/test",
+        custom: "default",
+      },
+    ]);
+  });
+
+  test("requests with per-request overrides still pass through transformClient", async () => {
+    const transformed: Array<string> = [];
+    const wire: Array<{ url: string; stamp: string | undefined }> = [];
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config, {
+        transformClient: (inner) =>
+          Effect.succeed(
+            HttpClient.mapRequest(inner, (request) => {
+              transformed.push(request.url);
+              return HttpClientRequest.setHeader(request, "X-Stamp", "stamped");
+            }),
+          ),
+      }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            wire.push({ url: request.url, stamp: request.headers["x-stamp"] });
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        { baseUrl: "https://api.example.test" },
+      ),
+    );
+
+    expect(transformed).toEqual(["https://api.example.test/v1/projects"]);
+    expect(wire).toEqual([{ url: "https://api.example.test/v1/projects", stamp: "stamped" }]);
   });
 
   test("fails request-body construction before sending a request", async () => {

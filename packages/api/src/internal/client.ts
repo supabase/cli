@@ -32,6 +32,13 @@ interface ResolvedSupabaseApiConfig {
   readonly headers?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
+/** Per-request overrides of the construction-time base URL, bearer token, and headers. */
+export interface SupabaseApiRequestOptions {
+  readonly baseUrl?: string | undefined;
+  readonly accessToken?: string | Redacted.Redacted<string> | undefined;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+}
+
 export interface SupabaseApiRetryOptions {
   readonly maxRetries?: number | undefined;
   readonly requestTimeoutMs?: number | undefined;
@@ -54,6 +61,7 @@ export interface SupabaseApiClientShape {
   readonly execute: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
     input: OperationInput<Id>,
+    options?: SupabaseApiRequestOptions,
   ) => Effect.Effect<OperationOutput<Id>, SupabaseApiError>;
   /**
    * Executes an operation but returns the raw HTTP response, without decoding
@@ -65,7 +73,7 @@ export interface SupabaseApiClientShape {
   readonly executeRaw: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
     input: OperationInput<Id>,
-    headers?: Readonly<Record<string, string>>,
+    options?: SupabaseApiRequestOptions,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError>;
 }
 
@@ -239,33 +247,54 @@ function applySupabaseRetryPolicy(
   });
 }
 
+/**
+ * Carries one request's overrides to the innermost client layer, so the client
+ * handed to `transformClient` stays fully configured and overridden requests
+ * still pass through it, the retry policy, and the timeout.
+ */
+const RequestOverrides = Context.Reference<SupabaseApiRequestOptions | undefined>(
+  "@supabase/api/RequestOverrides",
+  { defaultValue: () => undefined },
+);
+
+function applyRequestDefaults(
+  request: HttpClientRequest.HttpClientRequest,
+  config: ResolvedSupabaseApiConfig,
+  overrides: SupabaseApiRequestOptions | undefined,
+): HttpClientRequest.HttpClientRequest {
+  const accessToken = overrides?.accessToken ?? config.accessToken;
+  let next = HttpClientRequest.prependUrl(request, overrides?.baseUrl ?? config.baseUrl);
+  next = HttpClientRequest.setHeader(
+    next,
+    "Authorization",
+    `Bearer ${String(revealRedactedValue(accessToken))}`,
+  );
+  next = HttpClientRequest.setHeader(
+    next,
+    "User-Agent",
+    config.userAgent ?? "supabase-api/unknown",
+  );
+  for (const headers of [config.headers, overrides?.headers]) {
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      if (value !== undefined) {
+        next = HttpClientRequest.setHeader(next, name, value);
+      }
+    }
+  }
+  return next;
+}
+
 function prepareClient(
   client: HttpClient.HttpClient,
   config: ResolvedSupabaseApiConfig,
   options?: SupabaseApiClientOptions,
 ): Effect.Effect<HttpClient.HttpClient> {
   const prefixed = client.pipe(
-    HttpClient.mapRequest((request) => {
-      let next = HttpClientRequest.prependUrl(request, config.baseUrl);
-      next = HttpClientRequest.setHeader(
-        next,
-        "Authorization",
-        `Bearer ${String(revealRedactedValue(config.accessToken))}`,
-      );
-      next = HttpClientRequest.setHeader(
-        next,
-        "User-Agent",
-        config.userAgent ?? "supabase-api/unknown",
-      );
-      if (config.headers !== undefined) {
-        for (const [name, value] of Object.entries(config.headers)) {
-          if (value !== undefined) {
-            next = HttpClientRequest.setHeader(next, name, value);
-          }
-        }
-      }
-      return next;
-    }),
+    HttpClient.mapRequestEffect((request) =>
+      Effect.map(Effect.service(RequestOverrides), (overrides) =>
+        applyRequestDefaults(request, config, overrides),
+      ),
+    ),
     // Trace context stays local; no API consumer reads it.
     HttpClient.transformResponse(Effect.provideService(HttpClient.TracerPropagationEnabled, false)),
   );
@@ -497,10 +526,13 @@ function executeRequest(
   client: HttpClient.HttpClient,
   definition: OperationDefinition,
   input: object,
+  options: SupabaseApiRequestOptions | undefined,
 ): Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError> {
   return Effect.gen(function* () {
     const request = yield* buildRequest(definition, input);
-    const response = yield* client.execute(request);
+    const response = yield* client
+      .execute(request)
+      .pipe(Effect.provideService(RequestOverrides, options));
     return yield* HttpClientResponse.filterStatusOk(response);
   }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } }));
 }
@@ -569,14 +601,20 @@ export function makeSupabaseApiClient(
     );
     const httpClient = yield* HttpClient.HttpClient;
     const prepared = yield* prepareClient(httpClient, resolvedConfig, options);
+    // Excess keys fail instead of being stripped so a caller typo or stale field
+    // never silently drops out of the request.
+    const decodeInput = (definition: OperationDefinition, input: unknown) =>
+      Schema.decodeUnknownEffect(definition.inputSchema)(input, {
+        onExcessProperty: "error",
+      }).pipe(
+        Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
+      );
 
     return {
-      execute: (definition, input) =>
+      execute: (definition, input, requestOptions) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
-            Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
-          );
-          const response = yield* executeRequest(prepared, definition, validated);
+          const validated = yield* decodeInput(definition, input);
+          const response = yield* executeRequest(prepared, definition, validated, requestOptions);
           if (isJsonOperation(definition)) {
             return yield* decodeJsonResponse(definition, response);
           }
@@ -588,17 +626,13 @@ export function makeSupabaseApiClient(
           }
           return yield* Effect.die(`Unsupported response kind: ${definition.response.kind}`);
         }),
-      executeRaw: (definition, input, headers) =>
+      executeRaw: (definition, input, requestOptions) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
-            Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
-          );
-          const request = yield* buildRequest(definition, validated).pipe(
-            Effect.map((request) =>
-              headers === undefined ? request : HttpClientRequest.setHeaders(request, headers),
-            ),
-          );
-          return yield* prepared.execute(request);
+          const validated = yield* decodeInput(definition, input);
+          const request = yield* buildRequest(definition, validated);
+          return yield* prepared
+            .execute(request)
+            .pipe(Effect.provideService(RequestOverrides, requestOptions));
         }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } })),
     };
   });

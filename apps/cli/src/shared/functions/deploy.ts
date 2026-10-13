@@ -1871,12 +1871,35 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   );
 });
 
-function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): BulkUpdateFunction {
+function bulkUpdateStatus(
+  slug: string,
+  status: string,
+): Effect.Effect<BulkUpdateFunction["status"], FunctionsApiStatusError> {
+  switch (status) {
+    case "ACTIVE":
+    case "REMOVED":
+    case "THROTTLED":
+      return Effect.succeed(status);
+    default:
+      return Effect.fail(
+        new FunctionsApiStatusError({
+          status: 200,
+          message: `failed to read function ${slug}: unexpected status ${status}`,
+          decode: true,
+        }),
+      );
+  }
+}
+
+const toBulkUpdateItem = Effect.fnUntraced(function* (
+  remote: RemoteFunction | DeployFunctionResponse,
+) {
+  const status = yield* bulkUpdateStatus(remote.slug, remote.status);
   return {
     id: remote.id,
     slug: remote.slug,
     name: remote.name,
-    status: remote.status,
+    status,
     version: remote.version,
     ...(remote.created_at === undefined ? {} : { created_at: remote.created_at }),
     ...(remote.verify_jwt == null ? {} : { verify_jwt: remote.verify_jwt }),
@@ -1884,8 +1907,8 @@ function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): Bulk
     ...(remote.entrypoint_path == null ? {} : { entrypoint_path: remote.entrypoint_path }),
     ...(remote.import_map_path == null ? {} : { import_map_path: remote.import_map_path }),
     ...(remote.ezbr_sha256 == null ? {} : { ezbr_sha256: remote.ezbr_sha256 }),
-  };
-}
+  } satisfies BulkUpdateFunction;
+});
 
 const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunctions")(function* (
   api: ApiClient,
@@ -1898,7 +1921,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
       api
         .executeRaw(operationDefinitions.v1BulkUpdateFunctions, {
           ref: projectRef,
-          body: functions.map(toBulkUpdateItem),
+          body: functions,
         })
         .pipe(
           // Read the body as text (never failing) so the status check wins even
@@ -2284,7 +2307,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
     (config) =>
       Effect.gen(function* () {
         yield* output.raw(`Deploying Function: ${config.slug}\n`, "stderr");
-        return toBulkUpdateItem(
+        return yield* toBulkUpdateItem(
           yield* uploadFunctionSource(
             api,
             projectRef,
@@ -2398,7 +2421,7 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
       "stderr",
     );
     changed.push(
-      toBulkUpdateItem(
+      yield* toBulkUpdateItem(
         yield* upsertBundledFunction(api, projectRef, bundled, current !== undefined),
       ),
     );
