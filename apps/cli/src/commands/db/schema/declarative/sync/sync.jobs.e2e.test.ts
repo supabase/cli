@@ -10,7 +10,7 @@ import {
   setUpProject,
   TEST_TIMEOUT_MS,
   withTempStackProject,
-} from "./sync.e2e-fixture.ts";
+} from "../../../../../../tests/helpers/declarative-sync-e2e.ts";
 
 describe("db schema declarative sync extension jobs (e2e)", () => {
   it.live(

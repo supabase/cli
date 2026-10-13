@@ -569,7 +569,6 @@ StorageUnsupportedMoveError
 StorageUnsupportedOperationError
 StorageUrlParseError
 StorageWorkdirError
-SyncE2eSetupError
 TarFieldOutOfRangeError
 TarPathTooLongError
 TestDbEnablePgtapError
