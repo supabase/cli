@@ -204,7 +204,7 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.suite }})
+    name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.shard }}/2)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -213,7 +213,7 @@ jobs:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
         os: [macos-latest]
-        suite: [lifecycle, idle-parallel]
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -228,7 +228,7 @@ jobs:
 
       - name: Run stack native whole-stack scenarios
         working-directory: packages/stack
-        run: pnpm test:e2e:run whole-stack.native.${{ matrix.suite }} --passWithNoTests=false
+        run: pnpm test:e2e:native-scenarios --shard=${{ matrix.shard }}/2 --passWithNoTests=false
 
   test-summary:
     if: |
