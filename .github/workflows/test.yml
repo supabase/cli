@@ -183,7 +183,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          sticky-disks: "true"
           go-cache: "false"
           tools: node bun pnpm
           # Windows unpacks the store archive slower than it downloads the packages.
@@ -256,7 +255,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          sticky-disks: "true"
           go-cache: "false"
 
       - name: Run stack native whole-stack scenarios

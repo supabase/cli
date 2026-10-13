@@ -38,6 +38,7 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
+          commit-sticky-disks: "true"
           docker-images: "true"
           native-artifacts: "true"
 

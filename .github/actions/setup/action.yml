@@ -35,7 +35,14 @@ inputs:
   sticky-disks:
     description: >-
       Whether to mount dependency caches from Blacksmith sticky disks on
-      Blacksmith Linux runners. Pull request runs mount them read-only.
+      Blacksmith Linux runners. Disks are read-only unless commit-sticky-disks
+      is set.
+    required: false
+    default: "false"
+  commit-sticky-disks:
+    description: >-
+      Whether this job writes its sticky disks back. Only the fill workflow
+      sets it, so test jobs never race it with partial snapshots.
     required: false
     default: "false"
   docker-images:
@@ -54,8 +61,8 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Sticky disks are shared by every run in the repository, so only trusted
-    # events (pushes, schedules, manual runs) may commit to them; pull request
+    # Sticky disks are shared by every run in the repository, so only the fill
+    # job on trusted events (pushes, schedules, manual runs) commits; pull request
     # and merge queue code could otherwise plant dependencies or images that
     # trusted runs later execute.
     # Committing runs prune what the current lockfile no longer uses; bump the
@@ -66,13 +73,14 @@ runs:
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
+        COMMIT: ${{ inputs.commit-sticky-disks }}
       run: |
         if [ -z "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] || [ "$RUNNER_OS" != Linux ]; then
           exit 0
         fi
         echo "enabled=true" >> "$GITHUB_OUTPUT"
-        case "$EVENT_NAME" in
-          push | schedule | workflow_dispatch) echo "commit=on-change" >> "$GITHUB_OUTPUT" ;;
+        case "$COMMIT:$EVENT_NAME" in
+          true:push | true:schedule | true:workflow_dispatch) echo "commit=on-change" >> "$GITHUB_OUTPUT" ;;
           *) echo "commit=false" >> "$GITHUB_OUTPUT" ;;
         esac
 
