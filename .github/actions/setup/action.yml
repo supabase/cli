@@ -20,6 +20,18 @@ inputs:
       that never run Go.
     required: false
     default: "true"
+  tools:
+    description: >-
+      Space-separated mise tools to install instead of every tool in
+      mise.toml. Skipping the Go toolchain keeps the restored mise cache small.
+    required: false
+    default: ""
+  pnpm-store-cache:
+    description: >-
+      Whether to restore the pnpm store through actions/cache. Where the store
+      archive restores slower than the registry downloads it, disable this.
+    required: false
+    default: "true"
   sticky-disks:
     description: >-
       Whether to mount dependency caches from Blacksmith sticky disks on
@@ -82,6 +94,8 @@ runs:
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
         version: 2026.9.0
+        install_args: ${{ inputs.tools }}
+        cache_key: ${{ inputs.tools != '' && format('mise-{0}-{1}-{2}-{3}', runner.os, runner.arch, inputs.tools, hashFiles('mise.toml', 'mise.lock', '.node-version', '.bun-version', 'package.json')) || '' }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
@@ -113,7 +127,7 @@ runs:
     # so restores never match the earlier whole-store archives, which still
     # carry a links/ tree.
     - name: Configure pnpm dependency cache
-      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled != 'true'
+      if: inputs.dependency-cache == 'true' && inputs.pnpm-store-cache == 'true' && steps.sticky.outputs.enabled != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |

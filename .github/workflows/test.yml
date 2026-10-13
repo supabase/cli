@@ -196,6 +196,8 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
           go-cache: "false"
+          tools: node bun pnpm
+          pnpm-store-cache: "false"
 
       - name: Run stack integration tests
         working-directory: packages/stack
