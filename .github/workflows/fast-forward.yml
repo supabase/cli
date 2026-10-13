@@ -58,6 +58,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: write
       checks: read
       statuses: read
       pull-requests: write
@@ -92,3 +93,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           bun .github/scripts/fast-forward.ts
+
+      # The landed sync head can lag its source; the next sync run brings the rest in.
+      - name: Dispatch the next sync
+        if: startsWith(github.event.pull_request.head.ref, 'sync/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run sync-branches.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" -f pair="${HEAD_REF#sync/}"
