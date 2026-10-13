@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import type { DeclaredPermissionsLookup } from "./permission-registry.ts";
-import { assertDriftAgainst } from "./permission-drift.ts";
+import { block } from "../../src/command-internal/command-permissions/model.ts";
+import { assertBlockDrift, assertDriftAgainst } from "./permission-drift.ts";
 import { OPERATIONS } from "./operation-table.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -305,5 +306,24 @@ describe("assertDriftAgainst", () => {
         }),
       ).not.toThrow();
     });
+  });
+});
+
+describe("assertBlockDrift", () => {
+  const demo = block("demo", [
+    { operationId: "v1-list-all-secrets", kind: "required" },
+    { operationId: "v1-run-a-query", kind: "required", when: [{ flag: "linked" }] },
+  ]);
+
+  it("names the building block when a request is to an operation it does not declare", () => {
+    expect(() => assertBlockDrift(demo, { requests: [getProject] })).toThrow(
+      /building block "demo": request GET .*"v1-get-project", which is not declared for this building block at all/,
+    );
+  });
+
+  it("rejects a declared operation whose condition does not hold for the active flags", () => {
+    expect(() => assertBlockDrift(demo, { activeFlags: {}, requests: [runQuery] })).toThrow(
+      /building block "demo": .*"v1-run-a-query", which is declared for this building block but whose `when` condition/,
+    );
   });
 });

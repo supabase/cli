@@ -3,8 +3,7 @@ import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vitest";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
-import { assertDriftAgainst } from "../../../tests/helpers/permission-drift.ts";
-import { mapped } from "../../command-internal/command-permissions/model.ts";
+import { assertBlockDrift } from "../../../tests/helpers/permission-drift.ts";
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
@@ -61,11 +60,6 @@ const PROJECT_REF = "abcdefghijklmnopqrst";
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
   fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer));
 
-const linkedServiceVersionsDeclared = {
-  _tag: "Declared",
-  permissions: mapped(linkedServiceVersions),
-} as const;
-
 // Tenant probes share the test server's origin, so only Management API paths are recorded.
 const recordManagementRequests = () => {
   const requests: Array<{ readonly method: string; readonly url: string }> = [];
@@ -84,8 +78,7 @@ const assertLinkedServiceVersionsDrift = (
   requests: ReadonlyArray<{ readonly method: string; readonly url: string }>,
   apiUrl: string,
 ) =>
-  assertDriftAgainst(linkedServiceVersionsDeclared, {
-    command: "linked-service-versions block",
+  assertBlockDrift(linkedServiceVersions, {
     requests,
     apiUrl,
   });

@@ -13,16 +13,10 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { suggestUpgrade, upgradeSuggestion } from "./upgrade-suggest.ts";
-import { mapped } from "./command-permissions/model.ts";
 
 const ORG_SLUG = "test-org";
-
-const upgradeSuggestionDeclared = {
-  _tag: "Declared",
-  permissions: mapped(upgradeSuggestion),
-} as const;
 
 function projectResponse(slug: string = ORG_SLUG) {
   return {
@@ -245,8 +239,7 @@ describe("suggestUpgrade", () => {
         `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
         `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
       ]);
-      assertDriftAgainst(upgradeSuggestionDeclared, {
-        command: "upgrade-suggest block",
+      assertBlockDrift(upgradeSuggestion, {
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));

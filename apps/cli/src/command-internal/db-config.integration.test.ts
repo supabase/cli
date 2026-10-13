@@ -44,11 +44,10 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { applicableOperations } from "../../tests/helpers/permission-registry.ts";
 import type { ActiveFlags } from "../../tests/helpers/permission-registry.ts";
 import { dbConfig, dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
-import { mapped } from "./command-permissions/model.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -190,17 +189,13 @@ const assertDbConfigDrift = (
   requests: ReadonlyArray<{ readonly method: string; readonly path: string }>,
   activeFlags: ActiveFlags,
 ) =>
-  assertDriftAgainst(
-    { _tag: "Declared", permissions: mapped(dbConfig) },
-    {
-      command: "db-config block",
-      activeFlags,
-      requests: requests.map((r) => ({
-        method: r.method,
-        url: `https://api.supabase.com${r.path}`,
-      })),
-    },
-  );
+  assertBlockDrift(dbConfig, {
+    activeFlags,
+    requests: requests.map((r) => ({
+      method: r.method,
+      url: `https://api.supabase.com${r.path}`,
+    })),
+  });
 
 describe("dbConfigResolver (local + db-url)", () => {
   it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () =>
