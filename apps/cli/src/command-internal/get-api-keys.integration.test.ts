@@ -3,9 +3,8 @@ import { Effect } from "effect";
 
 import { VALID_REF, mockCommandPlatformApi } from "../../tests/helpers/command-mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { projectApiKeys } from "./command-permissions/fragments.ts";
+import { getProjectApiKeys, projectApiKeys } from "./get-api-keys.ts";
 import { mapped } from "./command-permissions/model.ts";
-import { getProjectApiKeys } from "./get-api-keys.ts";
 
 const declared = { _tag: "Declared", permissions: mapped(projectApiKeys) } as const;
 const apiKeys = [{ name: "anon", api_key: "anon-key", type: "legacy" }];

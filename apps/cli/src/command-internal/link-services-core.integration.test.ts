@@ -9,9 +9,8 @@ import {
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { linkServices } from "./command-permissions/fragments.ts";
+import { linkServices, linkServicesCore } from "./link-services-core.ts";
 import { mapped } from "./command-permissions/model.ts";
-import { linkServicesCore } from "./link-services-core.ts";
 
 const declared = { _tag: "Declared", permissions: mapped(linkServices) } as const;
 const storageConfigUrl = `https://api.supabase.com/v1/projects/${VALID_REF}/config/storage`;

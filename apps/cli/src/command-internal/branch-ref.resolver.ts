@@ -4,6 +4,21 @@ import { Effect } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `resolveBranchProjectRef`, for a branch argument that isn't a project ref. */
+export const branchRef = block("branch-ref", [
+  {
+    operationId: "v1-get-a-branch-config",
+    kind: "required",
+    context: "the branch argument is a UUID",
+  },
+  {
+    operationId: "v1-get-a-branch",
+    kind: "required",
+    context: "the branch argument is a branch name",
+  },
+]);
 
 /**
  * Per-family error mapping for {@link resolveBranchProjectRef}: each

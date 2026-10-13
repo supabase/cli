@@ -46,7 +46,7 @@ import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mo
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
 import type { ActiveFlags } from "../../tests/helpers/permission-registry.ts";
-import { dbConfig } from "./command-permissions/fragments.ts";
+import { dbConfig, dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { mapped } from "./command-permissions/model.ts";
 import {
   DebugFlag,
@@ -57,7 +57,6 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnectError } from "./db-connection.errors.ts";

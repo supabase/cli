@@ -9,6 +9,16 @@ import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../shared/telemetry/event-catalog.ts";
 import { readProjectRefFile, tempPaths } from "../command-internal/temp-paths.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+import { block } from "../command-internal/command-permissions/model.ts";
+
+/** `LinkedProjectCache`'s post-run fill. */
+export const linkedProjectCache = block("linked-project-cache", [
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context: "no cached supabase/.temp/linked-project.json",
+  },
+]);
 
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {

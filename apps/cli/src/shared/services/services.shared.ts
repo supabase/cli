@@ -22,6 +22,21 @@ import {
   slimImageForAlias,
   slimImageForCurrentPin,
 } from "./slim-images.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
+
+/** `fetchLinkedServiceVersions`, behind `services`. */
+export const linkedServiceVersions = block("linked-service-versions", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "best-effort",
+    note: "Sent with reveal=true.",
+  },
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context: "the api-keys lookup returned a usable key",
+  },
+]);
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 

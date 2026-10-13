@@ -4,8 +4,7 @@ import { Effect } from "effect";
 
 import { jsonResponse, mockCommandPlatformApi } from "../../tests/helpers/command-mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { resolveBranchProjectRef } from "./branch-ref.resolver.ts";
-import { branchRef } from "./command-permissions/fragments.ts";
+import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { mapped } from "./command-permissions/model.ts";
 
 const branchRefDeclared = { _tag: "Declared", permissions: mapped(branchRef) } as const;

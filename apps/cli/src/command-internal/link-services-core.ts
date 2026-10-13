@@ -10,6 +10,17 @@ import {
   fetchPostgrestVersion,
   fetchStorageVersion,
 } from "./tenant-versions.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `linkServicesCore`, shared by `link` and `bootstrap`. */
+export const linkServices = block("link-services", [
+  { operationId: "v1-get-storage-config", kind: "best-effort" },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "best-effort",
+    when: [{ flag: "skip-pooler", present: false }],
+  },
+]);
 
 export interface LinkServicesInput {
   readonly ref: string;

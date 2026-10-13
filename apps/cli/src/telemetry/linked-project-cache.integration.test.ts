@@ -14,10 +14,9 @@ import {
   mockCommandPlatformApi,
 } from "../../tests/helpers/command-mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { linkedProjectCache } from "../command-internal/command-permissions/fragments.ts";
+import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { mapped } from "../command-internal/command-permissions/model.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
-import { linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 
 const declared = { _tag: "Declared", permissions: mapped(linkedProjectCache) } as const;

@@ -58,8 +58,11 @@ export type CommandPermissions =
   | { readonly status: "unmapped"; readonly reason: "go-delegated" };
 
 /**
- * Builds a named building block, tagging every entry and each of its conditions with `source`
- * (see {@link FlagConditionBase.source}).
+ * Builds a named building block for Management API calls a shared module makes on behalf of its
+ * callers, tagging every entry and each of its conditions with `source` (see
+ * {@link FlagConditionBase.source}). Declare it next to the module that makes the calls; a command
+ * includes the blocks its handler reaches with {@link compose}, adding its own condition (e.g.
+ * `--linked`) with {@link withCondition} where the module is only used on that path.
  */
 export function block(
   source: string,

@@ -17,6 +17,23 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { billingUrl } from "./profile.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `suggestUpgrade`'s entitlement lookup. */
+export const upgradeSuggestion = block("upgrade-suggest", [
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+  {
+    operationId: "v1-get-organization-entitlements",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+]);
 
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {

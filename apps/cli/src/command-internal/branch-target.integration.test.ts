@@ -5,8 +5,7 @@ import { Effect, Layer } from "effect";
 import { jsonResponse, mockCommandPlatformApi } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { findBranchName } from "./branch-target.ts";
-import { branchTarget } from "./command-permissions/fragments.ts";
+import { branchTarget, findBranchName } from "./branch-target.ts";
 import { mapped } from "./command-permissions/model.ts";
 
 const branchTargetDeclared = { _tag: "Declared", permissions: mapped(branchTarget) } as const;

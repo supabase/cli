@@ -1,7 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
-import { afterEach, vi } from "vitest";
+import { ConfigProvider, Effect, Layer } from "effect";
 
 import {
   VALID_REF,
@@ -11,9 +10,8 @@ import {
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { storageCredentials } from "./command-permissions/fragments.ts";
 import { mapped } from "./command-permissions/model.ts";
-import { resolveStorageCredentials } from "./storage-credentials.ts";
+import { resolveStorageCredentials, storageCredentials } from "./storage-credentials.ts";
 
 const declared = { _tag: "Declared", permissions: mapped(storageCredentials) } as const;
 const apiKeys = [
@@ -23,14 +21,14 @@ const apiKeys = [
 const config = { api: { enabled: true, port: 54321, tls: { enabled: false } }, auth: {} };
 
 describe("resolveStorageCredentials for a remote project", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  const resolve = (api: ReturnType<typeof mockCommandPlatformApi>) =>
+  const resolve = (
+    api: ReturnType<typeof mockCommandPlatformApi>,
+    env: Record<string, string> = {},
+  ) =>
     resolveStorageCredentials({ projectRef: VALID_REF, config }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          ConfigProvider.layer(ConfigProvider.fromEnvRecord(env)),
           api.factoryLayer,
           mockCommandSettings({ workdir: "/unused" }),
           mockRuntimeInfo(),
@@ -41,7 +39,6 @@ describe("resolveStorageCredentials for a remote project", () => {
     );
 
   it.live("fetches the service-role key from the project api-keys without an env override", () => {
-    vi.stubEnv("SUPABASE_AUTH_SERVICE_ROLE_KEY", undefined);
     const api = mockCommandPlatformApi({ response: { status: 200, body: apiKeys } });
     return Effect.gen(function* () {
       const credentials = yield* resolve(api);
@@ -57,10 +54,11 @@ describe("resolveStorageCredentials for a remote project", () => {
   });
 
   it.live("requests no api-keys when SUPABASE_AUTH_SERVICE_ROLE_KEY is set", () => {
-    vi.stubEnv("SUPABASE_AUTH_SERVICE_ROLE_KEY", "env-service-role-key");
     const api = mockCommandPlatformApi({ response: { status: 200, body: apiKeys } });
     return Effect.gen(function* () {
-      const credentials = yield* resolve(api);
+      const credentials = yield* resolve(api, {
+        SUPABASE_AUTH_SERVICE_ROLE_KEY: "env-service-role-key",
+      });
 
       expect(credentials.apiKey).toBe("env-service-role-key");
       expect(api.requests).toEqual([]);

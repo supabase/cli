@@ -14,9 +14,8 @@ import {
 } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { projectRefPicker } from "../command-internal/command-permissions/fragments.ts";
+import { projectRefLayer, projectRefPicker } from "./project-ref.layer.ts";
 import { mapped } from "../command-internal/command-permissions/model.ts";
-import { projectRefLayer } from "./project-ref.layer.ts";
 import { ProjectRefResolver } from "./project-ref.service.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;

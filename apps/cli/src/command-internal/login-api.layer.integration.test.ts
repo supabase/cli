@@ -9,9 +9,8 @@ import {
   mockCommandSettings,
 } from "../../tests/helpers/command-mocks.ts";
 import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
-import { loginProfile } from "./command-permissions/fragments.ts";
+import { loginApiLayer, loginProfile } from "./login-api.layer.ts";
 import { mapped } from "./command-permissions/model.ts";
-import { loginApiLayer } from "./login-api.layer.ts";
 
 const declared = { _tag: "Declared", permissions: mapped(loginProfile) } as const;
 

@@ -4,11 +4,11 @@ import { FetchHttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vitest";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
 import { assertDriftAgainst } from "../../../tests/helpers/permission-drift.ts";
-import { linkedServiceVersions } from "../../command-internal/command-permissions/fragments.ts";
 import { mapped } from "../../command-internal/command-permissions/model.ts";
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
+  linkedServiceVersions,
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
   mergeRemoteServiceVersions,

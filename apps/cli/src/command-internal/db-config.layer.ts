@@ -41,6 +41,46 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
+import { block } from "./command-permissions/model.ts";
+
+/**
+ * `DbConfigResolver` on the `--linked` path. `gen types --project-id` and `db dump`'s container
+ * fallback fetch the pooler config without `--project-ref`, so those commands declare that entry
+ * themselves.
+ */
+export const dbConfig = block(
+  "db-config",
+  [
+    {
+      operationId: "v1-create-login-role",
+      kind: "required",
+      when: [{ flag: "password", present: false }],
+      context:
+        "no database password in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores both)",
+    },
+    {
+      operationId: "v1-get-pooler-config",
+      kind: "best-effort",
+      when: [{ flag: "project-ref" }],
+      context: "the direct database host is unreachable (IPv6-only network)",
+    },
+    {
+      operationId: "v1-list-all-network-bans",
+      kind: "best-effort",
+      when: [{ flag: "password", present: false }],
+      context:
+        "after three failed attempts to connect through the pooler as the temporary login role",
+    },
+    {
+      operationId: "v1-delete-network-bans",
+      kind: "best-effort",
+      when: [{ flag: "password", present: false }],
+      context:
+        "after three failed attempts to connect through the pooler as the temporary login role",
+    },
+  ],
+  ["local", "db-url"],
+);
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
