@@ -19,12 +19,12 @@ import { apiResponseToAdvisorLints } from "./advisors.format.ts";
 interface AdvisorEndpoint {
   readonly path: "security" | "performance";
   /**
-   * Builds the network/parse failure (`failed to fetch … advisors: %w`).
+   * Builds the network/parse failure (`failed to fetch … advisors: <cause>`).
    * `decode: true` marks a 200-response body decode failure rather than a
    * transport failure, even though both fold into the same message path.
    */
   readonly network: (message: string, opts?: { readonly decode?: boolean }) => AdvisorNetworkError;
-  /** Builds the non-200 failure (`unexpected … advisors status %d: %s`). */
+  /** Builds the non-200 failure (`unexpected … advisors status <status>: <body>`). */
   readonly status: (status: number, body: string) => AdvisorStatusError;
 }
 
@@ -86,7 +86,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   }
 
   const rawBody = yield* response.text;
-  // A decode error folds into the same `failed to fetch … advisors: %w` path,
+  // A decode error folds into the same `failed to fetch … advisors: <cause>` path,
   // so map both JSON syntax errors and structural-shape rejections (thrown by
   // `apiResponseToAdvisorLints`) to the endpoint's network error.
   const lints = yield* Effect.try({

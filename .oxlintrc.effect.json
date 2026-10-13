@@ -68,9 +68,9 @@
     "!apps/cli/src/command-internal/stack-shadow.ts",
     "!apps/cli/src/command-internal/stack-storage.ts",
     "!apps/cli/src/command-internal/storage-*.ts",
+    "!apps/cli/src/command-internal/supabase-env.*",
     "!apps/cli/src/command-internal/tenant-*",
     "!apps/cli/src/command-internal/vault-decrypt.*",
-    "!apps/cli/src/command-internal/vault.*",
-    "!apps/cli/src/command-internal/viper-env.*"
+    "!apps/cli/src/command-internal/vault.*"
   ]
 }

@@ -52,7 +52,7 @@ In text mode, a `- Custom Postgres Config -` heading is written to stderr, the c
 
 ### `--output-format text` (default)
 
-Renders the config map as a Glamour ASCII table with `Parameter` / `Value` columns.
+Renders the config map as an ASCII table with `Parameter` / `Value` columns.
 
 ### `--output pretty`
 

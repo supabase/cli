@@ -20,7 +20,7 @@ type SecretsList = typeof V1ListAllSecretsOutput.Type;
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
+  outputFlag?: "pretty" | "json" | "yaml" | "toml" | "env";
   yes?: boolean;
   stdinIsTty?: boolean;
   /** Piped stdin lines consumed by the non-TTY confirm read. */
@@ -64,7 +64,7 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
   );
@@ -145,23 +145,20 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "non-TTY with empty stdin prints the label and takes the Yes default (Go parity)",
-    () => {
-      const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
-      return Effect.gen(function* () {
-        yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-        // The 100ms non-TTY read scans nothing here, and the empty input is echoed back before
-        // the true default wins.
-        expect(out.stderrText).toContain(
-          "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
-        );
-        expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("non-TTY with empty stdin prints the label and takes the Yes default", () => {
+    const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
+    return Effect.gen(function* () {
+      yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+      // The 100ms non-TTY read scans nothing here, and the empty input is echoed back before
+      // the true default wins.
+      expect(out.stderrText).toContain(
+        "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
+      );
+      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect("non-TTY with piped `n` declines like Go (echoed answer, no DELETE)", () => {
+  it.effect("non-TTY with piped `n` declines (echoed answer, no DELETE)", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
@@ -174,7 +171,7 @@ describe("secrets unset integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("non-TTY with piped `y` confirms like Go", () => {
+  it.effect("non-TTY with piped `y` confirms", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
@@ -303,7 +300,7 @@ describe("secrets unset integration", () => {
   it.effect(
     "text mode prints `Finished supabase secrets unset.\\n` regardless of --output value",
     () => {
-      const { layer, out } = setup({ yes: true, goOutput: "json" });
+      const { layer, out } = setup({ yes: true, outputFlag: "json" });
       return Effect.gen(function* () {
         yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");

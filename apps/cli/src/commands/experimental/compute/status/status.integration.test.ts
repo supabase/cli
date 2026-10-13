@@ -573,7 +573,7 @@ describe("compute status", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [getRoute]: {
             status: 200,
@@ -650,7 +650,7 @@ describe("compute status", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [getRoute]: { status: 200, body: { data: computeResource({ name: "api" }) } } },
       });
 

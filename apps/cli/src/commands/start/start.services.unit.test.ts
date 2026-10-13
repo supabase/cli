@@ -178,12 +178,7 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
 
   /** Real gates for `config`, with the exclusion factor neutralized (nothing excluded). */
   function realGatesFor(config: CliConfig): StartGates {
-    return resolveStartGates({
-      config,
-      projectEnvValues: undefined,
-      excludedKeys: new Set(),
-      document: undefined,
-    });
+    return resolveStartGates({ config, excludedKeys: new Set() });
   }
 
   function expectGatesMatchMetadata(config: CliConfig, label: string) {

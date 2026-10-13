@@ -10,6 +10,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -258,6 +259,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     resolver.layer,
     connection.layer,
@@ -624,7 +626,7 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json mode: streams TAP only — emits no result envelope (Go parity)", () => {
+  it.live("json mode: streams TAP only — emits no result envelope", () => {
     const { layer, out } = setup({ format: "json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
@@ -632,7 +634,7 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stream-json mode: emits no result envelope (Go parity)", () => {
+  it.live("stream-json mode: emits no result envelope", () => {
     const { layer, out } = setup({ format: "stream-json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
@@ -721,7 +723,7 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the connection diagnostic to stderr, keeping stdout for TAP (Go parity)", () => {
+  it.live("writes the connection diagnostic to stderr, keeping stdout for TAP", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
@@ -744,7 +746,7 @@ describe("test db integration", () => {
   });
 
   const tempWorkdir = useTempWorkdir();
-  it.live("sanitizes a configured project_id when naming the local network (Go parity)", () => {
+  it.live("sanitizes a configured project_id when naming the local network", () => {
     const workdir = tempWorkdir.current;
     mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "My Project"\n');

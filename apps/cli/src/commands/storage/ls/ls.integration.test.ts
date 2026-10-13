@@ -11,7 +11,7 @@ import {
 import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -243,6 +243,28 @@ describe("storage ls", () => {
     });
   });
 
+  it.effect("applies the [remotes.*] block selected by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      toml: `project_id = "test"
+[remotes.staging]
+project_id = "env(STAGING_REF)"
+`,
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+    });
+    return withEnvVar(
+      "SUPABASE_REMOTES_STAGING_PROJECT_ID",
+      VALID_REF,
+      Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+      }),
+    );
+  });
+
   it.effect("lists the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
     // the gateway host.
@@ -464,7 +486,7 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      const serviceRoleJwt = generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role");
+      const serviceRoleJwt = generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role");
       expect(requests[0]?.headers["apikey"]).toBe(serviceRoleJwt);
       expect(requests[0]?.headers["authorization"]).toBe(`Bearer ${serviceRoleJwt}`);
     });
@@ -495,7 +517,7 @@ describe("stack backend", () => {
         expect(url).not.toContain("legacy.invalid");
         expect(url.startsWith("http://127.0.0.1:59999")).toBe(true);
         expect(requests[0]?.headers["apikey"]).toBe(
-          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+          generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
         );
       });
     },
@@ -595,7 +617,7 @@ describe("stack backend", () => {
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(requests).toHaveLength(1);
         expect(requests[0]?.headers["apikey"]).toBe(
-          generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+          generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
         );
       });
     },
