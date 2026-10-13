@@ -278,10 +278,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { suite: cli, shard: 1, shards: 4, name: cli 1/4 }
-          - { suite: cli, shard: 2, shards: 4, name: cli 2/4 }
-          - { suite: cli, shard: 3, shards: 4, name: cli 3/4 }
-          - { suite: cli, shard: 4, shards: 4, name: cli 4/4 }
+          - { suite: cli, shard: 1, shards: 5, name: cli 1/5 }
+          - { suite: cli, shard: 2, shards: 5, name: cli 2/5 }
+          - { suite: cli, shard: 3, shards: 5, name: cli 3/5 }
+          - { suite: cli, shard: 4, shards: 5, name: cli 4/5 }
+          - { suite: cli, shard: 5, shards: 5, name: cli 5/5 }
           - { suite: cli-e2e, name: cli-e2e }
     steps:
       - name: Checkout
