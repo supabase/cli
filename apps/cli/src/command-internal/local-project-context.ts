@@ -94,11 +94,13 @@ export const loadLocalProjectContext = <E>(
         mapConfigLoadError(`failed to resolve hostname: ${cause.message}`),
       ),
     );
+    const path = yield* Path.Path;
     // When a `[remotes.<ref>]` block matched `projectRef` above, its own `project_id` field is
     // what selected it, so a stale or differently-scoped `SUPABASE_PROJECT_ID` must not win over
     // it here.
     const projectId = sanitizeProjectId(
       resolveLocalProjectId(
+        path,
         loaded?.appliedRemote !== undefined
           ? undefined
           : (projectEnvValues["SUPABASE_PROJECT_ID"] ??

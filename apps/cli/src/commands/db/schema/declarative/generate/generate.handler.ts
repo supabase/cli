@@ -142,7 +142,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
         // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
         // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
         cwd: cliSettings.workdir,
         // Merged config's deno_version (re-loaded with the linked ref above on
         // `--linked`), so pg-delta runs under the remote-configured Deno image.

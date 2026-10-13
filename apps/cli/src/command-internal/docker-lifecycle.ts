@@ -1,5 +1,5 @@
 import { isDockerDaemonDownMessage } from "../shared/stack-constants.ts";
-import { Data, Effect, Stream } from "effect";
+import { Data, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
@@ -8,6 +8,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import {
+  collectText,
   ContainerRuntimeNotFoundError,
   describeContainerCliFailure,
   spawnContainerCli,
@@ -47,15 +48,6 @@ export class DockerLifecycleInspectError extends Data.TaggedError("DockerLifecyc
     }
     return actionability.startStack;
   }
-}
-
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
@@ -106,8 +98,8 @@ function spawnDockerPsLines(
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -117,14 +109,12 @@ function spawnDockerPsLines(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleListError({
-            message:
-              message.length > 0
-                ? `failed to list containers: ${message}`
-                : "failed to list containers",
-          }),
-        );
+        return yield* new DockerLifecycleListError({
+          message:
+            message.length > 0
+              ? `failed to list containers: ${message}`
+              : "failed to list containers",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),
@@ -219,8 +209,8 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -233,15 +223,13 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleInspectError({
-            message:
-              message.length > 0
-                ? `failed to inspect container health: ${message}`
-                : "failed to inspect container health",
-            daemonDown: isDockerDaemonDownMessage(message),
-          }),
-        );
+        return yield* new DockerLifecycleInspectError({
+          message:
+            message.length > 0
+              ? `failed to inspect container health: ${message}`
+              : "failed to inspect container health",
+          daemonDown: isDockerDaemonDownMessage(message),
+        });
       }
       return parseContainerState(stdout);
     }),
@@ -311,8 +299,8 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -320,12 +308,10 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new DockerLifecycleListError({
-            message:
-              message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
-          }),
-        );
+        return yield* new DockerLifecycleListError({
+          message:
+            message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),

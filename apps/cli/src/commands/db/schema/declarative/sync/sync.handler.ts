@@ -147,7 +147,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
         // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
         // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
         cwd: cliSettings.workdir,
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,

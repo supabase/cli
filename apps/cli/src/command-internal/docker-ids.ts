@@ -4,7 +4,7 @@
  * the local stack is running.
  */
 
-import { basename } from "node:path";
+import type { Path } from "effect";
 
 /**
  * Resolves the local project id used to derive Docker resource names.
@@ -13,6 +13,7 @@ import { basename } from "node:path";
  * `--project-ref` (when the command accepts one), then the working directory's basename.
  */
 export function resolveLocalProjectId(
+  path: Path.Path,
   envProjectId: string | undefined,
   tomlProjectId: string | undefined,
   workdir: string,
@@ -21,7 +22,7 @@ export function resolveLocalProjectId(
   if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
   if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
   if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
-  return basename(workdir);
+  return path.basename(workdir);
 }
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
