@@ -5,6 +5,7 @@ import { Effect, FileSystem, Path } from "effect";
 import { runSupabaseEffect } from "../../../../../../tests/helpers/cli.ts";
 import {
   commandFailure,
+  convergeInitialSchema,
   migrationFiles,
   scenarioCommandOptions,
   setUpProject,
@@ -22,6 +23,7 @@ describe("db schema declarative sync extension jobs (e2e)", () => {
           const path = yield* Path.Path;
           const projectDir = project.dir;
           yield* setUpProject(projectDir);
+          yield* convergeInitialSchema(projectDir);
 
           const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
           const runSync = (name: string) =>

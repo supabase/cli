@@ -145,3 +145,37 @@ export const setUpProject = (projectDir: string) =>
     );
     requireCliSuccess(start, "start setup");
   });
+
+/** Writes the initial declarative migration, resets onto it, and requires a converged plan. */
+export const convergeInitialSchema = (projectDir: string) =>
+  Effect.gen(function* () {
+    const sync = yield* runSupabaseEffect(
+      [
+        "db",
+        "schema",
+        "declarative",
+        "sync",
+        "--no-apply",
+        "--name",
+        "initial_declarative",
+        "--experimental",
+      ],
+      scenarioCommandOptions(projectDir),
+    );
+    requireCliSuccess(sync, "initial declarative sync");
+    const reset = yield* runSupabaseEffect(
+      ["db", "reset", "--local", "--no-seed"],
+      scenarioCommandOptions(projectDir),
+    );
+    requireCliSuccess(reset, "db reset setup");
+    const converged = yield* runSupabaseEffect(
+      ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
+      scenarioCommandOptions(projectDir),
+    );
+    requireCliSuccess(converged, "converged declarative sync");
+    if (!`${converged.stdout}${converged.stderr}`.includes("No schema changes found")) {
+      return yield* new SyncE2eSetupError({
+        message: `initial schema did not converge:\n${commandFailure(converged)}`,
+      });
+    }
+  });
