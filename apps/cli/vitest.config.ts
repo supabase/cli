@@ -102,7 +102,7 @@ export default defineConfig({
           include: E2E_EXCLUSIVE_FILES,
           fileParallelism: false,
           maxWorkers: 1,
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 2 },
           setupFiles: ["tests/e2e-setup.ts"],
           globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
           testTimeout: 120_000,

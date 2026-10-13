@@ -213,7 +213,9 @@ runs:
         } > "$npmrc"
         NPM_CONFIG_USERCONFIG="$npmrc" pnpm install --frozen-lockfile
 
+    # Pruning keeps only this checkout's packages, so only the default branch
+    # prunes; other branches would evict each other's dependencies.
     - name: Prune pnpm store disk
-      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.commit == 'on-change'
+      if: inputs.dependency-cache == 'true' && steps.sticky.outputs.commit == 'on-change' && github.ref_name == github.event.repository.default_branch
       shell: bash
       run: pnpm store prune
