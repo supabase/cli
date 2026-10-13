@@ -83,6 +83,46 @@ describe("applicableOperations", () => {
     ]);
   });
 
+  describe("database target", () => {
+    const entries = [
+      { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "required",
+        when: [{ dbTarget: ["local", "db-url"] }],
+      },
+    ] as const;
+    const applied = (
+      activeFlags: Parameters<typeof applicableOperations>[1],
+      dbTargetDefault?: "local" | "linked",
+    ) =>
+      applicableOperations(
+        { ...mapped(entries), ...(dbTargetDefault === undefined ? {} : { dbTargetDefault }) },
+        activeFlags,
+      ).map((e) => e.operationId);
+
+    it("takes --db-url over --local over --linked", () => {
+      expect(applied({ linked: true, local: true, "db-url": true })).toEqual([
+        "v1-get-pooler-config",
+      ]);
+      expect(applied({ linked: true, local: true })).toEqual(["v1-get-pooler-config"]);
+      expect(applied({ linked: true }, "local")).toEqual(["v1-run-a-query"]);
+    });
+
+    it("falls back to the declared default when no target flag is given", () => {
+      expect(applied({}, "linked")).toEqual(["v1-run-a-query"]);
+      expect(applied({}, "local")).toEqual(["v1-get-pooler-config"]);
+    });
+
+    it("ignores an empty --db-url", () => {
+      expect(applied({ "db-url": "" }, "linked")).toEqual(["v1-run-a-query"]);
+    });
+
+    it("rejects a run with no target flag and no default", () => {
+      expect(() => applied({})).toThrow(/sets no default/);
+    });
+  });
+
   it("keeps a required entry with no context over a required entry that has one, for the same operationId", () => {
     const permissions = mapped([
       {

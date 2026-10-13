@@ -10,6 +10,7 @@ interface FlagConditionBase {
    * by {@link withCondition}, must name a flag of the command it's declared on.
    */
   readonly source?: string;
+  readonly dbTarget?: never;
 }
 
 /**
@@ -41,12 +42,31 @@ interface ValueCondition extends FlagConditionBase {
 
 export type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
 
+/** The database a command talks to: `--local`, `--db-url`, or the linked project. */
+export type DbTarget = "local" | "db-url" | "linked";
+
+/**
+ * The run's database target must be one of `dbTarget` for an entry to apply. The target is
+ * `--db-url` if given, else `--local`, else `--linked`, else the default set with
+ * {@link withDbTarget}. As with {@link FlagCondition}, `source` marks a building block's condition.
+ */
+export interface DbTargetCondition {
+  readonly dbTarget: ReadonlyArray<DbTarget>;
+  readonly source?: string;
+  readonly flag?: never;
+  readonly present?: never;
+  readonly is?: never;
+  readonly oneOf?: never;
+}
+
+export type EntryCondition = FlagCondition | DbTargetCondition;
+
 export interface OperationEntry {
   /** The spec's `operationId`, e.g. `"v1-list-all-secrets"`. */
   readonly operationId: string;
   readonly kind: PermissionKind;
   /** Every condition must hold for this entry to apply. */
-  readonly when?: ReadonlyArray<FlagCondition>;
+  readonly when?: ReadonlyArray<EntryCondition>;
   /** A condition that isn't a flag, e.g. "only without a saved .temp/pooler-url". */
   readonly context?: string;
   readonly note?: string;
@@ -59,6 +79,8 @@ export interface PermissionFragment {
   readonly operations: ReadonlyArray<OperationEntry>;
   /** Flags this fragment contributes that never change which operations it calls. */
   readonly noApiEffectFlags?: ReadonlyArray<string>;
+  /** Which database the command targets when no target flag is given; see {@link withDbTarget}. */
+  readonly dbTargetDefault?: "local" | "linked";
 }
 
 export type CommandPermissions =
@@ -66,6 +88,7 @@ export type CommandPermissions =
       readonly status: "mapped";
       readonly operations: ReadonlyArray<OperationEntry>;
       readonly noApiEffectFlags: ReadonlyArray<string>;
+      readonly dbTargetDefault?: "local" | "linked";
     }
   | { readonly status: "unmapped"; readonly reason: "go-delegated" };
 
@@ -95,9 +118,17 @@ export function block(
 
 /** Merges fragments' operations and `noApiEffectFlags` into one, preserving entry order. */
 export function compose(...fragments: ReadonlyArray<PermissionFragment>): PermissionFragment {
+  const defaults = new Set(fragments.flatMap((fragment) => fragment.dbTargetDefault ?? []));
+  if (defaults.size > 1) {
+    throw new Error(
+      `compose: fragments disagree on the default database target (${[...defaults]})`,
+    );
+  }
+  const [dbTargetDefault] = defaults;
   return {
     operations: fragments.flatMap((fragment) => fragment.operations),
     noApiEffectFlags: fragments.flatMap((fragment) => fragment.noApiEffectFlags ?? []),
+    ...(dbTargetDefault === undefined ? {} : { dbTargetDefault }),
   };
 }
 
@@ -110,12 +141,23 @@ export function withCondition(
   condition: FlagCondition,
 ): PermissionFragment {
   return {
+    ...fragment,
     operations: fragment.operations.map((entry) => ({
       ...entry,
       when: [condition, ...(entry.when ?? [])],
     })),
-    noApiEffectFlags: fragment.noApiEffectFlags,
   };
+}
+
+/**
+ * Sets the database a command targets when no `--db-url`, `--local` or `--linked` flag is given,
+ * for entries with a {@link DbTargetCondition}.
+ */
+export function withDbTarget(
+  fragment: PermissionFragment,
+  options: { readonly default: "local" | "linked" },
+): PermissionFragment {
+  return { ...fragment, dbTargetDefault: options.default };
 }
 
 /** Builds a `"mapped"` {@link CommandPermissions} from a fragment, e.g. the result of {@link compose}. */
@@ -124,5 +166,8 @@ export function mapped(fragment: PermissionFragment): CommandPermissions {
     status: "mapped",
     operations: fragment.operations,
     noApiEffectFlags: fragment.noApiEffectFlags ?? [],
+    ...(fragment.dbTargetDefault === undefined
+      ? {}
+      : { dbTargetDefault: fragment.dbTargetDefault }),
   };
 }

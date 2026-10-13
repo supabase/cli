@@ -1,4 +1,8 @@
-import { applicableOperations, declaredPermissions } from "./permission-registry.ts";
+import {
+  DB_TARGET_FLAGS,
+  applicableOperations,
+  declaredPermissions,
+} from "./permission-registry.ts";
 import type {
   ActiveFlags,
   DeclaredPermissionsLookup,
@@ -7,7 +11,7 @@ import type {
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "./permission-global-flags.ts";
 import type {
   CommandPermissions,
-  FlagCondition,
+  EntryCondition,
 } from "../../src/command-internal/command-permissions/model.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
@@ -47,14 +51,17 @@ function describeActiveFlags(activeFlags: ActiveFlags): string {
   return `[${entries.join(", ")}]`;
 }
 
-/** Every flag name `command`'s declaration classifies anywhere — a global, a no-effect flag, or a `when` condition. */
+/** Every flag name `command`'s declaration classifies anywhere — a global, a no-effect flag, a `when` condition, or a database-target flag a condition selects on. */
 function knownFlagNames(
   permissions: Extract<CommandPermissions, { status: "mapped" }>,
 ): Set<string> {
   const names = new Set(GLOBAL_NO_API_EFFECT_FLAGS);
   for (const flag of permissions.noApiEffectFlags) names.add(flag);
   for (const entry of permissions.operations) {
-    for (const cond of entry.when ?? []) names.add(cond.flag);
+    for (const cond of entry.when ?? []) {
+      if (cond.dbTarget === undefined) names.add(cond.flag);
+      else for (const flag of DB_TARGET_FLAGS) names.add(flag);
+    }
   }
   return names;
 }
@@ -105,10 +112,12 @@ export function assertDriftAgainst(
   }
 
   const known = knownFlagNames(declared);
-  const conditionFlags = (pick: (cond: FlagCondition) => boolean) =>
+  const conditionFlags = (pick: (cond: EntryCondition) => boolean) =>
     new Set(
       declared.operations.flatMap((entry) =>
-        (entry.when ?? []).flatMap((cond) => (pick(cond) ? [cond.flag] : [])),
+        (entry.when ?? []).flatMap((cond) =>
+          cond.flag !== undefined && pick(cond) ? [cond.flag] : [],
+        ),
       ),
     );
   const valueChecked = conditionFlags((cond) => cond.oneOf !== undefined);

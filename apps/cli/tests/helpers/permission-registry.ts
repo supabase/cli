@@ -4,7 +4,8 @@ import { rootCommandForFeatures } from "../../src/cli/root.ts";
 import { readPermissions } from "../../src/command-internal/command-permissions/command-permissions.annotation.ts";
 import type {
   CommandPermissions,
-  FlagCondition,
+  DbTarget,
+  EntryCondition,
   OperationEntry,
 } from "../../src/command-internal/command-permissions/model.ts";
 import { findCommand } from "../../src/shared/cli/command-docs.ts";
@@ -15,11 +16,36 @@ export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 /**
  * The flags one run uses, keyed by name without the leading `--`: a switch's effective value
  * (its default included) where an `is` condition checks it, a string where a `oneOf` condition
- * checks the value, otherwise `true`.
+ * checks the value, otherwise `true`. A database-target flag (`db-url`, `local`, `linked`) counts
+ * when it is `true` or a non-empty string.
  */
 export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
-function conditionHolds(condition: FlagCondition, activeFlags: ActiveFlags): boolean {
+/** The flags that select a database target, in precedence order. */
+export const DB_TARGET_FLAGS = [
+  "db-url",
+  "local",
+  "linked",
+] as const satisfies ReadonlyArray<DbTarget>;
+
+/** The target `activeFlags` selects (`db-url`, then `local`, then `linked`), else `fallback`. */
+function dbTargetOf(
+  activeFlags: ActiveFlags,
+  fallback: DbTarget | undefined,
+): DbTarget | undefined {
+  for (const flag of DB_TARGET_FLAGS) {
+    const value = Object.hasOwn(activeFlags, flag) ? activeFlags[flag] : undefined;
+    if (value === true || (typeof value === "string" && value !== "")) return flag;
+  }
+  return fallback;
+}
+
+function conditionHolds(
+  condition: EntryCondition,
+  activeFlags: ActiveFlags,
+  dbTarget: () => DbTarget,
+): boolean {
+  if (condition.dbTarget !== undefined) return condition.dbTarget.includes(dbTarget());
   const value = Object.hasOwn(activeFlags, condition.flag)
     ? activeFlags[condition.flag]
     : undefined;
@@ -57,9 +83,19 @@ export function applicableOperations(
   permissions: MappedCommandPermissions,
   activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
+  const dbTarget = (): DbTarget => {
+    const target = dbTargetOf(activeFlags, permissions.dbTargetDefault);
+    if (target === undefined) {
+      throw new Error(
+        "an entry checks the database target, but activeFlags names none of --db-url, --local, --linked and the declaration sets no default (withDbTarget)",
+      );
+    }
+    return target;
+  };
   const applicable = permissions.operations.filter(
     (entry) =>
-      entry.when === undefined || entry.when.every((cond) => conditionHolds(cond, activeFlags)),
+      entry.when === undefined ||
+      entry.when.every((cond) => conditionHolds(cond, activeFlags, dbTarget)),
   );
   return dedupeOperations(applicable);
 }
