@@ -13,7 +13,11 @@ import type { PermissionVariant } from "./permission-registry.ts";
 interface FlagInfo {
   /** A switch takes no value: test it with `is` when it has a default, `present` when it's optional. */
   readonly isBoolean: boolean;
-  /** Declared with `Flag.optional`, so the handler can tell "not given" from a value; a `Flag.withDefault` flag is not. */
+  /**
+   * Declared with `Flag.optional` as the outermost wrapper, so the handler can tell "not given"
+   * from a value. A `Flag.withDefault` flag is not (it maps the optional), and neither is an
+   * optional flag a later `Flag.map` wraps: apply `Flag.optional` last on a flag tested with `present`.
+   */
   readonly isOptional: boolean;
   /** The values a choice flag accepts; `undefined` for a free-form value. */
   readonly choices: ReadonlyArray<string> | undefined;

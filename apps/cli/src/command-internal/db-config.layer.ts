@@ -65,6 +65,13 @@ export const dbConfig = block("db-config", [
       "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "project-ref", oneOf: [""] }],
+    context:
+      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
     operationId: "v1-list-all-network-bans",
     kind: "best-effort",
     when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],

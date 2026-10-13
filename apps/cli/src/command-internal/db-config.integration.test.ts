@@ -1254,7 +1254,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
             ]);
-            assertDbConfigDrift(requests, { linked: true, "project-ref": true });
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
           }),
         ),
         Effect.ensuring(
@@ -1372,7 +1372,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${targetRef}/config/database/pooler` },
             ]);
-            assertDbConfigDrift(requests, { linked: true, "project-ref": true });
+            assertDbConfigDrift(requests, { linked: true, "project-ref": targetRef });
           }),
         ),
         Effect.ensuring(
@@ -1502,7 +1502,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               { method: "POST", path: `/v1/projects/${ref}/network-bans/retrieve` },
               { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
             ]);
-            assertDbConfigDrift(requests, { linked: true, "project-ref": true });
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
           }),
         ),
         Effect.ensuring(
@@ -1677,7 +1677,7 @@ describe("dbConfigResolver (Management API calls)", () => {
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
             ]);
-            assertDbConfigDrift(requests, { linked: true, "project-ref": true });
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
           }),
         ),
         Effect.scoped,
@@ -1685,6 +1685,40 @@ describe("dbConfigResolver (Management API calls)", () => {
       );
     },
   );
+
+  it.effect("an empty --project-ref still fetches the pooler config for the linked project", () => {
+    const ref = "emptyprojectrefabcde";
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubApi(requests, (method, path) =>
+        method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+          ? Response.json(primaryPooler(ref))
+          : undefined,
+      );
+      const dir = yield* withWorkdir();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), ref);
+      const r = yield* resolve(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some("") },
+        {
+          projectHost: "invalid",
+          dbConnection: noDirectConnect,
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+          },
+        },
+      );
+      expect(r.conn).toMatchObject({ host: "aws-0-us-east-1.pooler.supabase.com", port: 5432 });
+      expect(requests).toEqual([
+        { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+      ]);
+      assertDbConfigDrift(requests, { linked: true, "project-ref": "" });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
 
   it.effect("an empty --password still mints a login role", () => {
     const ref = "emptypasswordrefabcd";
@@ -1730,7 +1764,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       expect(requests.map((request) => request.path)).toContain(
         `/v1/projects/${ref}/cli/login-role`,
       );
-      assertDbConfigDrift(requests, { linked: true, "project-ref": true, password: "" });
+      assertDbConfigDrift(requests, { linked: true, "project-ref": ref, password: "" });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
@@ -1809,7 +1843,7 @@ describe("dbConfigResolver (Management API calls)", () => {
               ? { method: "POST", path: `/v1/projects/${ref}/network-bans/retrieve` }
               : { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
           );
-          assertDbConfigDrift(requests, { linked: true, "project-ref": true });
+          assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
         }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );

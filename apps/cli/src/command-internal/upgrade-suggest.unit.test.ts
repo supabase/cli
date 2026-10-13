@@ -138,26 +138,35 @@ describe("suggestUpgrade", () => {
   });
 
   it.live("skips when getProject is forbidden", () => {
-    const { layer, analytics, out } = setup({ projectStatus: 403 });
+    const { layer, analytics, out, api } = setup({ projectStatus: 403 });
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
       });
+      expect(suggested).toBe(false);
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
       expect(analytics.captured).toHaveLength(0);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("skips when getEntitlements is forbidden", () => {
-    const { layer, analytics, out } = setup({ entitlementsStatus: 403 });
+    const { layer, analytics, out, api } = setup({ entitlementsStatus: 403 });
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
       });
+      expect(suggested).toBe(false);
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
+      ]);
       expect(analytics.captured).toHaveLength(0);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));

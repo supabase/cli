@@ -77,8 +77,8 @@ function dedupeOperations(
 
 type MappedCommandPermissions = Extract<CommandPermissions, { status: "mapped" }>;
 
-/** The entries of `permissions` that apply under `activeFlags`, deduped by `operationId`. */
-export function applicableOperations(
+/** The entries of `permissions` that apply under `activeFlags`, one per declaration (not deduped). */
+export function applicableEntries(
   permissions: MappedCommandPermissions,
   activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
@@ -91,12 +91,19 @@ export function applicableOperations(
     }
     return target;
   };
-  const applicable = permissions.operations.filter(
+  return permissions.operations.filter(
     (entry) =>
       entry.when === undefined ||
       entry.when.every((cond) => conditionHolds(cond, activeFlags, dbTarget)),
   );
-  return dedupeOperations(applicable);
+}
+
+/** The entries of `permissions` that apply under `activeFlags`, deduped by `operationId`. */
+export function applicableOperations(
+  permissions: MappedCommandPermissions,
+  activeFlags: ActiveFlags,
+): ReadonlyArray<OperationEntry> {
+  return dedupeOperations(applicableEntries(permissions, activeFlags));
 }
 
 export type DeclaredPermissionsLookup =

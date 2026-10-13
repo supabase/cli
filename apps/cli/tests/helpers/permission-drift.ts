@@ -1,5 +1,6 @@
 import {
   DB_TARGET_FLAGS,
+  applicableEntries,
   applicableOperations,
   declaredPermissions,
 } from "./permission-registry.ts";
@@ -12,6 +13,7 @@ import { GLOBAL_NO_API_EFFECT_FLAGS } from "./permission-global-flags.ts";
 import type {
   CommandPermissions,
   EntryCondition,
+  OperationEntry,
 } from "../../src/command-internal/command-permissions/model.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
@@ -19,6 +21,8 @@ import { matchOperation } from "./operation-table.ts";
 export interface RecordedMethodUrl {
   readonly method: string;
   readonly url: string;
+  /** Query parameters Effect's HttpClient keeps apart from `url` (a recorded request's `urlParams`). */
+  readonly urlParams?: string;
 }
 
 export interface DriftCheckOptions {
@@ -64,6 +68,51 @@ function knownFlagNames(
     }
   }
   return names;
+}
+
+/** The query parameters a recorded request carries, whether in `url` or kept apart in `urlParams`. */
+function queryOf(request: RecordedMethodUrl, apiUrl: string | undefined): URLSearchParams {
+  const params = new URL(request.url, apiUrl ?? "https://api.supabase.com").searchParams;
+  for (const [key, value] of new URLSearchParams(request.urlParams ?? "")) {
+    params.append(key, value);
+  }
+  return params;
+}
+
+/**
+ * A request must carry the qualifiers of at least one applicable entry for its operation, and no
+ * qualifier value the declaration names for the operation without an applicable entry declaring it.
+ */
+function assertQualifiersMatch(
+  command: string,
+  request: RecordedMethodUrl,
+  sent: URLSearchParams,
+  applicable: ReadonlyArray<OperationEntry>,
+  declaredForOperation: ReadonlyArray<OperationEntry>,
+): void {
+  const label = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
+  if (
+    !applicable.some((entry) =>
+      Object.entries(entry.request?.query ?? {}).every(([key, value]) => sent.get(key) === value),
+    )
+  ) {
+    throw new Error(
+      `assertPermissionDrift: "${command}": request ${label} was sent without the query qualifiers its declaration lists (${applicable
+        .map((entry) => JSON.stringify(entry.request?.query))
+        .join(" or ")}).`,
+    );
+  }
+  const mentioned = new Set(
+    declaredForOperation.flatMap((entry) => Object.keys(entry.request?.query ?? {})),
+  );
+  for (const key of mentioned) {
+    const value = sent.get(key);
+    if (value !== null && !applicable.some((entry) => entry.request?.query?.[key] === value)) {
+      throw new Error(
+        `assertPermissionDrift: "${command}": request ${label} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
+      );
+    }
+  }
 }
 
 /**
@@ -146,6 +195,11 @@ export function assertDriftAgainst(
 
   const allDeclaredIds = new Set(declared.operations.map((entry) => entry.operationId));
   const activeEntries = applicableOperations(declared, activeFlags);
+  const applicableByOperation = Map.groupBy(
+    applicableEntries(declared, activeFlags),
+    (entry) => entry.operationId,
+  );
+  const declaredByOperation = Map.groupBy(declared.operations, (entry) => entry.operationId);
   const activeIds = new Set(activeEntries.map((entry) => entry.operationId));
   const requestedIds = new Set<string>();
 
@@ -158,7 +212,16 @@ export function assertDriftAgainst(
       );
     }
     requestedIds.add(match.operation.operationId);
-    if (activeIds.has(match.operation.operationId)) continue;
+    if (activeIds.has(match.operation.operationId)) {
+      assertQualifiersMatch(
+        command,
+        request,
+        queryOf(request, options.apiUrl),
+        applicableByOperation.get(match.operation.operationId) ?? [],
+        declaredByOperation.get(match.operation.operationId) ?? [],
+      );
+      continue;
+    }
     if (allDeclaredIds.has(match.operation.operationId)) {
       throw new Error(
         `assertPermissionDrift: "${command}": request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this command but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
