@@ -1,0 +1,63 @@
+name: Fill sticky disks
+
+# Test jobs mount the pnpm, Go and Docker image caches from Blacksmith sticky
+# disks but pull request runs never commit them. This workflow is the trusted
+# writer: it runs on protected branches, which are the only refs Blacksmith's
+# sticky-disk branch protection lets commit.
+on:
+  push:
+    branches:
+      - develop
+      - next
+      - main
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fill-sticky-disks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fill:
+    name: Fill sticky disks
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: "true"
+
+      - name: Build CLI
+        run: |
+          (cd apps/cli-go && go build -o supabase-go .)
+          pnpm exec turbo run supabase#build
+
+      # Starting a default project pulls every image the local stack uses.
+      - name: Pull stack images
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_CLI_BINARY_OVERRIDE: ${{ github.workspace }}/apps/cli/dist/supabase
+        run: |
+          project="$(mktemp -d)"
+          cli="$GITHUB_WORKSPACE/apps/cli/dist/supabase.js"
+          cd "$project"
+          node "$cli" init
+          node "$cli" start
+          node "$cli" stop --no-backup
+
+      - name: Stop Docker so its image disk can be saved
+        if: always()
+        run: |
+          docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
+          docker system prune --force
+          docker volume prune --all --force
+          sudo systemctl stop docker.socket docker.service
