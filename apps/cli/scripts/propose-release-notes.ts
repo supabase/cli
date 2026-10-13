@@ -20,7 +20,7 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    model: { type: "string", default: "claude-sonnet-5-5" },
+    model: { type: "string", default: "claude-haiku-5-5" },
   },
   strict: true,
 });
