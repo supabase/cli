@@ -92,13 +92,13 @@ export function readTimings(root: string): Readonly<Record<string, number>> | un
 }
 
 /**
- * Shards the e2e project by measured duration. Other projects, and the e2e project while
+ * Shards the e2e projects by measured duration. Other projects, and the e2e projects while
  * the timings file is absent, keep Vitest's hash split.
  */
 export class E2eSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
     const { root, shard } = this.ctx.config;
-    const timings = files.every((spec) => spec.project.name === "e2e")
+    const timings = files.every((spec) => spec.project.name.startsWith("e2e"))
       ? readTimings(root)
       : undefined;
     if (shard === undefined || timings === undefined) {

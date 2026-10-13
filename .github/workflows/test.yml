@@ -327,6 +327,7 @@ jobs:
         run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_E2E_WORKERS: "4"
 
       - name: Run cli-e2e end-to-end tests
         if: matrix.suite == 'cli-e2e'

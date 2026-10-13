@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { defaultClientConditions, defaultServerConditions } from "vite";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
+
+/** E2e files that run concurrently; stacks already take unique ports and project ids. */
+const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS ?? "1");
+
+/** Tags a broken image under the tag every stack's Mailpit resolves to. */
+const E2E_EXCLUSIVE_FILES = ["src/commands/start/start.health.e2e.test.ts"];
 
 function dockerfileTextPlugin() {
   return {
@@ -75,8 +81,23 @@ export default defineConfig({
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
+          exclude: [...configDefaults.exclude, ...E2E_EXCLUSIVE_FILES],
+          fileParallelism: e2eWorkers > 1,
+          maxWorkers: e2eWorkers,
+          setupFiles: ["tests/e2e-setup.ts"],
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
+        test: {
+          // Files that change Docker state other stacks share run alone, after the e2e project.
+          name: "e2e-exclusive",
+          include: E2E_EXCLUSIVE_FILES,
           fileParallelism: false,
           maxWorkers: 1,
+          sequence: { groupOrder: 1 },
           setupFiles: ["tests/e2e-setup.ts"],
           globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
           testTimeout: 120_000,
