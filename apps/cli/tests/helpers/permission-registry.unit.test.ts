@@ -4,9 +4,7 @@ import type { CommandPermissions } from "../../src/command-internal/command-perm
 import { applicableOperations, declaredPermissions } from "./permission-registry.ts";
 
 describe("applicableOperations", () => {
-  const mapped = (
-    operations: Extract<CommandPermissions, { status: "mapped" }>["operations"],
-  ): Extract<CommandPermissions, { status: "mapped" }> => ({
+  const mapped = (operations: CommandPermissions["operations"]): CommandPermissions => ({
     status: "mapped",
     operations,
     noApiEffectFlags: [],

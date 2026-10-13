@@ -13,9 +13,17 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { upgradeSuggestion } from "./command-permissions/fragments.ts";
+import { mapped } from "./command-permissions/model.ts";
 import { suggestUpgrade } from "./upgrade-suggest.ts";
 
 const ORG_SLUG = "test-org";
+
+const upgradeSuggestionDeclared = {
+  _tag: "Declared",
+  permissions: mapped(upgradeSuggestion),
+} as const;
 
 function projectResponse(slug: string = ORG_SLUG) {
   return {
@@ -210,7 +218,7 @@ describe("suggestUpgrade", () => {
   });
 
   it.live("fires cli_upgrade_suggested with {feature_key, org_slug} when gated", () => {
-    const { layer, analytics, out } = setup();
+    const { layer, analytics, out, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,
@@ -225,6 +233,14 @@ describe("suggestUpgrade", () => {
       ]);
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/test-org/billing");
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
+      ]);
+      assertDriftAgainst(upgradeSuggestionDeclared, {
+        command: "upgrade-suggest block",
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -278,7 +294,6 @@ describe("suggestUpgrade", () => {
         statusCode: 402,
         response: gateResponse(402, ENVELOPE_BODY),
       });
-      expect(api.requests).toHaveLength(0);
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -287,6 +302,7 @@ describe("suggestUpgrade", () => {
           properties: { feature_key: "branching_persistent", org_slug: "env-org" },
         },
       ]);
+      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

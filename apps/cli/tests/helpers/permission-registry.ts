@@ -48,11 +48,9 @@ function dedupeOperations(
   return [...byId.values()];
 }
 
-type MappedCommandPermissions = Extract<CommandPermissions, { status: "mapped" }>;
-
 /** The entries of `permissions` that apply under `activeFlags`, deduped by `operationId`. */
 export function applicableOperations(
-  permissions: MappedCommandPermissions,
+  permissions: CommandPermissions,
   activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
   const applicable = permissions.operations.filter(

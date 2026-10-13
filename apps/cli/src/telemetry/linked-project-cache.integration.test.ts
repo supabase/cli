@@ -13,9 +13,14 @@ import {
   mockCommandCredentialsLayer,
   mockCommandPlatformApi,
 } from "../../tests/helpers/command-mocks.ts";
+import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { linkedProjectCache } from "../command-internal/command-permissions/fragments.ts";
+import { mapped } from "../command-internal/command-permissions/model.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+
+const declared = { _tag: "Declared", permissions: mapped(linkedProjectCache) } as const;
 
 describe("linkedProjectCacheLayer", () => {
   it.live(
@@ -73,6 +78,12 @@ describe("linkedProjectCacheLayer", () => {
       return Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
         yield* cache.cache(VALID_REF, workdir);
+        expect(api.requests).toHaveLength(1);
+        assertDriftAgainst(declared, {
+          command: "linked-project-cache block",
+          activeFlags: {},
+          requests: api.requests,
+        });
         expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
         const written: unknown = JSON.parse(
           readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
@@ -129,6 +140,7 @@ describe("linkedProjectCacheLayer", () => {
     return Effect.gen(function* () {
       const cache = yield* LinkedProjectCache;
       yield* cache.cache(VALID_REF, workdir);
+      expect(api.requests).toEqual([]);
       expect(analytics.groupIdentified).toEqual([]);
       expect(analytics.aliased).toEqual([]);
       rmSync(workdir, { recursive: true, force: true });
