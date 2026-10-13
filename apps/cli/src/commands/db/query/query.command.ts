@@ -1,6 +1,12 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  dbConfig,
+  linkedProjectCache,
+} from "../../../command-internal/command-permissions/fragments.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
@@ -51,6 +57,18 @@ export type DbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbQueryCommand = Command.make("query", config).pipe(
   Command.withDescription("Execute a SQL query against the database."),
   Command.withShortDescription("Execute a SQL query against the database"),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v1-run-a-query", kind: "required", when: [{ flag: "linked" }] },
+        ],
+        noApiEffectFlags: ["file"],
+      },
+      withCondition(dbConfig, { flag: "linked" }),
+      withCondition(linkedProjectCache, { flag: "linked" }),
+    ),
+  ),
   Command.withHandler((flags) =>
     dbQuery(flags).pipe(
       withCommandTelemetry({

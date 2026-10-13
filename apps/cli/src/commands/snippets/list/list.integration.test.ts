@@ -13,6 +13,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { snippetsList } from "./list.handler.ts";
 
 type SnippetsResponse = typeof V1ListAllSnippetsOutput.Type;
@@ -278,6 +279,7 @@ describe("snippets list integration", () => {
       yield* snippetsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlWithParams).toContain(`/v1/snippets?project_ref=${VALID_REF}`);
+      assertPermissionDrift({ command: "snippets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -287,6 +289,12 @@ describe("snippets list integration", () => {
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.urlWithParams).toContain(`project_ref=${flagRef}`);
+      assertPermissionDrift({
+        command: "snippets list",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

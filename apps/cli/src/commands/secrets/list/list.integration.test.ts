@@ -11,6 +11,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { secretsList } from "./list.handler.ts";
 
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
@@ -197,6 +198,7 @@ describe("secrets list integration", () => {
       yield* secretsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/secrets`);
+      assertPermissionDrift({ command: "secrets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -206,6 +208,12 @@ describe("secrets list integration", () => {
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
+      assertPermissionDrift({
+        command: "secrets list",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

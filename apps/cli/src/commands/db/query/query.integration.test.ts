@@ -44,6 +44,7 @@ import {
   type PgConnInput,
   type QueryResult,
 } from "../../../command-internal/db-connection.service.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { dbQuery } from "./query.handler.ts";
@@ -175,10 +176,12 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
 
 function mockHttpClient(opts: { status?: number; body?: string; networkFail?: boolean }) {
   const requests: Array<string> = [];
+  const calls: Array<{ method: string; url: string }> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       requests.push(request.url);
+      calls.push({ method: request.method, url: request.url });
       return opts.networkFail === true
         ? Effect.fail(
             new HttpClientError.HttpClientError({
@@ -200,6 +203,9 @@ function mockHttpClient(opts: { status?: number; body?: string; networkFail?: bo
     layer,
     get requests() {
       return requests;
+    },
+    get calls() {
+      return calls;
     },
   };
 }
@@ -661,7 +667,7 @@ describe("db query integration", () => {
   });
 
   it.live("queries the linked project over HTTP and writes the linked-project cache", () => {
-    const { layer, out, cache } = setup({
+    const { layer, out, cache, httpClient } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
@@ -669,6 +675,12 @@ describe("db query integration", () => {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true },
+        requests: httpClient.calls,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -693,6 +705,12 @@ describe("db query integration", () => {
       ).toBe(true);
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true, "project-ref": true },
+        requests: httpClient.calls,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
