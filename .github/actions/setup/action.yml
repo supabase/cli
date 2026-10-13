@@ -49,6 +49,8 @@ inputs:
     description: >-
       Whether to keep Docker's image store on a Blacksmith sticky disk so
       stack images are not pulled again on every job. Requires sticky-disks.
+      Callers must stop Docker in a final if: always() step so the disk
+      unmounts cleanly.
     required: false
     default: "false"
   native-artifacts:
