@@ -13,9 +13,13 @@ import {
   mockCommandCredentialsLayer,
   mockCommandPlatformApi,
 } from "../../tests/helpers/command-mocks.ts";
+import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
+import { mapped } from "../command-internal/command-permissions/model.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
-import { linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+
+const declared = { _tag: "Declared", permissions: mapped(linkedProjectCache) } as const;
 
 describe("linkedProjectCacheLayer", () => {
   it.live(
@@ -73,6 +77,12 @@ describe("linkedProjectCacheLayer", () => {
       return Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
         yield* cache.cache(VALID_REF, workdir);
+        expect(api.requests).toHaveLength(1);
+        assertDriftAgainst(declared, {
+          command: "linked-project-cache block",
+          activeFlags: {},
+          requests: api.requests,
+        });
         expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
         const written: unknown = JSON.parse(
           readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
@@ -129,6 +139,7 @@ describe("linkedProjectCacheLayer", () => {
     return Effect.gen(function* () {
       const cache = yield* LinkedProjectCache;
       yield* cache.cache(VALID_REF, workdir);
+      expect(api.requests).toEqual([]);
       expect(analytics.groupIdentified).toEqual([]);
       expect(analytics.aliased).toEqual([]);
       rmSync(workdir, { recursive: true, force: true });
@@ -174,4 +185,35 @@ describe("linkedProjectCacheLayer", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live("leaves the command's result alone when the project lookup is forbidden", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "linked-cache-forbidden-"));
+    const analytics = mockAnalytics();
+    const api = mockCommandPlatformApi({
+      response: { status: 403, body: { message: "Forbidden" } },
+    });
+    const identityStitch = identityStitchLayer.pipe(
+      Layer.provide(analytics.layer),
+      Layer.provide(
+        mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
+      ),
+      Layer.provide(BunServices.layer),
+    );
+    const layer = linkedProjectCacheLayer.pipe(
+      Layer.provide(api.httpClientLayer),
+      Layer.provide(mockCommandSettings({ workdir })),
+      Layer.provide(mockCommandCredentialsLayer),
+      Layer.provide(identityStitch),
+      Layer.provide(analytics.layer),
+      Layer.provide(BunServices.layer),
+    );
+    return Effect.gen(function* () {
+      const cache = yield* LinkedProjectCache;
+      yield* cache.cache(VALID_REF, workdir);
+      expect(api.requests).toHaveLength(1);
+      expect(existsSync(join(workdir, "supabase", ".temp", "linked-project.json"))).toBe(false);
+      expect(analytics.groupIdentified).toEqual([]);
+      rmSync(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
 });

@@ -7,45 +7,53 @@ import {
   flattenSubcommands,
   userGlobalFlagParams,
 } from "../../src/docs/docs-introspection.ts";
-import { unwrapToSingleParam } from "../../src/command-internal/param-introspection.ts";
+import { unwrapParam } from "../../src/command-internal/param-introspection.ts";
 import type { PermissionVariant } from "./permission-registry.ts";
 
 interface FlagInfo {
-  /** A switch takes no value, so only a presence condition can test it. */
+  /** A switch takes no value: test it with `is` when it has a default, `present` when it's optional. */
   readonly isBoolean: boolean;
+  /**
+   * Declared with `Flag.optional` as the outermost wrapper, so the handler can tell "not given"
+   * from a value. A `Flag.withDefault` flag is not (it maps the optional), and neither is an
+   * optional flag a later `Flag.map` wraps: apply `Flag.optional` last on a flag tested with `present`.
+   */
+  readonly isOptional: boolean;
   /** The values a choice flag accepts; `undefined` for a free-form value. */
   readonly choices: ReadonlyArray<string> | undefined;
 }
 
-function singleParamsOf(
-  params: ReadonlyArray<unknown>,
-): ReadonlyArray<NonNullable<ReturnType<typeof unwrapToSingleParam>>> {
-  return (params as Array<Parameters<typeof unwrapToSingleParam>[0]>).map((param) => {
-    const single = unwrapToSingleParam(param);
-    if (single === undefined) {
+function unwrappedParamsOf(params: ReadonlyArray<unknown>): ReadonlyArray<{
+  single: NonNullable<ReturnType<typeof unwrapParam>>["single"];
+  isOptional: boolean;
+}> {
+  return (params as Array<Parameters<typeof unwrapParam>[0]>).map((param) => {
+    const unwrapped = unwrapParam(param);
+    if (unwrapped === undefined) {
       throw new Error(
         "command-flags.ts: a flag param wraps an unrecognized Param variant — effect's Param union may have changed.",
       );
     }
-    return single;
+    return { single: unwrapped.single, isOptional: param._tag === "Optional" };
   });
 }
 
 export function flagNames(params: ReadonlyArray<unknown>): ReadonlyArray<string> {
-  return singleParamsOf(params).map((single) => single.name);
+  return unwrappedParamsOf(params).map(({ single }) => single.name);
 }
 
 /** A command's own flags: `config.flags`, `contextConfig.flags` (`withSharedFlags`), and whatever it registers via `withGlobalFlags` (e.g. `seed`'s persistent `--linked`/`--local`). */
 function ownFlagsOf(command: Command.Command.Any): ReadonlyArray<readonly [string, FlagInfo]> {
   const internals = commandInternals(command);
-  return singleParamsOf([
+  return unwrappedParamsOf([
     ...internals.config.flags,
     ...internals.contextConfig.flags,
     ...userGlobalFlagParams(command),
-  ]).map((single) => [
+  ]).map(({ single, isOptional }) => [
     single.name,
     {
       isBoolean: single.primitiveType._tag === "Boolean",
+      isOptional,
       choices: choiceKeysOf(single.primitiveType),
     },
   ]);

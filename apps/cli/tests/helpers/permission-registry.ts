@@ -4,7 +4,8 @@ import { rootCommandForFeatures } from "../../src/cli/root.ts";
 import { readPermissions } from "../../src/command-internal/command-permissions/command-permissions.annotation.ts";
 import type {
   CommandPermissions,
-  FlagCondition,
+  DbTarget,
+  EntryCondition,
   OperationEntry,
 } from "../../src/command-internal/command-permissions/model.ts";
 import { findCommand } from "../../src/shared/cli/command-docs.ts";
@@ -13,19 +14,45 @@ import { findCommand } from "../../src/shared/cli/command-docs.ts";
 export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 
 /**
- * The flags one run uses, keyed by name without the leading `--`: a flag's effective value
- * (its default included) where a value condition checks it, otherwise `true`.
+ * The flags one run uses, keyed by name without the leading `--`: a switch's effective value
+ * (its default included) where an `is` condition checks it, a string where a `oneOf` condition
+ * checks the value, otherwise `true`. List only the database-target flags (`db-url`, `local`,
+ * `linked`) the run was given: the CLI treats one as set whenever it appears on the command line.
  */
-export type ActiveFlags = Readonly<Record<string, true | string>>;
+export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
-function conditionHolds(condition: FlagCondition, activeFlags: ActiveFlags): boolean {
+/** The flags that select a database target, in precedence order. */
+export const DB_TARGET_FLAGS = [
+  "db-url",
+  "local",
+  "linked",
+] as const satisfies ReadonlyArray<DbTarget>;
+
+/** The target `activeFlags` selects (`db-url`, then `local`, then `linked`), else `fallback`. */
+function dbTargetOf(
+  activeFlags: ActiveFlags,
+  fallback: DbTarget | undefined,
+): DbTarget | undefined {
+  for (const flag of DB_TARGET_FLAGS) {
+    if (Object.hasOwn(activeFlags, flag)) return flag;
+  }
+  return fallback;
+}
+
+function conditionHolds(
+  condition: EntryCondition,
+  activeFlags: ActiveFlags,
+  dbTarget: () => DbTarget,
+): boolean {
+  if (condition.dbTarget !== undefined) return condition.dbTarget.includes(dbTarget());
   const value = Object.hasOwn(activeFlags, condition.flag)
     ? activeFlags[condition.flag]
     : undefined;
   if (condition.oneOf !== undefined) {
     return typeof value === "string" && condition.oneOf.includes(value);
   }
-  return (value !== undefined) === (condition.present ?? true);
+  if (condition.is !== undefined) return (value ?? false) === condition.is;
+  return (value !== undefined && value !== "") === (condition.present ?? true);
 }
 
 /** Higher wins a dedupe conflict: a required check with no `context` must never lose to one that has one. */
@@ -50,16 +77,33 @@ function dedupeOperations(
 
 type MappedCommandPermissions = Extract<CommandPermissions, { status: "mapped" }>;
 
+/** The entries of `permissions` that apply under `activeFlags`, one per declaration (not deduped). */
+export function applicableEntries(
+  permissions: MappedCommandPermissions,
+  activeFlags: ActiveFlags,
+): ReadonlyArray<OperationEntry> {
+  const dbTarget = (): DbTarget => {
+    const target = dbTargetOf(activeFlags, permissions.dbTargetDefault);
+    if (target === undefined) {
+      throw new Error(
+        "an entry checks the database target, but activeFlags names none of --db-url, --local, --linked and the declaration sets no default (withDbTarget)",
+      );
+    }
+    return target;
+  };
+  return permissions.operations.filter(
+    (entry) =>
+      entry.when === undefined ||
+      entry.when.every((cond) => conditionHolds(cond, activeFlags, dbTarget)),
+  );
+}
+
 /** The entries of `permissions` that apply under `activeFlags`, deduped by `operationId`. */
 export function applicableOperations(
   permissions: MappedCommandPermissions,
   activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
-  const applicable = permissions.operations.filter(
-    (entry) =>
-      entry.when === undefined || entry.when.every((cond) => conditionHolds(cond, activeFlags)),
-  );
-  return dedupeOperations(applicable);
+  return dedupeOperations(applicableEntries(permissions, activeFlags));
 }
 
 export type DeclaredPermissionsLookup =

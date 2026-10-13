@@ -5,6 +5,12 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { LoginApi, type LoginApiSessionResponse } from "../commands/login/login-api.service.ts";
 import { LoginVerificationError } from "../commands/login/login.errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** The profile lookup that stitches the account identity after login. */
+export const loginProfile = block("login-profile", [
+  { operationId: "v1-get-profile", kind: "best-effort" },
+]);
 
 const POLL_TIMEOUT = "10 seconds";
 

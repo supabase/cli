@@ -26,6 +26,17 @@ import {
 } from "./storage-credentials.errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackStorageEndpoint } from "./stack-storage.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `resolveStorageCredentials` for a remote project. */
+export const storageCredentials = block("storage-credentials", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "required",
+    context: "a remote project and no SUPABASE_AUTH_SERVICE_ROLE_KEY",
+    request: { query: { reveal: "true" } },
+  },
+]);
 
 /**
  * Resolves Storage gateway credentials (base URL, service-role key, and local
