@@ -1,6 +1,6 @@
 name: AI Review
 # Names the pull request, so `Sync repair` can wait for the review of its own pull request.
-run-name: AI Review #${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+run-name: "AI Review #${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}"
 
 # One-shot AI code review: replaces the Codex GitHub App's automatic per-push reviews with a
 # single exhaustive pass that runs at most once per PR. See .github/ai-review/README.md for the

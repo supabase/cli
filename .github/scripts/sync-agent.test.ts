@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 import { type CheckRun, REQUIRED_CHECKS } from "./fast-forward.ts";
-import { buildSuggestions, planRepair, type ReviewThread } from "./sync-agent.ts";
+import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
+import { buildSuggestions, planRepair, type ReviewThread, verifyWorkflows } from "./sync-agent.ts";
 
 const HEAD = "a".repeat(40);
 const RESOLVED = "<!-- sync-agent resolve -->\nClaude resolved the merge.";
@@ -179,5 +182,57 @@ describe("buildSuggestions", () => {
     expect(leftover).toContain("@@ -90 +89 @@");
     expect(leftover).toContain("deleted file mode 100644");
     expect(leftover).not.toContain("go-cache");
+  });
+});
+
+describe("verifyWorkflows", () => {
+  const repos: TestRepo[] = [];
+  afterEach(() => {
+    for (const repo of repos.splice(0)) {
+      repo.cleanup();
+    }
+  });
+
+  /** A sync branch at `develop` and a `next` that edits a workflow, checked out the way the publish job sees them. */
+  function syncCheckout() {
+    const repo = createTestRepo();
+    repos.push(repo);
+    mkdirSync(join(repo.seed, ".github"));
+    repo.commit(repo.seed, ".github/ci.yml", "on: push\n", "ci: add workflow");
+    git(repo.seed, "push", "origin", "main:develop", "main:sync/develop-into-next");
+    git(repo.seed, "switch", "-c", "next");
+    repo.commit(repo.seed, ".github/ci.yml", "on: pull_request\n", "ci: next trigger");
+    git(repo.seed, "push", "origin", "next");
+    const checkout = repo.checkout();
+    git(checkout, "switch", "sync/develop-into-next");
+    git(checkout, "merge", "--no-ff", "--no-edit", "origin/next");
+    return { repo, checkout };
+  }
+
+  test("accepts git's merge of next", () => {
+    const { checkout } = syncCheckout();
+
+    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).not.toThrow();
+  });
+
+  test("rejects a workflow added through a merge of a commit outside next", () => {
+    const { repo, checkout } = syncCheckout();
+    git(checkout, "switch", "-c", "forged", "HEAD~1");
+    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+    git(checkout, "switch", "sync/develop-into-next");
+    git(checkout, "merge", "--no-ff", "--no-edit", "forged");
+
+    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).toThrow(
+      "merges a commit outside origin/next",
+    );
+  });
+
+  test("rejects a workflow added in a plain commit", () => {
+    const { repo, checkout } = syncCheckout();
+    repo.commit(checkout, ".github/evil.yml", "on: push\n", "ci: evil");
+
+    expect(() => verifyWorkflows(checkout, "origin/sync/develop-into-next", "HEAD")).toThrow(
+      "workflow edits must come from a maintainer",
+    );
   });
 });

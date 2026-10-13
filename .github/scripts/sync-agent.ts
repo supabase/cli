@@ -25,6 +25,8 @@ const REPAIR_MARKER = "<!-- sync-agent repair";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
 /** Workflows on the sync branch run with repository secrets, so Claude's edits there are only proposed. */
 const WORKFLOWS = ".github/";
+/** Every merge in a pushed resolution brings in reviewed `next` commits, never a commit made during the run. */
+const MERGED_BRANCH = "origin/next";
 const WORKFLOW_DIFF = "github.diff";
 const MAX_REPAIR_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
@@ -851,10 +853,10 @@ function codeFence(text: string, language: string): string[] {
 }
 
 /**
- * Refuses a push whose `.github/` differs from what reviewed code gives: each merge must match git's own merge, with
- * conflicted workflows on the `develop` side, and no other commit may touch `.github/`.
+ * Refuses a push whose `.github/` differs from what reviewed code gives: each merge must merge `next` and match git's
+ * own merge, with conflicted workflows on the `develop` side, and no other commit may touch `.github/`.
  */
-function verifyWorkflows(repoDir: string, base: string, head: string): void {
+export function verifyWorkflows(repoDir: string, base: string, head: string): void {
   const git = makeGit(repoDir);
   for (const commit of gitOrThrow(git, ["rev-list", "--first-parent", `${base}..${head}`])
     .split("\n")
@@ -869,6 +871,12 @@ function verifyWorkflows(repoDir: string, base: string, head: string): void {
         );
       }
       continue;
+    }
+    if (
+      parents.length > 2 ||
+      git(["merge-base", "--is-ancestor", `${commit}^2`, MERGED_BRANCH]).status !== 0
+    ) {
+      throw new Error(`${commit} merges a commit outside ${MERGED_BRANCH}.`);
     }
     const merged = git([
       "merge-tree",
