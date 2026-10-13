@@ -162,6 +162,7 @@ export function assertDriftAgainst(
 ): void {
   const { command, requests, exact = false, subject = "command" } = options;
   const label = subject === "command" ? `"${command}"` : `${subject} "${command}"`;
+  const helper = subject === "command" ? "assertPermissionDrift" : "assertBlockDrift";
   const activeFlags = options.activeFlags ?? {};
   if (lookup._tag === "NotFound") {
     throw new Error(
@@ -183,7 +184,7 @@ export function assertDriftAgainst(
   for (const flag of Object.keys(activeFlags)) {
     if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: ${label}: activeFlags names "${flag}", but this command does not accept --${flag} — a shared building block may mention it without the command having it.`,
+        `${helper}: ${label}: activeFlags names "${flag}", but this ${subject} does not accept --${flag} — a shared building block may mention it without the command having it.`,
       );
     }
   }
@@ -211,12 +212,12 @@ export function assertDriftAgainst(
   for (const [flag, value] of Object.entries(activeFlags)) {
     if (!known.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: ${label}: activeFlags names "${flag}", which this ${subject}'s declaration never classifies — check for a typo.`,
+        `${helper}: ${label}: activeFlags names "${flag}", which this ${subject}'s declaration never classifies — check for a typo.`,
       );
     }
     if (typeof value !== "string" && valueChecked.has(flag)) {
       throw new Error(
-        `assertPermissionDrift: ${label}: activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
+        `${helper}: ${label}: activeFlags gives "${flag}" no value, but a \`when\` condition checks its value — pass the value this run uses.`,
       );
     }
   }
@@ -236,7 +237,7 @@ export function assertDriftAgainst(
     if (match.kind === "out-of-scope") continue;
     if (match.kind === "unmatched") {
       throw new Error(
-        `assertPermissionDrift: ${label}: request ${request.method} ${match.pathname} matched no known Management API operation — check operation-table.ts and the spec.`,
+        `${helper}: ${label}: request ${request.method} ${match.pathname} matched no known Management API operation — check operation-table.ts and the spec.`,
       );
     }
     requestedIds.add(match.operation.operationId);
@@ -252,11 +253,11 @@ export function assertDriftAgainst(
     }
     if (allDeclaredIds.has(match.operation.operationId)) {
       throw new Error(
-        `assertPermissionDrift: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this ${subject} but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
+        `${helper}: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is declared for this ${subject} but whose \`when\` condition doesn't hold for activeFlags=${describeActiveFlags(activeFlags)} — check that activeFlags matches what this test run actually exercises, including the default value of a flag a value condition checks.`,
       );
     }
     throw new Error(
-      `assertPermissionDrift: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this ${subject} at all (activeFlags=${describeActiveFlags(activeFlags)}).`,
+      `${helper}: ${label}: request ${request.method} ${match.operation.pathTemplate} resolved to operation "${match.operation.operationId}", which is not declared for this ${subject} at all (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 
@@ -270,7 +271,7 @@ export function assertDriftAgainst(
   );
   if (missingRequired.length > 0) {
     throw new Error(
-      `assertPermissionDrift: ${label}: exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=${describeActiveFlags(activeFlags)}).`,
+      `${helper}: ${label}: exact check expected these required operations to be requested but none were: ${missingRequired.map((entry) => entry.operationId).join(", ")} (activeFlags=${describeActiveFlags(activeFlags)}).`,
     );
   }
 }

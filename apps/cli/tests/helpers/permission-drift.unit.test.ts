@@ -317,13 +317,13 @@ describe("assertBlockDrift", () => {
 
   it("names the building block when a request is to an operation it does not declare", () => {
     expect(() => assertBlockDrift(demo, { requests: [getProject] })).toThrow(
-      /building block "demo": request GET .*"v1-get-project", which is not declared for this building block at all/,
+      /assertBlockDrift: building block "demo": request GET .*"v1-get-project", which is not declared for this building block at all/,
     );
   });
 
   it("rejects a declared operation whose condition does not hold for the active flags", () => {
     expect(() => assertBlockDrift(demo, { activeFlags: {}, requests: [runQuery] })).toThrow(
-      /building block "demo": .*"v1-run-a-query", which is declared for this building block but whose `when` condition/,
+      /assertBlockDrift: building block "demo": .*"v1-run-a-query", which is declared for this building block but whose `when` condition/,
     );
   });
 });
