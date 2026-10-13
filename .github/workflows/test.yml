@@ -238,7 +238,13 @@ jobs:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
         os: [blacksmith-6vcpu-macos-latest]
-        suite: [lifecycle, idle-parallel, confinement]
+        # Concurrent scenarios slow each other on macOS runners, so the
+        # heaviest ones run alone.
+        include:
+          - { suite: lifecycle, file: lifecycle, pattern: "^(?!.*writes stay confined)" }
+          - { suite: confinement, file: lifecycle, pattern: "writes stay confined" }
+          - { suite: idle, file: idle-parallel, pattern: "^(?!.*parallel stack isolation)" }
+          - { suite: isolation, file: idle-parallel, pattern: "parallel stack isolation" }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -256,8 +262,8 @@ jobs:
         working-directory: packages/stack
         run: >-
           pnpm test:e2e:run
-          src/whole-stack.native.${{ matrix.suite == 'idle-parallel' && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
-          --testNamePattern='${{ matrix.suite == 'confinement' && 'writes stay confined' || matrix.suite == 'lifecycle' && '^(?!.*writes stay confined)' || '.' }}'
+          src/whole-stack.native.${{ matrix.file }}.e2e.test.ts
+          --testNamePattern='${{ matrix.pattern }}'
           --sequence.concurrent
           --passWithNoTests=false
 
