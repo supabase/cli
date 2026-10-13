@@ -45,8 +45,8 @@ function fakeDiagnostic(code: string, subject: string) {
 }
 
 function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
-  const state = {
-    resolveCalls: [] as Array<{
+  const state: {
+    readonly resolveCalls: Array<{
       pool: Pool;
       options: {
         restrictToApplier?: boolean;
@@ -54,17 +54,25 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
         skipBaseline?: boolean;
       };
       schema?: readonly string[];
-    }>,
-    extractCalls: [] as Array<{ pool: Pool; options: object | undefined }>,
-    planCalls: [] as Array<{
+    }>;
+    readonly extractCalls: Array<{ pool: Pool; options: object | undefined }>;
+    readonly planCalls: Array<{
       source: FakeFactBase;
       desired: FakeFactBase;
       options: FakePlanOptions & { redactSecrets: boolean };
-    }>,
-    renderOptions: [] as Array<{ allowDrops: boolean }>,
-    exportInputs: [] as object[],
-    declarativeInputs: [] as object[],
-    snapshotMetadata: [] as object[],
+    }>;
+    readonly renderOptions: Array<{ allowDrops: boolean }>;
+    readonly exportInputs: object[];
+    readonly declarativeInputs: object[];
+    readonly snapshotMetadata: object[];
+  } = {
+    resolveCalls: [],
+    extractCalls: [],
+    planCalls: [],
+    renderOptions: [],
+    exportInputs: [],
+    declarativeInputs: [],
+    snapshotMetadata: [],
   };
 
   const extract = (

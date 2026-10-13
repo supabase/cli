@@ -190,7 +190,7 @@ describe("bufferedShadowOutput", () => {
     const out = mockOutput();
     return Effect.gen(function* () {
       const real = yield* Output;
-      const buffered = bufferedShadowOutput(real);
+      const buffered = yield* bufferedShadowOutput(real);
       yield* real.raw("Applying migration a...\n", "stderr");
       yield* buffered.output.raw("Initialising schema...\n", "stderr");
       yield* real.raw("Applying migration b...\n", "stderr");
@@ -209,7 +209,7 @@ describe("bufferedShadowOutput", () => {
     const out = mockOutput();
     return Effect.gen(function* () {
       const real = yield* Output;
-      const buffered = bufferedShadowOutput(real);
+      const buffered = yield* bufferedShadowOutput(real);
       yield* buffered.output.raw("buffered\n", "stderr");
       yield* buffered.flush;
       yield* buffered.flush;
@@ -222,7 +222,7 @@ describe("bufferedShadowOutput", () => {
     const out = mockOutput();
     return Effect.gen(function* () {
       const real = yield* Output;
-      const buffered = bufferedShadowOutput(real);
+      const buffered = yield* bufferedShadowOutput(real);
       yield* buffered.output.raw("first\n", "stderr");
       yield* buffered.output.rawBytes(new TextEncoder().encode("second\n"), "stderr");
       yield* buffered.flush;

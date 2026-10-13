@@ -1,17 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-  Stream,
-} from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
@@ -63,6 +52,7 @@ import {
 import { PgDeltaEngine, PgDeltaEngineError } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 
@@ -389,9 +379,6 @@ const flags = (
   password: over.password ?? Option.none(),
 });
 
-const failError = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
-
 const seedMigration = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -407,22 +394,20 @@ describe("db schema declarative generate integration", () => {
   it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("--local --linked with --experimental fails with the mutex error", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true), linked: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeMutuallyExclusiveFlagsError",
         message:
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
@@ -435,13 +420,12 @@ describe("db schema declarative generate integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           dbSchemaDeclarativeGenerate(
             flags({ local: Option.some(true), linked: Option.some(true) }),
           ),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -452,16 +436,15 @@ describe("db schema declarative generate integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withConfigEnv(
+        const error = yield* withConfigEnv(
           { [ENV]: "1" },
-          Effect.exit(
+          Effect.flip(
             dbSchemaDeclarativeGenerate(
               flags({ local: Option.some(true), linked: Option.some(true) }),
             ),
           ),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
+        expect(error).toMatchObject({
           _tag: "DeclarativeMutuallyExclusiveFlagsError",
           message:
             "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
@@ -479,12 +462,11 @@ describe("db schema declarative generate integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withConfigEnv(
+        const error = yield* withConfigEnv(
           { [ENV]: "1" },
-          Effect.exit(dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }))),
+          Effect.flip(dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }))),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -502,13 +484,12 @@ describe("db schema declarative generate integration", () => {
             path.join(tmp.current, "supabase", ".env"),
             "SUPABASE_EXPERIMENTAL=true\n",
           );
-          const exit = yield* Effect.exit(
+          const error = yield* Effect.flip(
             dbSchemaDeclarativeGenerate(
               flags({ local: Option.some(true), linked: Option.some(true) }),
             ),
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(failError(exit)).toMatchObject({
+          expect(error).toMatchObject({
             _tag: "DeclarativeMutuallyExclusiveFlagsError",
             message:
               "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
@@ -545,7 +526,7 @@ describe("db schema declarative generate integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      expect(s.engineExportCalls[0]!.targetRef).toContain(
+      expect(s.engineExportCalls[0]?.targetRef).toContain(
         "postgresql://postgres:postgres@127.0.0.1:54322",
       );
       const written = yield* fs.readFileString(
@@ -569,10 +550,10 @@ describe("db schema declarative generate integration", () => {
       const s = setup(tmp.current, { experimental: true, stackBackend: true });
       return Effect.gen(function* () {
         yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-        expect(s.engineExportCalls[0]!.targetRef).toContain(
+        expect(s.engineExportCalls[0]?.targetRef).toContain(
           "postgresql://postgres:stack-secret@127.0.0.1:54329",
         );
-        expect(s.engineExportCalls[0]!.targetRef).not.toContain(":54322");
+        expect(s.engineExportCalls[0]?.targetRef).not.toContain(":54322");
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -665,11 +646,10 @@ describe("db schema declarative generate integration", () => {
       const s = setup(projectDir, { experimental: true });
       yield* Effect.gen(function* () {
         for (const output of ["", ".", "..", path.dirname(projectDir)]) {
-          const exit = yield* dbSchemaDeclarativeGenerate(
+          const error = yield* dbSchemaDeclarativeGenerate(
             flags({ local: Option.some(true), outputDir: Option.some(output), overwrite: true }),
-          ).pipe(Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(failError(exit)).toMatchObject({
+          ).pipe(Effect.flip);
+          expect(error).toMatchObject({
             _tag: "DeclarativeWriteError",
             message:
               "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
@@ -701,11 +681,10 @@ describe("db schema declarative generate integration", () => {
   it.effect("explicit --local checks the local Postgres image before generating", () => {
     const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -762,7 +741,7 @@ describe("db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       yield* dbSchemaDeclarativeGenerate(flags({ dbUrl: Option.some("postgres://remote/db") }));
       expect(s.resolverCalls.length).toBe(1);
-      expect(s.engineExportCalls[0]!.targetRef).toContain("@db.remote:5432");
+      expect(s.engineExportCalls[0]?.targetRef).toContain("@db.remote:5432");
       expect(s.ensureStartedCalls).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
@@ -822,7 +801,7 @@ describe("db schema declarative generate integration", () => {
         path.join(tmp.current, "supabase", "remote_schema", "public", "tables", "players.sql"),
       );
       expect(written).toBe("create table players ();");
-      expect(s.engineExportCalls[0]!.projectRef).toBe(ref);
+      expect(s.engineExportCalls[0]?.projectRef).toBe(ref);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -878,11 +857,10 @@ describe("db schema declarative generate integration", () => {
             "",
           ].join("\n"),
         );
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           dbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -890,11 +868,10 @@ describe("db schema declarative generate integration", () => {
   it.effect("smart mode: non-TTY without --yes fails with the target hint", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect((failError(exit) as { message: string }).message).toContain(
-        "in non-interactive mode, specify a target",
-      );
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags()));
+      expect(error).toMatchObject({
+        message: expect.stringContaining("in non-interactive mode, specify a target"),
+      });
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -971,11 +948,10 @@ describe("db schema declarative generate integration", () => {
   it.effect("fails generate when the engine export fails", () => {
     const s = setup(tmp.current, { experimental: true, exportFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
-        Effect.exit,
+      const error = yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
+        Effect.flip,
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "PgDeltaEngineError",
         message: "declarative export failed",
       });
@@ -994,9 +970,8 @@ describe("db schema declarative generate integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags({ reset: true })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags({ reset: true })));
+      expect(error).toMatchObject({
         message: "database reset failed: supabase start is not running.",
       });
       expect(localResetRemovedContainers(s.child.spawned)).toEqual([]);
@@ -1029,9 +1004,8 @@ describe("db schema declarative generate integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags()));
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -1192,9 +1166,8 @@ describe("db schema declarative generate integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags()));
+      expect(error).toMatchObject({
         _tag: "DeclarativeInvalidDbUrlError",
         message: "failed to parse connection string: not a url",
       });
@@ -1211,7 +1184,7 @@ describe("db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
       yield* dbSchemaDeclarativeGenerate(flags());
-      expect(s.engineExportCalls[0]!.targetRef).toContain(
+      expect(s.engineExportCalls[0]?.targetRef).toContain(
         "@db.example.com:5432/app?connect_timeout=",
       );
     }).pipe(Effect.provide(s.layer));

@@ -32,12 +32,14 @@ export interface DeclarativeWriteResult {
   readonly preservedUnmanagedFiles: ReadonlyArray<string>;
 }
 
-function safeDeclarativeExportName(path: Path.Path, name: string): string {
+function safeDeclarativeExportName(
+  path: Path.Path,
+  name: string,
+): Effect.Effect<string, DeclarativeWriteError> {
   const rel = path.normalize(name.split("\\").join("/"));
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw declarativeWriteError(`unsafe declarative export path: ${name}`);
-  }
-  return rel.split("\\").join("/");
+  return rel.startsWith("..") || path.isAbsolute(rel)
+    ? Effect.fail(declarativeWriteError(`unsafe declarative export path: ${name}`))
+    : Effect.succeed(rel.split("\\").join("/"));
 }
 
 function isCustomDeclarativePath(name: string): boolean {
@@ -89,19 +91,17 @@ export const writeDeclarativeSchemas = Effect.fn("PgDelta.writeDeclarativeSchema
   output: PgDeltaDeclarativeExportResult,
 ) {
   const proposed = yield* Effect.forEach(output.files, (file) =>
-    Effect.try({
-      try: () => {
-        const name = safeDeclarativeExportName(path, file.name);
-        if (isCustomDeclarativePath(name)) {
-          throw declarativeWriteError(
-            `refusing to write into reserved declarative schema path: ${file.name}`,
-          );
-        }
-        return { name, sql: file.sql };
-      },
-      catch: (error) =>
-        error instanceof DeclarativeWriteError ? error : declarativeWriteError(String(error)),
-    }),
+    safeDeclarativeExportName(path, file.name).pipe(
+      Effect.flatMap((name) =>
+        isCustomDeclarativePath(name)
+          ? Effect.fail(
+              declarativeWriteError(
+                `refusing to write into reserved declarative schema path: ${file.name}`,
+              ),
+            )
+          : Effect.succeed({ name, sql: file.sql }),
+      ),
+    ),
   );
 
   const exists = yield* fs
@@ -273,15 +273,17 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fn(
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;
   const configPath = path.join(workdir, "supabase", "config.toml");
   const existing = yield* fs.readFileString(configPath).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      // A missing config file is tolerated; other read errors abort.
-      error.reason._tag === "NotFound"
-        ? Effect.succeed("")
-        : Effect.fail(
-            new DeclarativeWriteError({
-              message: `failed to read config: ${error.message}`,
-            }),
-          ),
+    // A missing config file is tolerated; other read errors abort.
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(""),
+      (_, error) =>
+        Effect.fail(
+          new DeclarativeWriteError({
+            message: `failed to read config: ${error.message}`,
+          }),
+        ),
     ),
   );
   // A replacer function, not a string, so a literal "$" in the path/value can't be
