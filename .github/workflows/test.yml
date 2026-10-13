@@ -163,7 +163,10 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker system prune --force --volumes
+            docker image ls --quiet --filter label=com.supabase.cli.e2e.broken-image=true |
+              xargs --no-run-if-empty docker image rm --force
+            docker system prune --force
+            docker volume prune --all --force
           fi
           sudo systemctl stop docker.socket docker.service
 
@@ -367,7 +370,10 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker system prune --force --volumes
+            docker image ls --quiet --filter label=com.supabase.cli.e2e.broken-image=true |
+              xargs --no-run-if-empty docker image rm --force
+            docker system prune --force
+            docker volume prune --all --force
           fi
           sudo systemctl stop docker.socket docker.service
 
@@ -427,7 +433,10 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
             docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
-            docker system prune --force --volumes
+            docker image ls --quiet --filter label=com.supabase.cli.e2e.broken-image=true |
+              xargs --no-run-if-empty docker image rm --force
+            docker system prune --force
+            docker volume prune --all --force
           fi
           sudo systemctl stop docker.socket docker.service
 
