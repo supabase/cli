@@ -72,6 +72,15 @@ describe("mock account recovery reminder", () => {
       const forcedColor = runWithTerminal(["telemetry", "status"], { CLICOLOR_FORCE: "1" });
       expect(forcedColor).toContain("\u001B[31m⚠ Secure your account\u001B[39m");
       expect(forcedColor).toContain("\u001B[31m│\u001B[39m Your recovery codes are exhausted.");
+
+      for (const state of ["missing", "low"] as const) {
+        const warning = runWithTerminal(["telemetry", "status"], {
+          CLICOLOR_FORCE: "1",
+          SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: state,
+        });
+        expect(warning).toContain("\u001B[33m⚠ Secure your account\u001B[39m");
+        expect(warning).toContain("\u001B[33m│\u001B[39m");
+      }
     },
   );
 
