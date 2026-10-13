@@ -5,7 +5,6 @@ import type * as HttpClient from "effect/http/HttpClient";
 import { dbConfigLayer } from "../../src/command-internal/db-config.layer.ts";
 import type { DbConfigResolver } from "../../src/command-internal/db-config.service.ts";
 import type { DbConnection } from "../../src/command-internal/db-connection.service.ts";
-import { DebugLogger } from "../../src/command-internal/debug-logger.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -15,6 +14,7 @@ import {
 } from "../../src/command-internal/global-flags.ts";
 import { identityStitchLayer } from "../../src/command-internal/identity-stitch.ts";
 import type { CommandSettings } from "../../src/config/command-settings.service.ts";
+import { DebugLogger } from "../../src/shared/output/debug-logger.service.ts";
 import { linkedProjectCacheLayer } from "../../src/telemetry/linked-project-cache.layer.ts";
 import type { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { mockCommandCredentialsLayer, mockCommandSettings } from "./command-mocks.ts";
