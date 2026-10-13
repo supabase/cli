@@ -111,8 +111,18 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run integration tests
+    name: Run integration tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: "@supabase/stack", shard: 1/3, name: stack 1/3 }
+          - { package: "@supabase/stack", shard: 2/3, name: stack 2/3 }
+          - { package: "@supabase/stack", shard: 3/3, name: stack 3/3 }
+          - { package: supabase, shard: 1/2, name: cli 1/2 }
+          - { package: supabase, shard: 2/2, name: cli 2/2 }
+          - { package: "@supabase/api", name: api }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,11 +136,14 @@ jobs:
           go-cache: "false"
 
       - name: Run integration tests
-        run: pnpm run test:integration
+        run: >-
+          pnpm --filter "${{ matrix.package }}" test:integration:run
+          ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
       # Not covered by test:integration above (a different vitest project); runs here so the
       # registry cross-process and publication-crash scenarios run on Linux too.
       - name: Run stack namespace e2e tests
+        if: matrix.name == 'api'
         working-directory: packages/stack
         run: >-
           pnpm test:e2e:run
