@@ -44,43 +44,41 @@ import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block } from "./command-permissions/model.ts";
 
 /**
- * `DbConfigResolver` on the `--linked` path. `gen types --project-id` and `db dump`'s container
- * fallback fetch the pooler config without `--project-ref`, so those commands declare that entry
+ * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
+ * include it with `withDbTarget`. `gen types --project-id` and `db dump`'s container fallback
+ * fetch the pooler config without `--project-ref`, so those commands declare that entry
  * themselves.
  */
-export const dbConfig = block(
-  "db-config",
-  [
-    {
-      operationId: "v1-create-login-role",
-      kind: "required",
-      when: [{ flag: "password", present: false }],
-      context:
-        "no database password in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores both)",
-    },
-    {
-      operationId: "v1-get-pooler-config",
-      kind: "best-effort",
-      when: [{ flag: "project-ref" }],
-      context: "the direct database host is unreachable (IPv6-only network)",
-    },
-    {
-      operationId: "v1-list-all-network-bans",
-      kind: "best-effort",
-      when: [{ flag: "password", present: false }],
-      context:
-        "after three failed attempts to connect through the pooler as the temporary login role",
-    },
-    {
-      operationId: "v1-delete-network-bans",
-      kind: "best-effort",
-      when: [{ flag: "password", present: false }],
-      context:
-        "after three failed attempts to connect through the pooler as the temporary login role",
-    },
-  ],
-  ["local", "db-url"],
-);
+export const dbConfig = block("db-config", [
+  {
+    operationId: "v1-create-login-role",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "no database password from --password (an empty value counts as none), SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
+  },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "project-ref" }],
+    context:
+      "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-list-all-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+  {
+    operationId: "v1-delete-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+]);
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);

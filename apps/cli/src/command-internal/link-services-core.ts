@@ -18,7 +18,7 @@ export const linkServices = block("link-services", [
   {
     operationId: "v1-get-pooler-config",
     kind: "best-effort",
-    when: [{ flag: "skip-pooler", present: false }],
+    when: [{ flag: "skip-pooler", is: false }],
   },
 ]);
 

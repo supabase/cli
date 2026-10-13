@@ -1,5 +1,9 @@
 /** Serializable description of the Management API operations a command may call, keyed by the spec's `operationId`. */
 
+/**
+ * Whether a command's useful result depends on the call. `best-effort` means a 403 on the call
+ * still leaves the command's useful result; anything else is `required`.
+ */
 type PermissionKind = "required" | "best-effort";
 
 interface FlagConditionBase {
@@ -23,7 +27,10 @@ interface PresenceCondition extends FlagConditionBase {
   readonly is?: never;
 }
 
-/** The switch's effective value, default included, must equal `is` for an entry to apply. */
+/**
+ * The switch's effective value, default included, must equal `is` for an entry to apply. A switch
+ * the including command lacks counts as `false`.
+ */
 interface SwitchCondition extends FlagConditionBase {
   readonly is: boolean;
   readonly present?: never;
@@ -50,7 +57,7 @@ export type DbTarget = "local" | "db-url" | "linked";
  * `--db-url` if given, else `--local`, else `--linked`, else the default set with
  * {@link withDbTarget}. As with {@link FlagCondition}, `source` marks a building block's condition.
  */
-export interface DbTargetCondition {
+interface DbTargetCondition {
   readonly dbTarget: ReadonlyArray<DbTarget>;
   readonly source?: string;
   readonly flag?: never;
@@ -69,7 +76,8 @@ export interface OperationEntry {
   readonly when?: ReadonlyArray<EntryCondition>;
   /** A condition that isn't a flag, e.g. "only without a saved .temp/pooler-url". */
   readonly context?: string;
-  readonly note?: string;
+  /** Request details a permission can depend on, e.g. `reveal=true` on the api-keys call. */
+  readonly request?: { readonly query?: Readonly<Record<string, string>> };
   /** The building block this entry came from (set by {@link block}); absent for a command's own entry. */
   readonly source?: string;
 }
@@ -150,8 +158,24 @@ export function withCondition(
 }
 
 /**
+ * Gives every entry in `fragment` the `kind` the including command handles it with, when that
+ * differs from the block's own (e.g. a command that carries on after a 403 on a call its
+ * block treats as required).
+ *
+ * @public
+ */
+export function withKind(fragment: PermissionFragment, kind: PermissionKind): PermissionFragment {
+  return {
+    ...fragment,
+    operations: fragment.operations.map((entry) => ({ ...entry, kind })),
+  };
+}
+
+/**
  * Sets the database a command targets when no `--db-url`, `--local` or `--linked` flag is given,
  * for entries with a {@link DbTargetCondition}.
+ *
+ * @public
  */
 export function withDbTarget(
   fragment: PermissionFragment,

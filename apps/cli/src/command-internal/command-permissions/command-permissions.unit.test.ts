@@ -170,6 +170,10 @@ describe("command permission mapping completeness", () => {
                   info.isBoolean,
                   `${where} tests --${cond.flag} with \`is\`, but it takes a value — use \`oneOf\``,
                 ).toBe(true);
+                expect(
+                  info.isOptional,
+                  `${where} tests --${cond.flag} with \`is\`, but it is optional, so "not given" differs from "false" — use \`present\``,
+                ).toBe(false);
               }
               if (cond.is === undefined && cond.oneOf === undefined && info?.isBoolean === true) {
                 expect(

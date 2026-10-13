@@ -137,8 +137,8 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips when getProject fails", () => {
-    const { layer, analytics, out } = setup({ projectStatus: 500 });
+  it.live("skips when getProject is forbidden", () => {
+    const { layer, analytics, out } = setup({ projectStatus: 403 });
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,
@@ -150,8 +150,8 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips when getEntitlements fails", () => {
-    const { layer, analytics, out } = setup({ entitlementsStatus: 500 });
+  it.live("skips when getEntitlements is forbidden", () => {
+    const { layer, analytics, out } = setup({ entitlementsStatus: 403 });
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,

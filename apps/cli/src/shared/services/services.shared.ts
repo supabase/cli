@@ -29,7 +29,7 @@ export const linkedServiceVersions = block("linked-service-versions", [
   {
     operationId: "v1-get-project-api-keys",
     kind: "best-effort",
-    note: "Sent with reveal=true.",
+    request: { query: { reveal: "true" } },
   },
   {
     operationId: "v1-get-project",

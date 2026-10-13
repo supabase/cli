@@ -77,6 +77,23 @@ describe("projectRefLayer Management API requests", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("lists projects for the picker when --project-ref is empty", () => {
+    const { api, layer } = setup({});
+    return Effect.gen(function* () {
+      const { resolve } = yield* ProjectRefResolver;
+      const ref = yield* resolve(Option.some(""));
+      expect(ref).toBe(VALID_REF);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+      ]);
+      assertDriftAgainst(declared, {
+        command: "project-ref picker block",
+        activeFlags: { "project-ref": "" },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("requests nothing when --project-ref names the project", () => {
     const { api, layer } = setup({});
     return Effect.gen(function* () {

@@ -16,8 +16,8 @@ export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 /**
  * The flags one run uses, keyed by name without the leading `--`: a switch's effective value
  * (its default included) where an `is` condition checks it, a string where a `oneOf` condition
- * checks the value, otherwise `true`. A database-target flag (`db-url`, `local`, `linked`) counts
- * when it is `true` or a non-empty string.
+ * checks the value, otherwise `true`. List only the database-target flags (`db-url`, `local`,
+ * `linked`) the run was given: the CLI treats one as set whenever it appears on the command line.
  */
 export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
@@ -34,8 +34,7 @@ function dbTargetOf(
   fallback: DbTarget | undefined,
 ): DbTarget | undefined {
   for (const flag of DB_TARGET_FLAGS) {
-    const value = Object.hasOwn(activeFlags, flag) ? activeFlags[flag] : undefined;
-    if (value === true || (typeof value === "string" && value !== "")) return flag;
+    if (Object.hasOwn(activeFlags, flag)) return flag;
   }
   return fallback;
 }
@@ -52,7 +51,7 @@ function conditionHolds(
   if (condition.oneOf !== undefined) {
     return typeof value === "string" && condition.oneOf.includes(value);
   }
-  if (condition.is !== undefined) return value === condition.is;
+  if (condition.is !== undefined) return (value ?? false) === condition.is;
   return (value !== undefined && value !== "") === (condition.present ?? true);
 }
 

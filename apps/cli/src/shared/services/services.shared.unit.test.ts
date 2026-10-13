@@ -408,7 +408,7 @@ describe("services shared", () => {
           managementApi.record(request);
           const url = new URL(request.url);
           if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-            return new Response("boom", { status: 500 });
+            return Response.json({ message: "Forbidden" }, { status: 403 });
           }
 
           if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
@@ -458,7 +458,7 @@ describe("services shared", () => {
           managementApi.record(request);
           const url = new URL(request.url);
           if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-            return new Response("boom", { status: 500 });
+            return Response.json({ message: "Forbidden" }, { status: 403 });
           }
 
           if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {

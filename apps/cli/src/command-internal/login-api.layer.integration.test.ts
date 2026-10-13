@@ -37,4 +37,20 @@ describe("loginApiLayer", () => {
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("skips the identity stitch when the profile lookup is forbidden", () => {
+    const api = mockCommandPlatformApi({
+      response: { status: 403, body: { message: "Forbidden" } },
+    });
+    const layer = loginApiLayer.pipe(
+      Layer.provide(api.httpClientLayer),
+      Layer.provide(mockCommandSettings({ workdir: "/unused-workdir" })),
+    );
+    return Effect.gen(function* () {
+      const loginApi = yield* LoginApi;
+      const gotrueId = yield* loginApi.fetchGotrueId(DEFAULT_API_URL, VALID_TOKEN);
+      expect(gotrueId).toEqual(Option.none());
+      expect(api.requests).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
 });

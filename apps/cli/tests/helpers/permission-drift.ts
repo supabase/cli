@@ -123,6 +123,8 @@ export function assertDriftAgainst(
   const valueChecked = conditionFlags((cond) => cond.oneOf !== undefined);
   const switchChecked = conditionFlags((cond) => cond.is !== undefined);
   for (const flag of switchChecked) {
+    // A switch the command lacks (a block's condition) can't be named, and counts as false.
+    if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) continue;
     if (typeof activeFlags[flag] !== "boolean") {
       throw new Error(
         `assertPermissionDrift: "${command}": a \`when\` condition checks the value of --${flag}, a switch — pass its effective value as a boolean in activeFlags (a switch defaults to false).`,

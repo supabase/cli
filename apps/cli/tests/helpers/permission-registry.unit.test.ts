@@ -62,6 +62,7 @@ describe("applicableOperations", () => {
       applicableOperations(permissions, activeFlags).map((e) => e.operationId);
     expect(applied({ "skip-pooler": false })).toEqual(["v1-get-pooler-config"]);
     expect(applied({ "skip-pooler": true })).toEqual([]);
+    expect(applied({})).toEqual(["v1-get-pooler-config"]);
   });
 
   it("treats a flag given an empty value as absent", () => {
@@ -112,10 +113,6 @@ describe("applicableOperations", () => {
     it("falls back to the declared default when no target flag is given", () => {
       expect(applied({}, "linked")).toEqual(["v1-run-a-query"]);
       expect(applied({}, "local")).toEqual(["v1-get-pooler-config"]);
-    });
-
-    it("ignores an empty --db-url", () => {
-      expect(applied({ "db-url": "" }, "linked")).toEqual(["v1-run-a-query"]);
     });
 
     it("rejects a run with no target flag and no default", () => {

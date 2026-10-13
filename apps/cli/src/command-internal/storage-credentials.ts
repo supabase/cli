@@ -34,7 +34,7 @@ export const storageCredentials = block("storage-credentials", [
     operationId: "v1-get-project-api-keys",
     kind: "required",
     context: "a remote project and no SUPABASE_AUTH_SERVICE_ROLE_KEY",
-    note: "Sent with reveal=true.",
+    request: { query: { reveal: "true" } },
   },
 ]);
 
