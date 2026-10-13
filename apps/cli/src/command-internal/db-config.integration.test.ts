@@ -45,6 +45,10 @@ import {
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
+import {
+  primaryPoolerConfigs,
+  stubManagementApi,
+} from "../../tests/helpers/permission-real-layers.ts";
 import { applicableOperations } from "../../tests/helpers/permission-registry.ts";
 import type { ActiveFlags } from "../../tests/helpers/permission-registry.ts";
 import { dbConfig, dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
@@ -1551,52 +1555,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
 });
 
 /** Replaces `globalThis.fetch` for the scope: `respond` answers a request, anything else gets a 404. */
-const stubApi = (
-  requests: Array<{ readonly method: string; readonly path: string }>,
-  respond: (method: string, path: string) => Response | undefined,
-) =>
-  Effect.acquireRelease(
-    Effect.sync(() => {
-      const previousFetch = globalThis.fetch;
-      globalThis.fetch = Object.assign(
-        (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-          const url = new URL(
-            typeof input === "string" || input instanceof URL ? input : input.url,
-          );
-          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-          requests.push({ method, path: url.pathname });
-          return Promise.resolve(
-            respond(method, url.pathname) ??
-              Response.json({ message: "unexpected request" }, { status: 404 }),
-          );
-        },
-        { preconnect: previousFetch.preconnect },
-      );
-      return previousFetch;
-    }),
-    (previousFetch) =>
-      Effect.sync(() => {
-        globalThis.fetch = previousFetch;
-      }),
-  );
-
-const primaryPooler = (ref: string) => [
-  {
-    identifier: "primary",
-    database_type: "PRIMARY",
-    is_using_scram_auth: true,
-    db_user: "postgres",
-    db_host: "db.example",
-    db_port: 5432,
-    db_name: "postgres",
-    connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-    connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-    default_pool_size: null,
-    max_client_conn: null,
-    pool_mode: "transaction",
-  },
-];
-
 describe("dbConfigResolver (Management API calls)", () => {
   const noDirectConnect = Layer.succeed(DbConnection, {
     connect: () => Effect.die("unexpected connect()"),
@@ -1618,7 +1576,7 @@ describe("dbConfigResolver (Management API calls)", () => {
   it.effect("--local makes no Management API request and the block declares none", () => {
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     return Effect.gen(function* () {
-      yield* stubApi(requests, () => undefined);
+      yield* stubManagementApi(requests, () => undefined);
       const dir = yield* withWorkdir();
       const r = yield* resolve(dir, localFlags);
       expect(r.isLocal).toBe(true);
@@ -1629,7 +1587,7 @@ describe("dbConfigResolver (Management API calls)", () => {
   it.effect("--db-url makes no Management API request and the block declares none", () => {
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     return Effect.gen(function* () {
-      yield* stubApi(requests, () => undefined);
+      yield* stubManagementApi(requests, () => undefined);
       const dir = yield* withWorkdir();
       const r = yield* resolve(dir, dbUrlFlags("postgres://alice:secret@example.com:6543/appdb"));
       expect(r.isLocal).toBe(false);
@@ -1643,7 +1601,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       const ref = "targetprojectrefabcd";
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       return Effect.gen(function* () {
-        yield* stubApi(requests, (method, path) =>
+        yield* stubManagementApi(requests, (method, path) =>
           method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
             ? Response.json({ message: "Forbidden" }, { status: 403 })
             : undefined,
@@ -1685,9 +1643,9 @@ describe("dbConfigResolver (Management API calls)", () => {
     const ref = "emptyprojectrefabcde";
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
     return Effect.gen(function* () {
-      yield* stubApi(requests, (method, path) =>
+      yield* stubManagementApi(requests, (method, path) =>
         method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
-          ? Response.json(primaryPooler(ref))
+          ? Response.json(primaryPoolerConfigs(ref))
           : undefined,
       );
       const dir = yield* withWorkdir();
@@ -1727,9 +1685,9 @@ describe("dbConfigResolver (Management API calls)", () => {
       queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
     };
     return Effect.gen(function* () {
-      yield* stubApi(requests, (method, path) => {
+      yield* stubManagementApi(requests, (method, path) => {
         if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
-          return Response.json(primaryPooler(ref));
+          return Response.json(primaryPoolerConfigs(ref));
         }
         if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
           return Response.json(
@@ -1789,9 +1747,9 @@ describe("dbConfigResolver (Management API calls)", () => {
         });
         const forbiddenResponse = () => Response.json({ message: "Forbidden" }, { status: 403 });
         return Effect.gen(function* () {
-          yield* stubApi(requests, (method, path) => {
+          yield* stubManagementApi(requests, (method, path) => {
             if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
-              return Response.json(primaryPooler(ref));
+              return Response.json(primaryPoolerConfigs(ref));
             }
             if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
               return Response.json(

@@ -1,7 +1,9 @@
+import type { NetConnectOpts } from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Effect,
   Exit,
   FileSystem,
@@ -15,6 +17,23 @@ import {
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", (importOriginal) =>
+  importOriginal<typeof import("node:net")>().then((net) => ({
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  })),
+);
 
 import {
   VALID_TOKEN,
@@ -46,7 +65,12 @@ import {
   type QueryResult,
 } from "../../../command-internal/db-connection.service.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
+  primaryPoolerConfigs,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  stubManagementApi,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { dbQuery } from "./query.handler.ts";
@@ -255,6 +279,8 @@ interface SetupOpts {
   resolveFails?: boolean;
   /** Runs the real linked-project cache layer against the temp `workdir`, answering its project lookup. */
   realCache?: boolean;
+  /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
+  realDbConfig?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -291,7 +317,13 @@ function setup(opts: SetupOpts = {}) {
         })
       : cache.layer,
     telemetryOutputFormat.layer,
-    mockResolver(opts.isLocal, opts.resolveFails),
+    opts.realDbConfig === true
+      ? realDbConfigResolver({
+          workdir: opts.workdir ?? "/work/project",
+          dbConnection: mockDbConnection(opts),
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : mockResolver(opts.isLocal, opts.resolveFails),
     mockDbConnection(opts),
     mockProjectRef(opts.unlinked, opts.refReadFails),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
@@ -753,6 +785,64 @@ describe("db query integration", () => {
         exact: true,
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("mints a login role and queries through the real DB config resolver and cache", () => {
+    const { layer, httpClient } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+      realCache: true,
+      realDbConfig: true,
+      workdir: tempRoot.current,
+    });
+    const resolverRequests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(resolverRequests, (method, path) => {
+        if (method === "GET" && path === `/v1/projects/${REF}/config/database/pooler`) {
+          return Response.json(primaryPoolerConfigs(REF));
+        }
+        if (method === "POST" && path === `/v1/projects/${REF}/cli/login-role`) {
+          return Response.json(
+            { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+            { status: 201 },
+          );
+        }
+        return undefined;
+      });
+      yield* dbQuery(
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(true),
+          projectRef: Option.some(REF),
+        }),
+      );
+      expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${REF}/config/database/pooler`,
+        `POST /v1/projects/${REF}/cli/login-role`,
+      ]);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true, "project-ref": REF },
+        requests: [
+          ...resolverRequests.map(({ method, path }) => ({
+            method,
+            url: `https://api.supabase.com${path}`,
+          })),
+          ...httpClient.calls,
+        ],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord(
+          { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          { preserveEmptyStrings: true },
+        ),
+      ),
+    );
   });
 
   it.live("queries the project given via --project-ref without a linked workdir", () => {
