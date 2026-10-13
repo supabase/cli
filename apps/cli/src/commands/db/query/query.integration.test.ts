@@ -21,6 +21,7 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -45,6 +46,7 @@ import {
   type QueryResult,
 } from "../../../command-internal/db-connection.service.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { dbQuery } from "./query.handler.ts";
@@ -174,7 +176,15 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
   });
 }
 
-function mockHttpClient(opts: { status?: number; body?: string; networkFail?: boolean }) {
+function mockHttpClient(opts: {
+  status?: number;
+  body?: string;
+  networkFail?: boolean;
+  route?: (request: {
+    method: string;
+    url: string;
+  }) => { status: number; body: string } | undefined;
+}) {
   const requests: Array<string> = [];
   const calls: Array<{ method: string; url: string }> = [];
   const layer = Layer.succeed(
@@ -182,6 +192,18 @@ function mockHttpClient(opts: { status?: number; body?: string; networkFail?: bo
     HttpClient.make((request) => {
       requests.push(request.url);
       calls.push({ method: request.method, url: request.url });
+      const routed = opts.route?.({ method: request.method, url: request.url });
+      if (routed !== undefined) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(routed.body, {
+              status: routed.status,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      }
       return opts.networkFail === true
         ? Effect.fail(
             new HttpClientError.HttpClientError({
@@ -231,6 +253,8 @@ interface SetupOpts {
   unlinked?: boolean;
   refReadFails?: boolean;
   resolveFails?: boolean;
+  /** Runs the real linked-project cache layer against the temp `workdir`, answering its project lookup. */
+  realCache?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -242,11 +266,30 @@ function setup(opts: SetupOpts = {}) {
     status: opts.linkedStatus,
     body: opts.linkedBody,
     networkFail: opts.networkFail,
+    route: (request) =>
+      opts.realCache === true &&
+      request.method === "GET" &&
+      request.url.endsWith(`/v1/projects/${REF}`)
+        ? {
+            status: 200,
+            body: JSON.stringify({
+              ref: REF,
+              name: "alpha",
+              organization_id: "org-123",
+              organization_slug: "acme",
+            }),
+          }
+        : undefined,
   });
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realCache === true
+      ? realLinkedProjectCache({
+          httpClient: httpClient.layer,
+          cliSettings: mockCommandSettings({ workdir: opts.workdir ?? "/work/project" }),
+        })
+      : cache.layer,
     telemetryOutputFormat.layer,
     mockResolver(opts.isLocal, opts.resolveFails),
     mockDbConnection(opts),
@@ -302,6 +345,8 @@ const SELECT_RESULT: QueryResult = {
 };
 
 describe("db query integration", () => {
+  const tempRoot = useTempWorkdir("supabase-db-query-int-");
+
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
@@ -675,6 +720,32 @@ describe("db query integration", () => {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true },
+        requests: httpClient.calls,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fills the linked-project cache through the real cache layer", () => {
+    const { layer, httpClient } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+      realCache: true,
+      workdir: tempRoot.current,
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({ ref: REF });
+      expect(httpClient.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${REF}/database/query`,
+        `GET https://api.supabase.com/v1/projects/${REF}`,
+      ]);
       assertPermissionDrift({
         command: "db query",
         activeFlags: { linked: true },
