@@ -118,9 +118,6 @@ A `result` event carrying the same `{ rows }` payload.
 Emit one extra stderr line before the table:
 `Command "<name>" is deprecated, use "<target>" instead.`
 
-`total-index-size`, `total-table-sizes`, and `table-index-sizes` are removed in v3 and
-emit `Command "<name>" is deprecated and will be removed in v3, use "<target>" instead.`
-
 ## Notes
 
 - The Management API stack is built lazily, only on the `--linked` path, so `--local`

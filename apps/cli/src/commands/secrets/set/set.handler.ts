@@ -39,6 +39,9 @@ const mapSetError = mapHttpError({
 const decodeCliConfig = Schema.decodeUnknownResult(CliConfigSchema);
 const decodeBulkCreateSecretsInput = Schema.decodeEffect(V1BulkCreateSecretsInput);
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /**
  * Best-effort recovery of `[edge_runtime.secrets]` from a document that failed schema decode
  * (not a raw parse failure). Matches the CLI's established per-field decode tolerance: an
