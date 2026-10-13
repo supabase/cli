@@ -29,7 +29,7 @@ const registry = Effect.fn("StackListTest.registry")(function* () {
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
 describe("stack list", () => {
-  it.live("lists real saved identities without starting owners in text and machine output", () =>
+  it.effect("lists real saved identities without starting owners in text and machine output", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       for (const name of ["beta", "alpha"]) {
@@ -62,7 +62,7 @@ describe("stack list", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("lists healthy stacks and warns about invalid entries without altering state", () =>
+  it.effect("lists healthy stacks and warns about invalid entries without altering state", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       const healthy = yield* fixture.api.create({
@@ -112,7 +112,7 @@ describe("stack list", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("reports an empty registry and rejects the legacy output flag", () =>
+  it.effect("reports an empty registry and rejects the legacy output flag", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       const output = mockOutput();

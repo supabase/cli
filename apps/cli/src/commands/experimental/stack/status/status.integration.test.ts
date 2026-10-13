@@ -84,6 +84,11 @@ const storage = (s3ProtocolEnabled: boolean): ServiceCreation => ({
   },
   endpoints: { http: { port: 54321 } },
 });
+const StatusEnvReport = Schema.Struct({ env: Schema.Record(Schema.String, Schema.String) });
+const StatusEndpointsReport = Schema.Struct({
+  ...StatusEnvReport.fields,
+  endpoints: Schema.Record(Schema.String, Schema.Unknown),
+});
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
   stack: Option.none(),
   stackId: Option.none(),
@@ -271,7 +276,7 @@ const runStatus = (input: {
     return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
 
-it.live("renders connections and a services summary without internal IDs", () =>
+it.effect("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {
     const databaseCalls = { value: 0 };
     const restCalls = { value: 0 };
@@ -333,7 +338,7 @@ it.live("renders connections and a services summary without internal IDs", () =>
   }),
 );
 
-it.live("preserves service status failures and marks aggregate readiness unavailable", () =>
+it.effect("preserves service status failures and marks aggregate readiness unavailable", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [
@@ -361,7 +366,7 @@ it.live("preserves service status failures and marks aggregate readiness unavail
   }),
 );
 
-it.live("does not label a requested stop as an unexpected process exit", () =>
+it.effect("does not label a requested stop as an unexpected process exit", () =>
   Effect.gen(function* () {
     const stopped = makeObservation("database-id", database, {
       lifecycle: "stopped",
@@ -402,7 +407,7 @@ it.live("does not label a requested stop as an unexpected process exit", () =>
   }),
 );
 
-it.live("reports stopped readiness without treating unbound endpoints as drift", () =>
+it.effect("reports stopped readiness without treating unbound endpoints as drift", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [
@@ -429,7 +434,7 @@ it.live("reports stopped readiness without treating unbound endpoints as drift",
   }),
 );
 
-it.live("reports the planned differences of composition members as drift", () =>
+it.effect("reports the planned differences of composition members as drift", () =>
   Effect.gen(function* () {
     const drifted = (outputFormat: StatusOutputFormat) =>
       runStatus({
@@ -479,7 +484,7 @@ it.live("reports the planned differences of composition members as drift", () =>
   }),
 );
 
-it.live(
+it.effect(
   "reports the gateway-served MCP endpoint at the API URL, with no synthetic endpoint entry",
   () =>
     Effect.gen(function* () {
@@ -514,10 +519,9 @@ it.live(
       ];
       const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
       yield* report.effect;
-      const result = report.out.messages.find((message) => message.type === "success")?.data as {
-        endpoints: Readonly<Record<string, unknown>>;
-        env: Readonly<Record<string, string>>;
-      };
+      const result = yield* Schema.decodeUnknownEffect(StatusEndpointsReport)(
+        report.out.messages.find((message) => message.type === "success")?.data,
+      );
       expect(result).toMatchObject({
         endpoints: { "studio.http": { url: "http://127.0.0.1:54323" } },
         env: { MCP_URL: "http://127.0.0.1:54321/mcp" },
@@ -531,7 +535,7 @@ it.live(
     }),
 );
 
-it.live("omits MCP_URL when no member exposes the shared API listener", () =>
+it.effect("omits MCP_URL when no member exposes the shared API listener", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -556,14 +560,14 @@ it.live("omits MCP_URL when no member exposes the shared API listener", () =>
     ];
     const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
     yield* report.effect;
-    const result = report.out.messages.find((message) => message.type === "success")?.data as {
-      env: Readonly<Record<string, string>>;
-    };
+    const result = yield* Schema.decodeUnknownEffect(StatusEnvReport)(
+      report.out.messages.find((message) => message.type === "success")?.data,
+    );
     expect(result.env).not.toHaveProperty("MCP_URL");
   }),
 );
 
-it.live("omits MCP_URL when Studio is not a composition member", () =>
+it.effect("omits MCP_URL when Studio is not a composition member", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -588,9 +592,9 @@ it.live("omits MCP_URL when Studio is not a composition member", () =>
     ];
     const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
     yield* report.effect;
-    const result = report.out.messages.find((message) => message.type === "success")?.data as {
-      env: Readonly<Record<string, string>>;
-    };
+    const result = yield* Schema.decodeUnknownEffect(StatusEnvReport)(
+      report.out.messages.find((message) => message.type === "success")?.data,
+    );
     expect(result.env).not.toHaveProperty("MCP_URL");
   }),
 );
@@ -620,7 +624,7 @@ const storageServices = (creation: ServiceCreation) => {
   ];
 };
 
-it.live("reports the Storage S3 endpoint and access keys through the gateway", () =>
+it.effect("reports the Storage S3 endpoint and access keys through the gateway", () =>
   Effect.gen(function* () {
     const text = yield* runStatus({ services: storageServices(storage(true)), reachable: true });
     yield* text.effect;
@@ -641,7 +645,7 @@ it.live("reports the Storage S3 endpoint and access keys through the gateway", (
   }),
 );
 
-it.live("omits Storage S3 details when the S3 protocol is disabled", () =>
+it.effect("omits Storage S3 details when the S3 protocol is disabled", () =>
   Effect.gen(function* () {
     const text = yield* runStatus({ services: storageServices(storage(false)), reachable: true });
     yield* text.effect;
@@ -659,7 +663,7 @@ it.live("omits Storage S3 details when the S3 protocol is disabled", () =>
   }),
 );
 
-it.live("omits Storage S3 details for a Storage member saved without S3 keys", () =>
+it.effect("omits Storage S3 details for a Storage member saved without S3 keys", () =>
   Effect.gen(function* () {
     const env = yield* runStatus({
       services: storageServices({
@@ -681,7 +685,7 @@ for (const { functionsMember, status } of [
   { functionsMember: false, status: "unchanged" },
   { functionsMember: true, status: "unavailable" },
 ] as const)
-  it.live(
+  it.effect(
     `reports ${status} drift for a multiline Functions dotenv when Functions is ${functionsMember ? "" : "not "}a member`,
     () =>
       Effect.gen(function* () {
@@ -705,7 +709,7 @@ for (const { functionsMember, status } of [
       }),
   );
 
-it.live("reports unavailable owner and does not query service status", () =>
+it.effect("reports unavailable owner and does not query service status", () =>
   Effect.gen(function* () {
     const statusCalls = { value: 0 };
     const services = [
@@ -724,7 +728,7 @@ it.live("reports unavailable owner and does not query service status", () =>
   }),
 );
 
-it.live("rejects environment export when the owner is unavailable", () =>
+it.effect("rejects environment export when the owner is unavailable", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({
       services: [makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } })],
@@ -742,7 +746,7 @@ it.live("rejects environment export when the owner is unavailable", () =>
   }),
 );
 
-it.live("exports saved credentials only for a running database", () =>
+it.effect("exports saved credentials only for a running database", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -787,7 +791,7 @@ it.live("exports saved credentials only for a running database", () =>
   }),
 );
 
-it.live("derives DB_URL using the postgres role and a non-default saved password", () =>
+it.effect("derives DB_URL using the postgres role and a non-default saved password", () =>
   Effect.gen(function* () {
     const password = "p@ss w/ord!";
     const customDatabase: ServiceCreation = {
@@ -820,7 +824,7 @@ it.live("derives DB_URL using the postgres role and a non-default saved password
   }),
 );
 
-it.live("the status JSON env map equals the status --env export for the same stack", () =>
+it.effect("the status JSON env map equals the status --env export for the same stack", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -846,9 +850,9 @@ it.live("the status JSON env map equals the status --env export for the same sta
     ];
     const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
     yield* report.effect;
-    const result = report.out.messages.find((message) => message.type === "success")?.data as {
-      env: Readonly<Record<string, string>>;
-    };
+    const result = yield* Schema.decodeUnknownEffect(StatusEnvReport)(
+      report.out.messages.find((message) => message.type === "success")?.data,
+    );
     const exported = yield* runStatus({
       services,
       reachable: true,
@@ -864,7 +868,7 @@ it.live("the status JSON env map equals the status --env export for the same sta
   }),
 );
 
-it.live("status JSON env degrades to what's available when credentials are unreachable", () =>
+it.effect("status JSON env degrades to what's available when credentials are unreachable", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
@@ -885,15 +889,15 @@ it.live("status JSON env degrades to what's available when credentials are unrea
       credentialsUnavailable: true,
     });
     yield* run.effect;
-    const result = run.out.messages.find((message) => message.type === "success")?.data as {
-      env: Readonly<Record<string, string>>;
-    };
+    const result = yield* Schema.decodeUnknownEffect(StatusEnvReport)(
+      run.out.messages.find((message) => message.type === "success")?.data,
+    );
     expect(result.env).not.toHaveProperty("PUBLISHABLE_KEY");
     expect(result.env.DB_URL).toContain("127.0.0.1:54322");
   }),
 );
 
-it.live("uses only the composition database for environment export", () =>
+it.effect("uses only the composition database for environment export", () =>
   Effect.gen(function* () {
     const shadow = makeObservation("shadow-db", database, {
       lifecycle: "running",
@@ -930,7 +934,7 @@ it.live("uses only the composition database for environment export", () =>
   }),
 );
 
-it.live("keeps status usable with malformed project configuration", () =>
+it.effect("keeps status usable with malformed project configuration", () =>
   Effect.gen(function* () {
     const services = [
       makeService({
