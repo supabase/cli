@@ -1,4 +1,4 @@
-import { Config, Option, type Path } from "effect";
+import { Config, Effect, Option, type Path } from "effect";
 
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 
@@ -61,4 +61,5 @@ export const isPgDeltaDebugEnabled = Config.String("PGDELTA_DEBUG").pipe(
     const value = raw.trim().toLowerCase();
     return value === "1" || value === "true" || value === "yes";
   }),
+  Effect.orElseSucceed(() => false),
 );
