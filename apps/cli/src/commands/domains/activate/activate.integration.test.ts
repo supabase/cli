@@ -31,11 +31,11 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
@@ -60,7 +60,7 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
@@ -121,8 +121,8 @@ describe("domains activate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsActivate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -136,7 +136,7 @@ describe("domains activate integration", () => {
       return Effect.gen(function* () {
         yield* domainsActivate({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
         expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n",
         );
         const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
         expect(parsed.custom_hostname).toBe("shop.acme.dev");
@@ -150,7 +150,7 @@ describe("domains activate integration", () => {
       yield* domainsActivate({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
       expect(
         out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n",
         ),
       ).toBe(true);
       expect(out.stdoutText).toBe("");

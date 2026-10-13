@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 
 const INCLUDE_RAW_OUTPUT_DEPRECATION =
-  "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n";
+  "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n";
 
 export const warnIncludeRawOutputDeprecated = Effect.fnUntraced(function* (
   includeRawOutput: Option.Option<boolean>,

@@ -8,7 +8,7 @@ import {
 
 /**
  * Writing a fetched migration file failed. Matches the established
- * `failed to write migration: %w` text.
+ * `failed to write migration: <cause>` text.
  */
 export class MigrationFetchWriteError extends Data.TaggedError("MigrationFetchWriteError")<{
   readonly message: string;

@@ -250,7 +250,21 @@ describe("migration list", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationPasswordFlagsError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("DbPasswordFlagsError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --local combined with --password", () => {
+    const { layer } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* migrationList(
+        flags({ local: true, linked: false, password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("DbPasswordFlagsError");
       }
     }).pipe(Effect.provide(layer));
   });

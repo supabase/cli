@@ -24,6 +24,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -339,7 +340,7 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly v2?: { status: number; body: unknown } | "fail" | "decode-fail";
   readonly branchByName?: { status: number; body: unknown } | "fail";
   readonly branchByUuid?: { status: number; body: unknown };
@@ -433,7 +434,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -441,6 +442,7 @@ function setup(opts: SetupOpts = {}) {
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
     projectFiles,
+    configValuesLayer({ output: outputLayer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
@@ -1110,6 +1112,67 @@ describe("config pull integration", () => {
     },
   );
 
+  it.effect("an env() reference on a numeric key is never replaced by the remote value", () => {
+    const before = ['project_id = "test"', "[api]", 'max_rows = "env(ROWS)"', ""].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "ROWS=010\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('max_rows = "env(ROWS)"');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      const rowsChange = changes.find((change) => change.path.join(".") === "api.max_rows");
+      expect(rowsChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(rowsChange?.["env_variables"]).toEqual(["ROWS"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an env() reference inside an array is never replaced by the remote list", () => {
+    const before = [
+      'project_id = "test"',
+      "[auth]",
+      'additional_redirect_urls = ["env(CALLBACK_URL)"]',
+      "",
+    ].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "CALLBACK_URL=https://local.example.com/callback\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('additional_redirect_urls = ["env(CALLBACK_URL)"]');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      const redirectChange = changes.find(
+        (change) => change.path.join(".") === "auth.additional_redirect_urls",
+      );
+      expect(redirectChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(redirectChange?.["env_variables"]).toEqual(["CALLBACK_URL"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("compares against the file's declared values, ignoring a SUPABASE_* override", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({ toml: before, yes: true });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "1000",
+      Effect.gen(function* () {
+        yield* configPull(noFlags);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.effect(
     "a declared secret is never written, even though the config file has it declared before AND after the run",
     () => {
@@ -1552,10 +1615,10 @@ describe("config pull integration", () => {
 
   it.effect("every -o/--output value is rejected before any config load or network call", () => {
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);

@@ -4,7 +4,7 @@ import { Cause, Effect, Exit } from "effect";
 import { assertStorageTargetsExclusive } from "./storage.flags.ts";
 
 describe("assertStorageTargetsExclusive", () => {
-  it.effect("rejects passing both --linked and --local (byte-exact cobra message)", () =>
+  it.effect("rejects passing both --linked and --local (byte-exact message)", () =>
     Effect.gen(function* () {
       const exit = yield* assertStorageTargetsExclusive([
         "storage",
