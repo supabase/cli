@@ -44,6 +44,12 @@ inputs:
       stack images are not pulled again on every job. Requires sticky-disks.
     required: false
     default: "false"
+  native-artifacts:
+    description: >-
+      Whether to keep the stack tests' native service artifacts on a
+      Blacksmith sticky disk. Requires sticky-disks.
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -90,6 +96,20 @@ runs:
         sudo systemctl start docker.socket docker.service
         docker info --format '{{.DockerRootDir}} {{.Driver}}'
         docker image ls --format '{{.Repository}}:{{.Tag}}' | wc -l
+
+    - name: Locate native artifact cache
+      id: native-artifacts
+      if: inputs.native-artifacts == 'true' && steps.sticky.outputs.enabled == 'true'
+      shell: bash
+      run: echo "path=${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts" >> "$GITHUB_OUTPUT"
+
+    - name: Mount native artifact disk
+      if: inputs.native-artifacts == 'true' && steps.sticky.outputs.enabled == 'true'
+      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
+      with:
+        key: ${{ github.repository }}-stack-artifacts-v1-${{ runner.arch }}
+        path: ${{ steps.native-artifacts.outputs.path }}
+        commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Install toolchains
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0

@@ -18,6 +18,7 @@
   },
   "scripts": {
     "generate": "bun run scripts/generate-functions-bootstrap.ts",
+    "prepare:native-artifacts": "bun run scripts/prepare-native-artifacts.ts",
     "test": "pnpm run test:unit && pnpm run test:integration",
     "test:unit": "pnpm exec turbo run @supabase/stack#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit",

@@ -35,6 +35,10 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
           docker-images: "true"
+          native-artifacts: "true"
+
+      - name: Download native stack artifacts
+        run: pnpm --filter @supabase/stack prepare:native-artifacts
 
       - name: Build CLI
         run: |

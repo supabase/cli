@@ -408,6 +408,7 @@ jobs:
           sticky-disks: "true"
           go-cache: "false"
           docker-images: ${{ matrix.runtime == 'docker' }}
+          native-artifacts: ${{ matrix.runtime == 'native' }}
 
       - name: Setup Podman
         if: matrix.runtime == 'podman'
