@@ -229,7 +229,7 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run stack native scenarios (${{ matrix.os }})
+    name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -238,6 +238,7 @@ jobs:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
         os: [blacksmith-6vcpu-macos-latest]
+        suite: [lifecycle, idle-parallel, confinement]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -253,7 +254,12 @@ jobs:
 
       - name: Run stack native whole-stack scenarios
         working-directory: packages/stack
-        run: pnpm test:e2e:native-scenarios --passWithNoTests=false
+        run: >-
+          pnpm test:e2e:run
+          src/whole-stack.native.${{ matrix.suite == 'idle-parallel' && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
+          --testNamePattern='${{ matrix.suite == 'confinement' && 'writes stay confined' || matrix.suite == 'lifecycle' && '^(?!.*writes stay confined)' || '.' }}'
+          --sequence.concurrent
+          --passWithNoTests=false
 
   test-summary:
     if: |

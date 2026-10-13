@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "files": {
     "scripts/publish-docs-spec.e2e.test.ts": 149,
     "src/cli/agent-output.e2e.test.ts": 1737,
@@ -57,5 +56,8 @@
     "src/shared/telemetry/failure-metadata.e2e.test.ts": 527,
     "src/shared/telemetry/posthog-client.e2e.test.ts": 2264,
     "src/shared/telemetry/trace-export.e2e.test.ts": 1748
-  }
+  },
+  "src/commands/db/schema/declarative/sync/sync.e2e.test.ts": 95000,
+  "src/commands/db/schema/declarative/sync/sync.jobs.e2e.test.ts": 90000,
+  "version": 1
 }
