@@ -686,7 +686,7 @@ async function collect(outputDir: string): Promise<void> {
   setOutput("head", pull.head.sha);
 
   if (plan.action === "skip" || plan.action === "approve") {
-    console.log(plan.reason);
+    console.log(plan.action === "skip" ? plan.reason : "Ready for approval.");
     return;
   }
   if (plan.action === "exhausted") {
