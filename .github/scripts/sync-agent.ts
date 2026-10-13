@@ -84,7 +84,8 @@ function latestRuns(runs: CheckRun[]): CheckRun[] {
 
 /**
  * Repairs once the head's checks settle, at most `MAX_REPAIR_ROUNDS` times per pull request. A head a round already
- * repaired gets another round only for new review findings; its remaining failures go to a maintainer.
+ * repaired gets another round only for new review findings; its remaining failures go to a maintainer. Markers count
+ * only at the start of a bot comment, where Claude's text never goes.
  */
 export function planRepair(state: {
   head: string;
@@ -94,10 +95,10 @@ export function planRepair(state: {
   reviewRunning: boolean;
 }): RepairPlan {
   const { head, botComments, threads } = state;
-  if (!botComments.some((body) => body.includes(RESOLVE_MARKER))) {
+  if (!botComments.some((body) => body.startsWith(RESOLVE_MARKER))) {
     return { action: "skip", reason: "Claude did not resolve this pull request." };
   }
-  if (botComments.some((body) => body.includes(EXHAUSTED_MARKER))) {
+  if (botComments.some((body) => body.startsWith(EXHAUSTED_MARKER))) {
     return { action: "skip", reason: "Already handed to a maintainer." };
   }
   const runs = latestRuns(state.runs.filter((run) => !isIgnoredCheck(run.name)));
@@ -110,7 +111,7 @@ export function planRepair(state: {
   if (state.reviewRunning) {
     return { action: "skip", reason: "The AI review is still running." };
   }
-  if (botComments.some((body) => body.includes(workflowMarker(head)))) {
+  if (botComments.some((body) => body.startsWith(workflowMarker(head)))) {
     return {
       action: "skip",
       reason: "Waiting for a maintainer to commit the workflow suggestions.",
@@ -122,8 +123,8 @@ export function planRepair(state: {
   if (threads.length === 0 && failures.length === 0) {
     return { action: "skip", reason: "Nothing to repair." };
   }
-  const rounds = botComments.filter((body) => body.includes(REPAIR_MARKER)).length;
-  const headRepaired = botComments.some((body) => body.includes(repairMarker(head)));
+  const rounds = botComments.filter((body) => body.startsWith(REPAIR_MARKER)).length;
+  const headRepaired = botComments.some((body) => body.startsWith(repairMarker(head)));
   if (rounds >= MAX_REPAIR_ROUNDS || (headRepaired && threads.length === 0)) {
     return { action: "exhausted" };
   }

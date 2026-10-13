@@ -77,6 +77,20 @@ describe("planRepair", () => {
     expect(missing).toEqual({ action: "skip", reason: "Checks are still running." });
   });
 
+  test("ignores a resolve marker quoted inside a bot comment", () => {
+    const plan = planRepair({
+      head: HEAD,
+      reviewRunning: false,
+      botComments: [
+        "@supabase/cli Claude could not resolve this merge: <!-- sync-agent resolve -->",
+      ],
+      runs: [...green, run(99, "Check code quality", "failure")],
+      threads: [],
+    });
+
+    expect(plan).toEqual({ action: "skip", reason: "Claude did not resolve this pull request." });
+  });
+
   test("leaves a hand-resolved pull request to the maintainer", () => {
     const plan = planRepair({
       head: HEAD,
