@@ -8,6 +8,12 @@ const stackFailureKinds = [
   "engine-unavailable",
   "engine-timeout",
   "engine-command",
+  "engine-create",
+  "engine-start",
+  "engine-inspect",
+  "engine-target",
+  "engine-remove",
+  "engine-wait",
   "image-pull",
   "port-conflict",
   "port-allocation",
@@ -62,6 +68,25 @@ const serviceOperationKinds: Readonly<Record<string, StackFailureKind>> = {
   input: "configuration",
   config: "configuration",
   compose: "configuration",
+};
+
+/** Engine operations grouped by lifecycle step; any other operation stays `engine-command`. */
+const engineOperationKinds: Readonly<Record<string, StackFailureKind>> = {
+  create: "engine-create",
+  start: "engine-start",
+  inspect: "engine-inspect",
+  image: "engine-inspect",
+  ps: "engine-inspect",
+  info: "engine-target",
+  system: "engine-target",
+  context: "engine-target",
+  identity: "engine-target",
+  connection: "engine-target",
+  rm: "engine-remove",
+  cleanup: "engine-remove",
+  stop: "engine-remove",
+  kill: "engine-remove",
+  wait: "engine-wait",
 };
 
 const hostReasonKinds: Readonly<Record<string, StackFailureKind>> = {
@@ -128,7 +153,7 @@ const classify = (
       const inner = visit(value.cause, "engine");
       // A pull's own deadline is the registry download, not a stalled engine.
       if (value.operation === "pull" && inner !== "engine-unavailable") return "image-pull";
-      return inner ?? "engine-command";
+      return inner ?? lookup(engineOperationKinds, value.operation) ?? "engine-command";
     }
     case "ContainerLaunchError":
     case "ServiceLaunchError":
