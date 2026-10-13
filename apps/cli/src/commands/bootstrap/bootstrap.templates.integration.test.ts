@@ -103,7 +103,7 @@ function setupDownload(listings: Readonly<Record<string, ReadonlyArray<DownloadE
 }
 
 describe("bootstrap template service", () => {
-  it.live("lists samples with a bearer header when settings carry GITHUB_TOKEN", () => {
+  it.effect("lists samples with a bearer header when settings carry GITHUB_TOKEN", () => {
     const s = setup({ githubToken: "gh-tok" });
     return Effect.gen(function* () {
       const service = yield* TemplateService;
@@ -118,7 +118,7 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("lists samples anonymously when no GITHUB_TOKEN is captured", () => {
+  it.effect("lists samples anonymously when no GITHUB_TOKEN is captured", () => {
     const s = setup();
     return Effect.gen(function* () {
       const service = yield* TemplateService;
@@ -128,7 +128,7 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("fails with the unmarshal error when samples.json is not json", () => {
+  it.effect("fails with the unmarshal error when samples.json is not json", () => {
     const s = setup({ content: "not json" });
     return Effect.gen(function* () {
       const service = yield* TemplateService;
@@ -138,7 +138,7 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("downloads a template tree below its root into the target directory", () => {
+  it.effect("downloads a template tree below its root into the target directory", () => {
     const s = setupDownload({
       "examples/app": [
         { type: "file", path: "examples/app/a.txt", download_url: "https://files.test/a.txt" },
@@ -161,7 +161,7 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, BunServices.layer)));
   });
 
-  it.live("rejects a listing entry that escapes the target directory", () => {
+  it.effect("rejects a listing entry that escapes the target directory", () => {
     const s = setupDownload({
       "examples/app": [
         { type: "file", path: "../escape.txt", download_url: "https://files.test/x" },
@@ -181,7 +181,7 @@ describe("bootstrap template service", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(s.layer, BunServices.layer)));
   });
 
-  it.live("rejects a file entry with no download url", () => {
+  it.effect("rejects a file entry with no download url", () => {
     const s = setupDownload({
       "examples/app": [{ type: "file", path: "examples/app/big.bin", download_url: null }],
     });
