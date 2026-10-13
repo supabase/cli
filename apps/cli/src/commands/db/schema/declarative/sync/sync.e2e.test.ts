@@ -6,7 +6,7 @@ import { requireCliSuccess, runSupabaseEffect } from "../../../../../../tests/he
 import {
   commandFailure,
   migrationFiles,
-  SCENARIO_COMMAND_TIMEOUT_MS,
+  scenarioCommandOptions,
   setUpProject,
   TEST_TIMEOUT_MS,
   withTempStackProject,
@@ -34,10 +34,7 @@ describe("db schema declarative sync (e2e)", () => {
               "initial_declarative",
               "--experimental",
             ],
-            {
-              cwd: projectDir,
-              exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-            },
+            scenarioCommandOptions(projectDir),
           );
           expect(sync.exitCode, commandFailure(sync)).toBe(0);
 
@@ -54,18 +51,15 @@ describe("db schema declarative sync (e2e)", () => {
             /CREATE\s+(?:SCHEMA|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(?:auth|storage|realtime)["']?/iu,
           );
 
-          const reset = yield* runSupabaseEffect(["db", "reset", "--local", "--no-seed"], {
-            cwd: projectDir,
-            exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-          });
+          const reset = yield* runSupabaseEffect(
+            ["db", "reset", "--local", "--no-seed"],
+            scenarioCommandOptions(projectDir),
+          );
           requireCliSuccess(reset, "db reset setup");
 
           const converged = yield* runSupabaseEffect(
             ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
-            {
-              cwd: projectDir,
-              exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-            },
+            scenarioCommandOptions(projectDir),
           );
           expect(converged.exitCode, commandFailure(converged)).toBe(0);
           expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");

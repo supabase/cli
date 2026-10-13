@@ -6,7 +6,7 @@ import { runSupabaseEffect } from "../../../../../../tests/helpers/cli.ts";
 import {
   commandFailure,
   migrationFiles,
-  SCENARIO_COMMAND_TIMEOUT_MS,
+  scenarioCommandOptions,
   setUpProject,
   TEST_TIMEOUT_MS,
   withTempStackProject,
@@ -36,10 +36,7 @@ describe("db schema declarative sync extension jobs (e2e)", () => {
                 name,
                 "--experimental",
               ],
-              {
-                cwd: projectDir,
-                exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
-              },
+              scenarioCommandOptions(projectDir),
             );
           // A next-engine plan may span several ordered migration files; read every
           // file a sync added rather than only the last one.

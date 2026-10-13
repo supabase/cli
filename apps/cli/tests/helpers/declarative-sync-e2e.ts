@@ -12,7 +12,7 @@ const STACK_START_TIMEOUT_MS = 280_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
 const LIFECYCLE_MARGIN_MS = 30_000;
 const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
-export const SCENARIO_COMMAND_TIMEOUT_MS = 280_000;
+const SCENARIO_COMMAND_TIMEOUT_MS = 280_000;
 const BEFORE_ALL_TIMEOUT_MS = CLI_COMMAND_TIMEOUT_MS + STACK_START_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_TIMEOUT_MS = 900_000;
 export const TEST_TIMEOUT_MS =
@@ -67,10 +67,19 @@ export const withTempStackProject = <A, E, R>(
       }).pipe(Effect.ignore),
   );
 
+/** Scenario commands share one home with the shipped shadow cache on, so only the first one provisions a cold shadow. */
+export const scenarioCommandOptions = (projectDir: string) => ({
+  cwd: projectDir,
+  exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+  home: `${projectDir}/.supabase-home`,
+  env: { SUPABASE_SHADOW_CACHE: undefined },
+});
+
 export const setUpProject = (projectDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(projectDir, ".supabase-home"));
     const init = yield* runSupabaseEffect(["init"], {
       cwd: projectDir,
       exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
