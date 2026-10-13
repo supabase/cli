@@ -10,6 +10,7 @@ import {
   type MarkedEntry,
   type MergedFinding,
   type MergedReview,
+  parseAiReviewState,
   parseDiffAnchors,
   partitionFindings,
   postConsolidatedReview,
@@ -535,6 +536,8 @@ describe("renderReviewBody", () => {
     trigger: "auto",
     runUrl: "https://example.com/run/9",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("shows 'No issues found.' when nothing was posted", () => {
@@ -672,6 +675,8 @@ describe("buildReviewPayload", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("event is always COMMENT", () => {
@@ -684,6 +689,27 @@ describe("buildReviewPayload", () => {
     const review = makeMergedReview({ findings: [] });
     const payload = buildReviewPayload(review, anchors, footer);
     expect(payload.body).toContain(AI_REVIEW_MARKER);
+  });
+
+  test("posts on the reviewed head and records every unrefuted finding, inline or not", () => {
+    const review = makeMergedReview({
+      findings: [
+        makeFinding({ id: "inline", file: "file.ts", line: 10 }),
+        makeFinding({ id: "outside", file: "file.ts", line: 99 }),
+        makeFinding({ id: "refuted", adjudication: { verdict: "refuted", reason: "No." } }),
+      ],
+    });
+    const payload = buildReviewPayload(review, anchors, { ...footer, reviewsComplete: false });
+
+    expect(payload.commit_id).toBe(footer.headSha);
+    expect(payload.comments).toHaveLength(1);
+    expect(
+      parseAiReviewState(truncateReviewBody(`${payload.body}${"x".repeat(70_000)}`, footer.runUrl)),
+    ).toEqual({
+      head: footer.headSha,
+      complete: false,
+      findings: 2,
+    });
   });
 
   test("the injected models footer appears in the body verbatim", () => {
@@ -832,6 +858,8 @@ describe("next-impact findings", () => {
     trigger: "auto",
     runUrl: "https://example.com/run/2",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
   const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF);
 
@@ -883,6 +911,8 @@ describe("foldInlineCommentsIntoBody", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("returns the same payload unchanged when there are no inline comments", () => {
@@ -1047,6 +1077,8 @@ describe("post flow via injected ReviewIo", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   function makeReviewIo(

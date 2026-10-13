@@ -7,6 +7,7 @@ import { type CheckRun, REQUIRED_CHECKS } from "./fast-forward.ts";
 import { createTestRepo, git, type TestRepo } from "./promotion-test-repo.ts";
 import {
   buildSuggestions,
+  hasChangesRequested,
   leftoverConflictMarkers,
   planRepair,
   type ReviewThread,
@@ -36,7 +37,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: [...green, failed, run(100, "Require fast-forward", "failure")],
       threads: [],
@@ -50,7 +52,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: [...green, cancelled],
       threads: [],
@@ -63,7 +66,8 @@ describe("planRepair", () => {
     const running = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: [...green, run(99, "CodeQL", null)],
       threads: [finding],
@@ -71,7 +75,8 @@ describe("planRepair", () => {
     const missing = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: green.slice(1),
       threads: [finding],
@@ -85,7 +90,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [
         "@supabase/cli Claude could not resolve this merge: <!-- sync-agent resolve -->",
       ],
@@ -103,7 +109,8 @@ describe("planRepair", () => {
       runs: green,
       threads: [finding],
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
     });
 
     expect(plan.action).toBe("skip");
@@ -113,20 +120,22 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: [...green, run(-1, "Check code quality", "failure")],
       threads: [],
     });
 
-    expect(plan).toEqual({ action: "skip", reason: "Nothing to repair." });
+    expect(plan.action).toBe("skip");
   });
 
   test("hands a head a round left failing to a maintainer unless new findings arrive", () => {
     const state = {
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED, repaired(HEAD)],
       runs: [...green, run(99, "Check code quality", "failure")],
     };
@@ -139,7 +148,8 @@ describe("planRepair", () => {
     const state = {
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
     };
@@ -152,7 +162,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: "d".repeat(40),
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED, repaired(HEAD), "<!-- sync-agent exhausted -->"],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [finding],
@@ -165,7 +176,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: true,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
@@ -178,7 +190,8 @@ describe("planRepair", () => {
     const plan = planRepair({
       head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [],
+      aiReview: null,
+      changesRequested: false,
       botComments: [RESOLVED, `<!-- sync-agent workflow-suggestions head=${HEAD} -->`],
       runs: [...green, run(99, "Check code quality", "failure")],
       threads: [],
@@ -187,17 +200,46 @@ describe("planRepair", () => {
     expect(plan.action).toBe("skip");
   });
 
-  test("approves a green head the AI review saw, but not one a repair commit moved past it", () => {
+  test("approves a green head only when both models reviewed it and every finding has an answered thread", () => {
+    const reviewed = { head: HEAD, complete: true, findings: 2, answeredThreads: 2 };
     const state = {
+      head: HEAD,
       reviewRunning: false,
-      reviewedHeads: [HEAD],
-      botComments: [RESOLVED, repaired(HEAD)],
+      botComments: [RESOLVED],
       runs: [...green, run(100, "Require fast-forward", "failure")],
       threads: [],
+      changesRequested: false,
     };
 
-    expect(planRepair({ ...state, head: HEAD })).toEqual({ action: "approve" });
-    expect(planRepair({ ...state, head: "e".repeat(40) }).action).toBe("skip");
+    expect(planRepair({ ...state, aiReview: reviewed })).toEqual({ action: "approve" });
+    for (const plan of [
+      planRepair({ ...state, aiReview: reviewed, head: "e".repeat(40) }),
+      planRepair({ ...state, aiReview: { ...reviewed, complete: false } }),
+      planRepair({ ...state, aiReview: { ...reviewed, answeredThreads: 1 } }),
+      planRepair({ ...state, aiReview: reviewed, changesRequested: true }),
+      planRepair({ ...state, aiReview: null }),
+    ]) {
+      expect(plan.action).toBe("skip");
+    }
+  });
+});
+
+describe("hasChangesRequested", () => {
+  const review = (login: string, state: string) => ({ user: { login }, state });
+
+  test("holds while a reviewer's latest verdict requests changes, ignoring later comments", () => {
+    expect(
+      hasChangesRequested([
+        review("maintainer", "CHANGES_REQUESTED"),
+        review("maintainer", "COMMENTED"),
+      ]),
+    ).toBe(true);
+    expect(
+      hasChangesRequested([
+        review("maintainer", "CHANGES_REQUESTED"),
+        review("maintainer", "APPROVED"),
+      ]),
+    ).toBe(false);
   });
 });
 

@@ -87,4 +87,31 @@ describe("generatePrDiff", () => {
     expect(diff).toContain("+feature");
     expect(diff).not.toContain("base-only.txt");
   });
+
+  test("diffs the pinned head even after the PR branch moves", () => {
+    const { seed, checkout } = setupRepository();
+    git(seed, "switch", "-c", "feature");
+    writeFileSync(join(seed, "reviewed.txt"), "reviewed\n");
+    git(seed, "add", "reviewed.txt");
+    git(seed, "commit", "-m", "reviewed change");
+    publishPullRequest(seed, 88);
+    const headSha = git(seed, "rev-parse", "HEAD");
+    writeFileSync(join(seed, "late.txt"), "pushed during the review\n");
+    git(seed, "add", "late.txt");
+    git(seed, "commit", "-m", "late change");
+    publishPullRequest(seed, 88);
+
+    const outputPath = join(checkout, "pr.diff");
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 88,
+      baseRef: "develop",
+      outputPath,
+      headSha,
+    });
+
+    const diff = readFileSync(outputPath, "utf8");
+    expect(diff).toContain("+reviewed");
+    expect(diff).not.toContain("late.txt");
+  });
 });

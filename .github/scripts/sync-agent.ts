@@ -6,7 +6,11 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { AI_REVIEW_MARKER } from "./ai-review/post-review.ts";
+import {
+  AI_REVIEW_MARKER,
+  type AiReviewState,
+  parseAiReviewState,
+} from "./ai-review/post-review.ts";
 import { type CheckRun, fetchPullRequestCheckRuns, REQUIRED_CHECKS } from "./fast-forward.ts";
 import {
   githubGraphql,
@@ -94,8 +98,10 @@ export function planRepair(state: {
   runs: CheckRun[];
   threads: ReviewThread[];
   reviewRunning: boolean;
-  /** Commits the AI review posted a review on. */
-  reviewedHeads: string[];
+  /** The latest AI review, with how many of its inline threads are resolved or answered by the release bot. */
+  aiReview: (AiReviewState & { answeredThreads: number }) | null;
+  /** Whether any reviewer's latest verdict is "Request changes". */
+  changesRequested: boolean;
 }): RepairPlan {
   const { head, botComments, threads } = state;
   if (!botComments.some((body) => body.startsWith(RESOLVE_MARKER))) {
@@ -124,10 +130,7 @@ export function planRepair(state: {
     (run) => !["success", "neutral", "skipped"].includes(run.conclusion ?? ""),
   );
   if (threads.length === 0 && failures.length === 0) {
-    // A head the AI review saw has no repair commit on top, so only Claude's resolution and declined findings remain.
-    return state.reviewedHeads.includes(head)
-      ? { action: "approve" }
-      : { action: "skip", reason: "Nothing to repair." };
+    return planApproval(head, state.aiReview, state.changesRequested);
   }
   const rounds = botComments.filter((body) => body.startsWith(REPAIR_MARKER)).length;
   const headRepaired = botComments.some((body) => body.startsWith(repairMarker(head)));
@@ -135,6 +138,33 @@ export function planRepair(state: {
     return { action: "exhausted" };
   }
   return { action: "repair", failures, threads };
+}
+
+/**
+ * Approves only a head both models reviewed, where every finding they did not refute has a thread Claude fixed or
+ * declined. Findings only in the review body have no thread, so they wait for a maintainer.
+ */
+function planApproval(
+  head: string,
+  review: (AiReviewState & { answeredThreads: number }) | null,
+  changesRequested: boolean,
+): RepairPlan {
+  if (changesRequested) {
+    return { action: "skip", reason: "A reviewer requested changes." };
+  }
+  if (review?.head !== head) {
+    return { action: "skip", reason: "Nothing to repair; the AI review did not see this head." };
+  }
+  if (!review.complete) {
+    return { action: "skip", reason: "Only one model finished the AI review." };
+  }
+  if (review.answeredThreads < review.findings) {
+    return {
+      action: "skip",
+      reason: "AI review findings without an answered thread need a maintainer.",
+    };
+  }
+  return { action: "approve" };
 }
 
 /** Lines that still carry a conflict marker, as `path:line`. */
@@ -528,7 +558,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           id
           isResolved
           comments(first: 50) {
-            nodes { databaseId body path line author { login } pullRequestReview { body } }
+            nodes { databaseId body path line author { login } pullRequestReview { databaseId body } }
           }
         }
       }
@@ -550,7 +580,7 @@ interface ThreadsPage {
               path: string;
               line: number | null;
               author: { login: string } | null;
-              pullRequestReview: { body: string } | null;
+              pullRequestReview: { databaseId: number; body: string } | null;
             }[];
           };
         }[];
@@ -559,35 +589,54 @@ interface ThreadsPage {
   } | null;
 }
 
-/** Unresolved AI review threads the release bot has not answered; nobody else's comments reach the agent. */
-async function fetchOpenFindings(
+/**
+ * AI review threads, answered when resolved or replied to by the release bot. Only the AI review's own comments are
+ * read, so nobody else's text reaches the agent.
+ */
+async function fetchAiReviewThreads(
   token: string,
   repository: string,
   number: number,
-): Promise<ReviewThread[]> {
+): Promise<{ thread: ReviewThread; reviewId: number; answered: boolean }[]> {
   const [owner, name] = repository.split("/");
   const page = await githubGraphql<ThreadsPage>(token, THREADS_QUERY, { owner, name, number });
   return (page.repository?.pullRequest?.reviewThreads.nodes ?? []).flatMap((thread) => {
     const [first, ...rest] = thread.comments.nodes;
     if (
-      thread.isResolved ||
-      !first ||
-      !isLogin(first.author?.login, AI_REVIEW_LOGIN) ||
-      !first.pullRequestReview?.body.includes(AI_REVIEW_MARKER) ||
-      rest.some((comment) => isLogin(comment.author?.login, RELEASE_BOT_LOGIN))
+      !first?.pullRequestReview?.body.includes(AI_REVIEW_MARKER) ||
+      !isLogin(first.author?.login, AI_REVIEW_LOGIN)
     ) {
       return [];
     }
     return [
       {
-        threadId: thread.id,
-        commentId: first.databaseId,
-        path: first.path,
-        line: first.line,
-        body: first.body,
+        thread: {
+          threadId: thread.id,
+          commentId: first.databaseId,
+          path: first.path,
+          line: first.line,
+          body: first.body,
+        },
+        reviewId: first.pullRequestReview.databaseId,
+        answered:
+          thread.isResolved ||
+          rest.some((comment) => isLogin(comment.author?.login, RELEASE_BOT_LOGIN)),
       },
     ];
   });
+}
+
+/** Whether any reviewer's latest approving or blocking review requests changes; comments do not change a verdict. */
+export function hasChangesRequested(
+  reviews: { user: { login: string } | null; state: string }[],
+): boolean {
+  const verdicts = new Map<string, string>();
+  for (const review of reviews) {
+    if (review.user && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) {
+      verdicts.set(review.user.login, review.state);
+    }
+  }
+  return [...verdicts.values()].includes("CHANGES_REQUESTED");
 }
 
 async function logTail(token: string, repository: string, jobId: number): Promise<string> {
@@ -656,11 +705,18 @@ async function collect(outputDir: string): Promise<void> {
     )),
   ];
   const reviews = await listAll<{
+    id: number;
     user: { login: string } | null;
     body: string;
-    commit_id: string;
+    state: string;
   }>(token, `/repos/${repository}/pulls/${pull.number}/reviews`);
   comments.push(...reviews);
+  const aiReview = reviews.findLast(
+    (review) =>
+      isLogin(review.user?.login, AI_REVIEW_LOGIN) && review.body.includes(AI_REVIEW_MARKER),
+  );
+  const aiReviewState = aiReview ? parseAiReviewState(aiReview.body) : null;
+  const aiThreads = await fetchAiReviewThreads(token, repository, pull.number);
   const plan = planRepair({
     head: pull.head.sha,
     botComments: comments
@@ -672,14 +728,18 @@ async function collect(outputDir: string): Promise<void> {
       pull.number,
       pull.head.sha,
     ),
-    threads: await fetchOpenFindings(token, repository, pull.number),
+    threads: aiThreads.filter((entry) => !entry.answered).map((entry) => entry.thread),
     reviewRunning: await isReviewRunning(token, repository, pull.number),
-    reviewedHeads: reviews
-      .filter(
-        (review) =>
-          isLogin(review.user?.login, AI_REVIEW_LOGIN) && review.body.includes(AI_REVIEW_MARKER),
-      )
-      .map((review) => review.commit_id),
+    aiReview:
+      aiReview && aiReviewState
+        ? {
+            ...aiReviewState,
+            answeredThreads: aiThreads.filter(
+              (entry) => entry.reviewId === aiReview.id && entry.answered,
+            ).length,
+          }
+        : null,
+    changesRequested: hasChangesRequested(reviews),
   });
   setOutput("action", plan.action);
   setOutput("pr", String(pull.number));

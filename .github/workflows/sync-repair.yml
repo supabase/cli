@@ -147,8 +147,8 @@ jobs:
               bun .github/scripts/sync-agent.ts suggest
           fi
 
-  # A green head the AI review saw carries only Claude's resolution and its declined findings. The approval runs
-  # fast-forward.yml, which re-checks the head and its checks before moving `next`.
+  # A green head both AI review models saw, with every finding fixed or declined and no reviewer requesting changes.
+  # The approval runs fast-forward.yml, which re-checks the head and its checks before moving `next`.
   approve:
     name: Approve the reviewed sync
     needs: repair
@@ -172,10 +172,11 @@ jobs:
             exit 0
           fi
           login="$(gh api user --jq .login)"
-          approved="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" \
-            --jq ".[] | select(.user.login == \"$login\" and .state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\") | .id")"
-          if [ -n "$approved" ]; then
-            echo "::notice::${login} already approved ${HEAD_SHA}."
+          # A dismissed approval on this head means a maintainer took it back, so it is never posted again.
+          previous="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" \
+            --jq ".[] | select(.user.login == \"$login\" and .commit_id == \"$HEAD_SHA\" and (.state == \"APPROVED\" or .state == \"DISMISSED\")) | .state")"
+          if [ -n "$previous" ]; then
+            echo "::notice::${login} already approved ${HEAD_SHA} (${previous//$'\n'/, })."
             exit 0
           fi
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" -f commit_id="$HEAD_SHA" -f event=APPROVE \

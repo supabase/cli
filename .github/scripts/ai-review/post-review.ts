@@ -24,6 +24,29 @@
  */
 
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
+const AI_REVIEW_STATE_PATTERN =
+  /^<!-- supabase-ai-review-state head=([0-9a-f]{40}) complete=(true|false) findings=(\d+) -->$/m;
+
+/** What a posted AI review covered, read from the hidden state line at the top of its body. */
+export interface AiReviewState {
+  head: string;
+  /** Whether both the Claude and the Codex review finished. */
+  complete: boolean;
+  /** Findings posted that were not refuted, inline or in the body. */
+  findings: number;
+}
+
+export function renderAiReviewState(state: AiReviewState): string {
+  return `<!-- supabase-ai-review-state head=${state.head} complete=${state.complete} findings=${state.findings} -->`;
+}
+
+export function parseAiReviewState(body: string): AiReviewState | null {
+  const match = AI_REVIEW_STATE_PATTERN.exec(body);
+  if (!match?.[1] || !match[2] || !match[3]) {
+    return null;
+  }
+  return { head: match[1], complete: match[2] === "true", findings: Number(match[3]) };
+}
 const SUPERSEDED_SUMMARY = "Superseded by a newer AI review";
 /** Hidden marker `isSuperseded` checks for. Kept out of the human-readable
  * `SUPERSEDED_SUMMARY` text, and broken by `sanitizeModelText`, so a model
@@ -606,6 +629,9 @@ export interface ReviewFooterInfo {
   /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Sourced from
    * `.github/ai-models.json` through the workflow's model env vars. */
   modelsFooter: string;
+  /** Commit the models reviewed; the review is posted on it. */
+  headSha: string;
+  reviewsComplete: boolean;
 }
 
 /** Renders the full review body: summary, findings table, out-of-diff section, refuted details, stats, and footer. */
@@ -619,7 +645,10 @@ export function renderReviewBody(
   );
   const verdicts = computeVerdictCounts(review.findings);
 
-  const sections: string[] = [`## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
+  // The state line leads the body so truncation never drops it.
+  const sections: string[] = [
+    `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete, findings: posted.length })}\n## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`,
+  ];
 
   if (posted.length > 0) {
     const rows = posted.map(
@@ -715,6 +744,7 @@ export interface InlineReviewComment {
 }
 
 export interface ReviewPayload {
+  commit_id: string;
   event: "COMMENT";
   body: string;
   comments: InlineReviewComment[];
@@ -763,7 +793,12 @@ export function buildReviewPayload(
   const body = renderReviewBody(review, partitioned, footer);
   // A body-only review has no 422 fold-retry to truncate it later, so
   // truncate the first payload too rather than posting an oversized body.
-  return { event: "COMMENT", body: truncateReviewBody(body, footer.runUrl), comments };
+  return {
+    commit_id: footer.headSha,
+    event: "COMMENT",
+    body: truncateReviewBody(body, footer.runUrl),
+    comments,
+  };
 }
 
 /** Folds every inline comment into the review body, for the 422-retry path when GitHub rejects an anchor. */
@@ -1138,6 +1173,8 @@ async function runPost(): Promise<void> {
   const prDiffPath = requireEnv("PR_DIFF_PATH");
   const claudeModel = requireEnv("CLAUDE_MODEL");
   const codexModel = requireEnv("CODEX_MODEL");
+  const headSha = requireEnv("HEAD_SHA");
+  const reviewsComplete = requireEnv("REVIEWS_COMPLETE") === "true";
 
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
@@ -1147,6 +1184,8 @@ async function runPost(): Promise<void> {
     trigger,
     runUrl,
     modelsFooter: `\`${claudeModel}\` + \`${codexModel}\``,
+    headSha,
+    reviewsComplete,
   });
   console.log(`Posted AI review on PR #${prNumber} (${raw.findings.length} finding(s)).`);
 }
