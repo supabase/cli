@@ -10,18 +10,18 @@ import {
 
 type MockRecoveryState = "exhausted" | "missing" | "low";
 
-const accountSecurityPrefix = (state: MockRecoveryState): string =>
-  state === "exhausted" ? red("Account security:") : yellow("Account security:");
+const accountSecurityHeading = (state: MockRecoveryState): string =>
+  state === "exhausted" ? red("⚠ Secure your account") : yellow("⚠ Secure your account");
 
 const message = (state: MockRecoveryState): string => {
-  const prefix = `[mock] ${accountSecurityPrefix(state)}`;
+  const heading = `[mock] ${accountSecurityHeading(state)}`;
   switch (state) {
     case "exhausted":
-      return `${prefix} Your recovery codes are exhausted. Generate and save a new set in Account Security: https://supabase.com/dashboard/account/security`;
+      return `${heading}\n\nYour recovery codes are exhausted. Generate and save a new set:\nhttps://supabase.com/dashboard/account/security`;
     case "missing":
-      return `${prefix} You have no recovery codes. Generate and save a set in Account Security: https://supabase.com/dashboard/account/security`;
+      return `${heading}\n\nYou have no recovery codes. Generate and save a set:\nhttps://supabase.com/dashboard/account/security`;
     case "low":
-      return `${prefix} You have few recovery codes left. Generate and save a new set in Account Security: https://supabase.com/dashboard/account/security`;
+      return `${heading}\n\nYou have few recovery codes left. Generate and save a new set:\nhttps://supabase.com/dashboard/account/security`;
   }
 };
 

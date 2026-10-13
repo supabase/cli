@@ -8,7 +8,7 @@ import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import { runSupabase } from "../../tests/helpers/cli.ts";
 
 const binary = fileURLToPath(new URL("../../dist/supabase", import.meta.url));
-const reminder = "[mock] Account security:";
+const reminder = "[mock] ⚠ Secure your account";
 
 function runWithTerminal(args: ReadonlyArray<string>, extraEnv: Record<string, string> = {}) {
   const home = mkdtempSync(join(tmpdir(), "supabase-account-reminder-"));
@@ -70,7 +70,7 @@ describe("mock account recovery reminder", () => {
       expect(failed).not.toContain(reminder);
 
       const forcedColor = runWithTerminal(["telemetry", "status"], { CLICOLOR_FORCE: "1" });
-      expect(forcedColor).toContain("\u001B[31mAccount security:\u001B[39m");
+      expect(forcedColor).toContain("\u001B[31m⚠ Secure your account\u001B[39m");
     },
   );
 
