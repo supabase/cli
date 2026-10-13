@@ -250,7 +250,7 @@ const runStatusEnv = (input: {
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("stack start export pointer", () => {
-  it.live(
+  it.effect(
     "the printed pointer's argv resolves --workdir and the named --stack to that stack, not the caller's cwd or the project's default stack",
     () =>
       Effect.gen(function* () {
@@ -278,7 +278,7 @@ describe("stack start export pointer", () => {
       }),
   );
 
-  it.live(
+  it.effect(
     "quotes a workdir and stack name that need it, and the same raw values still resolve that stack",
     () =>
       Effect.gen(function* () {
