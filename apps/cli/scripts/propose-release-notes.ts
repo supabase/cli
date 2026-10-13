@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import aiModels from "../../../.github/ai-models.json";
 
 const { values } = parseArgs({
   options: {
@@ -20,7 +21,7 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    model: { type: "string", default: "claude-haiku-5-5" },
+    model: { type: "string", default: aiModels.claude.haiku },
   },
   strict: true,
 });

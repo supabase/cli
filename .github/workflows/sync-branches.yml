@@ -104,7 +104,6 @@ jobs:
     outputs:
       resolved: ${{ steps.resolve.outputs.resolved }}
     env:
-      CLAUDE_MODEL: claude-opus-5-5
       OUTPUT_DIR: ${{ github.workspace }}/sync-agent
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -112,6 +111,9 @@ jobs:
         with:
           path: trusted
           persist-credentials: false
+
+      - name: Load Claude model
+        run: echo "CLAUDE_MODEL=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,13 +231,15 @@ jobs:
     permissions:
       contents: read
     env:
-      CLAUDE_MODEL: claude-opus-5-5
       OUTPUT_DIR: ${{ github.workspace }}/sync-agent
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: trusted
           persist-credentials: false
+
+      - name: Load Claude model
+        run: echo "CLAUDE_MODEL=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
