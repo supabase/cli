@@ -141,9 +141,10 @@ lists, and approve
 ([runbook](../apps/cli/docs/release-process.md#claude-resolved-develop-into-next)).
 Otherwise merge the target into the sync branch, resolve, and push; then
 **approve** the PR. Approval fast-forwards the
-target and deletes the branch. Never use the merge button. If the target or the
-source moved, the bot merges the latest target and source into the approved head and lands
-it directly if the merge is clean, as for a clean sync (the merge commit is
+target and deletes the branch. Never use the merge button. A moved source does
+not block landing; the next sync run brings its newer commits in. If the target
+moved, the bot merges the latest target into the approved head and lands it
+directly if the merge is clean, as for a clean sync (the merge commit is
 untested); only a new conflict, or a target that keeps moving, sends the PR
 back for a new approval. Only two sync pairs
 exist (`sync/main-into-develop` into `develop`, `sync/develop-into-next` into

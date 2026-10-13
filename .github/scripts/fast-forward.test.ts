@@ -733,8 +733,11 @@ describe("runFastForward sync", () => {
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
   });
 
-  test("lands the approved head merged with a non-conflicting target move", async () => {
+  test("lands the approved head merged with a target move without pulling in the moved source", async () => {
     const { repo, head, io, comments } = resolvedSyncScenario();
+    git(repo.seed, "switch", "main");
+    const movedMain = repo.commit(repo.seed, "late-main.txt", "late\n", "fix(cli): late main");
+    git(repo.seed, "push", "origin", "main");
     git(repo.seed, "switch", "develop");
     const movedDevelop = repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
     git(repo.seed, "push", "origin", "develop");
@@ -745,6 +748,7 @@ describe("runFastForward sync", () => {
     expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
     expect(repo.isAncestor(head, landed)).toBe(true);
     expect(repo.isAncestor(movedDevelop, landed)).toBe(true);
+    expect(repo.isAncestor(movedMain, landed)).toBe(false);
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
     expect(comments).toHaveLength(1);
     expect(comments[0]).toContain("moved since approval");
