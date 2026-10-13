@@ -162,6 +162,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker container prune --force
             docker image prune --force
           fi
           sudo systemctl stop docker.socket docker.service
@@ -365,6 +366,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker container prune --force
             docker image prune --force
           fi
           sudo systemctl stop docker.socket docker.service
@@ -424,6 +426,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [[ "$EVENT_NAME" != pull_request* ]]; then
+            docker container prune --force
             docker image prune --force
           fi
           sudo systemctl stop docker.socket docker.service
