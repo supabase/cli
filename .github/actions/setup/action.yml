@@ -33,7 +33,21 @@ runs:
       if: inputs.dependency-cache == 'true'
       id: pnpm-store
       shell: bash
-      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      run: |
+        echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        if [ -n "${BLACKSMITH_RUNNER_MESSAGE_WAIT_MS:-}" ] && [ "$RUNNER_OS" = Linux ]; then
+          echo "sticky=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    # A sticky disk mounts a block-level snapshot in seconds, while
+    # actions/cache downloads and untars the whole store on every job.
+    - name: Mount pnpm store disk
+      if: steps.pnpm-store.outputs.sticky == 'true'
+      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
+      with:
+        key: ${{ github.repository }}-pnpm-store-${{ runner.arch }}
+        path: ${{ steps.pnpm-store.outputs.path }}
+        commit: on-change
 
     # Cache only the content-addressable half of the store (package files plus
     # the SQLite index), never the global virtual store under links/. That
@@ -48,7 +62,7 @@ runs:
     # so restores never match the earlier whole-store archives, which still
     # carry a links/ tree.
     - name: Configure pnpm dependency cache
-      if: inputs.dependency-cache == 'true'
+      if: inputs.dependency-cache == 'true' && steps.pnpm-store.outputs.sticky != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -83,8 +97,24 @@ runs:
         echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
 
+    - name: Mount Go module disk
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky == 'true'
+      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
+      with:
+        key: ${{ github.repository }}-go-mod-${{ runner.arch }}
+        path: ${{ steps.go-cache.outputs.mod }}
+        commit: on-change
+
+    - name: Mount Go build disk
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky == 'true'
+      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
+      with:
+        key: ${{ github.repository }}-go-build-${{ runner.arch }}
+        path: ${{ steps.go-cache.outputs.build }}
+        commit: on-change
+
     - name: Configure Go dependency cache
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true'
+      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.pnpm-store.outputs.sticky != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
