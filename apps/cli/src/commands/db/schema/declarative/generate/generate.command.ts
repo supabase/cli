@@ -11,6 +11,8 @@ import {
 } from "../../../../../command-internal/command-permissions/model.ts";
 import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -19,6 +21,7 @@ import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 
 const config = {
   overwrite: Flag.Boolean("overwrite").pipe(
@@ -65,11 +68,12 @@ const config = {
     Flag.withDescription("Generates declarative schema from the local database."),
     Flag.optional,
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 // Without a target flag, a run whose workdir has migrations can ask where to generate from.
@@ -165,4 +169,6 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     }),
   ),
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -1,6 +1,11 @@
 import { Command, Flag } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
-import { dbRemoteChanges } from "./changes.handler.ts";
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -16,17 +21,24 @@ const config = {
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
-export type DbRemoteChangesFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
-  Command.withDescription("Show changes on the remote database since last migration."),
-  Command.withShortDescription("Show changes on the remote database"),
-  Command.withHandler((flags) => dbRemoteChanges(flags)),
+  Command.withDescription("Removed: use `supabase db diff --linked` instead."),
+  Command.withShortDescription("Removed: use `db diff --linked` instead"),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase db diff --linked` instead.").pipe(
+      withCommandTelemetry(),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(commandRuntimeLayer(["db", "remote", "changes"])),
+  Command.provide(telemetryStateLayer),
+  withCliConfigFlags(config),
 );
