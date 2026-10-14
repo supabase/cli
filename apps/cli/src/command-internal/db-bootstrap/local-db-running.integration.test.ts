@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
 import { DebugLogger } from "../debug-logger.service.ts";

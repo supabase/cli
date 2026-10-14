@@ -18,7 +18,7 @@ import {
   Semaphore,
   type FileSystem,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { viperEnvBoolWithProjectFallback } from "../viper-env.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -688,7 +688,10 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {})
+      !(yield* viperEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      ))
     ) {
       return { state: "uncachable" } as const;
     }
@@ -868,9 +871,13 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
-        whenUnset: true,
-      })
+      !(yield* viperEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+        {
+          whenUnset: true,
+        },
+      ))
     ) {
       yield* annotateCacheState("disabled");
       return yield* uncachedShadow(spawner, input);

@@ -15,7 +15,8 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Effect, Encoding, Option, Schema } from "effect";
+import { Context, Effect, Option, Ref, Schema } from "effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
   resolveRemoteJwks,
@@ -1018,6 +1019,58 @@ export function envOverrideMajorVersion(
     projectEnvValues,
   );
 }
+
+const ORIOLEDB_VERSION_ENV = "SUPABASE_DB_ORIOLEDB_VERSION";
+const DEPRECATED_ORIOLEDB_VERSION_ENV = "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION";
+
+/**
+ * Reads the `db.orioledb_version` override through `read`, falling back to the deprecated
+ * `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` alias while `SUPABASE_DB_ORIOLEDB_VERSION` is unset.
+ */
+export const readOrioleDBVersionEnvOverride = (
+  read: (
+    name: typeof ORIOLEDB_VERSION_ENV | typeof DEPRECATED_ORIOLEDB_VERSION_ENV,
+  ) => string | undefined,
+): string | undefined => read(ORIOLEDB_VERSION_ENV) ?? read(DEPRECATED_ORIOLEDB_VERSION_ENV);
+
+/** `SUPABASE_DB_ORIOLEDB_VERSION` or its deprecated alias — see {@link envOverride}. */
+export function envOverrideOrioleDBVersion(
+  configured: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  return (
+    readOrioleDBVersionEnvOverride((name) => envOverride(name, undefined, projectEnvValues)) ??
+    configured
+  );
+}
+
+/**
+ * Set by {@link withSingleOrioleDBVersionEnvWarning}; while unset, every config read that finds the
+ * deprecated OrioleDB env alias prints its WARN.
+ */
+const OrioleDBVersionEnvWarningPrinted = Context.Reference<Option.Option<Ref.Ref<boolean>>>(
+  "supabase/cli/OrioleDBVersionEnvWarningPrinted",
+  { defaultValue: () => Option.none() },
+);
+
+/** Runs `effect` so its config reads print the deprecated OrioleDB env WARN at most once. */
+export const withSingleOrioleDBVersionEnvWarning = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(Ref.make(false), (printed) =>
+    Effect.provideService(effect, OrioleDBVersionEnvWarningPrinted, Option.some(printed)),
+  );
+
+/**
+ * The deprecation warning to print when `read` finds `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set,
+ * unless an enclosing {@link withSingleOrioleDBVersionEnvWarning} already printed it.
+ */
+export const deprecatedOrioleDBVersionEnvWarning = Effect.fnUntraced(function* (
+  read: (name: typeof DEPRECATED_ORIOLEDB_VERSION_ENV) => string | undefined,
+) {
+  if (read(DEPRECATED_ORIOLEDB_VERSION_ENV) === undefined) return undefined;
+  const printed = yield* OrioleDBVersionEnvWarningPrinted;
+  if (Option.isSome(printed) && (yield* Ref.getAndSet(printed.value, true))) return undefined;
+  return `WARN: ${DEPRECATED_ORIOLEDB_VERSION_ENV} is deprecated and will be removed in v3, use ${ORIOLEDB_VERSION_ENV} instead.`;
+});
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
 export function envOverrideDenoVersion(
@@ -3105,7 +3158,7 @@ export const resolveLocalJwks = Effect.fnUntraced(function* (
   }
   keys.push(...signingKeys.map(toPublicJwk));
   if (signingKeysPath === undefined || signingKeysPath.length === 0) {
-    keys.push({ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) });
+    keys.push({ kty: "oct", k: Base64Url.encode(jwtSecret) });
   }
   return yield* Schema.encodeEffect(
     Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),

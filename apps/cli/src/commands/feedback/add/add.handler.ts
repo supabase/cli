@@ -34,8 +34,7 @@ const readCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
   Effect.gen(function* () {
     const parts: Array<Uint8Array> = [];
     let total = 0;
-    let readFailed = false;
-    yield* pipe.pipe(
+    const readOk = yield* pipe.pipe(
       Stream.runForEachWhile((chunk) =>
         Effect.sync(() => {
           parts.push(chunk);
@@ -43,13 +42,10 @@ const readCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
           return total <= FEEDBACK_PIPE_CAP_BYTES;
         }),
       ),
-      Effect.catchTag("PlatformError", () =>
-        Effect.sync(() => {
-          readFailed = true;
-        }),
-      ),
+      Effect.as(true),
+      Effect.catchTag("PlatformError", () => Effect.succeed(false)),
     );
-    if (readFailed) return Option.none<string>();
+    if (!readOk) return Option.none<string>();
     if (total > FEEDBACK_PIPE_CAP_BYTES) {
       return yield* new FeedbackMessageTooLongError({ message: FEEDBACK_PIPE_TOO_LONG_MESSAGE });
     }

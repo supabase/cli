@@ -1,4 +1,6 @@
 name: AI Review
+# Names the pull request, so `Sync repair` can wait for the review of its own pull request.
+run-name: "AI Review #${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}"
 
 # One-shot AI code review: replaces the Codex GitHub App's automatic per-push reviews with a
 # single exhaustive pass that runs at most once per PR. See .github/ai-review/README.md for the
@@ -23,12 +25,6 @@ on:
       - ready_for_review
 
 permissions: {}
-
-# One source of truth for the model names; resolve, claude-review, codex-review, and
-# post-review's footer all read these instead of hardcoding them separately.
-env:
-  CLAUDE_MODEL: claude-opus-5-5
-  CODEX_MODEL: gpt-6.1-sol
 
 # Non-command issue_comment events fire for every comment on every PR, so grouping by PR number
 # alone would let any comment cancel an in-flight review; give those runs their own per-run
@@ -71,6 +67,9 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       trigger: ${{ steps.resolve.outputs.trigger }}
+      # Read once here so every job in the run uses the same models, even if the file changes mid-run.
+      claude_model: ${{ steps.models.outputs.claude_model }}
+      codex_model: ${{ steps.models.outputs.codex_model }}
     steps:
       # Pinned to the default ref explicitly — this job must keep running only trusted repo code,
       # even though the pull_request trigger above hands it PR-authored event payloads.
@@ -93,6 +92,9 @@ jobs:
           COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: bun .github/scripts/ai-review/resolve.ts
+      - name: Load AI models
+        id: models
+        run: jq -r '"claude_model=\(.claude.opus)", "codex_model=\(.codex.sol)"' .github/ai-models.json >> "$GITHUB_OUTPUT"
 
   claude-review:
     name: Claude review
@@ -108,6 +110,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      CLAUDE_MODEL: ${{ needs.resolve.outputs.claude_model }}
     steps:
       - name: Checkout PR head (untrusted; review subject matter only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -264,6 +268,8 @@ jobs:
       pull-requests: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
+    env:
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       - name: Checkout default branch (trusted; the only checkout this job needs)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -319,6 +325,9 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          # `Sync branches` dispatches the review of the sync pull request as github-actions[bot], which has no
+          # collaborator permission; only this repository's workflows can act as that bot.
+          allow-bots: true
 
       - name: Validate Codex findings
         run: bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/codex-findings.json
@@ -366,6 +375,8 @@ jobs:
       pull-requests: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
+    env:
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       - name: Checkout PR head (untrusted; read-only, for verify-by-reading)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -473,6 +484,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          allow-bots: true
 
       - name: Validate merged review
         working-directory: trusted
@@ -519,6 +531,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       pull-requests: write
+    env:
+      CLAUDE_MODEL: ${{ needs.resolve.outputs.claude_model }}
+      CODEX_MODEL: ${{ needs.resolve.outputs.codex_model }}
     steps:
       # Security-critical: this is the only job with write permission, so it must only ever
       # execute trusted base-branch code — never the PR head. Checking out `develop` explicitly
@@ -531,6 +546,7 @@ jobs:
         with:
           ref: develop
           persist-credentials: false
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
@@ -556,6 +572,6 @@ jobs:
           PR_DIFF_PATH: /tmp/ai-review/pr.diff
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # CLAUDE_MODEL / CODEX_MODEL are inherited from the workflow-level `env:` block above,
-          # so the footer never drifts from what actually ran.
+          # CLAUDE_MODEL / CODEX_MODEL are the job-level values from `resolve`, the same ones the
+          # review jobs ran with, so the footer never drifts from what actually ran.
         run: bun .github/scripts/ai-review/post-review.ts post

@@ -3,7 +3,6 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Config,
   ConfigProvider,
   Effect,
   Exit,
@@ -13,19 +12,49 @@ import {
   Path,
   Schema,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
+  withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockDockerDaemonCliSpawner,
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
@@ -49,6 +78,7 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -93,6 +123,23 @@ const pgDeltaDiffEnvelope = (
       sql: unit.sql,
     })),
   });
+
+const PulledSchemaFiles = Schema.Struct({
+  schemaWritten: Schema.String,
+  schemaFiles: Schema.Array(Schema.String),
+});
+
+const PgDeltaPlanEnvelope = Schema.fromJsonString(
+  Schema.Struct({
+    files: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        sql: Schema.String,
+        transactionMode: Schema.Literals(["transactional", "none"]),
+      }),
+    ),
+  }),
+);
 
 interface SetupOpts {
   readonly nextDebugDirectory?: string;
@@ -142,6 +189,8 @@ interface SetupOpts {
   // issues after the migration file is already on disk); the shadow's own internal
   // migration replay is unaffected. Exercises `DbPullWriteError`'s `writtenSoFar`.
   readonly historyUpdateFailWith?: string;
+  // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
+  readonly realLayers?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -163,6 +212,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     projectRef?: string;
     projectId: string;
     strictCoverage: boolean;
+    debug: boolean;
   }> = [];
   let engineDiffCount = 0;
   const pgDeltaEngine = Layer.succeed(
@@ -176,6 +226,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           projectRef: input.projectRef,
           projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
+          debug: input.debug,
         });
         engineDiffCount += 1;
         if (opts.edgeFailFirstWith !== undefined && engineDiffCount === 1) {
@@ -188,63 +239,39 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         const stdout = opts.edgeStdout ?? "";
         if (stdout.trim().length === 0) {
-          return Config.option(Config.string("PGDELTA_DEBUG")).pipe(
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
-            ),
-            Effect.mapError((cause) => new PgDeltaEngineError({ message: cause.message, cause })),
-            Effect.map((pgDeltaDebug) => ({
-              changes: false,
-              sql: "",
-              files: [],
-              ...(Option.isSome(pgDeltaDebug)
-                ? {
-                    debug:
-                      opts.nextDebugDirectory !== undefined
-                        ? { directory: opts.nextDebugDirectory }
-                        : {},
-                  }
-                : {}),
-            })),
-          );
-        }
-        try {
-          const parsed: unknown = JSON.parse(stdout);
-          if (typeof parsed !== "object" || parsed === null) throw new Error("invalid envelope");
-          const rawFiles = Reflect.get(parsed, "files");
-          if (!Array.isArray(rawFiles)) throw new Error("invalid envelope");
-          const files = rawFiles.map((raw, index) => {
-            if (typeof raw !== "object" || raw === null) throw new Error("invalid file");
-            const sql = Reflect.get(raw, "sql");
-            const name = Reflect.get(raw, "name");
-            const transactionMode = Reflect.get(raw, "transactionMode");
-            if (typeof sql !== "string" || typeof name !== "string") {
-              throw new Error("invalid file");
-            }
-            if (transactionMode !== "transactional" && transactionMode !== "none") {
-              throw new Error(`unknown transaction mode ${String(transactionMode)}`);
-            }
-            return {
-              sequence: index + 1,
-              name,
-              sql,
-              transactionMode,
-            };
-          });
           return Effect.succeed({
+            changes: false,
+            sql: "",
+            files: [],
+            ...(input.debug
+              ? {
+                  debug:
+                    opts.nextDebugDirectory !== undefined
+                      ? { directory: opts.nextDebugDirectory }
+                      : {},
+                }
+              : {}),
+          });
+        }
+        return Schema.decodeEffect(PgDeltaPlanEnvelope)(stdout).pipe(
+          Effect.map(({ files }) => ({
             changes: files.length > 0,
             sql: files.map((file) => file.sql).join("\n"),
-            files,
-          });
-        } catch (cause) {
-          return Effect.fail(
-            new PgDeltaEngineError({
-              message: "failed to parse pg-delta diff output",
-              cause,
-            }),
-          );
-        }
+            files: files.map((file, index) => ({
+              sequence: index + 1,
+              name: file.name,
+              sql: file.sql,
+              transactionMode: file.transactionMode,
+            })),
+          })),
+          Effect.mapError(
+            (cause) =>
+              new PgDeltaEngineError({
+                message: "failed to parse pg-delta diff output",
+                cause,
+              }),
+          ),
+        );
       },
       exportDeclarativeSchema: (input) => {
         engineCalls.push({
@@ -253,6 +280,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           projectRef: input.projectRef,
           projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
+          debug: input.debug,
         });
         if (opts.edgeFailFirstWith !== undefined && engineCalls.length === 1) {
           return Effect.fail(
@@ -348,7 +376,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         historyUpserts.push(params);
       }
-      return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
+      return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
     };
     return {
       exec,
@@ -457,6 +485,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -464,7 +493,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     pgDeltaEngine,
     edge,
     docker,
@@ -474,10 +508,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbConnection,
     dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     projectRefResolver,
     proxy,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
+    }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? false,
@@ -495,6 +539,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(opts.platform === undefined ? {} : { platform: opts.platform }),
     workdirFiles,
+    shadowCacheDisabledLayer,
   );
   return {
     layer: baseLayer,
@@ -517,6 +562,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edgeCalls,
     spawnedBeforeEdgeRun,
     cache,
+    projectHttp,
   };
 }
 
@@ -565,7 +611,6 @@ const readFileText = (file: string) =>
   });
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 describe("db pull", () => {
   it.effect("pulls a migration (pgdelta engine) and updates remote history under --yes", () => {
@@ -750,14 +795,12 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ diffEngine: Option.some("pg-delta") }));
         const success = s.out.messages.find((m) => m.type === "success");
-        const data = success?.data as
-          | { schemaWritten?: string; schemaFiles?: Array<string> }
-          | undefined;
-        expect(data?.schemaFiles).toHaveLength(3);
-        expect(data?.schemaFiles?.[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
-        expect(data?.schemaFiles?.[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
-        expect(data?.schemaFiles?.[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
-        expect(data?.schemaWritten).toBe(data?.schemaFiles?.[0]);
+        const data = yield* Schema.decodeUnknownEffect(PulledSchemaFiles)(success?.data);
+        expect(data.schemaFiles).toHaveLength(3);
+        expect(data.schemaFiles[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
+        expect(data.schemaFiles[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
+        expect(data.schemaFiles[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
+        expect(data.schemaWritten).toBe(data.schemaFiles[0]);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -975,6 +1018,17 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('declarative export passes PGDELTA_DEBUG="$value" to pg-delta', ({ value, debug }) => {
+    const s = setup(tmp.current, {});
+    return Effect.gen(function* () {
+      yield* dbPull(flags({ declarative: Option.some(true) }));
+      expect(s.engineCalls.map((call) => call.debug)).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
+  });
+
   it.effect(
     "pull --declarative writes [db.migrations] schema_paths when pg-delta is disabled",
     () => {
@@ -1038,7 +1092,9 @@ describe("db pull", () => {
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags({ usePgDelta: Option.some(true) }));
-        expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
+        expect(streamText(s.out, "stderr")).toContain(
+          "Flag --use-pg-delta is deprecated and will be removed in v3, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.\n",
+        );
         const path = yield* Path.Path;
         expect(streamText(s.out, "stderr")).toContain(
           `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
@@ -1215,13 +1271,11 @@ describe("db pull", () => {
         remoteHistoryUpdated: true,
         engine: "migra",
       });
-      const data = success?.data as
-        | { schemaWritten?: string; schemaFiles?: Array<string> }
-        | undefined;
-      expect(data?.schemaWritten).toMatch(/_remote_schema\.sql$/u);
+      const data = yield* Schema.decodeUnknownEffect(PulledSchemaFiles)(success?.data);
+      expect(data.schemaWritten).toMatch(/_remote_schema\.sql$/u);
       // Single-unit case: exactly one path, matching `schemaWritten`.
-      expect(data?.schemaFiles).toHaveLength(1);
-      expect(data?.schemaFiles?.[0]).toBe(data?.schemaWritten);
+      expect(data.schemaFiles).toHaveLength(1);
+      expect(data.schemaFiles[0]).toBe(data.schemaWritten);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1258,14 +1312,9 @@ describe("db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* dbPull(flags()).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = Exit.isFailure(exit)
-          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
-          : undefined;
-        const message = (error as { message?: string } | undefined)?.message ?? "";
-        expect(message).toContain("Cannot read properties of undefined");
-        expect(message).not.toContain("No schema changes found");
+        const error = yield* dbPull(flags()).pipe(Effect.flip);
+        expect(error.message).toContain("Cannot read properties of undefined");
+        expect(error.message).not.toContain("No schema changes found");
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1415,11 +1464,12 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
+      expect(s.engineCalls.map((call) => call.debug)).toEqual([false]);
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const debugRoot = path.join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
       expect((yield* fs.exists(debugRoot)) ? yield* fs.readDirectory(debugRoot) : []).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("reports the next-generation debug directory for an empty pg-delta diff", () =>
@@ -1440,9 +1490,8 @@ describe("db pull", () => {
         edgeStdout: "",
         nextDebugDirectory: debugDir,
       });
-      const error = yield* withEnvVar(
-        "PGDELTA_DEBUG",
-        "1",
+      const error = yield* withConfigEnv(
+        { PGDELTA_DEBUG: "1" },
         dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
           Effect.flip,
           Effect.provide(s.layer),
@@ -1506,9 +1555,7 @@ describe("db pull", () => {
         const writtenPath = path.join(dir, file ?? "");
         // Confirms the failure happened after the write, not instead of it.
         expect(yield* fs.exists(writtenPath)).toBe(true);
-        expect((error as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual([
-          writtenPath,
-        ]);
+        expect(error).toMatchObject({ writtenSoFar: [writtenPath] });
         expect(s.historyUpserts.length).toBe(0);
       }).pipe(Effect.provide(s.layer));
     },
@@ -1597,7 +1644,7 @@ describe("db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] y",
       );
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.effect("honors SUPABASE_YES from supabase/.env for the initial-pull history update", () => {
@@ -1620,7 +1667,7 @@ describe("db pull", () => {
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer), (body) =>
       // only the project .env value must apply
-      withEnvVar("SUPABASE_YES", undefined, body),
+      withEmptyConfigEnv(body),
     );
   });
 
@@ -1646,7 +1693,10 @@ describe("db pull", () => {
       }).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_SHADOW_CACHE: "0" },
+            { preserveEmptyStrings: true },
+          ),
         ),
         Effect.provide(s.layer),
       );
@@ -1671,9 +1721,7 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
         expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
-      );
+      }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
     },
   );
 
@@ -1691,7 +1739,7 @@ describe("db pull", () => {
       yield* dbPull(flags({ local: Option.some(true) }));
       expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
       expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("host.docker.internal");
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("keeps a loopback target for a Linux pg_dump container on --network-id host", () => {
@@ -1706,7 +1754,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ local: Option.some(true) }));
       expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("127.0.0.1");
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
   });
 
   it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
@@ -1723,7 +1771,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(s.historyUpserts.length).toBe(0);
-    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
   it.effect(
@@ -1746,7 +1794,7 @@ describe("db pull", () => {
         expect(streamText(s.out, "stderr")).toContain(
           "Update remote migration history table? [Y/n] y",
         );
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_YES", "1", body));
+      }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
     },
   );
 
@@ -1755,12 +1803,12 @@ describe("db pull", () => {
     () => {
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
-        yield* withEnvVar("SUPABASE_EXPERIMENTAL", "true", dbPull(flags()));
+        yield* withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, dbPull(flags()));
         expect(s.proxyCalls).toHaveLength(0);
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
         );
         expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
       }).pipe(Effect.provide(s.layer));
@@ -1778,9 +1826,8 @@ describe("db pull", () => {
         ]),
       });
       const unforced = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        "true",
+      return withConfigEnv(
+        { SUPABASE_EXPERIMENTAL: "true" },
         Effect.gen(function* () {
           // `forceMigrationMode: true` keeps an in-process caller in migration mode
           // even though the ambient `SUPABASE_EXPERIMENTAL` gate would otherwise select
@@ -1816,7 +1863,7 @@ describe("db pull", () => {
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(s.proxyCalls).toHaveLength(0);
       expect(streamText(s.out, "stderr")).toContain(
-        "The --experimental structured-dump mode for `db pull` is deprecated",
+        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
       );
     }).pipe(Effect.provide(s.layer));
   });
@@ -1840,9 +1887,51 @@ describe("db pull", () => {
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated",
+          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
         );
       }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect.each([
+    {
+      mode: "the deprecated --experimental export",
+      opts: { experimental: true, edgeStdout: EXPORT_JSON },
+    },
+    {
+      mode: "a migration pull",
+      opts: {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      },
+    },
+  ])(
+    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3 for $mode",
+    ({ opts }) => {
+      const s = setup(tmp.current, opts);
+      const consoleErrors: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        consoleErrors.push(args.map((a) => String(a)).join(" "));
+      });
+      const [name, value] = ["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", "17.11.0.002"] as const;
+      // The project-context load reads `process.env`; `readDbToml` reads `Config`.
+      return withEnvVar(
+        name,
+        value,
+        withConfigEnv(
+          { [name]: value },
+          Effect.gen(function* () {
+            yield* dbPull(flags());
+            const warning =
+              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+            const stderrLines = [...streamText(s.out, "stderr").split("\n"), ...consoleErrors];
+            expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
+            expect(streamText(s.out, "stdout")).not.toContain(warning);
+          }),
+        ),
+      ).pipe(Effect.provide(s.layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
     },
   );
 
@@ -1899,7 +1988,9 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags());
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -1918,7 +2009,9 @@ describe("db pull", () => {
         yield* dbPull(flags({ name: Option.some("--experimental=false") }));
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -1954,7 +2047,9 @@ describe("db pull", () => {
         yield* dbPull(flags());
         expect(s.engineCalls[0]?.operation).toBe("export");
         expect(s.proxyCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_EXPERIMENTAL", "true", body));
+      }).pipe(Effect.provide(s.layer), (body) =>
+        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
+      );
     },
   );
 
@@ -2318,13 +2413,10 @@ describe("db pull", () => {
         return yield* withEnvVar(
           "SUPABASE_HOME",
           path.join(tmp.current, "_supabase_home"),
-          withEnvVar(
-            "SUPABASE_SHADOW_CACHE",
-            "1",
-            dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
-              Effect.provide(s.layer),
-            ),
-          ),
+          withConfigEnv(
+            { SUPABASE_SHADOW_CACHE: "1" },
+            dbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})),
+          ).pipe(Effect.provide(s.layer)),
         ).pipe(Effect.as(s));
       });
 
@@ -2382,12 +2474,13 @@ describe("db remote commit", () => {
         "create table remote ();",
       );
       expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
       expect(streamText(s.out, "stderr")).toContain(
         `Schema written to ${path.join("supabase", "migrations", written[0] ?? "")}\n`,
       );
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
       expect(s.engineCalls).toHaveLength(1);
       expect(s.engineCalls[0]?.operation).toBe("diff");
     }).pipe(Effect.provide(s.layer));
@@ -2403,14 +2496,19 @@ describe("db remote commit", () => {
       yield* dbRemoteCommit(commitFlags());
       expect(s.engineCalls[0]?.operation).toBe("export");
       const err = streamText(s.out, "stderr");
-      expect(err).toContain(`Command "commit" is deprecated, use "db pull" instead.\n`);
-      expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
+      expect(err).toContain(
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
+      );
+      expect(err).toContain(
+        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3.",
+      );
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       expect(
         yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2428,8 +2526,239 @@ describe("db remote commit", () => {
         );
       }
       expect(streamText(s.out, "stderr")).toContain(
-        `Command "commit" is deprecated, use "db pull" instead.\n`,
+        `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.\n`,
       );
+      expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
+  });
+});
+
+describe("db pull and db remote commit permissions through the real resolver and cache", () => {
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const savedRef = { "supabase/.temp/project-ref": VALID_REF };
+
+  it.effect("mints a login role and fills the cache for the default linked target", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPull(
+        flags({ declarative: Option.some(true), projectRef: Option.some(VALID_REF) }),
+      ).pipe(Effect.provide(s.layer));
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["export"]);
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(s.projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        cacheRequest,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: { declarative: true, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPull(
+        flags({
+          declarative: Option.some(true),
+          linked: Option.some(true),
+          projectRef: Option.some(VALID_REF),
+          password: Option.some("secret"),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([poolerRequest]);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: {
+          declarative: true,
+          linked: true,
+          "project-ref": VALID_REF,
+          password: true,
+        },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --local and caches nothing", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbPull(flags({ declarative: Option.some(true), local: Option.some(true) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["export"]);
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: { declarative: true, local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("retries the initial dump through the pooler after a container IPv6 failure", () => {
+    // No --project-ref: the ref comes from the saved file, so only the fallback block accounts
+    // for the pooler config request.
+    const s = setup(tmp.current, {
+      realLayers: true,
+      files: savedRef,
+      remoteVersions: [],
+      dumpFailFirstWith: "could not translate host name: network is unreachable",
+      dumpStdout: "",
+      edgeStdout: "",
+      yes: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      const error = yield* dbPull(flags()).pipe(Effect.provide(s.layer), Effect.flip);
+      expect(error.message).toBe("No schema changes found");
+      expect(s.dumpCalls).toHaveLength(2);
+      expect(s.dumpCalls[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
+      expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "db pull",
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("db remote commit mints a login role and fills the cache for the linked target", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      migrations: ["20240101000000"],
+      files: {
+        ...savedRef,
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+      },
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        {
+          name: "schema_changes",
+          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+        },
+      ]),
+      yes: true,
+      args: ["db", "remote", "commit"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbRemoteCommit(commitFlags()).pipe(Effect.provide(s.layer));
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["diff"]);
+      expect(asLines(requests)).toEqual([loginRoleRequest]);
+      expect(s.projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        cacheRequest,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db remote commit",
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("db remote commit does not mint a login role when --password is given", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      migrations: ["20240101000000"],
+      files: {
+        ...savedRef,
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+      },
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        {
+          name: "schema_changes",
+          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+        },
+      ]),
+      yes: true,
+      args: ["db", "remote", "commit", "--linked", "--password", "secret"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbRemoteCommit(commitFlags({ linked: true, password: Option.some("secret") })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "db remote commit",
+        activeFlags: { linked: true, password: true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

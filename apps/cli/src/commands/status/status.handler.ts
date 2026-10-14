@@ -1,4 +1,4 @@
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Option } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -45,6 +45,7 @@ import {
 import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
 import {
   STATUS_FIELDS,
+  deprecatedStatusFieldWarning,
   gateStatusState,
   resolveStatusLocalState,
   statusContainerIds,
@@ -57,19 +58,15 @@ import type { StatusFlags } from "./status.command.ts";
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a `fieldKey -> outputName`
  * map. Each entry must be `KEY=VALUE`; an unknown `KEY` is silently ignored, not an error.
  */
-function parseOverrides(
-  entries: ReadonlyArray<string>,
-): Effect.Effect<ReadonlyMap<string, string>, StatusOverrideParseError> {
+const parseOverrides = Effect.fnUntraced(function* (entries: ReadonlyArray<string>) {
   const knownKeys = new Set(STATUS_FIELDS.map((field) => field.fieldKey));
   const overrides = new Map<string, string>();
   for (const entry of entries) {
     const separatorIndex = entry.indexOf("=");
     if (separatorIndex <= 0) {
-      return Effect.fail(
-        new StatusOverrideParseError({
-          message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
-        }),
-      );
+      return yield* new StatusOverrideParseError({
+        message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
+      });
     }
     const key = entry.slice(0, separatorIndex);
     const value = entry.slice(separatorIndex + 1);
@@ -78,8 +75,8 @@ function parseOverrides(
     }
     overrides.set(key, value);
   }
-  return Effect.succeed(overrides);
-}
+  return overrides;
+});
 
 /** The established `"Stopped services:", stopped` slice format. */
 function formatGoStringSlice(items: ReadonlyArray<string>): string {
@@ -240,6 +237,16 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // `values` spreads last so an `--override-name`-renamed field always wins a key collision
     // with the linked-state extension, never the other way round.
     const valuesWithLinkedState = { ...linkedStateGoFields(linkedState), ...values };
+
+    // `INBUCKET_URL` appears only in the machine formats, never the pretty table.
+    const machineFormat =
+      goFmt === undefined
+        ? output.format === "json" || output.format === "stream-json"
+        : goFmt !== "pretty";
+    const deprecationWarning = deprecatedStatusFieldWarning(state, overrides);
+    if (machineFormat && deprecationWarning !== undefined) {
+      yield* output.raw(deprecationWarning, "stderr");
+    }
 
     if (goFmt === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");

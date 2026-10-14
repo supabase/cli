@@ -1,8 +1,8 @@
-import { Effect, FileSystem, Stream } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Effect, FileSystem, Schema, Stream } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { kongAuthHeaders } from "./kong-auth.ts";
 import { StorageGatewayNetworkError, StorageGatewayStatusError } from "./storage-gateway.errors.ts";
@@ -45,7 +45,7 @@ interface UploadObjectOptions {
 }
 
 export interface StorageGateway {
-  readonly listBuckets: () => Effect.Effect<
+  readonly listBuckets: Effect.Effect<
     ReadonlyArray<BucketSummary>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -89,7 +89,7 @@ export interface StorageGateway {
     ReadonlyArray<{ readonly name: string }>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
-  readonly listVectorBuckets: () => Effect.Effect<
+  readonly listVectorBuckets: Effect.Effect<
     ReadonlyArray<string>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -99,7 +99,7 @@ export interface StorageGateway {
   readonly deleteVectorBucket: (
     name: string,
   ) => Effect.Effect<void, StorageGatewayNetworkError | StorageGatewayStatusError>;
-  readonly listAnalyticsBuckets: () => Effect.Effect<
+  readonly listAnalyticsBuckets: Effect.Effect<
     ReadonlyArray<string>,
     StorageGatewayNetworkError | StorageGatewayStatusError
   >;
@@ -160,11 +160,10 @@ function isConnectionRefused(error: HttpClientError.TransportError): boolean {
   return /econnrefused|connection ?refused|unable to connect/.test(detail);
 }
 
+const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const parseJsonBody = (body: string): Effect.Effect<unknown, StorageGatewayNetworkError> =>
-  Effect.try({
-    try: () => JSON.parse(body) as unknown,
-    catch: (cause) => failParse(String(cause)),
-  });
+  decodeJsonBody(body).pipe(Effect.mapError((error) => failParse(error.message)));
 
 /** A JSON object → itself; `null` → `{}`; anything else → `null`. */
 function asObject(entry: unknown): Record<string, unknown> | null {
@@ -188,7 +187,7 @@ const decodeBucketSummaries = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of buckets"));
+      return yield* failParse("expected an array of buckets");
     }
     const result: Array<BucketSummary> = [];
     for (const entry of parsed) {
@@ -196,7 +195,7 @@ const decodeBucketSummaries = (
       const name = obj === null ? null : decodeStringField(obj, "name");
       const id = obj === null ? null : decodeStringField(obj, "id");
       if (name === null || id === null) {
-        return yield* Effect.fail(failParse("invalid bucket entry"));
+        return yield* failParse("invalid bucket entry");
       }
       result.push({ name, id });
     }
@@ -214,21 +213,21 @@ const decodeStorageObjects = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of objects"));
+      return yield* failParse("expected an array of objects");
     }
     const result: Array<StorageObject> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       if (obj === null) {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       const name = decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       const idValue = obj["id"];
       if (idValue !== undefined && idValue !== null && typeof idValue !== "string") {
-        return yield* Effect.fail(failParse("invalid object entry"));
+        return yield* failParse("invalid object entry");
       }
       result.push({ name, isDir: idValue === undefined || idValue === null });
     }
@@ -242,19 +241,19 @@ const decodeVectorBucketNames = (
     const parsed = yield* parseJsonBody(body);
     const root = asObject(parsed);
     if (root === null) {
-      return yield* Effect.fail(failParse("expected a vector bucket list object"));
+      return yield* failParse("expected a vector bucket list object");
     }
     const list = root["vectorBuckets"];
     if (list === undefined || list === null) return [];
     if (!Array.isArray(list)) {
-      return yield* Effect.fail(failParse("vectorBuckets must be an array"));
+      return yield* failParse("vectorBuckets must be an array");
     }
     const names: Array<string> = [];
     for (const entry of list) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "vectorBucketName");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid vector bucket entry"));
+        return yield* failParse("invalid vector bucket entry");
       }
       names.push(name);
     }
@@ -276,7 +275,7 @@ const decodeFieldResponse = (
     const obj = asObject(parsed);
     const value = obj === null ? null : decodeStringField(obj, field);
     if (value === null) {
-      return yield* Effect.fail(failParse(`invalid ${field} response`));
+      return yield* failParse(`invalid ${field} response`);
     }
     return value;
   });
@@ -288,14 +287,14 @@ const decodeDeleteObjects = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of deleted objects"));
+      return yield* failParse("expected an array of deleted objects");
     }
     const result: Array<{ name: string }> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid deleted object entry"));
+        return yield* failParse("invalid deleted object entry");
       }
       result.push({ name });
     }
@@ -309,14 +308,14 @@ const decodeAnalyticsBucketNames = (
     const parsed = yield* parseJsonBody(body);
     if (parsed === null) return [];
     if (!Array.isArray(parsed)) {
-      return yield* Effect.fail(failParse("expected an array of analytics buckets"));
+      return yield* failParse("expected an array of analytics buckets");
     }
     const names: Array<string> = [];
     for (const entry of parsed) {
       const obj = asObject(entry);
       const name = obj === null ? null : decodeStringField(obj, "name");
       if (name === null) {
-        return yield* Effect.fail(failParse("invalid analytics bucket entry"));
+        return yield* failParse("invalid analytics bucket entry");
       }
       names.push(name);
     }
@@ -383,13 +382,11 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       return { status: response.status, body: text };
     }).pipe(Effect.mapError(networkError));
     if (status !== 200) {
-      return yield* Effect.fail(
-        new StorageGatewayStatusError({
-          status,
-          body,
-          message: `Error status ${status}: ${body}`,
-        }),
-      );
+      return yield* new StorageGatewayStatusError({
+        status,
+        body,
+        message: `Error status ${status}: ${body}`,
+      });
     }
     return body;
   });
@@ -397,10 +394,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
   const url = (path: string) => `${opts.baseUrl}${path}`;
 
   const gateway: StorageGateway = {
-    listBuckets: () =>
-      send(withAuth(HttpClientRequest.get(url("/storage/v1/bucket")))).pipe(
-        Effect.flatMap(decodeBucketSummaries),
-      ),
+    listBuckets: send(withAuth(HttpClientRequest.get(url("/storage/v1/bucket")))).pipe(
+      Effect.flatMap(decodeBucketSummaries),
+    ),
     createBucket: (name, props) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/bucket"))).pipe(
@@ -510,12 +506,11 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
           HttpClientRequest.bodyJsonUnsafe({ prefixes }),
         ),
       ).pipe(Effect.flatMap(decodeDeleteObjects)),
-    listVectorBuckets: () =>
-      send(
-        withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(
-          HttpClientRequest.bodyJsonUnsafe({}),
-        ),
-      ).pipe(Effect.flatMap(decodeVectorBucketNames)),
+    listVectorBuckets: send(
+      withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(
+        HttpClientRequest.bodyJsonUnsafe({}),
+      ),
+    ).pipe(Effect.flatMap(decodeVectorBucketNames)),
     createVectorBucket: (name) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/CreateVectorBucket"))).pipe(
@@ -528,10 +523,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
           HttpClientRequest.bodyJsonUnsafe({ vectorBucketName: name }),
         ),
       ).pipe(Effect.asVoid),
-    listAnalyticsBuckets: () =>
-      send(withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket")))).pipe(
-        Effect.flatMap(decodeAnalyticsBucketNames),
-      ),
+    listAnalyticsBuckets: send(
+      withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket"))),
+    ).pipe(Effect.flatMap(decodeAnalyticsBucketNames)),
     createAnalyticsBucket: (name) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/iceberg/bucket"))).pipe(

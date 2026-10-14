@@ -1,6 +1,6 @@
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Layer } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";

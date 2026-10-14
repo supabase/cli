@@ -1,5 +1,7 @@
 import { Cause, Option, Predicate } from "effect";
-import type { CliError as EffectCliError } from "effect/unstable/cli";
+import type { PlatformError } from "effect";
+import type { CliError as EffectCliError } from "effect/cli";
+import type { StackError, StackFailureKind } from "@supabase/stack/effect";
 
 /**
  * CLI error actionability taxonomy for KPI reporting.
@@ -77,6 +79,7 @@ const CLI_SUGGESTED_COMMANDS = [
 type CliSuggestedCommand = (typeof CLI_SUGGESTED_COMMANDS)[number];
 
 const CLI_ERROR_FINGERPRINT_SUFFIXES = [
+  "already_exists",
   "api_response",
   "api_status",
   "asset_checksum",
@@ -84,43 +87,75 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "auth",
   "bad_argument",
   "branch_not_ready",
-  "conflict",
   "cancelled",
+  "confirmation",
+  "conflict",
   "connect",
   "container_configuration",
   "container_killed",
-  "daemon_start",
   "daemon_protocol",
+  "daemon_start",
   "daemon_status",
-  "daemon_transport",
-  "daemon_upgrade_required",
-  "daemon_upgrade_preflight",
-  "daemon_upgrade_restart",
   "daemon_stop_timeout",
+  "daemon_transport",
+  "daemon_upgrade_preflight",
+  "daemon_upgrade_required",
+  "daemon_upgrade_restart",
   "database",
+  "database_bootstrap",
   "docker_not_running",
+  "engine_command",
+  "engine_command_create",
+  "engine_command_inspect",
+  "engine_command_remove",
+  "engine_command_start",
+  "engine_command_target",
+  "engine_command_wait",
+  "engine_timeout",
   "filesystem",
+  "filesystem_io",
+  "flags",
   "forbidden",
   "gateway_auth",
+  "health_check",
+  "health_timeout",
   "image_inspect",
-  "invalid_content",
-  "invalid_url",
   "internal_build",
   "invalid_config",
+  "invalid_content",
+  "invalid_url",
+  "lease_held",
+  "lifecycle",
   "network",
   "not_found",
+  "operation_timeout",
   "out_of_memory",
+  "output_format",
+  "owner_connection",
+  "owner_exit",
+  "owner_startup",
+  "owner_unavailable",
   "plan_limit",
   "platform_error",
+  "platform_unsupported",
   "port_allocation",
   "port_conflict",
+  "process_exit",
+  "process_spawn",
+  "process_stop",
   "query",
   "registry_pull",
+  "release_mismatch",
   "replication_slots_active",
   "replication_slots_query",
   "request_encoding",
   "request_input",
+  "runtime_stopped",
   "saml_disabled",
+  "seed_buckets",
+  "stack_configuration",
+  "state_file",
+  "unclassified",
 ] as const;
 
 type CliErrorFingerprintSuffix = (typeof CLI_ERROR_FINGERPRINT_SUFFIXES)[number];
@@ -448,6 +483,77 @@ export const actionability = {
   },
 } as const satisfies Record<string, CliErrorActionabilityDeclaration>;
 
+const stackFailureKindActionability = {
+  "engine-unavailable": {
+    ...actionability.dockerNotRunning,
+    fingerprint_suffix: "docker_not_running",
+  },
+  "engine-timeout": { ...actionability.dockerNotRunning, fingerprint_suffix: "engine_timeout" },
+  "engine-command": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command" },
+  "engine-create": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_create" },
+  "engine-start": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_start" },
+  "engine-inspect": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_inspect" },
+  "engine-target": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_target" },
+  "engine-remove": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_remove" },
+  "engine-wait": { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_wait" },
+  "image-pull": { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" },
+  "port-conflict": { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" },
+  "port-allocation": { ...actionability.runtimeCrash, fingerprint_suffix: "port_allocation" },
+  "artifact-download": {
+    ...actionability.externalNetwork,
+    fingerprint_suffix: "asset_preparation",
+  },
+  "artifact-integrity": { ...actionability.externalNetwork, fingerprint_suffix: "asset_checksum" },
+  "platform-unsupported": {
+    ...actionability.provideFlags,
+    fingerprint_suffix: "platform_unsupported",
+  },
+  "process-spawn": { ...actionability.runtimeCrash, fingerprint_suffix: "process_spawn" },
+  "process-exit": { ...actionability.runtimeCrash, fingerprint_suffix: "process_exit" },
+  "process-stop": { ...actionability.runtimeCrash, fingerprint_suffix: "process_stop" },
+  "health-timeout": { ...actionability.runtimeCrash, fingerprint_suffix: "health_timeout" },
+  "health-check": { ...actionability.runtimeCrash, fingerprint_suffix: "health_check" },
+  "database-bootstrap": {
+    ...actionability.runtimeCrash,
+    fingerprint_suffix: "database_bootstrap",
+  },
+  configuration: { ...actionability.invalidConfig, fingerprint_suffix: "stack_configuration" },
+  state: { ...actionability.invalidConfig, fingerprint_suffix: "state_file" },
+  "filesystem-permission": { ...actionability.permission, fingerprint_suffix: "filesystem" },
+  filesystem: { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" },
+  "owner-startup": { ...actionability.runtimeCrash, fingerprint_suffix: "owner_startup" },
+  "owner-connection": { ...actionability.runtimeCrash, fingerprint_suffix: "owner_connection" },
+  "owner-exit": { ...actionability.runtimeCrash, fingerprint_suffix: "owner_exit" },
+  "lease-held": { ...actionability.invalidInput, fingerprint_suffix: "lease_held" },
+  "already-exists": { ...actionability.invalidInput, fingerprint_suffix: "already_exists" },
+  timeout: { ...actionability.runtimeCrash, fingerprint_suffix: "operation_timeout" },
+} as const satisfies Record<StackFailureKind, CliErrorActionabilityDeclaration>;
+
+const stackErrorReasonActionability = {
+  "runtime-unavailable": {
+    ...actionability.dockerNotRunning,
+    fingerprint_suffix: "docker_not_running",
+  },
+  "owner-unavailable": { ...actionability.startStack, fingerprint_suffix: "owner_unavailable" },
+  "release-mismatch": { ...actionability.invalidInput, fingerprint_suffix: "release_mismatch" },
+} as const satisfies Record<NonNullable<StackError["reason"]>, CliErrorActionabilityDeclaration>;
+
+/** Reported when nothing in a stack failure classifies it. */
+export const unclassifiedStackFailureActionability: CliErrorActionabilityDeclaration = {
+  ...actionability.unknown,
+  fingerprint_suffix: "unclassified",
+};
+
+function isTableKey<T extends object>(table: T, value: unknown): value is keyof T {
+  return typeof value === "string" && Object.hasOwn(table, value);
+}
+
+function stackKindDeclaration(value: unknown): CliErrorActionabilityDeclaration | undefined {
+  return isTableKey(stackFailureKindActionability, value)
+    ? stackFailureKindActionability[value]
+    : undefined;
+}
+
 /**
  * The declaration for a failure confirmed plan-gated by the entitlement
  * check (`suggestUpgrade`). Shared so every gated surface groups under
@@ -656,11 +762,13 @@ function readDeclaration(error: unknown): CliErrorActionabilityDeclaration | und
   }
 }
 
-function safeIdentifier(value: string | undefined): string | undefined {
+/** `allowDots` admits namespaced tags such as `Namespace.NamespaceError`. */
+function safeIdentifier(value: string | undefined, allowDots = false): string | undefined {
   if (value === undefined) return undefined;
   // The length cap is defense-in-depth: every legitimate identifier is a
   // class/tag name, so an oversized value is never a real CLI error source.
-  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : undefined;
+  const pattern = allowDots ? /^[A-Za-z][A-Za-z0-9_.]{0,63}$/ : /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+  return pattern.test(value) ? value : undefined;
 }
 
 function readErrorTag(error: unknown): string | undefined {
@@ -698,7 +806,7 @@ function readDeclaredErrorFingerprintId(error: unknown): string | undefined {
  * identifier minification. Never invoke prototype getters here: only the
  * static data property created by Effect is a safe fingerprint authority.
  */
-function readStableTaggedPrototypeName(error: unknown): string | undefined {
+function readStableTaggedPrototypeName(error: unknown, allowDots = false): string | undefined {
   if (!(error instanceof Error)) return undefined;
   let prototype: unknown = Object.getPrototypeOf(error);
   while (prototype !== Error.prototype) {
@@ -706,7 +814,9 @@ function readStableTaggedPrototypeName(error: unknown): string | undefined {
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "name");
     if (descriptor !== undefined && "value" in descriptor) {
       const name =
-        typeof descriptor.value === "string" ? safeIdentifier(descriptor.value) : undefined;
+        typeof descriptor.value === "string"
+          ? safeIdentifier(descriptor.value, allowDots)
+          : undefined;
       if (name !== undefined && name !== "Error") return name;
     }
     prototype = Object.getPrototypeOf(prototype);
@@ -820,7 +930,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
       ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
       : { ...actionability.impossibleState, fingerprint_suffix: "request_encoding" },
 
-  // effect/unstable/http — generated Management API client transport/decoding
+  // effect/http — generated Management API client transport/decoding
   HttpClientError: (error) => {
     const reason = error["reason"];
     const reasonTag = isErrorRecord(reason) ? readString(reason, "_tag") : undefined;
@@ -844,7 +954,56 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "request_encoding",
   }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
+
+  // @supabase/stack — `reason` is a closed literal and `kind` an open string read against the
+  // known kinds. The client reason is the more specific fact; a failed outcome's kind stands in
+  // when the error has no kind.
+  StackError: (error) => {
+    const reason = error["reason"];
+    if (isTableKey(stackErrorReasonActionability, reason)) {
+      return stackErrorReasonActionability[reason];
+    }
+    const outcomes = Array.isArray(error["outcomes"]) ? error["outcomes"] : [];
+    return (
+      stackKindDeclaration(error["kind"]) ??
+      outcomes
+        .map((outcome) =>
+          isErrorRecord(outcome) ? stackKindDeclaration(outcome["kind"]) : undefined,
+        )
+        .find((declaration) => declaration !== undefined) ??
+      unclassifiedStackFailureActionability
+    );
+  },
 };
+
+/**
+ * The declaration the classifier gives an error it finds as a wrapper's `cause`: the error's
+ * own declaration, else its external adapter.
+ */
+export function causeDeclaration(cause: unknown): CliErrorActionabilityDeclaration | undefined {
+  // Wrapper getters call back into this; its own counter bounds that nesting at MAX_CAUSE_DEPTH.
+  if (causeDeclarationDepth >= MAX_CAUSE_DEPTH) return undefined;
+  causeDeclarationDepth++;
+  try {
+    const error = unwrapNativeFailure(cause);
+    const declared = readDeclaration(error);
+    if (declared !== undefined) return declared;
+    const tag = readErrorTag(error);
+    if (
+      tag === undefined ||
+      !isErrorRecord(error) ||
+      !Object.hasOwn(externalActionabilityByTag, tag)
+    )
+      return undefined;
+    const external = externalActionabilityByTag[tag]?.(error);
+    // An unclassified stack failure leaves the wrapper's own fallback in charge.
+    return external === unclassifiedStackFailureActionability ? undefined : external;
+  } finally {
+    causeDeclarationDepth--;
+  }
+}
+
+let causeDeclarationDepth = 0;
 
 function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
   const errors = error["errors"];
@@ -962,17 +1121,127 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   return toActionability(actionability.unknown, "error", undefined);
 }
 
+/** A fixed list, so a code groups the same way on every platform. */
+const defectSystemErrorCodes = new Set([
+  "EACCES",
+  "EADDRINUSE",
+  "EADDRNOTAVAIL",
+  "EAGAIN",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EAI_NONAME",
+  "EBADF",
+  "EBUSY",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EEXIST",
+  "EHOSTUNREACH",
+  "EINVAL",
+  "EISDIR",
+  "ELOOP",
+  "EMFILE",
+  "ENAMETOOLONG",
+  "ENETUNREACH",
+  "ENFILE",
+  "ENOENT",
+  "ENOMEM",
+  "ENOSPC",
+  "ENOTDIR",
+  "ENOTEMPTY",
+  "ENOTFOUND",
+  "ENOTSUP",
+  "EPERM",
+  "EPIPE",
+  "EROFS",
+  "ESRCH",
+  "ETIMEDOUT",
+  "EXDEV",
+]);
+
+// Data descriptors only, so reading a defect never runs a getter.
+const ownValue = (record: object, key: string): unknown =>
+  Object.getOwnPropertyDescriptor(record, key)?.value;
+
+const platformErrorReasons: ReadonlySet<string> = new Set<PlatformError.SystemErrorTag>([
+  "AlreadyExists",
+  "BadResource",
+  "Busy",
+  "InvalidData",
+  "NotFound",
+  "PermissionDenied",
+  "TimedOut",
+  "UnexpectedEof",
+  "Unknown",
+  "WouldBlock",
+  "WriteZero",
+]);
+
+// The Effect platform services, and the CLI's stdin reader, that raise PlatformError for local I/O.
+const platformErrorModules: ReadonlySet<string> = new Set([
+  "ChildProcess",
+  "Crypto",
+  "FileSystem",
+  "Path",
+  "Stdin",
+  "Stdio",
+  "Terminal",
+]);
+
+/**
+ * Names a PlatformError's closed reason and the platform module and method that raised it. The
+ * method is an identifier those modules pass as a literal, never a caller value.
+ */
+function platformErrorOperation(error: Error): string | undefined {
+  const reason = ownValue(error, "reason");
+  if (!isErrorRecord(reason)) return undefined;
+  const tag = ownValue(reason, "_tag");
+  const module = ownValue(reason, "module");
+  const method = ownValue(reason, "method");
+  if (typeof tag !== "string" || !platformErrorReasons.has(tag)) return undefined;
+  if (typeof module !== "string" || !platformErrorModules.has(module)) return undefined;
+  const name = typeof method === "string" ? safeIdentifier(method) : undefined;
+  return name === undefined ? undefined : `${tag}:${module}.${name}`;
+}
+
+/**
+ * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
+ * for a non-error value. A PlatformError adds its closed reason and known raising operation. No
+ * other instance field is read, so only source-owned identifiers reach telemetry.
+ */
+function defectIdentity(defect: unknown): string {
+  try {
+    const error = unwrapNativeFailure(defect);
+    if (!isErrorRecord(error)) return typeof error;
+    if (!(error instanceof Error)) return "object";
+    const base = readStableTaggedPrototypeName(error, true) ?? "Error";
+    if (base === "PlatformError") {
+      const operation = platformErrorOperation(error);
+      if (operation !== undefined) return `${base}:${operation}`;
+    }
+    const code = ownValue(error, "code");
+    return typeof code === "string" && defectSystemErrorCodes.has(code) ? `${base}:${code}` : base;
+  } catch {
+    return "Unreadable";
+  }
+}
+
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {
   let firstKnownDefect: CliErrorActionability | undefined;
-  let hasUnknownDefect = false;
+  let unknownDefect: { readonly defect: unknown } | undefined;
   for (const reason of cause.reasons) {
     if (!Cause.isDieReason(reason)) continue;
     const classified = classifyCliErrorActionability(reason.defect);
     if (classified.error_kind === CliErrorKind.InternalBug) return classified;
-    if (classified.error_kind === CliErrorKind.Unknown) hasUnknownDefect = true;
+    if (classified.error_kind === CliErrorKind.Unknown) unknownDefect ??= { defect: reason.defect };
     else firstKnownDefect ??= classified;
   }
-  if (hasUnknownDefect) return toActionability(actionability.internalPanic, "error", "Defect");
+  if (unknownDefect !== undefined) {
+    return {
+      ...toActionability(actionability.internalPanic, "error", "Defect"),
+      error_fingerprint: `error:Defect:${defectIdentity(unknownDefect.defect)}`,
+    };
+  }
   if (firstKnownDefect !== undefined) return firstKnownDefect;
   if (Cause.hasInterruptsOnly(cause)) {
     return toActionability(actionability.cancelled, "error", "Interrupt");

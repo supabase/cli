@@ -10,7 +10,11 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
-import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  loadProjectEnv,
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
@@ -83,6 +87,7 @@ const runDown = Effect.fnUntraced(function* (
 
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -97,7 +102,8 @@ const runDown = Effect.fnUntraced(function* (
 
         const remote = yield* listRemoteMigrations(session);
         const total = remote.length;
-        if (total <= flags.last) {
+        const version = remote[total - flags.last - 1];
+        if (total <= flags.last || version === undefined) {
           return yield* new MigrationLastTooLargeError({
             message: `--last must be smaller than total applied migrations: ${total}`,
             suggestion: `Try ${aqua("supabase db reset")} if you want to revert all migrations.`,
@@ -115,7 +121,6 @@ const runDown = Effect.fnUntraced(function* (
           return yield* new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
         }
 
-        const version = remote[total - flags.last - 1]!;
         yield* output.raw(`Resetting database to version: ${version}\n`, "stderr");
         yield* Effect.annotateCurrentSpan({
           "db.is_local": cfg.isLocal,

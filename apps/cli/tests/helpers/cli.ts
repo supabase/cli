@@ -1,4 +1,4 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -173,7 +173,23 @@ export const withTempHome = <A, E, R>(
       }),
   );
 
-function pickFreePort(): Promise<number> {
+/**
+ * Concurrent e2e workers each keep only ports in their own slot, so a port one worker picked and
+ * released before Docker binds it is never handed to another worker. Slots skip the low bit
+ * because Linux hands out mostly odd ports for `listen(0)`.
+ */
+const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS || "1");
+const e2eWorkerSlot = Number(process.env.VITEST_POOL_ID || "1") % e2eWorkers;
+
+async function pickFreePort(): Promise<number> {
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const port = await pickReleasedPort();
+    if (Math.floor(port / 2) % e2eWorkers === e2eWorkerSlot) return port;
+  }
+  throw new Error(`No free port for e2e worker slot ${e2eWorkerSlot} of ${e2eWorkers}`);
+}
+
+function pickReleasedPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.listen(0, "127.0.0.1", () => {
@@ -276,6 +292,14 @@ export async function makeTempCliStackProject(
   return stackProject;
 }
 
+/** Concurrent e2e files each run a stack, and Docker names its containers after the project id. */
+const projectIdFor = (dir: string) =>
+  `e2e-${path
+    .basename(dir)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(-8)}`;
+
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
   const project = await makeTempProject(prefix);
   const ports = {
@@ -304,7 +328,7 @@ export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
   await writeFile(
     path.join(supabaseDir, "config.toml"),
     [
-      'project_id = "e2e"',
+      `project_id = "${projectIdFor(project.dir)}"`,
       "",
       "[api]",
       `port = ${ports.apiPort}`,
@@ -756,7 +780,7 @@ class DockerCommandError extends Data.TaggedError("DockerCommandError")<{
 /** Owns a Docker CLI process and drains its output while it runs. */
 export const runDockerEffect = (
   args: ReadonlyArray<string>,
-  options: { readonly timeout?: number } = {},
+  options: { readonly timeout?: number; readonly forceKillAfter?: number } = {},
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -765,6 +789,7 @@ export const runDockerEffect = (
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        forceKillAfter: options.forceKillAfter,
       }),
     );
     // Keep recent diagnostics while draining both pipes completely so the child can exit.

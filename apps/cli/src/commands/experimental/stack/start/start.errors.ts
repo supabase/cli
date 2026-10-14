@@ -1,21 +1,14 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandStartError extends Data.TaggedError("ExperimentalStackStartError")<{
-  readonly reason:
-    | "invalid-config"
-    | "flags"
-    | "runtime"
-    | "registry"
-    | "port"
-    | "artifact"
-    | "lifecycle"
-    | "seed"
-    | "unknown";
+  readonly reason: "invalid-config" | "flags" | "runtime" | "lifecycle" | "seed" | "stack";
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -24,22 +17,17 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "invalid-config":
-        return actionability.invalidConfig;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "flags":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":
-        return actionability.dockerNotRunning;
-      case "registry":
-      case "artifact":
-        return actionability.externalNetwork;
-      case "port":
-        return actionability.invalidConfig;
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "lifecycle":
-        return actionability.invalidConfig;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
       case "seed":
-        return actionability.seedBuckets;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.seedBuckets, fingerprint_suffix: "seed_buckets" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }

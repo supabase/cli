@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";

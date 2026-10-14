@@ -44,7 +44,7 @@ function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
       promptText: () => Effect.succeed(""),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(true),
-      promptSelect: (_message, options) => Effect.succeed(options[0]!.value),
+      promptSelect: (_message, options) => Effect.succeed(options[0]?.value ?? ""),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
       progress: () =>
@@ -136,7 +136,7 @@ function issueSetup(
 }
 
 describe("issue", () => {
-  it.live("opens bug form with runtime fields and user-provided context", () => {
+  it.effect("opens bug form with runtime fields and user-provided context", () => {
     const { layer, out, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -153,7 +153,7 @@ describe("issue", () => {
       });
 
       expect(browser.openedUrls).toHaveLength(1);
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("bug-report.yml");
       expect(params.get("affected-area")).toBe("Local development");
       expect(params.get("cli-version")).toBe("1.2.3-test");
@@ -170,7 +170,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the bug URL without opening a browser when requested", () => {
+  it.effect("prints the bug URL without opening a browser when requested", () => {
     const { layer, out, browser } = issueSetup({
       env: { SUPABASE_INSTALL_METHOD: "asdf" },
     });
@@ -197,7 +197,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens feature form with matching issue form field IDs", () => {
+  it.effect("opens feature form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -211,7 +211,7 @@ describe("issue", () => {
         noBrowser: false,
       });
 
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("feature-request.yml");
       expect(params.get("existing-issues")).toBe("I have searched the existing issues.");
       expect(params.get("affected-area")).toBe("Auth");
@@ -221,7 +221,7 @@ describe("issue", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("opens docs form with matching issue form field IDs", () => {
+  it.effect("opens docs form with matching issue form field IDs", () => {
     const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
@@ -234,7 +234,7 @@ describe("issue", () => {
         noBrowser: false,
       });
 
-      const params = issueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0] ?? "");
       expect(params.get("template")).toBe("docs.yml");
       expect(params.get("link")).toBe("https://supabase.com/docs/guides/cli");
       expect(params.get("issue-type")).toBe("Incorrect documentation");

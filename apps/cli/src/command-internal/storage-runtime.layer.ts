@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { commandCredentialsLayer } from "../auth/command-credentials.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-factory.layer.ts";
@@ -61,7 +61,11 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     stackApiLayer,
   );
 
-  const _serviceCoverageCheck: Layer.Layer<StorageGatewayServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    StorageGatewayServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

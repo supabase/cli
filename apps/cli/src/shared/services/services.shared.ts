@@ -1,8 +1,8 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   actionability,
@@ -22,6 +22,21 @@ import {
   slimImageForAlias,
   slimImageForCurrentPin,
 } from "./slim-images.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
+
+/** `fetchLinkedServiceVersions`, behind `services`. */
+export const linkedServiceVersions = block("linked-service-versions", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "best-effort",
+    request: { query: { reveal: "true" } },
+  },
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context: "the api-keys lookup returned a usable key",
+  },
+]);
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 

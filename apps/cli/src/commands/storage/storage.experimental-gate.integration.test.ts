@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -56,7 +56,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
   for (const { name, args } of leaves) {
     const conflictingArgs = [...args, "--linked", "--local"];
 
-    it.live(
+    it.effect(
       `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
       () => {
         const { layer } = setup(conflictingArgs);
@@ -75,7 +75,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering (Go Persisten
       },
     );
 
-    it.live(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+    it.effect(`${name} --linked --local with --experimental fails with the mutex error`, () => {
       const withExperimental = [...conflictingArgs, "--experimental"];
       const { layer } = setup(withExperimental);
       return Effect.gen(function* () {

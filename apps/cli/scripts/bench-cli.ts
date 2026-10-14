@@ -11,7 +11,7 @@ import process from "node:process";
 import { parseArgs } from "node:util";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Clock, Console, Effect, FileSystem, Path, Ref, Stdio } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { readSpans, type ReportSpan } from "./trace-report.ts";
 
 const USAGE =

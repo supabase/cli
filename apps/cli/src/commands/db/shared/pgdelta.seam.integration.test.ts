@@ -1,15 +1,15 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Effect, Exit, Layer, Option } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
@@ -116,8 +116,6 @@ function fakeShadowSetupDocker() {
   return { layer };
 }
 
-useShadowCacheDisabled();
-
 const tmp = useTempWorkdir("pgdelta-seam-");
 
 function setup(
@@ -180,14 +178,12 @@ function setup(
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     seam,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 
   return { layer, out, shadowSpawned: shadowSpawner.spawned };
 }
-
-const failError = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
 describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   it.effect(
@@ -206,13 +202,10 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = failError(exit);
+        const error = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.flip);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-        const shadowError = error as DeclarativeShadowDbError;
-        expect(shadowError.docker).toBe("daemon");
-        expect(shadowError.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
+        expect(error.docker).toBe("daemon");
+        expect(error.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -234,17 +227,11 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
       const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = failError(exit);
+        const error = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.flip);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-        expect((error as DeclarativeShadowDbError).message).toContain(
-          "local Postgres container image is stale",
-        );
-        expect((error as DeclarativeShadowDbError).message).toContain(
-          "same SUPABASE_USE_SLIM_IMAGES setting",
-        );
-        expect((error as DeclarativeShadowDbError).message).not.toContain("--no-backup");
+        expect(error.message).toContain("local Postgres container image is stale");
+        expect(error.message).toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+        expect(error.message).not.toContain("--no-backup");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -260,18 +247,12 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
-      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = failError(exit);
+      const error = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.flip);
       expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-      expect((error as DeclarativeShadowDbError).message).toContain(
-        "local Postgres container image is stale",
-      );
+      expect(error.message).toContain("local Postgres container image is stale");
       // Same family (slim vs slim): the generic remediation, not the family-mismatch wording.
-      expect((error as DeclarativeShadowDbError).message).not.toContain(
-        "same SUPABASE_USE_SLIM_IMAGES setting",
-      );
-      expect((error as DeclarativeShadowDbError).message).toContain("--no-backup");
+      expect(error.message).not.toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+      expect(error.message).toContain("--no-backup");
     }).pipe(Effect.provide(layer));
   });
 

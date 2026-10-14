@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";

@@ -1,39 +1,47 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbAdvisors } from "./advisors.handler.ts";
 import { dbAdvisorsRuntimeLayer } from "./advisors.layers.ts";
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Checks the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Checks the linked project for issues."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Checks the local database for issues."),
     Flag.withDefault(false),
   ),
   // Overrides the linked project ref; the same flag exists on `config push`.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  type: Flag.choice("type", ["all", "security", "performance"] as const).pipe(
+  type: Flag.Literals("type", ["all", "security", "performance"] as const).pipe(
     Flag.withDescription("Type of advisors to check: all, security, performance."),
     Flag.optional,
   ),
-  level: Flag.choice("level", ["info", "warn", "error"] as const).pipe(
+  level: Flag.Literals("level", ["info", "warn", "error"] as const).pipe(
     Flag.withDescription("Minimum issue level to display: info, warn, error."),
     Flag.optional,
   ),
-  failOn: Flag.choice("fail-on", ["none", "info", "warn", "error"] as const).pipe(
+  failOn: Flag.Literals("fail-on", ["none", "info", "warn", "error"] as const).pipe(
     Flag.withDescription("Issue level to exit with non-zero status: none, info, warn, error."),
     Flag.optional,
   ),
@@ -44,6 +52,40 @@ export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.withDescription("Checks database for security and performance issues."),
   Command.withShortDescription("Checks database for security and performance issues"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [
+            {
+              operationId: "v1-get-security-advisors",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }, { flag: "type", oneOf: ["all", "security"] }],
+            },
+            {
+              operationId: "v1-get-security-advisors",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            },
+            {
+              operationId: "v1-get-performance-advisors",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }, { flag: "type", oneOf: ["all", "performance"] }],
+            },
+            {
+              operationId: "v1-get-performance-advisors",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            },
+          ],
+          noApiEffectFlags: ["level", "fail-on"],
+        },
+        dbConfig,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbAdvisors(flags).pipe(
       withCommandTelemetry({

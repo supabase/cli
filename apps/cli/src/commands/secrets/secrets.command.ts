@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { secretsListCommand } from "./list/list.command.ts";
 import { secretsSetCommand } from "./set/set.command.ts";
 import { secretsUnsetCommand } from "./unset/unset.command.ts";

@@ -1,5 +1,5 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   DebugFlag,
@@ -19,7 +19,12 @@ import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
+import {
+  loadProjectEnv,
+  readDbToml,
+  resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -90,7 +95,7 @@ export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
 const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+  "Flag --use-pg-delta is deprecated and will be removed in v3, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
@@ -107,7 +112,7 @@ const MIGRATION_FILE_MODE = 0o644;
 // export covers the same per-object-files outcome. Printed only when the experimental gate
 // selected this branch, not when `--declarative` already did.
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
-  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
+  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
   /** Skip printing `Finished supabase db pull.` for callers that must not emit it. */
@@ -264,6 +269,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    // Without the deprecated export, the shadow inputs' project-context load below prints it.
+    if (useExperimentalExport) yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
@@ -303,7 +310,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       // Precedence: `SUPABASE_PROJECT_ID` env override, then config.toml's `project_id`, then
       // the workdir basename fallback — with the matched `[remotes.<ref>]` block's own
       // `project_id` suppressing the raw env argument on the linked path.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
@@ -392,6 +399,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
+          const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
           const exportSchema = (target: PgDeltaDatabaseEndpoint) =>
             pgDeltaEngine.exportDeclarativeSchema({
               context: ctx,
@@ -401,7 +409,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: isPgDeltaDebugEnabled(),
+              debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
@@ -497,7 +505,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               fileOpen: true,
             });
           const stackBackend = (yield* currentStackBackend).kind === "stack";
-          const seedNetwork = dumpNetworkMode(
+          const seedNetwork = yield* dumpNetworkMode(
             Option.getOrUndefined(networkIdFlag),
             stackBackend,
             projectEnv,
@@ -657,7 +665,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     },
                     schema: diffSchema,
                     formatOptions,
-                    debug: isPgDeltaDebugEnabled(),
+                    debug: yield* isPgDeltaDebugEnabled,
                     strictCoverage: flags.strictCoverage,
                   });
                 }

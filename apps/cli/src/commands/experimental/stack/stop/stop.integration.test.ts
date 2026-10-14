@@ -57,7 +57,7 @@ describe("stack stop", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live(
+  it.effect(
     "stop all reclaims ownerless stacks and keeps their definitions without claiming a stop",
     () =>
       Effect.gen(function* () {
@@ -81,7 +81,7 @@ describe("stack stop", () => {
       }).pipe(Effect.provide(live)),
   );
 
-  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "stop all continues past siblings whose state cannot be decoded or accessed and warns about them",
     () =>
       Effect.gen(function* () {
@@ -106,7 +106,7 @@ describe("stack stop", () => {
       }).pipe(Effect.provide(live)),
   );
 
-  it.live("surfaces a shutdown failure after a successful owner preflight", () =>
+  it.effect("surfaces a shutdown failure after a successful owner preflight", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       const saved = (yield* f.api.discover(f.locations))[0];
@@ -141,7 +141,7 @@ describe("stack stop", () => {
         Effect.provide(Layer.provideMerge(f.layer, failedApi)),
         Effect.flip,
       );
-      expect(error.reason).toBe("unknown");
+      expect(error.reason).toBe("stack");
       expect(error.detail).toContain(`${f.stack.id}: owner disconnected`);
       expect(f.output.stdoutText).toBe("");
       expect(f.telemetry.flushed).toBe(true);
@@ -166,7 +166,7 @@ describe("stack stop", () => {
         Effect.flip,
         Effect.ensuring(Scope.close(holder, Exit.void)),
       );
-      expect(error.reason).toBe("unknown");
+      expect(error.reason).toBe("stack");
       expect(error.detail).toContain(`${f.stack.id}: Another process holds the stack lease`);
       expect(f.output.stdoutText).toBe("");
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([

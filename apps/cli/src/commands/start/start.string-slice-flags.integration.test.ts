@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -75,7 +75,7 @@ describe("start --exclude flag (pflag CSV parity)", () => {
   ];
 
   for (const { name, flag } of spellings) {
-    it.live(
+    it.effect(
       `${name}: malformed CSV fails at parse time with pflag's shorthand-framed diagnostic`,
       () => {
         const { layer } = setup();

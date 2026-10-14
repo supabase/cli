@@ -44,7 +44,7 @@ const registryOverride = Effect.fnUntraced(function* (
           }),
           ambient,
         );
-  return yield* Config.option(Config.string(INTERNAL_IMAGE_REGISTRY_ENV)).pipe(
+  return yield* Config.option(Config.String(INTERNAL_IMAGE_REGISTRY_ENV)).pipe(
     Effect.provideService(ConfigProvider.ConfigProvider, provider),
     Effect.map(Option.map((value) => value.trim().toLowerCase())),
   );

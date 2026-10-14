@@ -1,5 +1,5 @@
 import { Deferred, Effect, Layer, PlatformError, Predicate, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 interface SpawnRecord {
   command: string;

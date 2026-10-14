@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import * as SmolToml from "smol-toml";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
   Cause,
   ConfigProvider,
@@ -10,6 +11,8 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
+  Schema,
   Stdio,
 } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -19,10 +22,16 @@ import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
-import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { init } from "./init.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-init-");
+
+const decodeOrioleDbConfig = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    db: Schema.Struct({ major_version: Schema.Finite, orioledb_version: Schema.String }),
+  }),
+);
 
 const readTextFile = (...segments: Array<string>) =>
   Effect.gen(function* () {
@@ -68,15 +77,15 @@ function setup(
   };
 }
 
-function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
+function findFailure(exit: Exit.Exit<unknown, unknown>): unknown {
   expect(Exit.isFailure(exit)).toBe(true);
   if (!Exit.isFailure(exit)) {
-    return {};
+    return undefined;
   }
 
   const failure = Cause.findErrorOption(exit.cause);
   expect(Option.isSome(failure)).toBe(true);
-  return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
+  return Option.getOrUndefined(failure);
 }
 
 /**
@@ -117,7 +126,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 }
 
 describe("init", () => {
-  it.live("creates config.toml natively without the Go proxy", () => {
+  it.effect("creates config.toml natively without the Go proxy", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -140,7 +149,7 @@ describe("init", () => {
     });
   });
 
-  it.live.each([
+  it.effect.each([
     { experimental: false, label: "without --experimental" },
     { experimental: true, label: "with --experimental" },
   ])("writes OrioleDB config $label", ({ experimental }) => {
@@ -159,14 +168,14 @@ describe("init", () => {
       }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      expect(SmolToml.parse(content)).toMatchObject({
-        db: { major_version: 17, orioledb_version: "17.11.0.002" },
-      });
+      const { db } = yield* decodeOrioleDbConfig(SmolToml.parse(content));
+      expect(db.major_version).toBe(17);
+      expect(orioledbVersions()).toContain(db.orioledb_version);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
 
-  it.live("fails with Go's exact error when config.toml already exists", () => {
+  it.effect("fails with Go's exact error when config.toml already exists", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -185,13 +194,11 @@ describe("init", () => {
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitConfigExistsError");
-      expect(error["message"]).toBe(
-        "failed to create config file: open supabase/config.toml: file exists",
-      );
-      expect(error["suggestion"]).toBe(
-        "Run supabase init --force to overwrite existing config file.",
-      );
+      expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
+      expect(error).toMatchObject({
+        message: "failed to create config file: open supabase/config.toml: file exists",
+        suggestion: "Run supabase init --force to overwrite existing config file.",
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase/config.toml: file exists\n",
@@ -200,7 +207,7 @@ describe("init", () => {
     });
   });
 
-  it.live("renders the Windows form of the already-exists error on win32", () => {
+  it.effect("renders the Windows form of the already-exists error on win32", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -219,13 +226,11 @@ describe("init", () => {
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitConfigExistsError");
-      expect(error["message"]).toBe(
-        "failed to create config file: open supabase\\config.toml: The file exists.",
-      );
-      expect(error["suggestion"]).toBe(
-        "Run supabase init --force to overwrite existing config file.",
-      );
+      expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
+      expect(error).toMatchObject({
+        message: "failed to create config file: open supabase\\config.toml: The file exists.",
+        suggestion: "Run supabase init --force to overwrite existing config file.",
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
@@ -234,7 +239,7 @@ describe("init", () => {
     });
   });
 
-  it.live("supports the hidden IDE flags natively", () => {
+  it.effect("supports the hidden IDE flags natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -263,7 +268,7 @@ describe("init", () => {
     });
   });
 
-  it.live("respects the legacy --workdir global flag", () => {
+  it.effect("respects the legacy --workdir global flag", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -291,7 +296,7 @@ describe("init", () => {
     withIntellijSettings: false,
   } as const;
 
-  it.live("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
+  it.effect("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -308,27 +313,27 @@ describe("init", () => {
     });
   });
 
-  it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
+  it.effect("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
     const tempDir = tempRoot.current;
 
-    return withEnvVar(
-      "SUPABASE_YES",
-      "1",
-      Effect.gen(function* () {
-        const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
+    return Effect.gen(function* () {
+      const { layer, out } = setup(tempDir, {
+        interactive: true,
+        stdinIsTty: true,
+        env: { SUPABASE_YES: "1" },
+      });
 
-        yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
-        expect(out.promptConfirmCalls).toHaveLength(0);
-        expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-        expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
-          '"deno.enablePaths"',
-        );
-      }),
-    );
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
   });
 
-  it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
+  it.effect("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -343,7 +348,7 @@ describe("init", () => {
     });
   });
 
-  it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+  it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -360,7 +365,7 @@ describe("init", () => {
     });
   });
 
-  it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+  it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -374,7 +379,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+  it.effect("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -386,8 +391,10 @@ describe("init", () => {
       );
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
-      expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+      expect(Predicate.isTagged(error, "ExperimentalFeatureFlagError")).toBe(true);
+      expect(error).toMatchObject({
+        message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",

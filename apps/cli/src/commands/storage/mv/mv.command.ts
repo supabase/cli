@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -16,9 +16,9 @@ import {
 import { storageMv } from "./mv.handler.ts";
 
 const config = {
-  src: Argument.string("src").pipe(Argument.withDescription("Source path to move from.")),
-  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to move to.")),
-  recursive: Flag.boolean("recursive").pipe(
+  src: Argument.String("src").pipe(Argument.withDescription("Source path to move from.")),
+  dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to move to.")),
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively move a directory."),
     Flag.withDefault(false),

@@ -1,14 +1,10 @@
 import { Data, Duration, Effect, Fiber, Option, Scope, Sink, Stream } from "effect";
 import { fileURLToPath } from "node:url";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
 import * as Environment from "../namespace/Environment.ts";
-import type {
-  ChildProcessHandle,
-  ExitCode,
-  ProcessId,
-} from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessHandle, ExitCode, ProcessId } from "effect/process/ChildProcessSpawner";
 
 export interface NativeProcessSpec {
   readonly executable: string;

@@ -32,30 +32,30 @@ const mapStatusOrNetwork = mapHttpError({
 });
 
 const handleListError = (ref: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    if (mapped._tag === "SsoListUnexpectedStatusError") {
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: ref,
-        featureKey: "auth.saml_2",
-        statusCode: mapped.status,
-        response: gateResponse(cause),
-      });
-      if (mapped.status === 404) {
-        return yield* new SsoListSamlDisabledError({
-          message: SAML_DISABLED_MESSAGE,
+  mapStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoListUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoListSamlDisabledError({
+            message: SAML_DISABLED_MESSAGE,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoListUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
           upgradeSuggested,
         });
-      }
-      return yield* new SsoListUnexpectedStatusError({
-        status: mapped.status,
-        body: mapped.body,
-        message: mapped.message,
-        upgradeSuggested,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+      }),
+    ),
+  );
 
 export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
   const output = yield* Output;

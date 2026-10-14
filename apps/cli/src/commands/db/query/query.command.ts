@@ -1,6 +1,14 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
@@ -14,32 +22,32 @@ import { dbQueryRuntimeLayer } from "./query.layers.ts";
  * defaults by agent mode (JSON for agents, table for humans) when unset. See SIDE_EFFECTS.md.
  */
 const config = {
-  sql: Argument.string("sql").pipe(
+  sql: Argument.String("sql").pipe(
     Argument.withDescription("SQL query to execute."),
     Argument.optional,
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Queries the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
   // Selects the linked path by presence, not value, so `--linked=false` still selects it.
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Queries the linked project's database via Management API."),
     Flag.optional,
   ),
   // In the same mutually-exclusive target group as `--db-url`/`--linked`, keyed off explicit
   // presence, so `--local=false` still counts as an explicit target in the conflict check.
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Queries the local database."),
     Flag.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  file: Flag.string("file").pipe(
+  file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
     Flag.optional,
@@ -51,6 +59,21 @@ export type DbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbQueryCommand = Command.make("query", config).pipe(
   Command.withDescription("Execute a SQL query against the database."),
   Command.withShortDescription("Execute a SQL query against the database"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [
+            { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
+          ],
+          noApiEffectFlags: ["file"],
+        },
+        dbConfig,
+        withCondition(linkedProjectCache, { flag: "linked" }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbQuery(flags).pipe(
       withCommandTelemetry({

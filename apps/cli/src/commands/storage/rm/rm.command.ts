@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -16,11 +16,11 @@ import {
 import { storageRm } from "./rm.handler.ts";
 
 const config = {
-  files: Argument.string("file").pipe(
+  files: Argument.String("file").pipe(
     Argument.withDescription("File paths to remove."),
     Argument.variadic(),
   ),
-  recursive: Flag.boolean("recursive").pipe(
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively remove a directory."),
     Flag.withDefault(false),

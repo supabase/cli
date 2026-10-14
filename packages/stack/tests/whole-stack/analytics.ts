@@ -1,5 +1,5 @@
 import { Clock, DateTime, Effect, Schedule, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 const AnalyticsLog = Schema.Struct({
   event_message: Schema.String,

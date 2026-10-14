@@ -10,8 +10,8 @@
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type * as HttpClient from "effect/http/HttpClient";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";

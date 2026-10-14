@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
-import type * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Clock, Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
+import type * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeDockerImageResolver } from "./docker-image-resolve.ts";
@@ -108,10 +108,6 @@ describe("makeDockerImageResolver", () => {
     "retries a pull failure unconditionally through messages that wouldn't have matched the old retryable-pattern allowlist, giving up after 3 total attempts",
     () =>
       Effect.gen(function* () {
-        // Pins the resolver to a single registry candidate so the assertions below cover
-        // exactly one candidate's attempt count.
-        const previousRegistry = process.env[REGISTRY_ENV];
-        process.env[REGISTRY_ENV] = "docker.io";
         const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
         globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -125,6 +121,8 @@ describe("makeDockerImageResolver", () => {
             { exitCode: 1, stderr: "no space left on device" },
             { exitCode: 1, stderr: "no space left on device" },
           ]);
+          // Pins the resolver to a single registry candidate so the assertions below cover
+          // exactly one candidate's attempt count.
           const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
           const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
             Effect.forkChild({ startImmediately: true }),
@@ -156,8 +154,6 @@ describe("makeDockerImageResolver", () => {
           expect(transcript).not.toContain("deviceRetrying");
         } finally {
           globalThis.process.stderr.write = originalWrite;
-          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-          else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
   );
@@ -166,8 +162,6 @@ describe("makeDockerImageResolver", () => {
     "resolves successfully once a retried pull succeeds, without waiting for the second backoff",
     () =>
       Effect.gen(function* () {
-        const previousRegistry = process.env[REGISTRY_ENV];
-        process.env[REGISTRY_ENV] = "docker.io";
         const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
         globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -197,8 +191,6 @@ describe("makeDockerImageResolver", () => {
           expect(retryBanners).toEqual(["Retrying after 4s: supabase/postgres:17.6.1.138\n"]);
         } finally {
           globalThis.process.stderr.write = originalWrite;
-          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-          else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
   );
@@ -207,8 +199,6 @@ describe("makeDockerImageResolver", () => {
     "does not inject a blank line before the banner when the child error is newline-terminated",
     () =>
       Effect.gen(function* () {
-        const previousRegistry = process.env[REGISTRY_ENV];
-        process.env[REGISTRY_ENV] = "docker.io";
         const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
         globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -237,13 +227,11 @@ describe("makeDockerImageResolver", () => {
           expect(transcript).not.toContain("\n\nRetrying");
         } finally {
           globalThis.process.stderr.write = originalWrite;
-          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-          else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
   );
 
-  it.live("gives every registry candidate its share when a deadline is passed", () => {
+  it.effect("gives every registry candidate its share when a deadline is passed", () => {
     // Finishing within the test timeout is itself the assertion that the guarded backoff never
     // overruns the deadline.
     const mock = mockSpawner([
@@ -254,7 +242,8 @@ describe("makeDockerImageResolver", () => {
     const resolve = makeDockerImageResolver(mock.spawner, {
       SUPABASE_INTERNAL_IMAGE_REGISTRY: "",
     });
-    return resolve("supabase/postgres:15", Date.now() + 500).pipe(
+    return Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) => resolve("supabase/postgres:15", now + 500)),
       Effect.flip,
       Effect.map((error) => {
         expect(error).toBeInstanceOf(DockerRunError);
@@ -264,10 +253,11 @@ describe("makeDockerImageResolver", () => {
     );
   });
 
-  it.live("reports exhausted candidate budgets instead of pulling past a spent deadline", () => {
+  it.effect("reports exhausted candidate budgets instead of pulling past a spent deadline", () => {
     const mock = mockSpawner([]);
     const resolve = makeDockerImageResolver(mock.spawner);
-    return resolve("supabase/postgres:15", Date.now() - 1_000).pipe(
+    return Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) => resolve("supabase/postgres:15", now - 1_000)),
       Effect.flip,
       Effect.map((error) => {
         expect(error.message).toContain("candidate budget exhausted");
@@ -278,8 +268,6 @@ describe("makeDockerImageResolver", () => {
 
   it.effect("prints no Retrying banner when the first pull attempt succeeds", () =>
     Effect.gen(function* () {
-      const previousRegistry = process.env[REGISTRY_ENV];
-      process.env[REGISTRY_ENV] = "docker.io";
       const stderrChunks: Array<unknown> = [];
       const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
       globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -302,33 +290,23 @@ describe("makeDockerImageResolver", () => {
         expect(retryBanners).toEqual([]);
       } finally {
         globalThis.process.stderr.write = originalWrite;
-        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-        else process.env[REGISTRY_ENV] = previousRegistry;
       }
     }),
   );
 
   it.effect("fails fast on a daemon-unreachable image inspect without ever attempting a pull", () =>
     Effect.gen(function* () {
-      const previousRegistry = process.env[REGISTRY_ENV];
-      process.env[REGISTRY_ENV] = "docker.io";
+      const daemonUnreachableStderr =
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+      const mock = mockSpawner([], { exitCode: 1, stderr: daemonUnreachableStderr });
+      const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
-      try {
-        const daemonUnreachableStderr =
-          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
-        const mock = mockSpawner([], { exitCode: 1, stderr: daemonUnreachableStderr });
-        const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
+      const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
 
-        const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(DockerRunError);
-        expect(error.message).toContain(daemonUnreachableStderr);
-        expect(error.message).toContain(SUGGEST_DOCKER_INSTALL);
-        expect(mock.pulls).toHaveLength(0);
-      } finally {
-        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-        else process.env[REGISTRY_ENV] = previousRegistry;
-      }
+      expect(error).toBeInstanceOf(DockerRunError);
+      expect(error.message).toContain(daemonUnreachableStderr);
+      expect(error.message).toContain(SUGGEST_DOCKER_INSTALL);
+      expect(mock.pulls).toHaveLength(0);
     }),
   );
 
@@ -336,25 +314,17 @@ describe("makeDockerImageResolver", () => {
     "fails fast on a non-not-found image inspect error (e.g. an auth-plugin denial) without ever attempting a pull",
     () =>
       Effect.gen(function* () {
-        const previousRegistry = process.env[REGISTRY_ENV];
-        process.env[REGISTRY_ENV] = "docker.io";
+        const authPluginDenialStderr =
+          "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
+        const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });
+        const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
-        try {
-          const authPluginDenialStderr =
-            "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
-          const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });
-          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
+        const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
 
-          const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
-
-          expect(error).toBeInstanceOf(DockerRunError);
-          expect(error.message).toContain(authPluginDenialStderr);
-          expect(error.message).not.toContain(SUGGEST_DOCKER_INSTALL);
-          expect(mock.pulls).toHaveLength(0);
-        } finally {
-          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-          else process.env[REGISTRY_ENV] = previousRegistry;
-        }
+        expect(error).toBeInstanceOf(DockerRunError);
+        expect(error.message).toContain(authPluginDenialStderr);
+        expect(error.message).not.toContain(SUGGEST_DOCKER_INSTALL);
+        expect(mock.pulls).toHaveLength(0);
       }),
   );
 
@@ -362,24 +332,16 @@ describe("makeDockerImageResolver", () => {
     "treats Podman's differently worded image-inspect miss as a cache miss and proceeds to pull",
     () =>
       Effect.gen(function* () {
-        const previousRegistry = process.env[REGISTRY_ENV];
-        process.env[REGISTRY_ENV] = "docker.io";
+        const mock = mockSpawner([{ exitCode: 0 }], {
+          exitCode: 1,
+          stderr: "supabase/postgres:17.6.1.138: image not known",
+        });
+        const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
-        try {
-          const mock = mockSpawner([{ exitCode: 0 }], {
-            exitCode: 1,
-            stderr: "supabase/postgres:17.6.1.138: image not known",
-          });
-          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
+        const image = yield* resolve("supabase/postgres:17.6.1.138");
 
-          const image = yield* resolve("supabase/postgres:17.6.1.138");
-
-          expect(image).toBe("supabase/postgres:17.6.1.138");
-          expect(mock.pulls).toHaveLength(1);
-        } finally {
-          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
-          else process.env[REGISTRY_ENV] = previousRegistry;
-        }
+        expect(image).toBe("supabase/postgres:17.6.1.138");
+        expect(mock.pulls).toHaveLength(1);
       }),
   );
 

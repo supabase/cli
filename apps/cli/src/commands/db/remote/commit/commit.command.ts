@@ -1,6 +1,14 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../../command-internal/command-permissions/model.ts";
+import { dbConfig, dbConfigPoolerFallback } from "../../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
@@ -8,7 +16,7 @@ import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
 import { dbRemoteCommit } from "./commit.handler.ts";
 
 const config = {
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -17,15 +25,15 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Connect to the linked project."),
     Flag.withDefault(false),
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
@@ -36,9 +44,20 @@ export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>
 
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
   Command.withDescription(
-    "Deprecated: use db pull instead. Commit remote changes as a new migration.",
+    "Deprecated: use db pull instead; removed in v3. Commit remote changes as a new migration.",
   ),
   Command.withShortDescription("Commit remote changes as a new migration"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["schema"] },
+        dbConfig,
+        dbConfigPoolerFallback,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "linked" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbRemoteCommit(flags).pipe(
       withCommandTelemetry({

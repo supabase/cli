@@ -1,5 +1,5 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Clock, Effect, FileSystem, Option, Path, Ref } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   DebugFlag,
@@ -14,8 +14,11 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
+  envOverrideLookup,
+  loadProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -154,7 +157,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // The engine flags (`use-migra use-pgadmin use-pg-schema use-pg-delta`) and the target flags
@@ -254,7 +257,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         if (preflightConnType === "linked") {
           const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
           if (preflightRef !== undefined) {
-            linkedRefForCache = preflightRef;
+            yield* Ref.set(linkedRefForCache, Option.some(preflightRef));
             mergedLinkedRef = preflightRef;
           }
         }
@@ -303,6 +306,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                       message: cause.message,
                       daemonDown: cause.daemonDown,
                       suggestion: cause.suggestion,
+                      cause,
                     }),
                 ),
               );
@@ -323,7 +327,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               });
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
-                linkedRefForCache = ref2;
+                yield* Ref.set(linkedRefForCache, Option.some(ref2));
                 mergedLinkedRef = ref2;
                 cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
@@ -350,14 +354,16 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 // by default, so TLS is used.
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
-            default:
+            case "unknown":
               return yield* new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) });
           }
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
+      // A `migrations` ref provisions a shadow whose project-context load prints this itself.
+      if (migrationsToml === undefined) yield* warnDeprecatedOrioleDBVersionEnv(cfg.envLookup);
       const explicitCtx: PgDeltaContext = {
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -369,7 +375,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
-        debug: isPgDeltaDebugEnabled(),
+        debug: yield* isPgDeltaDebugEnabled,
         strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
@@ -428,7 +434,21 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // every mode). The delegated Go `db diff --use-pg-schema` still prints its own
       // experimental warning; this is additive, not a replacement, so don't drop it.
       yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+      const envLookup = yield* envOverrideLookup(
+        yield* loadProjectEnv(fs, path, cliSettings.workdir),
+      );
+      yield* warnDeprecatedOrioleDBVersionEnv(envLookup);
+      // The Go child does not know the deprecated alias, so hand it the resolved value.
+      const orioleDBVersionAlias =
+        envLookup("SUPABASE_DB_ORIOLEDB_VERSION") === undefined
+          ? envLookup("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION")
+          : undefined;
+      const env = {
+        SUPABASE_TELEMETRY_DISABLED: "1",
+        ...(orioleDBVersionAlias === undefined
+          ? {}
+          : { SUPABASE_DB_ORIOLEDB_VERSION: orioleDBVersionAlias }),
+      };
       // In machine-output mode the child's stdout is captured and re-emitted as a structured
       // envelope, so scripted callers get valid JSON instead of the raw SQL. The delegated
       // child owns any `--file` write, so the written path isn't introspectable here (`file:
@@ -476,7 +496,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cached the moment the ref is known, not after `cfg`/`localInputs` below (both
       // fallible) resolve, so the project cache is still written even if a later step fails.
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     }
     const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (cfg.appliedRemote !== undefined) {
@@ -515,13 +535,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+    if (linkedRef !== undefined) yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then the
       // workdir basename fallback; the matched `[remotes.<ref>]` block's own `project_id`
       // suppresses the raw env argument on the linked path — see `readDbToml`'s doc comment.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
@@ -703,7 +723,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               },
               schema: flags.schema,
               formatOptions,
-              debug: isPgDeltaDebugEnabled(),
+              debug: yield* isPgDeltaDebugEnabled,
               strictCoverage: flags.strictCoverage,
             });
             return { sql: result.sql, files: result.files, hazards: result.hazards };
@@ -850,8 +870,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Ref.get(linkedRefForCache).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

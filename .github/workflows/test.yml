@@ -5,7 +5,9 @@ name: Test
 #
 # Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
 # `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
-# `run-ci.yml` calls this workflow for drafts and stacked PRs.
+# `run-ci.yml` calls this workflow for drafts and stacked PRs. Windows and macOS
+# jobs run on PRs into develop or next only for platform-sensitive paths, and
+# always in the merge queue, on PRs into main or v*.x, and under `run-ci`.
 on:
   pull_request:
     types:
@@ -29,6 +31,10 @@ on:
     inputs:
       force:
         description: Run the suite even when the PR is a draft (used by run-ci.yml)
+        type: boolean
+        default: false
+      full:
+        description: Run the Windows and macOS jobs regardless of the changed paths (used by run-ci.yml)
         type: boolean
         default: false
     secrets:
@@ -55,6 +61,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,6 +72,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
       - name: Unlock keyring (for cli-go keyring tests)
         uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
@@ -90,6 +98,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run unit tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,6 +109,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Run unit tests
@@ -111,8 +121,19 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run integration tests
+    name: Run integration tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: "@supabase/stack", shard: 1/3, name: stack 1/3 }
+          - { package: "@supabase/stack", shard: 2/3, name: stack 2/3 }
+          - { package: "@supabase/stack", shard: 3/3, name: stack 3/3 }
+          - { package: supabase, shard: 1/2, name: cli 1/2 }
+          - { package: supabase, shard: 2/2, name: cli 2/2 }
+          - { package: "@supabase/api", name: api, stack-e2e: true }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,14 +144,19 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
+          docker-images: "true"
 
       - name: Run integration tests
-        run: pnpm run test:integration
+        run: >-
+          pnpm --filter "${{ matrix.package }}" test:integration:run
+          ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
       # Not covered by test:integration above (a different vitest project); runs here so the
       # registry cross-process and publication-crash scenarios run on Linux too.
       - name: Run stack namespace e2e tests
+        if: matrix.stack-e2e
         working-directory: packages/stack
         run: >-
           pnpm test:e2e:run
@@ -138,14 +164,68 @@ jobs:
           src/port-reservation.e2e.test.ts
           --passWithNoTests=false
 
-  test-stack-ports:
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
+  platform-changes:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
+    name: Detect platform-sensitive changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      # The merge queue and PRs into main or v*.x run every platform; only PRs
+      # into develop or next defer Windows and macOS to the merge queue.
+      - name: Detect
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          FULL: ${{ inputs.full }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PATTERN: >-
+            ^(pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|mise\.(toml|lock)|\.node-version|\.bun-version|turbo\.json|\.github/workflows/test\.yml|\.github/actions/
+            |packages/stack/(package\.json|vitest[^/]*|tests/|src/(host|namespace|identity|storage|internal)/
+            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy|StackNamespace|effect)[.]|src/whole-stack\.native)
+            |apps/cli/src/commands/(db/reset|experimental/stack/start)/)
+        run: |
+          if [ "$EVENT" != "pull_request" ] || [ "$FULL" = "true" ] || [ "$BASE_REF" = "main" ] || [[ "$BASE_REF" == v*.x ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pattern=$(tr -d ' \n' <<<"$PATTERN")
+          # The compare API lists at most 300 files; a larger diff runs every platform.
+          files=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq 'if (.files | length) >= 300 then "package.json" else .files[].filename end')
+          matches=$(grep -E "$pattern" <<<"$files" || true)
+          if [ -n "$matches" ]; then
+            printf 'Platform-sensitive changes:\n%s\n' "$matches"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No platform-sensitive changes; Windows and macOS run in the merge queue. Add the run-ci label to run them here."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-stack-ports:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false) &&
+      needs.platform-changes.outputs.run == 'true'
+    needs: platform-changes
     name: Run stack port tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +243,9 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
+          tools: node bun pnpm
+          # Windows unpacks the store archive slower than it downloads the packages.
+          pnpm-store-cache: ${{ matrix.os != 'windows-latest' }}
 
       - name: Run stack integration tests
         working-directory: packages/stack
@@ -203,16 +286,26 @@ jobs:
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
-        github.event.pull_request.draft == false)
-    name: Run stack native scenarios (${{ matrix.os }})
+        github.event.pull_request.draft == false) &&
+      needs.platform-changes.outputs.run == 'true'
+    needs: platform-changes
+    name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
-        os: [macos-latest]
+        os: [blacksmith-6vcpu-macos-latest]
+        suite: [lifecycle, confinement, idle, isolation]
+        # Concurrent scenarios slow each other on macOS runners, so the
+        # heaviest ones run alone.
+        include:
+          - { suite: lifecycle, file: lifecycle, pattern: "^(?!.*writes stay confined)" }
+          - { suite: confinement, file: lifecycle, pattern: "writes stay confined" }
+          - { suite: idle, file: idle-parallel, pattern: "^(?!.*parallel stack isolation)" }
+          - { suite: isolation, file: idle-parallel, pattern: "parallel stack isolation" }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -225,9 +318,21 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
 
+      # Keyed per suite so each job saves the artifacts it actually prepared.
+      - name: Cache native stack artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/supabase-stack-artifacts
+          key: stack-artifacts-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ hashFiles('packages/stack/src/Artifacts.ts') }}
+
       - name: Run stack native whole-stack scenarios
         working-directory: packages/stack
-        run: pnpm test:e2e:native-scenarios --passWithNoTests=false
+        run: >-
+          pnpm test:e2e:run
+          src/whole-stack.native.${{ matrix.file }}.e2e.test.ts
+          --testNamePattern='${{ matrix.pattern }}'
+          --sequence.concurrent
+          --passWithNoTests=false
 
   test-summary:
     if: |
@@ -237,11 +342,16 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [test-unit, test-integration, test-stack-ports]
+    needs: [platform-changes, test-unit, test-integration, test-stack-ports]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
+          if [ "${{ needs.platform-changes.result }}" != "success" ]; then
+            echo "::error ::Platform change detection did not succeed: ${{ needs.platform-changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
             [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
             echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
@@ -261,14 +371,16 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run CLI end-to-end tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { suite: cli, shard: 1, shards: 4, name: cli 1/4 }
-          - { suite: cli, shard: 2, shards: 4, name: cli 2/4 }
-          - { suite: cli, shard: 3, shards: 4, name: cli 3/4 }
-          - { suite: cli, shard: 4, shards: 4, name: cli 4/4 }
+          - { suite: cli, shard: 1, shards: 5, name: cli 1/5 }
+          - { suite: cli, shard: 2, shards: 5, name: cli 2/5 }
+          - { suite: cli, shard: 3, shards: 5, name: cli 3/5 }
+          - { suite: cli, shard: 4, shards: 5, name: cli 4/5 }
+          - { suite: cli, shard: 5, shards: 5, name: cli 5/5 }
           - { suite: cli-e2e, name: cli-e2e }
     steps:
       - name: Checkout
@@ -280,6 +392,8 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          docker-images: "true"
 
       - name: Cache Go CLI binary
         id: cache-go-binary
@@ -306,6 +420,7 @@ jobs:
         run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_E2E_WORKERS: "4"
 
       - name: Run cli-e2e end-to-end tests
         if: matrix.suite == 'cli-e2e'
@@ -324,6 +439,11 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -332,11 +452,14 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         runtime: [native, docker, podman]
-        suite: [lifecycle, idle-parallel]
+        # Confinement watches the whole temp tree, so it gets a job of its own
+        # instead of sharing one with concurrently running scenarios.
+        suite: [lifecycle, idle-parallel, confinement]
     env:
       SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
     steps:
@@ -347,7 +470,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
+          docker-images: ${{ matrix.runtime == 'docker' }}
+          native-artifacts: ${{ matrix.runtime == 'native' }}
 
       - name: Setup Podman
         if: matrix.runtime == 'podman'
@@ -356,7 +482,9 @@ jobs:
       - name: Run stack end-to-end tests
         run: >-
           pnpm --filter @supabase/stack test:e2e:run
-          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite }}.e2e.test.ts
+          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite == 'idle-parallel' && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
+          --testNamePattern='${{ matrix.suite == 'confinement' && 'writes stay confined' || matrix.suite == 'lifecycle' && '^(?!.*writes stay confined)' || '.' }}'
+          --sequence.concurrent
           --passWithNoTests=false
 
       - name: Run public stack end-to-end tests
@@ -366,6 +494,11 @@ jobs:
           src/public.e2e.test.ts
           --passWithNoTests=false
 
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always() && matrix.runtime == 'docker'
+        run: sudo systemctl stop docker.socket docker.service
+
   test-stack-podman-integration:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -374,6 +507,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run stack Podman integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     env:
       SUPABASE_STACK_TEST_ENGINE: podman
     steps:
@@ -384,6 +518,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: "false"
 
       - name: Setup Podman
@@ -423,11 +558,23 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: [test-e2e, test-stack-e2e, test-stack-native-scenarios, test-stack-podman-integration]
+    needs:
+      [
+        platform-changes,
+        test-e2e,
+        test-stack-e2e,
+        test-stack-native-scenarios,
+        test-stack-podman-integration,
+      ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify all shards succeeded
         run: |
+          if [ "${{ needs.platform-changes.result }}" != "success" ]; then
+            echo "::error ::Platform change detection did not succeed: ${{ needs.platform-changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || \
             [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ] || \
             [ "${{ needs.test-stack-native-scenarios.result }}" = "failure" ] || [ "${{ needs.test-stack-native-scenarios.result }}" = "cancelled" ] || \

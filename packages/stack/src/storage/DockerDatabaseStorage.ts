@@ -13,9 +13,13 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { ChildProcess } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { ChildProcess } from "effect/process";
+import type {
+  ChildProcessHandle,
+  ChildProcessSpawner as ChildProcessSpawnerService,
+} from "effect/process/ChildProcessSpawner";
+import { postgresLine, postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import * as Publication from "../namespace/Publication.ts";
@@ -38,6 +42,8 @@ const Marker = Schema.Struct({
   cacheNamespace: Schema.String,
   daemonId: Schema.optionalKey(Schema.String),
   initialized: Schema.Boolean,
+  /** Release line recorded before initdb; markers written before this field have none. */
+  line: Schema.optionalKey(Schema.String),
 });
 type Marker = Schema.Schema.Type<typeof Marker>;
 const DaemonIdentity = Schema.Struct({
@@ -522,7 +528,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
       const helperImage = yield* Ref.make<string | undefined>(undefined);
-      const helperScopeRef = yield* Ref.make<Scope.Scope | undefined>(undefined);
+      const helperScopeRef = yield* Ref.make<Scope.Closeable | undefined>(undefined);
       const helperCleanupPending = yield* Ref.make(false);
       const operationLock = yield* Semaphore.make(1);
       const ownerScope = yield* Scope.Scope;
@@ -550,13 +556,24 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         labels: ReadonlyArray<string>,
       ) {
         const testRunLabel = yield* testRunLabelArgs();
-        const child = yield* options.spawner
+        const stderrTail = (process: ChildProcessHandle) =>
+          process.stderr.pipe(
+            Stream.decodeText,
+            Stream.runFold(
+              () => "",
+              (tail, chunk) => (tail + chunk).slice(-4096),
+            ),
+            Effect.forkScoped,
+          );
+        /* Create by name before attaching so a readiness timeout's `rm -f` always finds the helper;
+           `--rm -i` keeps the AutoRemove and StdinOnce of `run`, so owner death still ends it. */
+        const creator = yield* options.spawner
           .spawn(
             ChildProcess.make(
               options.target.engine,
               [
                 ...options.target.argv,
-                "run",
+                "create",
                 "--rm",
                 "-i",
                 "--name",
@@ -576,18 +593,45 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "-c",
                 "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
               ],
+              { stdin: "ignore", stdout: "ignore", stderr: "pipe", forceKillAfter: "5 seconds" },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        const createStderr = yield* stderrTail(creator);
+        const created = yield* creator.exitCode.pipe(Effect.timeout("30 seconds"), Effect.exit);
+        if (Exit.isFailure(created))
+          yield* creator
+            .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+            .pipe(Effect.ignore);
+        const createTail = (yield* Fiber.join(createStderr).pipe(
+          Effect.timeout("1 second"),
+          Effect.orElseSucceed(() => ""),
+        )).trim();
+        if (Exit.isFailure(created) || Number(created.value) !== 0) {
+          const reason = Exit.isFailure(created)
+            ? Option.match(Cause.findErrorOption(created.cause), {
+                onNone: () => Cause.pretty(created.cause),
+                onSome: (error) =>
+                  Cause.isTimeoutError(error)
+                    ? "Database helper was not created within 30 seconds"
+                    : failureMessage(error),
+              })
+            : createTail || `Container engine exited with ${created.value}`;
+          return yield* errorFor(
+            "helper",
+            Exit.isFailure(created) && createTail !== "" ? `${reason}: ${createTail}` : reason,
+          );
+        }
+        const child = yield* options.spawner
+          .spawn(
+            ChildProcess.make(
+              options.target.engine,
+              [...options.target.argv, "start", "--attach", "--interactive", name],
               { stdin: "pipe", stdout: "pipe", stderr: "pipe", forceKillAfter: "5 seconds" },
             ),
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-        const stderr = yield* child.stderr.pipe(
-          Stream.decodeText,
-          Stream.runFold(
-            () => "",
-            (tail, chunk) => (tail + chunk).slice(-4096),
-          ),
-          Effect.forkScoped,
-        );
+        const stderr = yield* stderrTail(child);
         return yield* child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
@@ -607,7 +651,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.timeout("1 second"),
                     Effect.orElseSucceed(() => ""),
                   );
-                  const tail = diagnostic.trim();
+                  // Docker prints warnings such as a platform mismatch on `create`, so keep that
+                  // output alongside what `start` wrote.
+                  const tail = [createTail, diagnostic.trim()]
+                    .filter((part) => part !== "")
+                    .join("\n");
                   const reason = Exit.isFailure(exit)
                     ? Option.match(Cause.findErrorOption(exit.cause), {
                         onNone: () => Cause.pretty(exit.cause),
@@ -711,7 +759,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* Ref.set(helperScopeRef, helperScope);
               return yield* startAttachedHelper(name, mounts, preparedImage, [
                 `com.supabase.instance=${options.instanceId}`,
-              ]).pipe(Scope.provide(helperScope));
+              ]).pipe(
+                Scope.provide(helperScope),
+                /* A create the daemon finishes after the failure cleanup's `rm -f` would outlive
+                   it, so this unique name is removed again on shutdown. */
+                Effect.tapError(() =>
+                  Scope.addFinalizer(
+                    ownerScope,
+                    engineCommand(["rm", "-f", name]).pipe(
+                      Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+                        missingContainer(cause.message) ? Effect.void : Effect.logError(cause),
+                      ),
+                    ),
+                  ),
+                ),
+              );
             }),
           ),
       );
@@ -880,6 +942,28 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         });
       const writeMarker = (marker: Marker) =>
         encodeMarker(marker).pipe(Effect.flatMap((encoded) => publishMarker(encoded)));
+      const checkInitialized = Effect.fnUntraced(function* (
+        pgVersion: string,
+        version: string,
+        marker: Marker,
+      ) {
+        // The database checks a present readiness marker's line before preparing storage.
+        const verified = yield* options.fs.exists(readyMarkerPath);
+        const reason = unusableDatabaseData(
+          {
+            major: pgVersion.trim(),
+            line: verified ? postgresLine(version) : marker.line,
+            initialized: marker.initialized,
+          },
+          version,
+        );
+        if (reason !== undefined)
+          return yield* errorFor("prepare", `${reason}; ${recreateStackAdvice(options.stackId)}`);
+      });
+      const recordLine = (marker: Marker, version: string) =>
+        marker.line === postgresLine(version)
+          ? Effect.void
+          : writeMarker({ ...marker, line: postgresLine(version) });
       const setup = Effect.fn("DockerDatabaseStorage.prepare")((version: string) =>
         Effect.gen(function* () {
           yield* selected;
@@ -897,13 +981,20 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ],
                 version,
               );
-              if (major.trim() !== majorVersion(version))
-                return yield* errorFor(
-                  "prepare",
-                  "Initialized PostgreSQL major does not match the requested configuration",
-                );
+              yield* checkInitialized(major, version, marker);
+            } else if (yield* options.fs.exists(data)) {
+              // An interrupted first start can leave initdb output behind without readiness.
+              const major = yield* runHelper(
+                "set -eu; if [ -f /instance/data/PG_VERSION ]; then cat /instance/data/PG_VERSION; fi",
+                [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
+                version,
+                true,
+              );
+              if (major.trim() !== "") yield* checkInitialized(major, version, marker);
+              else yield* recordLine(marker, version);
             } else {
               yield* options.fs.makeDirectory(data, { recursive: true, mode: 0o700 });
+              yield* recordLine(marker, version);
             }
             return;
           }
@@ -915,17 +1006,16 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               version,
             );
-            if (major.trim() !== majorVersion(version))
-              return yield* errorFor(
-                "prepare",
-                "Initialized PostgreSQL major does not match the requested configuration",
-              );
+            yield* checkInitialized(major, version, marker);
           } else {
-            yield* runHelper(
-              `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
+            const major = yield* runHelper(
+              `set -eu; if [ -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then cat ${shellQuote(`${store}/data/PG_VERSION`)}; fi; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               version,
+              true,
             );
+            if (major.trim() !== "") yield* checkInitialized(major, version, marker);
+            else yield* recordLine(marker, version);
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );

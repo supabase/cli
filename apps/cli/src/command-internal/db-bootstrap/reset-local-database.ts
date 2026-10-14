@@ -10,7 +10,7 @@
  */
 
 import { Data, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
 import {
@@ -23,6 +23,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -65,9 +66,10 @@ class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunni
 class ResetLocalDbFailedError extends Data.TaggedError("ResetLocalDbFailedError")<{
   readonly message: string;
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return causeDeclaration(this.cause) ?? actionability.dbConnection;
   }
 }
 
@@ -92,7 +94,8 @@ const notRunning = () =>
     message: `${aqua("supabase start")} is not running.`,
   });
 
-const resetFailed = (message: string) => new ResetLocalDbFailedError({ message });
+const resetFailed = (message: string, cause?: unknown) =>
+  new ResetLocalDbFailedError({ message, ...(cause === undefined ? {} : { cause }) });
 
 const suggestionOf = (error: unknown): string | undefined =>
   error instanceof StackStorageUnavailableError || error instanceof StackStorageCapabilityError
@@ -126,7 +129,8 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    const config = yield* loadStackConfig(workdir).pipe(
+    const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
+    const config = yield* loadStackConfig(workdir, { context }).pipe(
       Effect.mapError((cause) => resetFailed(cause.message)),
     );
     const toml = yield* readDbToml(fs, path, workdir);
@@ -159,16 +163,24 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* Effect.gen(function* () {
       yield* opened.value.stack.composition.stop.pipe(
-        Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to stop local stack: ${cause.message}`, cause),
+        ),
       );
       yield* opened.value.database.resetData.pipe(
-        Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to reset local database: ${cause.message}`, cause),
+        ),
       );
       yield* opened.value.database.start.pipe(
-        Effect.mapError((cause) => resetFailed(`failed to start local database: ${cause.message}`)),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to start local database: ${cause.message}`, cause),
+        ),
       );
       yield* opened.value.database.ready.pipe(
-        Effect.mapError((cause) => resetFailed(`failed to ready local database: ${cause.message}`)),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to ready local database: ${cause.message}`, cause),
+        ),
       );
     }).pipe(Effect.withSpan("DbBootstrap.resetStackDatabase"));
     yield* initializeStackDatabase({
@@ -216,7 +228,6 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // The database is already rebuilt, so any typed seeding failure only warns; defects and
     // interruption still propagate.
     yield* Effect.gen(function* () {
-      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
       const capability = storage === undefined ? undefined : yield* storage.status;
       const decision = classifyStorageCapability(capability);

@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { dbDiffCommand } from "./diff/diff.command.ts";
 import { dbDumpCommand } from "./dump/dump.command.ts";
 import { dbPushCommand } from "./push/push.command.ts";

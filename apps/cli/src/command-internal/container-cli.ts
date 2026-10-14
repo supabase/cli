@@ -1,6 +1,6 @@
 import { Data, Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   withChildTraceEnv,
@@ -64,12 +64,8 @@ export const spawnContainerCliWithRuntime = (
     Effect.catch(() =>
       spawnRuntime(spawner, podmanRuntime, args, options).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -175,12 +171,8 @@ export const containerCliExitCode = (
   runtimeExitCode(spawner, dockerRuntime, args, options).pipe(
     Effect.catch(() =>
       runtimeExitCode(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
-        Effect.catch(() =>
-          Effect.fail(
-            new ContainerRuntimeNotFoundError({
-              message: containerRuntimeNotFoundMessage,
-            }),
-          ),
+        Effect.mapError(
+          () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
         ),
       ),
     ),
@@ -249,11 +241,11 @@ export function runContainerCliExpectSuccess<E>(
 }
 
 /**
- * Like {@link containerCliExitCode}, but also returns the child's stdout — reading it instead of
- * ignoring it avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
+ * Like {@link containerCliExitCode}, but also returns the child's stdout and stderr — reading them
+ * instead of ignoring them avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
  * {@link containerCliExitCode}.
  */
-export const containerCliExitCodeAndStdout = (
+export const containerCliOutput = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   podmanArgs?: ReadonlyArray<string>,
@@ -263,28 +255,28 @@ export const containerCliExitCodeAndStdout = (
       const options = {
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
       } satisfies ChildProcess.CommandOptions;
       const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
           spawnRuntime(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
-            Effect.catch(() =>
-              Effect.fail(
-                new ContainerRuntimeNotFoundError({
-                  message: containerRuntimeNotFoundMessage,
-                }),
-              ),
+            Effect.mapError(
+              () => new ContainerRuntimeNotFoundError({ message: containerRuntimeNotFoundMessage }),
             ),
           ),
         ),
       );
       // Read stdout concurrently with the exit code: Node's "exit" event can fire before a fast
       // process's stdio finishes draining, so awaiting the exit code first would race the stream.
-      const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          handle.exitCode.pipe(Effect.map(Number)),
+          collectText(handle.stdout),
+          collectText(handle.stderr),
+        ],
         { concurrency: "unbounded" },
       );
-      return { exitCode, stdout };
+      return { exitCode, stdout, stderr };
     }),
   );
 

@@ -4,6 +4,21 @@ import { Effect } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `resolveBranchProjectRef`, for a branch argument that isn't a project ref. */
+export const branchRef = block("branch-ref", [
+  {
+    operationId: "v1-get-a-branch-config",
+    kind: "required",
+    context: "the branch argument is a UUID",
+  },
+  {
+    operationId: "v1-get-a-branch",
+    kind: "required",
+    context: "the branch argument is a branch name",
+  },
+]);
 
 /**
  * Per-family error mapping for {@link resolveBranchProjectRef}: each
@@ -33,12 +48,12 @@ export interface BranchRefResolveMappers<EGet, EFind> {
  * directory: the UUID endpoint does not use a parent ref, so requiring one
  * up front would fail invocations the API itself can serve.
  */
-export function resolveBranchProjectRef<EGet, EFind, EParent = never, RParent = never>(
-  input: string,
-  projectRef: string | Effect.Effect<string, EParent, RParent>,
-  mappers: BranchRefResolveMappers<EGet, EFind>,
-) {
-  return Effect.gen(function* () {
+export const resolveBranchProjectRef = Effect.fn("BranchRef.resolve")(
+  function* <EGet, EFind, EParent = never, RParent = never>(
+    input: string,
+    projectRef: string | Effect.Effect<string, EParent, RParent>,
+    mappers: BranchRefResolveMappers<EGet, EFind>,
+  ) {
     if (BRANCH_PROJECT_REF_PATTERN.test(input)) {
       yield* Effect.annotateCurrentSpan("branch_ref.input_kind", "project_ref");
       return input;
@@ -60,8 +75,6 @@ export function resolveBranchProjectRef<EGet, EFind, EParent = never, RParent = 
       .getABranch({ ref: parentRef, name: input })
       .pipe(Effect.catch(mappers.mapFindError));
     return branch.project_ref;
-  }).pipe(
-    Effect.tap((ref) => Effect.annotateCurrentSpan("project.ref", ref)),
-    Effect.withSpan("BranchRef.resolve"),
-  );
-}
+  },
+  Effect.tap((ref) => Effect.annotateCurrentSpan("project.ref", ref)),
+);

@@ -1,5 +1,5 @@
 import { Cause } from "effect";
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
@@ -308,7 +308,7 @@ describe("classifyParseErrorConsoleOutput", () => {
     ).toBe("drop");
   });
 
-  it("flushes the help dump to stderr for an invalid Flag.choice value", () => {
+  it("flushes the help dump to stderr for an invalid Flag.Literals value", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
         commandPath: ["supabase", "sso", "add"],

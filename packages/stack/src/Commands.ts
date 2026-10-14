@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { rejectExcessKeys } from "./internal/reject-excess-keys.ts";
 
 const PgProveMount = Schema.Struct({
   source: Schema.String,
@@ -18,22 +19,28 @@ export const PostgresCommand = Schema.Struct({
 });
 export interface PostgresCommand extends Schema.Schema.Type<typeof PostgresCommand> {}
 
-const AuthInitializationCommand = Schema.Struct({
-  type: Schema.Literal("auth.initialize"),
-  version: Schema.optional(Schema.String),
-  databaseUrl: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
-const StorageInitializationCommand = Schema.Struct({
-  type: Schema.Literal("storage.initialize"),
-  version: Schema.optional(Schema.String),
-  databaseUrl: Schema.String,
-  filePath: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
-const RealtimeInitializationCommand = Schema.Struct({
-  type: Schema.Literal("realtime.initialize"),
-  version: Schema.optional(Schema.String),
-  databaseUrl: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+const AuthInitializationCommand = rejectExcessKeys(
+  Schema.Struct({
+    type: Schema.Literal("auth.initialize"),
+    version: Schema.optional(Schema.String),
+    databaseUrl: Schema.String,
+  }),
+);
+const StorageInitializationCommand = rejectExcessKeys(
+  Schema.Struct({
+    type: Schema.Literal("storage.initialize"),
+    version: Schema.optional(Schema.String),
+    databaseUrl: Schema.String,
+    filePath: Schema.String,
+  }),
+);
+const RealtimeInitializationCommand = rejectExcessKeys(
+  Schema.Struct({
+    type: Schema.Literal("realtime.initialize"),
+    version: Schema.optional(Schema.String),
+    databaseUrl: Schema.String,
+  }),
+);
 
 /** A finite service setup action with inputs owned by its service definition. */
 export const InitializationCommand = Schema.Union([

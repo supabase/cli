@@ -1,12 +1,10 @@
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
-import { PgClient } from "@effect/sql-pg";
 import { Cause, Duration, Effect, Exit, FileSystem, Layer, Scope } from "effect";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
-// `pg` is `@effect/sql-pg`'s transitive driver; used directly here for COPY and
-// extended-protocol batches, which `@effect/sql-pg` does not expose. Keep the direct `pg`
-// version in package.json aligned with the one `@effect/sql-pg` resolves.
+import * as Reactivity from "effect/reactivity/Reactivity";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
+// `pg` drives the pool behind `makePoolSqlClient` and the raw COPY and extended-protocol batch
+// connections; `@effect/sql-pg` only supplies the statement compiler.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
@@ -18,6 +16,7 @@ import {
   isSqlState,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
+import { makePoolSqlClient } from "./db-connection.pool-client.ts";
 import {
   type DbBatchStatement,
   type DbBatchValue,
@@ -857,7 +856,7 @@ export const acquirePgPool = (
   acquirePgPoolConnection(cfg, options).pipe(Effect.map(({ pool }) => pool));
 
 /**
- * Default `DbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg` driver, no native
+ * Default `DbConnection` layer, backed by a node-postgres pool (pure-JS `pg` driver, no native
  * addon, so it bundles under `bun build --compile`). Each `connect` builds a scoped
  * single-client connection that closes on scope exit.
  */
@@ -870,10 +869,7 @@ const connect = (
       cfg,
       options,
     );
-    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-      Effect.provide(Reactivity.layer),
-      Effect.mapError((error) => toConnectError(cfg, options.isLocal, error)),
-    );
+    const client = yield* makePoolSqlClient(pool).pipe(Effect.provide(Reactivity.layer));
 
     // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres' COPY protocol
     // needs a raw client, which `@effect/sql-pg` does not surface, so the session opens one
@@ -1060,7 +1056,7 @@ const connect = (
     return session;
   });
 
-/** The active `DbConnection` layer, backed by `@effect/sql-pg`. */
+/** The active `DbConnection` layer, backed by node-postgres. */
 export const dbConnectionLayer = Layer.effect(
   DbConnection,
   Effect.gen(function* () {

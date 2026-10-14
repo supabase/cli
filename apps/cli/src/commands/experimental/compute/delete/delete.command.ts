@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -9,8 +9,8 @@ import { computeDelete } from "./delete.handler.ts";
 // reads through `resolveYes`, so redeclaring it here would shadow the
 // global, list `--yes` twice in `--help`, and quietly ignore `SUPABASE_YES`.
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Compute to delete.")),
-  projectRef: Flag.string("project-ref").pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Compute to delete.")),
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

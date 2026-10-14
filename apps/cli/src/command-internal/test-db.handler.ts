@@ -7,7 +7,12 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import {
+  envOverrideLookup,
+  loadProjectEnv,
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "./db-config.toml-read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
@@ -22,7 +27,7 @@ import {
   TestDbNoTestsError,
   TestDbRunError,
 } from "./test-db.errors.ts";
-import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import {
   rewriteDumpHostForToolContainer,
@@ -79,15 +84,10 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local stack primary service is not a database.",
     });
-  const major =
-    status.config.config.version === "15"
-      ? 15
-      : status.config.config.version === "17"
-        ? 17
-        : undefined;
+  const major = pgProveMajor(status.config.config.version);
   if (major === undefined)
     return yield* new LocalDbRunningError({
-      message: `The local database major version ${status.config.config.version} is not supported by pg_prove.`,
+      message: `The local database version ${status.config.config.version} is not supported by pg_prove.`,
     });
   const credentials = yield* database.credentials({ from: "runtime" }).pipe(
     Effect.mapError(
@@ -164,6 +164,9 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       dnsResolver,
       linkedProjectRef: flags.projectRef,
     });
+    yield* warnDeprecatedOrioleDBVersionEnv(
+      yield* envOverrideLookup(yield* loadProjectEnv(fs, path, cliSettings.workdir)),
+    );
 
     const args = buildPgProveArgs({
       paths: flags.paths,
@@ -311,7 +314,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             })
             .pipe(
               Effect.mapError(
-                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+                (cause) =>
+                  new TestDbRunError({ message: `pg_prove run failed: ${cause.message}`, cause }),
               ),
             );
         }

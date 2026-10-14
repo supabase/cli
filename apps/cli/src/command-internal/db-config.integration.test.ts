@@ -1,4 +1,3 @@
-import type { NetConnectOpts } from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -6,30 +5,24 @@ import {
   ConfigProvider,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
   Path,
+  Queue,
   Redacted,
   Stream,
 } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { vi } from "vitest";
 
-// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
 vi.mock("node:net", (importOriginal) =>
-  importOriginal<typeof import("node:net")>().then((net) => ({
-    ...net,
-    connect: (options: NetConnectOpts) => {
-      const host = "host" in options ? options.host : undefined;
-      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
-        return net.connect(options);
-      }
-      const socket = new net.Socket();
-      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
-      return socket;
-    },
-  })),
+  Promise.all([
+    import("../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
 import {
@@ -41,6 +34,19 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
+import {
+  primaryPoolerConfigs,
+  stubManagementApi,
+} from "../../tests/helpers/permission-real-layers.ts";
+import { applicableOperations } from "../../tests/helpers/permission-registry.ts";
+import type { ActiveFlags } from "../../tests/helpers/permission-registry.ts";
+import {
+  dbConfig,
+  dbConfigLayer,
+  dbConfigPoolerFallback,
+  dbConfigResolverLayer,
+} from "./db-config.layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -50,9 +56,9 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
+import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
@@ -76,6 +82,7 @@ function buildResolver(
     readonly projectHost?: string;
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
+    readonly debugLogger?: Layer.Layer<DebugLogger>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
   } = {},
@@ -88,7 +95,7 @@ function buildResolver(
       projectId: Option.none(),
     }),
     opts.dbConnection ?? mockDbConnection,
-    mockDebugLogger,
+    opts.debugLogger ?? mockDebugLogger,
     mockOutput().layer,
     mockAnalytics().layer,
     mockTelemetryRuntime(),
@@ -176,6 +183,18 @@ const linkedFlags: DbConfigFlags = {
   connType: "linked",
   dnsResolver: "native",
 };
+
+const assertDbConfigDrift = (
+  requests: ReadonlyArray<{ readonly method: string; readonly path: string }>,
+  activeFlags: ActiveFlags,
+) =>
+  assertBlockDrift(dbConfig, {
+    activeFlags,
+    requests: requests.map((r) => ({
+      method: r.method,
+      url: `https://api.supabase.com${r.path}`,
+    })),
+  });
 
 describe("dbConfigResolver (local + db-url)", () => {
   it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () =>
@@ -479,6 +498,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         stop: unused,
         restart: unused,
       },
+      startupEndpointChanges: unused,
       stop: unused,
       destroy: unused,
       gateway: unusedGateway,
@@ -1228,6 +1248,7 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
             ]);
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
           }),
         ),
         Effect.ensuring(
@@ -1345,6 +1366,137 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${targetRef}/config/database/pooler` },
             ]);
+            assertDbConfigDrift(requests, { linked: true, "project-ref": targetRef });
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "an explicit --project-ref with no password mints a login role and clears network bans after three failed temp-role connects",
+    () => {
+      const ref = "banrecoveryrefabcdef";
+
+      const previousFetch = globalThis.fetch;
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      let connectAttempts = 0;
+      const session: DbSession = {
+        exec: () => Effect.void,
+        execBatch: () => Effect.void,
+        query: () => Effect.succeed([]),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+      };
+      const dbConnection = Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.suspend(() => {
+            connectAttempts += 1;
+            return connectAttempts <= 3
+              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
+              : Effect.succeed(session);
+          }),
+      });
+      const json = (status: number, body: unknown) =>
+        Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      const fetchMock = Object.assign(
+        (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? input : input.url,
+          );
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          requests.push({ method, path: url.pathname });
+
+          if (method === "GET" && url.pathname === `/v1/projects/${ref}/config/database/pooler`) {
+            return json(200, [
+              {
+                identifier: "primary",
+                database_type: "PRIMARY",
+                is_using_scram_auth: true,
+                db_user: "postgres",
+                db_host: "db.example",
+                db_port: 5432,
+                db_name: "postgres",
+                connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                default_pool_size: null,
+                max_client_conn: null,
+                pool_mode: "transaction",
+              },
+            ]);
+          }
+          if (method === "POST" && url.pathname === `/v1/projects/${ref}/cli/login-role`) {
+            return json(201, {
+              role: "cli_login_role",
+              password: "temporary-role-password",
+              ttl_seconds: 3600,
+            });
+          }
+          if (method === "POST" && url.pathname === `/v1/projects/${ref}/network-bans/retrieve`) {
+            return json(200, { banned_ipv4_addresses: ["203.0.113.7"] });
+          }
+          if (method === "DELETE" && url.pathname === `/v1/projects/${ref}/network-bans`) {
+            return json(200, {});
+          }
+          return json(404, { message: "unexpected request" });
+        },
+        { preconnect: previousFetch.preconnect },
+      );
+
+      globalThis.fetch = fetchMock;
+
+      return Effect.gen(function* () {
+        const retries = yield* Queue.unbounded<string>();
+        const debugLogger = Layer.succeed(DebugLogger, {
+          debug: (message) =>
+            message.startsWith("Retry (") ? Queue.offer(retries, message) : Effect.void,
+          http: () => Effect.void,
+        });
+        const dir = yield* withWorkdir();
+        const resolved = yield* resolve(
+          dir,
+          { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+          {
+            projectHost: "invalid",
+            dbConnection,
+            debugLogger,
+            configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          },
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        for (let failedConnects = 1; failedConnects <= 3; failedConnects++) {
+          yield* Queue.take(retries).pipe(Effect.raceFirst(Fiber.join(resolved)));
+          yield* TestClock.adjust("10 seconds");
+        }
+        return yield* Fiber.join(resolved);
+      }).pipe(
+        Effect.tap((r) =>
+          Effect.sync(() => {
+            expect(r.conn).toMatchObject({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              user: `cli_login_role.${ref}`,
+              password: "temporary-role-password",
+            });
+            expect(connectAttempts).toBe(4);
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+              { method: "POST", path: `/v1/projects/${ref}/cli/login-role` },
+              { method: "POST", path: `/v1/projects/${ref}/network-bans/retrieve` },
+              { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
+            ]);
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
           }),
         ),
         Effect.ensuring(
@@ -1395,4 +1547,370 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
       );
     },
   );
+});
+
+/** Replaces `globalThis.fetch` for the scope: `respond` answers a request, anything else gets a 404. */
+describe("dbConfigResolver (Management API calls)", () => {
+  const noDirectConnect = Layer.succeed(DbConnection, {
+    connect: () => Effect.die("unexpected connect()"),
+  });
+  const noApiCalls = (
+    requests: ReadonlyArray<{ readonly method: string; readonly path: string }>,
+    activeFlags: ActiveFlags,
+  ) => {
+    expect(requests).toEqual([]);
+    expect(
+      applicableOperations(
+        { status: "mapped", operations: dbConfig.operations, noApiEffectFlags: [] },
+        activeFlags,
+      ),
+    ).toEqual([]);
+    assertDbConfigDrift(requests, activeFlags);
+  };
+
+  it.effect("--local makes no Management API request and the block declares none", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      const dir = yield* withWorkdir();
+      const r = yield* resolve(dir, localFlags);
+      expect(r.isLocal).toBe(true);
+      noApiCalls(requests, { local: true });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("--db-url makes no Management API request and the block declares none", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      const dir = yield* withWorkdir();
+      const r = yield* resolve(dir, dbUrlFlags("postgres://alice:secret@example.com:6543/appdb"));
+      expect(r.isLocal).toBe(false);
+      noApiCalls(requests, { "db-url": true });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect(
+    "a 403 on the pooler config fails with the IPv6 error when the direct host is unreachable",
+    () => {
+      const ref = "targetprojectrefabcd";
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) =>
+          method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+            ? Response.json({ message: "Forbidden" }, { status: 403 })
+            : undefined,
+        );
+        const dir = yield* withWorkdir();
+        return yield* resolve(
+          dir,
+          { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+          {
+            projectHost: "invalid",
+            dbConnection: noDirectConnect,
+            configEnv: {
+              SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+              SUPABASE_DB_PASSWORD: "ambient-password",
+            },
+          },
+        );
+      }).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.pretty(exit.cause)).toContain("DbConfigIpv6Error");
+            }
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+            ]);
+            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect("an empty --project-ref still fetches the pooler config for the linked project", () => {
+    const ref = "emptyprojectrefabcde";
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) =>
+        method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+          ? Response.json(primaryPoolerConfigs(ref))
+          : undefined,
+      );
+      const dir = yield* withWorkdir();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), ref);
+      const r = yield* resolve(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some("") },
+        {
+          projectHost: "invalid",
+          dbConnection: noDirectConnect,
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+          },
+        },
+      );
+      expect(r.conn).toMatchObject({ host: "aws-0-us-east-1.pooler.supabase.com", port: 5432 });
+      expect(requests).toEqual([
+        { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+      ]);
+      assertDbConfigDrift(requests, { linked: true, "project-ref": "" });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("an empty --password still mints a login role", () => {
+    const ref = "emptypasswordrefabcd";
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    const session: DbSession = {
+      exec: () => Effect.void,
+      execBatch: () => Effect.void,
+      query: () => Effect.succeed([]),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+    };
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) => {
+        if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+          return Response.json(primaryPoolerConfigs(ref));
+        }
+        if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+          return Response.json(
+            { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+            { status: 201 },
+          );
+        }
+        return undefined;
+      });
+      const dir = yield* withWorkdir();
+      const r = yield* resolve(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some(ref), password: Option.some("") },
+        {
+          projectHost: "invalid",
+          dbConnection: Layer.succeed(DbConnection, { connect: () => Effect.succeed(session) }),
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+          },
+        },
+      );
+      expect(r.conn).toMatchObject({
+        user: `cli_login_role.${ref}`,
+        password: "temporary-role-password",
+      });
+      expect(requests.map((request) => request.path)).toContain(
+        `/v1/projects/${ref}/cli/login-role`,
+      );
+      assertDbConfigDrift(requests, { linked: true, "project-ref": ref, password: "" });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  for (const forbidden of ["retrieve", "delete"] as const) {
+    it.effect(
+      `still connects with the login role when the network-ban ${forbidden} is forbidden`,
+      () => {
+        const ref = "banforbiddenrefabcde";
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        let connectAttempts = 0;
+        const session: DbSession = {
+          exec: () => Effect.void,
+          execBatch: () => Effect.void,
+          query: () => Effect.succeed([]),
+          extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
+          queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+        };
+        const dbConnection = Layer.succeed(DbConnection, {
+          connect: () =>
+            Effect.suspend(() => {
+              connectAttempts += 1;
+              return connectAttempts <= 3
+                ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
+                : Effect.succeed(session);
+            }),
+        });
+        const forbiddenResponse = () => Response.json({ message: "Forbidden" }, { status: 403 });
+        return Effect.gen(function* () {
+          yield* stubManagementApi(requests, (method, path) => {
+            if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+              return Response.json(primaryPoolerConfigs(ref));
+            }
+            if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+              return Response.json(
+                { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+                { status: 201 },
+              );
+            }
+            if (method === "POST" && path === `/v1/projects/${ref}/network-bans/retrieve`) {
+              return forbidden === "retrieve"
+                ? forbiddenResponse()
+                : Response.json({ banned_ipv4_addresses: ["203.0.113.7"] });
+            }
+            if (method === "DELETE" && path === `/v1/projects/${ref}/network-bans`) {
+              return forbiddenResponse();
+            }
+            return undefined;
+          });
+          const retries = yield* Queue.unbounded<string>();
+          const debugLogger = Layer.succeed(DebugLogger, {
+            debug: (message) =>
+              message.startsWith("Retry (") ? Queue.offer(retries, message) : Effect.void,
+            http: () => Effect.void,
+          });
+          const dir = yield* withWorkdir();
+          const resolved = yield* resolve(
+            dir,
+            { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+            {
+              projectHost: "invalid",
+              dbConnection,
+              debugLogger,
+              configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+            },
+          ).pipe(Effect.forkChild({ startImmediately: true }));
+          for (let failedConnects = 1; failedConnects <= 3; failedConnects++) {
+            yield* Queue.take(retries).pipe(Effect.raceFirst(Fiber.join(resolved)));
+            yield* TestClock.adjust("10 seconds");
+          }
+          const r = yield* Fiber.join(resolved);
+          expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
+          expect(connectAttempts).toBe(4);
+          expect(requests).toContainEqual(
+            forbidden === "retrieve"
+              ? { method: "POST", path: `/v1/projects/${ref}/network-bans/retrieve` }
+              : { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
+          );
+          assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      },
+    );
+  }
+});
+
+describe("dbConfigResolver (container pooler fallback)", () => {
+  const ref = "fallbackrefabcdefghi";
+  const poolerPath = `/v1/projects/${ref}/config/database/pooler`;
+  const loginRolePath = `/v1/projects/${ref}/cli/login-role`;
+  const session: DbSession = {
+    exec: () => Effect.void,
+    execBatch: () => Effect.void,
+    query: () => Effect.succeed([]),
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+  };
+  const connects = Layer.succeed(DbConnection, { connect: () => Effect.succeed(session) });
+  const assertFallbackDrift = (
+    requests: ReadonlyArray<{ readonly method: string; readonly path: string }>,
+    activeFlags: ActiveFlags,
+  ) =>
+    assertBlockDrift(dbConfigPoolerFallback, {
+      activeFlags,
+      requests: requests.map((r) => ({
+        method: r.method,
+        url: `https://api.supabase.com${r.path}`,
+      })),
+      exact: true,
+    });
+
+  it.effect("fetches the pooler config, then mints a login role when no password is set", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) => {
+        if (method === "GET" && path === poolerPath)
+          return Response.json(primaryPoolerConfigs(ref));
+        if (method === "POST" && path === loginRolePath) {
+          return Response.json(
+            { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+            { status: 201 },
+          );
+        }
+        return undefined;
+      });
+      const dir = yield* withWorkdir();
+      const pooler = yield* resolvePoolerFallback(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+        { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
+      );
+      expect(Option.isSome(pooler)).toBe(true);
+      if (Option.isSome(pooler)) {
+        expect(pooler.value).toMatchObject({
+          host: "aws-0-us-east-1.pooler.supabase.com",
+          user: `cli_login_role.${ref}`,
+          password: "temporary-role-password",
+        });
+      }
+      expect(requests).toEqual([
+        { method: "GET", path: poolerPath },
+        { method: "POST", path: loginRolePath },
+      ]);
+      assertFallbackDrift(requests, { linked: true });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("fetches the pooler config but mints no login role when a password is set", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) =>
+        method === "GET" && path === poolerPath
+          ? Response.json(primaryPoolerConfigs(ref))
+          : undefined,
+      );
+      const dir = yield* withWorkdir();
+      const pooler = yield* resolvePoolerFallback(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some(ref), password: Option.some("secret") },
+        { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
+      );
+      expect(pooler).toEqual(
+        Option.some(expect.objectContaining({ user: `postgres.${ref}`, password: "secret" })),
+      );
+      expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
+      assertFallbackDrift(requests, { linked: true, password: "secret" });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("returns no pooler when the pooler config is forbidden", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) =>
+        method === "GET" && path === poolerPath
+          ? Response.json({ message: "Forbidden" }, { status: 403 })
+          : undefined,
+      );
+      const dir = yield* withWorkdir();
+      const pooler = yield* resolvePoolerFallback(
+        dir,
+        { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+        { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
+      );
+      expect(Option.isNone(pooler)).toBe(true);
+      expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
+      assertFallbackDrift(requests, { linked: true });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("--local returns no pooler and makes no Management API request", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      const dir = yield* withWorkdir();
+      const pooler = yield* resolvePoolerFallback(dir, localFlags);
+      expect(Option.isNone(pooler)).toBe(true);
+      expect(requests).toEqual([]);
+      assertFallbackDrift(requests, { local: true });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
 });

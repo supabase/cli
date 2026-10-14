@@ -43,10 +43,10 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
 
 describe("domains delete integration", () => {
-  it.live("prints the success line to stderr in text mode", () => {
+  it.effect("prints the success line to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -58,7 +58,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format json", () => {
+  it.effect("emits a structured success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -67,7 +67,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success event for --output-format stream-json", () => {
+  it.effect("emits a structured success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -75,7 +75,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores -o json and still only prints to stderr (Go parity)", () => {
+  it.effect("ignores -o json and still only prints to stderr (Go parity)", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
@@ -84,16 +84,34 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores --include-raw-output (inert on delete, Go parity)", () => {
+  it.effect(
+    "is inert apart from the stderr deprecation warning when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup({ goOutput: "json" });
+      return Effect.gen(function* () {
+        yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
+        expect(out.stdoutText).toBe("");
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+            "Deleted custom hostname config successfully.\n",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("warns when --include-raw-output=false", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: true });
+      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
+          "Deleted custom hostname config successfully.\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
@@ -106,7 +124,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));
@@ -117,7 +135,7 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsDelete(baseFlags));

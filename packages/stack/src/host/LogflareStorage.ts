@@ -69,7 +69,11 @@ export const make = Effect.fn("LogflareStorage.make")(function* <E>(
     acquire: database.pipe(
       Effect.flatMap((connection) =>
         Layer.build(
-          PgClient.layer({ url: Redacted.make(connection.url), connectTimeout: "2 seconds" }),
+          PgClient.layer({
+            url: Redacted.make(connection.url),
+            connectTimeout: "2 seconds",
+            idleTimeout: "10 seconds",
+          }),
         ),
       ),
       Effect.map((context) => Context.get(context, PgClient.PgClient)),

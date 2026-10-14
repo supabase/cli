@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import {
   DnsResolverFlag,
@@ -15,10 +15,12 @@ import {
   loadProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
 } from "../../../../../command-internal/db-config.toml-read.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
+import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
 import {
   isPgDeltaDebugEnabled,
   resolvePgDeltaProjectId,
@@ -69,10 +71,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
   // linked-project cache finalizer can read it after the body resolves it.
-  let linkedProjectRef: string | undefined;
+  const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
+    yield* warnDeprecatedOrioleDBVersionEnv(baseToml.envLookup);
     // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
     // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
@@ -107,7 +110,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         ? cliSettings.projectId
         : yield* readProjectRefFile(fs, path, cliSettings.workdir);
       if (Option.isSome(linkedRef)) {
-        linkedProjectRef = linkedRef.value;
+        yield* Ref.set(linkedProjectRef, linkedRef.value);
         toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef.value);
       }
     }
@@ -136,13 +139,14 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const local: LocalConn = { port: toml.port, password: toml.password };
 
+    const resolvedLinkedProjectRef = yield* Ref.get(linkedProjectRef);
     const run: DeclarativeRunContext = {
       pgDelta: {
         // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
         // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
         // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
         // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
         cwd: cliSettings.workdir,
         // Merged config's deno_version (re-loaded with the linked ref above on
         // `--linked`), so pg-delta runs under the remote-configured Deno image.
@@ -154,10 +158,12 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       declarativeDirDisplay: declarativeDirRel,
       schema: flags.schema,
       noCache: flags.noCache,
-      debug: isPgDeltaDebugEnabled(),
+      debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
-      ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
+      ...(resolvedLinkedProjectRef !== undefined
+        ? { linkedProjectRef: resolvedLinkedProjectRef }
+        : {}),
     };
 
     const hasExplicitTarget =
@@ -220,7 +226,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {
-          linkedProjectRef = linkedRef.value;
+          yield* Ref.set(linkedProjectRef, linkedRef.value);
         }
       }
       target = yield* resolveSmartTargetEndpoint(
@@ -260,12 +266,15 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
     yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
   }).pipe(
+    // Starting or resetting the local database loads the project context, which would print the
+    // OrioleDB env WARN again.
+    withSingleOrioleDBVersionEnvWarning,
     // Writes the linked-project cache for any resolved ref, on success and failure. Only
     // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
     // token is missing, or the GET is non-200.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
+      Effect.flatMap(Ref.get(linkedProjectRef), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),
@@ -275,7 +284,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, dir: string) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 
@@ -290,10 +301,8 @@ const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
   const entries = yield* fs
     .readDirectory(dir)
     .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.succeed<ReadonlyArray<string>>([])
-          : Effect.fail(error),
+      Effect.catchReason("PlatformError", "NotFound", () =>
+        Effect.succeed<ReadonlyArray<string>>([]),
       ),
     );
   return entries.length > 0;
@@ -308,7 +317,7 @@ const hasMigrationFiles = Effect.fnUntraced(function* (
   // path-is-a-file, not-exist, …), so generate continues into the no-migrations local flow. The
   // real diff path keeps `listLocalMigrations`'s hard error behavior instead.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   return migrations.length > 0;
 });

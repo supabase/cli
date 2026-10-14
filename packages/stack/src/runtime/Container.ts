@@ -20,7 +20,8 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { StackFailureKind } from "../FailureKind.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
 import { identifyContainer } from "./ContainerName.ts";
@@ -29,6 +30,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly kind?: StackFailureKind;
 }> {}
 
 interface ContainerSpec {
@@ -91,12 +93,48 @@ export interface ContainerRuntime {
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
 
-const errorFor = (operation: string, cause: unknown): ContainerError =>
-  new ContainerError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  });
+/** The engine picks published host ports (`127.0.0.1::port`), so a refusal is its own allocation. */
+const portAllocated = (message: string) =>
+  /port is already allocated|address already in use|listen failed for host tcp port[^\n]*address in use/iu.test(
+    message,
+  );
+
+/** Podman releases the host port it picks at create before pasta binds it at start, so another listener can take it. */
+const PORT_COLLISION_ATTEMPTS = 3;
+
+/** A refused registry connection also reads "connection refused", so a pull needs the daemon named. */
+const pullEngineUnreachable = (cause: unknown, message: string) =>
+  (cause instanceof Object &&
+    "cause" in cause &&
+    cause.cause instanceof PlatformError.PlatformError &&
+    cause.cause.reason._tag === "NotFound" &&
+    cause.cause.reason.method === "spawn") ||
+  /cannot connect to the docker daemon|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified|connection refused)|unable to connect to podman socket:[^\n]*(?:the system cannot find the file specified|connection refused)/iu.test(
+    message,
+  );
+
+const engineKind = (
+  operation: string,
+  cause: unknown,
+  message: string,
+): StackFailureKind | undefined =>
+  cause instanceof ContainerError
+    ? cause.kind
+    : Cause.isTimeoutError(cause)
+      ? operation === "pull"
+        ? "image-pull"
+        : "engine-timeout"
+      : (operation === "pull" ? pullEngineUnreachable(cause, message) : engineUnreachable(cause))
+        ? "engine-unavailable"
+        : portAllocated(message)
+          ? "port-allocation"
+          : undefined;
+
+const errorFor = (operation: string, cause: unknown): ContainerError => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const kind = engineKind(operation, cause, message);
+  return new ContainerError({ operation, message, cause, ...(kind === undefined ? {} : { kind }) });
+};
 
 /** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
@@ -135,16 +173,24 @@ const transientPullFailure = (error: ContainerError) =>
     error.message,
   );
 
-/** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
+/**
+ * Runs one engine CLI invocation outside the owner's command runner, for resolving its target
+ * itself. `pin` precedes `args` so the failure names the subcommand, not a pin flag.
+ */
 const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   engine: ContainerEngine,
   args: ReadonlyArray<string>,
+  pin: ReadonlyArray<string> = [],
 ): Effect.Effect<string, ContainerError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make(engine, args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(engine, [...pin, ...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -205,7 +251,7 @@ const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Se
   });
 
 const nonEmptyEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.map(Option.filter((value) => value.length > 0)),
     Effect.orElseSucceed(() => Option.none<string>()),
   );
@@ -219,12 +265,7 @@ const podmanInfo = (
   argv: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
-    const output = yield* runRaw(spawner, "podman", [
-      ...argv,
-      "info",
-      "--format",
-      PODMAN_INFO_FORMAT,
-    ]);
+    const output = yield* runRaw(spawner, "podman", ["info", "--format", PODMAN_INFO_FORMAT], argv);
     const [remote, rootless, hostname, ...graphRoot] = output.trim().split("|");
     const root = graphRoot.join("|");
     if (hostname === undefined || hostname.length === 0 || root.length === 0)
@@ -288,12 +329,7 @@ export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(fu
   const argv: ReadonlyArray<string> = Option.isSome(host)
     ? ["--host", host.value]
     : ["--context", yield* resolveContextName(spawner)];
-  const daemonId = (yield* runRaw(spawner, "docker", [
-    ...argv,
-    "info",
-    "--format",
-    "{{.ID}}",
-  ])).trim();
+  const daemonId = (yield* runRaw(spawner, "docker", ["info", "--format", "{{.ID}}"], argv)).trim();
   if (daemonId.length === 0) return yield* errorFor("identity", "Engine returned an empty id");
   return { engine: "docker", argv, daemonId };
 });
@@ -613,7 +649,7 @@ export const makeContainerRuntime = (options: {
       Effect.gen(function* () {
         const testRunLabel = yield* testRunLabelArgs;
         const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => errorFor("identity", cause)),
+          Effect.mapError((cause) => errorFor("token", cause)),
         );
         // Not an instance container: no instance label, so it is never mistaken for one.
         const { name } = identifyContainer(spec, token, true);
@@ -683,10 +719,10 @@ export const makeContainerRuntime = (options: {
         ? hostGateway.prefetch(hostGatewayProbe(image, spec)).pipe(Effect.as("host-gateway"))
         : hostGateway.resolve(hostGatewayProbe(image, spec));
 
-    const launch = Effect.fn("Container.launch")(function* (
+    const launchOnce = Effect.fnUntraced(function* (
       spec: ContainerSpec,
-      interactive = false,
-      oneOff = false,
+      interactive: boolean,
+      oneOff: boolean,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -733,7 +769,7 @@ export const makeContainerRuntime = (options: {
         )
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       const token = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => errorFor("identity", cause)),
+        Effect.mapError((cause) => errorFor("token", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const hostAlias = yield* hostAliasTarget(image, spec);
@@ -829,10 +865,11 @@ export const makeContainerRuntime = (options: {
                     yield* run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(
                       Effect.ignore,
                     );
-                    return yield* errorFor(
-                      "create",
-                      `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
-                    );
+                    return yield* new ContainerError({
+                      operation: "create",
+                      message: `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
+                      kind: "engine-timeout",
+                    });
                   }),
                 ),
               ),
@@ -1081,6 +1118,45 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
+    const launchWithRetry = (
+      spec: ContainerSpec,
+      interactive: boolean,
+      oneOff: boolean,
+      owner: Scope.Scope,
+      attempt: number,
+    ): ReturnType<ContainerRuntime["launch"]> =>
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ "retry.attempt_count": attempt });
+        const attemptScope = yield* Scope.fork(owner);
+        return yield* launchOnce(spec, interactive, oneOff).pipe(
+          Effect.provideService(Scope.Scope, attemptScope),
+          Effect.catchTag("ContainerLaunchError", (error) =>
+            attempt >= PORT_COLLISION_ATTEMPTS || error.failure.kind !== "port-allocation"
+              ? Effect.fail(error)
+              : Effect.logDebug(`Retrying container launch: ${error.failure.message}`).pipe(
+                  Effect.andThen(
+                    error.process.remove.pipe(
+                      Effect.tapError((cause) =>
+                        Effect.logWarning(
+                          `Failed to remove collided container ${error.process.id}: ${cause.message}`,
+                        ),
+                      ),
+                      Effect.mapError(() => error),
+                    ),
+                  ),
+                  Effect.andThen(Scope.close(attemptScope, Exit.void)),
+                  Effect.andThen(launchWithRetry(spec, interactive, oneOff, owner, attempt + 1)),
+                ),
+          ),
+        );
+      });
+    const launch = Effect.fn("Container.launch")(function* (
+      spec: ContainerSpec,
+      interactive = false,
+      oneOff = false,
+    ) {
+      return yield* launchWithRetry(spec, interactive, oneOff, yield* Scope.Scope, 1);
+    });
     return {
       prepare,
       prepareImage,
@@ -1137,17 +1213,21 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
   readonly stackRoot: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* runRaw(spawner, options.target.engine, [
-    ...options.target.argv,
-    "ps",
-    "--all",
-    "--quiet",
-    "--no-trunc",
-    "--filter",
-    `label=com.supabase.stack=${options.stackId}`,
-    "--filter",
-    `label=com.supabase.stack-root=${options.stackRoot}`,
-  ]);
+  const output = yield* runRaw(
+    spawner,
+    options.target.engine,
+    [
+      "ps",
+      "--all",
+      "--quiet",
+      "--no-trunc",
+      "--filter",
+      `label=com.supabase.stack=${options.stackId}`,
+      "--filter",
+      `label=com.supabase.stack-root=${options.stackRoot}`,
+    ],
+    options.target.argv,
+  );
   return output
     .split("\n")
     .map((line) => line.trim())
@@ -1189,15 +1269,19 @@ export const listStackLabels = Effect.fn("Container.listStackLabels")(function* 
   target: EngineTarget,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* runRaw(spawner, target.engine, [
-    ...target.argv,
-    "ps",
-    "--all",
-    "--filter",
-    "label=com.supabase.stack",
-    "--format",
-    '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
-  ]);
+  const output = yield* runRaw(
+    spawner,
+    target.engine,
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=com.supabase.stack",
+      "--format",
+      '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
+    ],
+    target.argv,
+  );
   const labels = yield* Effect.forEach(
     output.split("\n").filter((line) => line.length > 0),
     (line) => decodeStackLabels(line).pipe(Effect.option),

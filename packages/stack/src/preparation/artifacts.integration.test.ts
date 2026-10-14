@@ -18,7 +18,7 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as Environment from "../namespace/Environment.ts";

@@ -33,14 +33,14 @@ jobs:
           cache: true
       - id: list
         run: |
-          echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
+          echo "tags=$(go run tools/listdep/main.go)" >> "$GITHUB_OUTPUT"
       - id: curr
         name: List main branch dependencies
         if: github.ref != 'refs/heads/main'
         run: |
           git fetch origin main
           git checkout main
-          echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
+          echo "tags=$(go run tools/listdep/main.go)" >> "$GITHUB_OUTPUT"
 
   publish:
     needs:

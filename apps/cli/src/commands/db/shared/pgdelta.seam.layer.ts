@@ -1,5 +1,5 @@
-import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -162,6 +162,7 @@ export const declarativeSeamLayer = Layer.effect(
             );
             const tomlProjectId = toml.projectId;
             const projectId = resolveLocalProjectId(
+              path,
               Option.getOrUndefined(cliSettings.projectId),
               Option.getOrUndefined(tomlProjectId),
               cliSettings.workdir,
@@ -181,13 +182,7 @@ export const declarativeSeamLayer = Layer.effect(
                   }),
               ),
             );
-            const stdoutChunks: Array<Uint8Array> = [];
-            const stderrChunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(child.stdout, (chunk) =>
-              Effect.sync(() => {
-                stdoutChunks.push(chunk);
-              }),
-            ).pipe(
+            const stdoutChunks = yield* Stream.runCollect(child.stdout).pipe(
               Effect.mapError(
                 () =>
                   new DeclarativeShadowDbError({
@@ -196,11 +191,7 @@ export const declarativeSeamLayer = Layer.effect(
                   }),
               ),
             );
-            yield* Stream.runForEach(child.stderr, (chunk) =>
-              Effect.sync(() => {
-                stderrChunks.push(chunk);
-              }),
-            ).pipe(
+            const stderrChunks = yield* Stream.runCollect(child.stderr).pipe(
               Effect.mapError(
                 () =>
                   new DeclarativeShadowDbError({
@@ -300,16 +291,14 @@ export function isMissingContainerInspectError(stderr: string): boolean {
   return stderr.toLowerCase().includes("no such container");
 }
 
+const decodeInspectJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
 export function resolveContainerInspectImageName(stdout: string): string {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) return "";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return trimmed;
-  }
-  const inspect = Array.isArray(parsed) ? parsed[0] : parsed;
+  const parsed = decodeInspectJson(trimmed);
+  if (Option.isNone(parsed)) return trimmed;
+  const inspect = Array.isArray(parsed.value) ? parsed.value[0] : parsed.value;
   if (!isJsonRecord(inspect)) return "";
   const imageName = inspect["ImageName"];
   if (typeof imageName === "string" && imageName.trim().length > 0) {

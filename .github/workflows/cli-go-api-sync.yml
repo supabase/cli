@@ -54,10 +54,10 @@ jobs:
           if git diff --exit-code --quiet api/v1-openapi.yaml &&
             git diff --ignore-space-at-eol --exit-code --quiet pkg; then
             echo "No changes detected"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "Changes detected"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate token

@@ -79,7 +79,7 @@ Identical to `test db`. See
   proxy-only `--local` default-modelling caveat that existed while this
   command still forwarded to the Go binary (the previous proxy's
   `if (flags.local) args.push("--local")` never actually forwarded the
-  default, since Effect CLI's own `Flag.boolean` default is `false`; now that
+  default, since Effect CLI's own `Flag.Boolean` default is `false`; now that
   the flag drives `resolveDbTargetFlags`'s presence-based selection
   directly — same mechanism `test db` already used — the true default is
   reflected exactly, with no proxy-only quirk to carry over).

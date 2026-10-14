@@ -41,6 +41,99 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
+import { block, type OperationEntry } from "./command-permissions/model.ts";
+
+const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
+  {
+    operationId: "v1-create-login-role",
+    kind: "required",
+    when: [{ flag: "password", present: false }],
+    context:
+      "no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
+  },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ flag: "project-ref" }],
+    context:
+      "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ flag: "project-ref", oneOf: [""] }],
+    context:
+      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-list-all-network-bans",
+    kind: "best-effort",
+    when: [{ flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+  {
+    operationId: "v1-delete-network-bans",
+    kind: "best-effort",
+    when: [{ flag: "password", present: false }],
+    context:
+      "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+];
+
+/**
+ * The same calls as {@link dbConfig} without its target condition, for a command that reaches the
+ * linked path some other way: `db diff --from linked`, a `--linked` flag with no default target, or
+ * a target prompt.
+ */
+export const dbConfigLinked = block("db-config", linkedEntries);
+
+/**
+ * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
+ * include it with `withDbTarget`. The container retry that `db dump`, `db pull` and
+ * `db remote commit` run is {@link dbConfigPoolerFallback}; `gen types --project-id` fetches the
+ * pooler config without `--project-ref`, so that command declares its own entry.
+ */
+export const dbConfig = block(
+  "db-config",
+  linkedEntries.map((entry) => ({
+    ...entry,
+    when: [{ dbTarget: ["linked" as const] }, ...(entry.when ?? [])],
+  })),
+);
+
+/**
+ * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a linked dump, declarative export
+ * or pull diff fails with an IPv6 connectivity error against a direct host the CLI could reach.
+ */
+export const dbConfigPoolerFallback = block("db-config-pooler-fallback", [
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }],
+    context:
+      "a linked dump, declarative export or pull diff fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-create-login-role",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "the same retry, and no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env",
+  },
+  {
+    operationId: "v1-list-all-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context: "the same retry, after three failed attempts to connect as the temporary login role",
+  },
+  {
+    operationId: "v1-delete-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context: "the same retry, after three failed attempts to connect as the temporary login role",
+  },
+]);
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
@@ -214,7 +307,7 @@ const resolveDbPassword = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-  const ambientPassword = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
+  const ambientPassword = yield* Config.option(Config.String("SUPABASE_DB_PASSWORD"));
   return (
     Option.getOrUndefined(passwordFlag) ??
     Option.getOrUndefined(ambientPassword) ??

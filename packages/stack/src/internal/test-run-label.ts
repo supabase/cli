@@ -10,7 +10,7 @@ const testRunLabelPattern = /^[A-Za-z0-9-]{1,64}$/u;
 
 /** Reads and validates the optional test-run id through Effect `Config`. */
 export const readTestRunId: Effect.Effect<Option.Option<string>, string> = Effect.gen(function* () {
-  const testRun = yield* Config.option(Config.string(testRunEnvVar)).pipe(
+  const testRun = yield* Config.option(Config.String(testRunEnvVar)).pipe(
     Effect.mapError((cause) => String(cause)),
   );
   if (Option.isNone(testRun)) return testRun;

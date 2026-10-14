@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";
@@ -8,6 +8,9 @@ import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts
 const stackId = process.argv[2];
 const root = process.argv[3];
 const shared = process.argv[4] === "shared";
+// "stall-before-start" reports the created helper and then never attaches to it, so a test can
+// kill this owner in the window between `create` and `start`.
+const stallBeforeStart = process.argv[4] === "stall-before-start";
 if (stackId === undefined || root === undefined) throw new Error("Expected stack id and root");
 const HostMarker = Schema.Struct({
   backend: Schema.Literals(["host"]),
@@ -20,7 +23,16 @@ const run = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawner = stallBeforeStart
+    ? ChildProcessSpawner.make((command) =>
+        ChildProcess.isStandardCommand(command) && command.args[0] === "start"
+          ? Effect.sync(() => process.stdout.write("HELPER_CREATED\n")).pipe(
+              Effect.andThen(Effect.never),
+            )
+          : realSpawner.spawn(command),
+      )
+    : realSpawner;
   const storageRoot = path.join(root, "state", "stack", "data");
   const instanceRoot = path.join(storageRoot, "database");
   const cacheRoot = path.join(root, "cache");

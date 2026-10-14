@@ -1,9 +1,9 @@
-import { Argument, Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { dbBranchDelete } from "./delete.handler.ts";
 
 const config = {
-  branchName: Argument.string("branch name").pipe(
+  branchName: Argument.String("branch name").pipe(
     Argument.withDescription("Name of the branch to delete."),
   ),
 } as const;

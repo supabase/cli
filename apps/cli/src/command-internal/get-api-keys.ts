@@ -7,6 +7,16 @@ import {
   ProjectsApiKeysUnexpectedStatusError,
 } from "../commands/projects/projects.errors.ts";
 import { mapHttpError } from "./http-errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/**
+ * `getProjectApiKeys`, shared by `projects api-keys` and `bootstrap`. Only a caller that asks
+ * for secret keys sends `reveal=true` (`projects api-keys --reveal`), so that qualifier belongs
+ * on the command's own entry.
+ */
+export const projectApiKeys = block("project-api-keys", [
+  { operationId: "v1-get-project-api-keys", kind: "required" },
+]);
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 

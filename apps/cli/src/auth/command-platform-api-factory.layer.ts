@@ -1,4 +1,4 @@
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, Layer } from "effect";
 
 import { dohFetchLayer } from "../command-internal/http-dns.ts";

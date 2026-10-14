@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -13,11 +13,11 @@ import { genSigningKey } from "./signing-key.handler.ts";
 const ALGORITHM_VALUES = ["ES256", "RS256"] as const;
 
 const config = {
-  algorithm: Flag.choice("algorithm", ALGORITHM_VALUES).pipe(
+  algorithm: Flag.Literals("algorithm", ALGORITHM_VALUES).pipe(
     Flag.withDescription("Algorithm for signing key generation."),
     Flag.withDefault("ES256" as const),
   ),
-  append: Flag.boolean("append").pipe(
+  append: Flag.Boolean("append").pipe(
     Flag.withDescription("Append new key to existing keys file instead of overwriting."),
     Flag.withDefault(false),
   ),

@@ -1,5 +1,6 @@
-import { Cause, Clock, DateTime, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path, Ref, Result } from "effect";
 
+import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
 import {
   DnsResolverFlag,
   resolveExperimentalWithProjectEnv,
@@ -85,7 +86,7 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 const formatTimestamp = (millis: number): string =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/g, "").slice(0, 14);
 
-export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
+const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
 ) {
   const output = yield* Output;
@@ -106,7 +107,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
   // Set when the bootstrap branch below resolves a linked ref, so the `Effect.ensuring`
   // finalizer at the end of this handler can refresh the linked-project cache.
-  let linkedProjectRef: string | undefined;
+  const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     const toml = yield* readDbToml(fs, path, cliSettings.workdir);
@@ -147,7 +148,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
         // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
         // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
         cwd: cliSettings.workdir,
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,
@@ -157,7 +158,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       declarativeDirDisplay: declarativeDirRel,
       schema: flags.schema,
       noCache: flags.noCache,
-      debug: isPgDeltaDebugEnabled(),
+      debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
     };
@@ -174,13 +175,11 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     // bundle was saved.
     const saveApplyDebugBundle = (bundle: DebugBundle) =>
       saveDebugBundle(fs, path, cliSettings.workdir, tempDir, migrationsDir, bundle).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            output
-              .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
-              .pipe(Effect.as("")),
-          onSuccess: Effect.succeed,
-        }),
+        Effect.catch((error) =>
+          output
+            .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
+            .pipe(Effect.as("")),
+        ),
       );
 
     // Step 1: declarative files must exist; in a TTY, offer to generate them.
@@ -204,7 +203,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // keeps the hard list behavior.
       const hasMigrations =
         (yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
         )).length > 0;
       // Only when migrations exist, resolve the ref (config `project_id` → `.temp/project-ref`)
       // and record it for the finalizer, so a linked-workdir bootstrap caches regardless of the
@@ -220,7 +219,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {
-          linkedProjectRef = linkedRef.value;
+          yield* Ref.set(linkedProjectRef, linkedRef.value);
         }
       }
       // sync has no target flags, so reset stays interactive (the prompt fires under the local
@@ -352,14 +351,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     const planWithLoadRecovery = Effect.fnUntraced(function* () {
       while (true) {
-        const attempt = yield* planDeclarativeSync().pipe(
-          Effect.match({
-            onFailure: (error) => ({ error }),
-            onSuccess: (result) => ({ result }),
-          }),
-        );
-        if ("result" in attempt) return Option.some(attempt.result);
-        const error = attempt.error;
+        const attempt = yield* planDeclarativeSync().pipe(Effect.result);
+        if (Result.isSuccess(attempt)) return Option.some(attempt.success);
+        const error = attempt.failure;
         if (!(error instanceof DeclarativeCompatibilityError) || error.loadFindings === undefined) {
           return yield* error;
         }
@@ -584,7 +578,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       backend.kind === "stack"
         ? yield* stackLocalDatabaseConn.pipe(
             Effect.mapError(
-              (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
+              (error) =>
+                new DeclarativeApplyError({ message: error.message, connect: true, cause: error }),
             ),
           )
         : {
@@ -592,7 +587,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             port: toml.port,
             password: toml.password,
           };
-    const applyExit = yield* applyMigrationToLocal(
+    // A Ctrl-C or defect during the apply is not a migration-apply failure — propagate it
+    // unchanged instead of synthesizing a fake `DeclarativeApplyError`.
+    const applyResult = yield* applyMigrationToLocal(
       {
         host: applyTarget.host,
         port: applyTarget.port,
@@ -600,22 +597,15 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         dnsResolver,
       },
       migrationPaths,
-    ).pipe(Effect.exit);
+    ).pipe(Effect.result);
 
-    if (Exit.isSuccess(applyExit)) {
+    if (Result.isSuccess(applyResult)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
       return;
     }
 
-    // A Ctrl-C or defect during the apply is not a migration-apply failure — propagate it
-    // unchanged instead of synthesizing a fake `DeclarativeApplyError`.
-    const applyFailure = Cause.findFail(applyExit.cause);
-    if (Result.isFailure(applyFailure)) {
-      return yield* Effect.failCause(applyFailure.failure);
-    }
-
     // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-    const applyError = applyFailure.success.error;
+    const applyError = applyResult.failure;
     yield* output.raw(`${red(`Migration failed to apply: ${applyError.message}`)}\n`, "stderr");
     const ts = formatDebugId(yield* Clock.currentTimeMillis);
     const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
@@ -636,18 +626,14 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       if (shouldReset) {
         // `resetLocalDatabase` runs in-process, sharing this command's own context: it resolves
         // `NetworkIdFlag` itself, so no argv-forwarding is needed to stay on a custom network.
-        const resetExit = yield* resetLocalDatabase().pipe(Effect.exit);
-        if (Exit.isFailure(resetExit)) {
-          // A Ctrl-C or defect during the recovery reset must cancel the command, not get
-          // rewritten into a synthetic "unknown error" apply failure.
-          const resetFailure = Cause.findFail(resetExit.cause);
-          if (Result.isFailure(resetFailure)) {
-            return yield* Effect.failCause(resetFailure.failure);
-          }
+        // A Ctrl-C or defect during the recovery reset must cancel the command, not get
+        // rewritten into a synthetic "unknown error" apply failure.
+        const resetResult = yield* resetLocalDatabase().pipe(Effect.result);
+        if (Result.isFailure(resetResult)) {
           // Surfaces the failure that actually blocked recovery, not the original apply error,
           // printed exactly once (no extra "database reset failed:" wrapper) — build it from the
           // real typed failure and reuse that one value for message, suggestion, and bundle.
-          const rawResetFailure = resetFailure.success.error;
+          const rawResetFailure = resetResult.failure;
           const resetError = new DeclarativeApplyError({
             message: rawResetFailure.message,
             suggestion: readErrorSuggestion(rawResetFailure),
@@ -688,8 +674,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     // sync succeeds or fails; only the linked bootstrap sets `linkedProjectRef`, so non-linked
     // syncs never trigger this.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
+      Effect.flatMap(Ref.get(linkedProjectRef), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),
@@ -702,47 +688,49 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 ) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 
 /** Connects once and applies the ordered migration files. */
-const applyMigrationToLocal = (
+// Starting or resetting the local database loads the project context, which would print the
+// OrioleDB env WARN again.
+export const dbSchemaDeclarativeSync = (flags: DbSchemaDeclarativeSyncFlags) =>
+  withSingleOrioleDBVersionEnvWarning(runDbSchemaDeclarativeSync(flags));
+
+const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(function* (
   local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
-) =>
-  Effect.gen(function* () {
-    const dbConnection = yield* DbConnection;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const session = yield* dbConnection
-      .connect(
-        {
-          host: local.host,
-          port: local.port,
-          user: "postgres",
-          password: local.password,
-          database: "postgres",
-        },
-        { isLocal: true, dnsResolver: local.dnsResolver },
-      )
-      .pipe(
-        Effect.mapError(
-          (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
-        ),
-      );
-    for (const migrationPath of migrationPaths) {
-      yield* applyMigrationFile(
-        session,
-        fs,
-        path,
-        migrationPath,
-        (message) => new DeclarativeApplyError({ message }),
-      );
-    }
-  }).pipe(
-    Effect.scoped,
-    Effect.withSpan("db.schema.declarative.sync.apply", {
-      attributes: { "migration.count": migrationPaths.length },
-    }),
-  );
+) {
+  yield* Effect.annotateCurrentSpan({ "migration.count": migrationPaths.length });
+  const dbConnection = yield* DbConnection;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const session = yield* dbConnection
+    .connect(
+      {
+        host: local.host,
+        port: local.port,
+        user: "postgres",
+        password: local.password,
+        database: "postgres",
+      },
+      { isLocal: true, dnsResolver: local.dnsResolver },
+    )
+    .pipe(
+      Effect.mapError(
+        (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
+      ),
+    );
+  for (const migrationPath of migrationPaths) {
+    yield* applyMigrationFile(
+      session,
+      fs,
+      path,
+      migrationPath,
+      (message) => new DeclarativeApplyError({ message }),
+    );
+  }
+}, Effect.scoped);

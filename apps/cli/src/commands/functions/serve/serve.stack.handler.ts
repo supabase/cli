@@ -1,4 +1,4 @@
-import type { ServiceCreation, Stack } from "@supabase/stack/effect";
+import { StackError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
 import { DateTime, Effect, Equal, Fiber, Option, Path, Schema, Stream, type Scope } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -27,16 +27,25 @@ const JwksDocument = Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Sc
 const runtimeError = (cause: { readonly message: string }) =>
   cause instanceof FunctionsServeStackError
     ? cause
-    : new FunctionsServeStackError({
-        reason:
-          cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError
-            ? "invalid-config"
-            : cause instanceof LocalDbRunningError
-              ? "lifecycle"
-              : "runtime",
-        message: cause.message,
-        cause,
-      });
+    : Schema.is(StackError)(cause)
+      ? new FunctionsServeStackError({
+          reason: "stack",
+          message: cause.message,
+          cause,
+        })
+      : new FunctionsServeStackError({
+          reason:
+            cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError
+              ? "invalid-config"
+              : // The session only decodes the stack's saved credentials.
+                Schema.isSchemaError(cause)
+                ? "state"
+                : cause instanceof LocalDbRunningError
+                  ? "lifecycle"
+                  : "runtime",
+          message: cause.message,
+          cause,
+        });
 const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
 

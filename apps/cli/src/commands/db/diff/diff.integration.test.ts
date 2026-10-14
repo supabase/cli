@@ -5,6 +5,7 @@ import {
   Cause,
   Config,
   ConfigProvider,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -12,16 +13,39 @@ import {
   Layer,
   Option,
   Path,
+  Schema,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   FAKE_SHADOW_CONTAINER_ID,
   VALID_REF,
+  VALID_TOKEN,
   failWriteStringMatchingFsLayer,
   failWriteStringOnNthCallFsLayer,
+  withConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockDockerDaemonCliSpawner,
@@ -29,7 +53,7 @@ import {
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -137,6 +161,8 @@ interface SetupOpts {
   readonly statefulDocker?: boolean;
   readonly dirs?: ReadonlyArray<string>;
   readonly files?: Readonly<Record<string, string>>;
+  // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
+  readonly realLayers?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -145,6 +171,11 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
   ),
 );
+
+const WrittenMigrations = Schema.Struct({
+  file: Schema.String,
+  files: Schema.Array(Schema.String),
+});
 
 /** `[db] shadow_port`'s schema default — the port every connect to the shadow itself dials. */
 const SHADOW_PORT = 54320;
@@ -158,11 +189,13 @@ const SHADOW_PORT = 54320;
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
+  const shadowConnectRefused = Deferred.makeUnsafe<void>();
   const layer = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
       Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
         if (opts.neverConnectableShadow === true && cfg.port === SHADOW_PORT) {
+          yield* Deferred.succeed(shadowConnectRefused, undefined);
           return yield* new DbConnectError({ message: "connection refused" });
         }
         const session: DbSession = {
@@ -179,7 +212,7 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
         return session;
       }),
   });
-  return { layer, connectedDatabases, execCalls };
+  return { layer, connectedDatabases, execCalls, shadowConnectRefused };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -194,6 +227,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
+  const shadowHealthProbed = Deferred.makeUnsafe<void>();
+  const shadowSpawnerLayer = Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (inner) =>
+      ChildProcessSpawner.make((command) =>
+        inner
+          .spawn(command)
+          .pipe(
+            Effect.tap(() =>
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "container" &&
+              command.args[1] === "inspect" &&
+              command.args[2] === FAKE_SHADOW_CONTAINER_ID
+                ? Deferred.succeed(shadowHealthProbed, undefined)
+                : Effect.void,
+            ),
+          ),
+      ),
+    ),
+  ).pipe(Layer.provide(shadowSpawner.layer));
   // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
@@ -290,7 +343,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // Tracks the migra OOM bash fallback's own `runCapture` calls; the native shadow's
   // PG15+ one-shot setup jobs go through `runStream` instead and are tracked
   // separately in `shadowSetupJobCalls`.
-  const dockerCalls: unknown[] = [];
+  const dockerCalls: Array<DockerRunOpts> = [];
   // The pgAdmin differ's own `runCapture` calls, distinguished from `dockerCalls`
   // by `image` (both share the same `DockerRun.runCapture` seam).
   const differCalls: Array<DockerRunOpts> = [];
@@ -409,6 +462,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -416,18 +470,33 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     pgDeltaEngine,
     edge,
     docker,
     shadowDbConnection.layer,
-    dockerDaemon?.layer ?? shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawnerLayer,
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: shadowDbConnection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     projectRefResolver,
     proxy,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(
       NetworkIdFlag,
@@ -442,6 +511,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
     workdirFiles,
+    shadowCacheDisabledLayer,
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
   const failWriteLayer =
@@ -470,9 +540,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
+    shadowHealthProbed,
     dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
+    shadowConnectRefused: shadowDbConnection.shadowConnectRefused,
+    projectHttp,
   };
 }
 
@@ -515,7 +588,6 @@ const readFileText = (file: string) =>
   });
 
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 /** `DiffEntry` shape, defaulting to a kept entry. */
 function pgadminEntry(overrides: Record<string, unknown> = {}) {
@@ -577,7 +649,7 @@ describe("db diff", () => {
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromEnvRecord(
-            { SUPABASE_SSL_DEBUG: "TRUE" },
+            { SUPABASE_SSL_DEBUG: "TRUE", SUPABASE_SHADOW_CACHE: "0" },
             { preserveEmptyStrings: true },
           ),
         ),
@@ -593,7 +665,10 @@ describe("db diff", () => {
       yield* dbDiff(flags()).pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({ SUPABASE_SSL_DEBUG: "" }, { preserveEmptyStrings: true }),
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_SSL_DEBUG: "", SUPABASE_SHADOW_CACHE: "0" },
+            { preserveEmptyStrings: true },
+          ),
         ),
       );
       expect(s.edgeCalls).toHaveLength(1);
@@ -665,6 +740,19 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('passes PGDELTA_DEBUG="$value" to both pg-delta diff modes', ({ value, debug }) => {
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("local") }));
+      expect(s.databaseDiffCalls.map((call) => call.debug)).toEqual([debug]);
+      expect(s.explicitDiffCalls.map((call) => call.debug)).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
   });
 
   it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
@@ -1294,6 +1382,29 @@ describe("db diff", () => {
     },
   );
 
+  it.effect(
+    "hands the deprecated OrioleDB version alias to the --use-pg-schema Go child under its new name and warns once",
+    () => {
+      const s = setup(tmp.current, {
+        files: { "supabase/.env": "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n" },
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
+        const warning =
+          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+        expect(
+          stderr(s.out)
+            .split("\n")
+            .filter((line) => line === warning),
+        ).toHaveLength(1);
+        expect(s.proxyCalls[0]?.env).toEqual({
+          SUPABASE_TELEMETRY_DISABLED: "1",
+          SUPABASE_DB_ORIOLEDB_VERSION: "17.11.0.002",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("does not print the --use-pg-schema deprecation warning on other diff paths", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
@@ -1351,7 +1462,7 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }));
         const success = s.out.messages.find((m) => m.type === "success");
-        const data = success?.data as { file: string; files: ReadonlyArray<string> };
+        const data = yield* Schema.decodeUnknownEffect(WrittenMigrations)(success?.data);
         expect(data.file).toMatch(/\d{14}_pgadmin_diff\.sql$/);
         expect(data.files).toEqual([data.file]);
         const fs = yield* FileSystem.FileSystem;
@@ -1415,7 +1526,9 @@ describe("db diff", () => {
       const files = yield* fs.readDirectory(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
-      expect(yield* readFileText(path.join(dir, files[0]!))).toBe("create table live_only ();\n");
+      expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(
+        "create table live_only ();\n",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1490,11 +1603,11 @@ describe("db diff", () => {
       expect(files).toHaveLength(2);
       expect(files[0]).toBe("19700101000000_my_diff_1.sql");
       expect(files[1]).toBe("19700101000001_my_diff_2.sql");
-      expect(yield* readFileText(path.join(dir, files[0]!))).toBe(
+      expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(
         "alter type mood add value 'ok';\n",
       );
       const success = s.out.messages.find((m) => m.type === "success");
-      const data = success?.data as { file: string; files: ReadonlyArray<string> };
+      const data = yield* Schema.decodeUnknownEffect(WrittenMigrations)(success?.data);
       expect(data.files).toHaveLength(2);
       expect(data.file).toBe(data.files[0]);
     }).pipe(Effect.provide(s.layer));
@@ -1510,7 +1623,9 @@ describe("db diff", () => {
       const dirs = yield* fs.readDirectory(migrationsRoot);
       expect(dirs).toHaveLength(1);
       expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0] ?? ""))).toEqual([
+        "remote.sql",
+      ]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1968,7 +2083,7 @@ describe("db diff", () => {
     return Effect.gen(function* () {
       yield* dbDiff(flags({ schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
-      expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
+      expect(s.dockerCalls[0]?.network).toEqual({
         _tag: "named",
         name: "my-net",
       });
@@ -1986,14 +2101,14 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ schema: ["public"] }));
-        const env = (s.dockerCalls[0] as { env: Readonly<Record<string, string>> }).env;
-        expect(new URL(env["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
-        expect(new URL(env["TARGET"] ?? "").host).toBe("host.docker.internal:54322");
+        const env = s.dockerCalls[0]?.env;
+        expect(new URL(env?.["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
+        expect(new URL(env?.["TARGET"] ?? "").host).toBe("host.docker.internal:54322");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.live(
+  it.effect(
     "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
       // `acquire` covers only `createShadowDatabase`; the readiness wait runs in the
@@ -2007,11 +2122,9 @@ describe("db diff", () => {
         );
         // Waits until the shadow's readiness gate has refused a connect at least once,
         // proving the fiber is suspended in `waitForShadowReady`'s retry loop.
-        while (s.shadowConnectedDatabases.length === 0) {
-          yield* Effect.sleep("5 millis");
-        }
-        // `Fiber.interrupt` only resolves once finalizers complete; this would hang for
-        // up to 30s if `acquire` still covered the readiness wait.
+        yield* Deferred.await(s.shadowConnectRefused);
+        // `Fiber.interrupt` only resolves once finalizers complete; this would hang (the readiness
+        // timeout never elapses under the test clock) if `acquire` still covered the readiness wait.
         yield* Fiber.interrupt(fiber);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2066,7 +2179,7 @@ describe("db diff", () => {
         const files = yield* fs.readDirectory(dir);
         expect(files).toHaveLength(1);
         expect(files[0]).toMatch(/^\d{14}_pgadmin_diff\.sql$/);
-        expect(yield* readFileText(path.join(dir, files[0]!))).toBe(PGADMIN_DIFF_SQL);
+        expect(yield* readFileText(path.join(dir, files[0] ?? ""))).toBe(PGADMIN_DIFF_SQL);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2082,7 +2195,7 @@ describe("db diff", () => {
         const dirs = yield* fs.readDirectory(migrationsRoot);
         expect(dirs).toHaveLength(1);
         expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual([
+        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0] ?? ""))).toEqual([
           "remote.sql",
         ]);
       }).pipe(Effect.provide(s.layer));
@@ -2132,21 +2245,21 @@ describe("db diff", () => {
           const projectId = path.basename(tmp.current);
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differCalls).toHaveLength(1);
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.image).toBe(dockerfileServiceImage("differ", false));
-          expect(call.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
-          expect(call.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
-          expect(call.env).toEqual({});
-          expect(call.binds).toEqual([]);
-          expect(call.securityOpt).toEqual([]);
-          expect(call.workingDir).toEqual(Option.none());
-          expect(call.entrypoint).toBeUndefined();
-          expect(call.network).toEqual({ _tag: "named", name: `supabase_network_${projectId}` });
-          expect(call.labels).toEqual({
+          const call = s.differCalls[0];
+          expect(call?.image).toBe(dockerfileServiceImage("differ", false));
+          expect(call?.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
+          expect(call?.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
+          expect(call?.env).toEqual({});
+          expect(call?.binds).toEqual([]);
+          expect(call?.securityOpt).toEqual([]);
+          expect(call?.workingDir).toEqual(Option.none());
+          expect(call?.entrypoint).toBeUndefined();
+          expect(call?.network).toEqual({ _tag: "named", name: `supabase_network_${projectId}` });
+          expect(call?.labels).toEqual({
             "com.supabase.cli.project": projectId,
             "com.docker.compose.project": projectId,
           });
-          expect(call.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+          expect(call?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
           // The differ's stderr is never teed to the parent terminal.
           expect(s.differCaptureOpts[0]).toBeUndefined();
         }).pipe(Effect.provide(s.layer));
@@ -2160,8 +2273,8 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        const call = s.differCalls[0] as DockerRunOpts;
-        expect(call.network).toEqual({ _tag: "named", name: "custom-net" });
+        const call = s.differCalls[0];
+        expect(call?.network).toEqual({ _tag: "named", name: "custom-net" });
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2174,8 +2287,8 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.extraHosts).toEqual([]);
+          const call = s.differCalls[0];
+          expect(call?.extraHosts).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2191,9 +2304,9 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
-          expect(call.cmd.join(" ")).not.toContain("distinctive-pw");
+          const call = s.differCalls[0];
+          expect(call?.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
+          expect(call?.cmd.join(" ")).not.toContain("distinctive-pw");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2210,7 +2323,7 @@ describe("db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
         });
         const ambientRegistry = () =>
-          Config.option(Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
+          Config.option(Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
@@ -2269,14 +2382,14 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
           expect(s.differCalls).toHaveLength(2);
-          expect((s.differCalls[0] as DockerRunOpts).cmd).toEqual([
+          expect(s.differCalls[0]?.cmd).toEqual([
             "--schema",
             "public",
             "--json-diff",
             PGADMIN_SOURCE_URL,
             PGADMIN_TARGET_URL,
           ]);
-          expect((s.differCalls[1] as DockerRunOpts).cmd).toEqual([
+          expect(s.differCalls[1]?.cmd).toEqual([
             "--schema",
             "app",
             "--json-diff",
@@ -2328,9 +2441,7 @@ describe("db diff", () => {
           _tag: "DbDiffPgAdminError",
           reason: "invalid_output",
         });
-        expect((error as { message: string }).message).toContain(
-          "failed to parse schema diff output:",
-        );
+        expect(error.message).toContain("failed to parse schema diff output:");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2387,7 +2498,7 @@ describe("db diff", () => {
             message: "error running container: exit 1",
           });
           // The differ's own stderr never reaches the error message.
-          expect((error as { message: string }).message).not.toContain("some differ crash text");
+          expect(error.message).not.toContain("some differ crash text");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -2428,9 +2539,7 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError" });
-          expect(stripAnsi((error as { message: string }).message)).toBe(
-            "supabase start is not running.",
-          );
+          expect(stripAnsi(error.message)).toBe("supabase start is not running.");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
           expect(s.differCalls).toEqual([]);
           expect(s.resolverCalls.length).toBeGreaterThan(0);
@@ -2447,8 +2556,11 @@ describe("db diff", () => {
         });
         return Effect.gen(function* () {
           const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
-          expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError", daemonDown: true });
-          expect((error as { suggestion?: string }).suggestion).toContain("Docker Desktop");
+          expect(error).toMatchObject({
+            _tag: "DbDiffDbNotRunningError",
+            daemonDown: true,
+            suggestion: expect.stringContaining("Docker Desktop"),
+          });
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2487,7 +2599,7 @@ describe("db diff", () => {
           const error = yield* dbDiff(
             flags({ usePgAdmin: Option.some(true), usePgDelta: Option.some(true) }),
           ).pipe(Effect.flip);
-          expect((error as { message: string }).message).toBe(
+          expect(error.message).toBe(
             "if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
           );
         }).pipe(Effect.provide(s.layer));
@@ -2530,7 +2642,7 @@ describe("db diff", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "removes the shadow container on interruption during the health wait for --use-pgadmin too",
       () => {
         const s = setup(tmp.current, { neverHealthyShadow: true });
@@ -2542,16 +2654,7 @@ describe("db diff", () => {
           // Waits for the shadow's own health probe (its 64-hex id); the pgadmin path's
           // separate `supabase_db_test` probe fires first and would satisfy a looser
           // check immediately.
-          while (
-            !s.shadowSpawned.some(
-              (c) =>
-                c.args[0] === "container" &&
-                c.args[1] === "inspect" &&
-                c.args[2] === FAKE_SHADOW_CONTAINER_ID,
-            )
-          ) {
-            yield* Effect.sleep("5 millis");
-          }
+          yield* Deferred.await(s.shadowHealthProbed);
           yield* Fiber.interrupt(fiber);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2588,17 +2691,16 @@ describe("db diff", () => {
         return yield* withEnvVar(
           "SUPABASE_HOME",
           path.join(tmp.current, "_supabase_home"),
-          withEnvVar(
-            "SUPABASE_SHADOW_CACHE",
-            "1",
+          withConfigEnv(
+            { SUPABASE_SHADOW_CACHE: "1" },
             dbDiff(
               flags(
                 engine === "pg-delta"
                   ? { usePgDelta: Option.some(true) }
                   : { useMigra: Option.some(true) },
               ),
-            ).pipe(Effect.provide(s.layer)),
-          ),
+            ),
+          ).pipe(Effect.provide(s.layer)),
         ).pipe(Effect.as(s));
       });
 
@@ -2623,5 +2725,151 @@ describe("db diff", () => {
         expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
       }).pipe(Effect.provide(BunServices.layer));
     });
+  });
+});
+
+describe("db diff permissions through the real resolver and cache", () => {
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    calls.map(({ method, url }) => `${method} ${url}`);
+
+  it.effect("mints a login role and fills the cache for --linked", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "alter table x;\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(VALID_REF) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for the default local target", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "alter table x;\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDiff(flags()).pipe(Effect.provide(s.layer));
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db diff",
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  for (const side of ["from", "to"] as const) {
+    it.effect(`resolves the linked project for --${side} linked without --linked`, () => {
+      const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+      const requests: Array<StubbedRequest> = [];
+      const refs =
+        side === "from"
+          ? { from: "linked", to: "migrations" }
+          : { from: "migrations", to: "linked" };
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* dbDiff(
+          flags({
+            from: Option.some(refs.from),
+            to: Option.some(refs.to),
+            projectRef: Option.some(VALID_REF),
+          }),
+        ).pipe(Effect.provide(s.layer));
+        expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "db diff",
+          activeFlags: { from: refs.from, to: refs.to, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+  }
+
+  it.effect("makes no Management API request for --from local --to migrations", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("migrations") })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { from: "local", to: "migrations" },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("mints a login role for each side when both --from and --to are linked", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(
+        flags({
+          from: Option.some("linked"),
+          to: Option.some("linked"),
+          projectRef: Option.some(VALID_REF),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([
+        poolerRequest,
+        loginRoleRequest,
+        poolerRequest,
+        loginRoleRequest,
+      ]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { from: "linked", to: "linked", "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

@@ -2,7 +2,6 @@ import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../shared/output/output.service.ts";
@@ -14,8 +13,8 @@ import { shouldSearchAncestors } from "./workdir-search.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
   resolveStorageCredentials,
-  storageGatewayFetch,
   validateLocalStorageConfig,
+  withStorageGatewayFetch,
   type StorageCredentials,
 } from "./storage-credentials.ts";
 import { currentStackBackend } from "./stack-backend.ts";
@@ -34,10 +33,6 @@ import {
 } from "../commands/seed/buckets/buckets.classify.ts";
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
-
-// Re-exported so `stack start` can report a project-context config-load failure with the
-// same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
-export { SeedConfigLoadError };
 
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
@@ -247,9 +242,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
       projectEnvValues,
     }));
 
-  // Gateway operations use an explicit non-DoH fetch (CA-trusting for local + https, plain
-  // `globalThis.fetch` otherwise); the api-keys lookup in `resolveStorageCredentials` runs
-  // before this scope, so it still honors `--dns-resolver https`.
+  // Gateway operations use plain `globalThis.fetch` instead of the DoH fetch, with the Kong CA in
+  // `FetchHttpClient.RequestInit` for local + https; the api-keys lookup in
+  // `resolveStorageCredentials` runs before this scope, so it still honors `--dns-resolver https`.
   const gatewayOps = Effect.gen(function* () {
     const gateway = yield* makeStorageGateway({
       baseUrl: credentials.baseUrl,
@@ -299,7 +294,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   });
 
   yield* withStackStorageGuidance({ local: projectRef === "" }, gatewayOps).pipe(
-    Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
+    withStorageGatewayFetch(credentials.localKongCa),
   );
 });
 
@@ -349,7 +344,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listBuckets();
+  const existing = yield* gateway.listBuckets;
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, props] of propsByName) {
@@ -388,7 +383,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listVectorBuckets();
+  const existing = yield* gateway.listVectorBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -437,7 +432,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listAnalyticsBuckets();
+  const existing = yield* gateway.listAnalyticsBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -502,7 +497,7 @@ const handleVectorError = Effect.fnUntraced(function* (
     summary.vector_skipped = true;
     return;
   }
-  return yield* Effect.fail(error);
+  return yield* error;
 });
 
 const uploadObjects = Effect.fnUntraced(function* (
@@ -539,7 +534,7 @@ const uploadObjects = Effect.fnUntraced(function* (
           // text/plain by file extension.
           const sniff = yield* readSniffBytes(fs, file.absPath);
           yield* gateway.uploadObject(dstPath, file.absPath, {
-            contentType: contentTypeForUpload(sniff, file.absPath),
+            contentType: contentTypeForUpload(path, sniff, file.absPath),
             cacheControl: "max-age=3600",
             overwrite: true,
           });
@@ -602,7 +597,7 @@ const collectDir = (
       // has no `lstat`.
       const isSymlink = yield* fs.readLink(absChild).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) {
         // Opens the target then stats the handle, so an unreadable target is caught now
@@ -613,7 +608,7 @@ const collectDir = (
             const targetInfo = yield* handle.stat;
             return targetInfo.type;
           }),
-        ).pipe(Effect.catch(() => Effect.succeed("Unknown" as const)));
+        ).pipe(Effect.orElseSucceed(() => "Unknown" as const));
         if (targetType === "File") {
           collected.push({ absPath: absChild, displayPath: displayChild });
         } else {

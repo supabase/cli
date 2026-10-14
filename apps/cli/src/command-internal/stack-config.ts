@@ -9,7 +9,7 @@ import {
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -17,6 +17,7 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { stackDatabaseVersion } from "./stack-database-version.ts";
 
 import {
   decryptAuthSecret,
@@ -32,6 +33,7 @@ import {
   envOverrideEdgeRuntimePolicy,
   envOverrideMaxClientConn,
   envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
   envOverridePort,
   envOverridePoolMode,
   envOverrideRealtimeIpVersion,
@@ -131,6 +133,8 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
 export interface StackEndpointSetting {
   readonly configPath: string;
   readonly envVar: string;
+  /** A deprecated alias of `envVar`, honored only while `envVar` is unset. */
+  readonly deprecatedEnvVar?: string;
 }
 
 // Shared by `createCreations` and `stackEndpointSetting`; a new endpoint also needs an entry in
@@ -226,6 +230,13 @@ export const stackEndpointSetting = (
 export const stackMajorVersionSetting: StackEndpointSetting = {
   configPath: "db.major_version",
   envVar: "SUPABASE_DB_MAJOR_VERSION",
+};
+
+/** `db.orioledb_version`'s config key and `SUPABASE_DB_ORIOLEDB_VERSION` override. */
+export const stackOrioledbVersionSetting: StackEndpointSetting = {
+  configPath: "db.orioledb_version",
+  envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
+  deprecatedEnvVar: "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
 };
 
 const authProviderNames = [
@@ -720,12 +731,27 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
-      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
+      orioledb_version: envOverrideOrioleDBVersion(db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
     edge_runtime: resolvedEdge,
-    experimental,
+    // Same S3 overrides legacy Compose applies, so the OrioleDB S3 guard sees env-only values.
+    experimental: {
+      ...experimental,
+      s3_host: envOverride("SUPABASE_EXPERIMENTAL_S3_HOST", experimental.s3_host, env),
+      s3_region: envOverride("SUPABASE_EXPERIMENTAL_S3_REGION", experimental.s3_region, env),
+      s3_access_key: envOverride(
+        "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
+        experimental.s3_access_key,
+        env,
+      ),
+      s3_secret_key: envOverride(
+        "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
+        experimental.s3_secret_key,
+        env,
+      ),
+    },
     realtime: {
       ...realtime,
       enabled: envOverrideBool(
@@ -786,7 +812,11 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
+  ...(["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const).map((key) => ({
+    path: `experimental.${key}`,
+    // Legacy Compose forwards these to OrioleDB; the stack does not, so fail rather than drop them.
+    active: (config: CliConfig) => (config.db.orioledb_version ?? "") !== "",
+  })),
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -915,6 +945,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
+      const databaseVersion = yield* Effect.fromResult(
+        stackDatabaseVersion(validatedConfig.db),
+      ).pipe(Effect.mapError((message) => new StackConfigError({ message })));
 
       const externalProviders = yield* Effect.try({
         try: () =>
@@ -1189,7 +1222,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             {
               service: "database",
               config: {
-                version: String(validatedConfig.db.major_version),
+                version: databaseVersion,
                 ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,

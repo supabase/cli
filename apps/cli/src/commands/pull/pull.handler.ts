@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
@@ -105,27 +105,19 @@ const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
     : output.success(pullSummaryMessage(aggregate), pullPayload(aggregate));
 
 /**
- * Runs `effect`, capturing a typed failure into `{kind: "failed", cause}` instead of letting it
+ * Runs `effect`, capturing a typed failure into a failed `Exit` instead of letting it
  * propagate; a defect or interruption still propagates immediately via `Effect.failCause`. Lets
  * every step run even when an earlier one failed, preserving the first failure to re-fail with.
  */
 function pullCaptureStep<A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<
-  | { readonly kind: "ok"; readonly value: A }
-  | { readonly kind: "failed"; readonly cause: Cause.Cause<E> },
-  E,
-  R
-> {
+): Effect.Effect<Exit.Exit<A, E>, E, R> {
   return Effect.gen(function* () {
     const exit = yield* Effect.exit(effect);
-    if (Exit.isSuccess(exit)) {
-      return { kind: "ok", value: exit.value } as const;
-    }
-    if (Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause)) {
+    if (Exit.isFailure(exit) && (Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause))) {
       return yield* Effect.failCause(exit.cause);
     }
-    return { kind: "failed", cause: exit.cause } as const;
+    return exit;
   });
 }
 
@@ -206,7 +198,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
 
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Rejects `-o`/`--output` outright; `pull` only supports `--output-format`.
@@ -227,7 +219,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     const { ref, branch, runPlan, source } = yield* Effect.gen(function* () {
       const pullSource = yield* openConfigPullSource();
       const target = yield* resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError);
-      resolvedRef = target.ref;
+      yield* Ref.set(resolvedRef, Option.some(target.ref));
 
       // `planConfigPullRun` does everything up through the schema-validation gate: no git
       // check, no prompt, no write.
@@ -285,14 +277,16 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     const shouldFetchMigrationHistory = flags.withMigrationHistory
       ? true
       : (yield* fs.readDirectory(migrationsDir).pipe(
-          Effect.catchTag("PlatformError", (cause) =>
-            Predicate.isTagged(cause.reason, "NotFound")
-              ? Effect.succeed<ReadonlyArray<string>>([])
-              : Effect.fail(
-                  new MigrationsReadError({
-                    message: `failed to read migrations: ${cause.message}`,
-                  }),
-                ),
+          Effect.catchReason(
+            "PlatformError",
+            "NotFound",
+            () => Effect.succeed<ReadonlyArray<string>>([]),
+            (_reason, cause) =>
+              Effect.fail(
+                new MigrationsReadError({
+                  message: `failed to read migrations: ${cause.message}`,
+                }),
+              ),
           ),
         )).length === 0;
     const migrationHistoryReason: "flag" | "bootstrap" | undefined = !shouldFetchMigrationHistory
@@ -412,7 +406,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       const results: Array<PullStepResult> = [];
 
       const configCapture = yield* pullCaptureStep(pullConfigStep({ runPlan, source }));
-      if (configCapture.kind === "ok") {
+      if (Exit.isSuccess(configCapture)) {
         results.push(
           pullConfigStepResult(
             // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
@@ -440,7 +434,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
               reason: "not_needed",
             }),
       );
-      if (migrationCapture.kind === "ok") {
+      if (Exit.isSuccess(migrationCapture)) {
         results.push(pullMigrationHistoryStepResult(migrationCapture.value));
       } else {
         results.push(
@@ -458,7 +452,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       }
 
       const dbCapture = yield* pullCaptureStep(pullDbStep(stepContext));
-      if (dbCapture.kind === "ok") {
+      if (Exit.isSuccess(dbCapture)) {
         results.push(pullDbStepResult(dbCapture.value));
       } else {
         results.push(
@@ -477,7 +471,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       }
 
       const functionsCapture = yield* pullCaptureStep(pullFunctionsStep(stepContext));
-      if (functionsCapture.kind === "ok") {
+      if (Exit.isSuccess(functionsCapture)) {
         results.push(pullFunctionsStepResult(functionsCapture.value));
       } else {
         results.push(
@@ -520,8 +514,13 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     // Telemetry flushes on every invocation, including target-resolution failures; the
     // linked-project cache write only fires once a ref has resolved.
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Ref.get(resolvedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

@@ -1,7 +1,15 @@
 import { Effect, Layer, type Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { storageCredentials } from "../../../command-internal/storage-credentials.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SeedLinkedFlag, SeedLocalFlag } from "../seed.flags.ts";
@@ -12,7 +20,7 @@ import { seedBuckets } from "./buckets.handler.ts";
 
 const config = {
   // TS-only flag; see push.command.ts (db push) for the same pattern.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
@@ -29,6 +37,15 @@ export type BucketsFlags = {
 export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["project-ref"] },
+        withCondition(compose(storageCredentials, linkedProjectCache), { dbTarget: ["linked"] }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((leafFlags) =>
     Effect.gen(function* () {
       // Enforce --local/--linked mutual exclusivity before instrumentation, so a

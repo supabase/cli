@@ -1,3 +1,4 @@
+import { Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,17 +25,13 @@ const SAMPLE_FUNCTION = {
 
 describe("list encoders", () => {
   it("preserves top-level null as a nil function list", () => {
-    expect(decodeFunctionsResponse("null")).toEqual({
-      ok: true,
-      value: { functions: [], isNil: true },
-    });
+    expect(decodeFunctionsResponse("null")).toEqual(Result.succeed({ functions: [], isNil: true }));
   });
 
   it("preserves null elements as Go zero-value rows", () => {
     const decoded = decodeFunctionsResponse("[null]");
-    expect(decoded).toEqual({
-      ok: true,
-      value: {
+    expect(decoded).toEqual(
+      Result.succeed({
         functions: [
           {
             id: "",
@@ -52,15 +49,14 @@ describe("list encoders", () => {
           },
         ],
         isNil: false,
-      },
-    });
+      }),
+    );
   });
 
   it("preserves Go zero values for omitted non-pointer fields", () => {
     const decoded = decodeFunctionsResponse("[{}]");
-    expect(decoded).toEqual({
-      ok: true,
-      value: {
+    expect(decoded).toEqual(
+      Result.succeed({
         functions: [
           {
             id: "",
@@ -78,8 +74,8 @@ describe("list encoders", () => {
           },
         ],
         isNil: false,
-      },
-    });
+      }),
+    );
   });
 
   it("omits null optional fields from Go JSON output", () => {

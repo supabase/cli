@@ -14,9 +14,9 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import type { Rpc, RpcGroup } from "effect/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
@@ -34,6 +34,7 @@ import {
   credentialsFor,
   endpointNames,
   endpointPort,
+  freshWrites,
   joinRoutes,
   outputsFor,
   publicUrl,
@@ -132,6 +133,14 @@ type NamespaceError =
 
 export interface Interface {
   readonly handlers: Handlers;
+  /**
+   * Binds the given instances' configured endpoints through the same `Ports.acquire` path a
+   * composition bind uses; already-bound endpoints are untouched. Lets a start that re-planned an
+   * endpoint's port claim it before any client attaches.
+   */
+  readonly claimEndpoints: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<void, Orchestrator.OrchestratorError | ServiceError>;
   readonly getStackCredentials: Effect.Effect<
     StackCredentials,
     StackNamespace.NamespaceError | CredentialError
@@ -524,6 +533,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
               ),
             ),
           enabled,
+          ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
         };
@@ -880,6 +890,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (
 
   return {
     handlers,
+    claimEndpoints: (ids) =>
+      Effect.forEach(
+        ids,
+        (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
+        {
+          discard: true,
+        },
+      ).pipe(Effect.withSpan("Owner.claimEndpoints")),
     getStackCredentials,
     namespace: {
       // Services stop in reverse dependency order with their listeners open, so a dependent's

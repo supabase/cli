@@ -11,7 +11,7 @@
 
 import type { CliConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
 import { slimImagesEnabled } from "../../shared/services/slim-images.ts";

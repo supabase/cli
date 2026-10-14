@@ -1,4 +1,4 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Data, Effect, Stream } from "effect";
 
 export class GitSetupError extends Data.TaggedError("GitSetupError")<{

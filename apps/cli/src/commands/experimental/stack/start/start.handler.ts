@@ -1,4 +1,10 @@
-import { defaultRuntime, postgresVersion } from "@supabase/stack/internal/artifacts";
+import {
+  defaultRuntime,
+  isOrioledbVersion,
+  orioledbConfigVersion,
+  orioledbVersions,
+  postgresVersion,
+} from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
   renderStackSummary,
@@ -18,9 +24,11 @@ import {
   type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
+import { Effect, FileSystem, Fiber, Match, Option, Path, Redacted, Ref } from "effect";
 import {
+  apiRoute,
   resolveNativePostgresUser,
+  type EndpointPortChange,
   type Observation,
   type PlannedInstance,
   type ServiceCreation,
@@ -44,16 +52,14 @@ import {
   projectCatalogOverlay,
 } from "../../../../command-internal/stack-bootstrap.ts";
 import { stackStorageCredentialsFor } from "../../../../command-internal/stack-storage.ts";
-import {
-  hasConfiguredBuckets,
-  SeedConfigLoadError,
-  seedBucketsRun,
-} from "../../../../command-internal/seed-buckets.ts";
+import { hasConfiguredBuckets, seedBucketsRun } from "../../../../command-internal/seed-buckets.ts";
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import {
   loadStackConfig,
+  StackConfigError,
   stackEndpointSetting,
   stackMajorVersionSetting,
+  stackOrioledbVersionSetting,
   type StackEndpointSetting,
 } from "../../../../command-internal/stack-config.ts";
 import { envOverride } from "../../../../command-internal/local-config-values.ts";
@@ -104,6 +110,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const portConflictSuggestion = (
   conflict: StackError["conflict"],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }>,
+  portSaved = false,
 ): string | undefined => {
   if (conflict === undefined) return undefined;
   const settings = new Map<string, StackEndpointSetting>();
@@ -116,23 +123,26 @@ const portConflictSuggestion = (
     }
   }
   const [setting, ...rest] = settings.values();
-  return setting === undefined || rest.length > 0
-    ? undefined
-    : `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+  if (setting === undefined || rest.length > 0) return undefined;
+  const choice = `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+  return portSaved
+    ? `${choice} The stack already saved this port (any previous automatic port is released), so the next start uses it once it is free.`
+    : choice;
 };
 
 const stackError = (
   cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
+  portSaved = false,
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, requested);
+  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
   return new StackCommandStartError({
-    reason: "unknown",
+    reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
     ...(suggestion === undefined ? {} : { suggestion }),
@@ -160,9 +170,16 @@ const stackAcquireError = (
     readonly selectedRuntime: StackRuntime;
     readonly runtime: { readonly platform: string; readonly arch: string };
     readonly creating: boolean;
+    /** The creations the owner's startup re-plans, already saved when its claim fails. */
+    readonly replanned?: ReadonlyArray<ServiceCreationInput>;
   },
 ) => {
-  const base = stackError(cause);
+  const base = stackError(
+    cause,
+    [],
+    runtimeContext.replanned,
+    runtimeContext.replanned !== undefined,
+  );
   const { selectedRuntime } = runtimeContext;
   if (cause.reason !== "runtime-unavailable" || selectedRuntime === "native") return base;
   return new StackCommandStartError({
@@ -178,22 +195,26 @@ const stackAcquireError = (
   });
 };
 
-const loadStartConfig = (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) =>
-  Effect.gen(function* () {
-    const config = yield* loadStackConfig(projectRoot);
+const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
+  function* (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) {
+    const context = yield* loadLocalProjectContext(
+      projectRoot,
+      (message) => new StackConfigError({ message }),
+    );
+    const config = yield* loadStackConfig(projectRoot, { context });
     const keys = yield* config.keys;
     const toml = yield* readDbToml(fs, path, projectRoot);
-    return { config, keys, toml };
-  }).pipe(
-    Effect.mapError(
-      (error) =>
-        new StackCommandStartError({
-          reason: "invalid-config",
-          message: error.message,
-          cause: error,
-        }),
-    ),
-  );
+    return { context, config, keys, toml };
+  },
+  Effect.mapError(
+    (error) =>
+      new StackCommandStartError({
+        reason: "invalid-config",
+        message: error.message,
+        cause: error,
+      }),
+  ),
+);
 
 const sameKinds = (
   left: ReadonlyArray<{ readonly service: string }>,
@@ -225,6 +246,10 @@ const databaseVersionOf = (
 
 const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
 
+/** The `db.orioledb_version` value behind a database artifact version, or `unset` for stock. */
+const orioledbVersionOf = (version: string): string =>
+  isOrioledbVersion(version) ? orioledbConfigVersion(version) : "unset";
+
 /** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
 const formatConfigPath = (path: string): string => {
   const segments = path.split(".");
@@ -237,13 +262,13 @@ const settingKeyLabel = (
   setting: StackEndpointSetting,
   projectEnvValues: Readonly<Record<string, string>>,
 ): string =>
-  envOverride(setting.envVar, undefined, projectEnvValues) !== undefined
-    ? setting.envVar
-    : formatConfigPath(setting.configPath);
+  [setting.envVar, setting.deprecatedEnvVar].find(
+    (name) => name !== undefined && envOverride(name, undefined, projectEnvValues) !== undefined,
+  ) ?? formatConfigPath(setting.configPath);
 
 /**
- * One incompatible path, reported as the JSON/stream-json error envelope's `stack_changes`
- * entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
+ * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
+ * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
  * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
  * artifact or Postgres build.
  */
@@ -262,7 +287,7 @@ const describeSettingChange = (
   savedCreation: ServiceCreation | undefined,
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
-): StructuredSettingChange => {
+): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
   if (service === "database" && path === "config.version") {
     // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
     // composition plan actually compared, so the saved/requested pair reflects what changed.
@@ -270,9 +295,11 @@ const describeSettingChange = (
     const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
     const savedMajor = majorVersionOf(savedVersion);
     const requestedMajor = majorVersionOf(requestedVersion);
-    // Same major but different pinned build: `major_version` doesn't control this, so reverting
-    // it wouldn't fix anything — name the actual (unpinnable) versions instead.
-    if (savedMajor === requestedMajor)
+    const savedOrioledb = orioledbVersionOf(savedVersion);
+    const requestedOrioledb = orioledbVersionOf(requestedVersion);
+    // Same major and engine but different pinned build: no setting controls this, so name the
+    // actual (unpinnable) versions instead.
+    if (savedMajor === requestedMajor && savedOrioledb === requestedOrioledb)
       return {
         service,
         path,
@@ -281,14 +308,27 @@ const describeSettingChange = (
         requested: requestedVersion,
         editable: false,
       };
-    return {
-      service,
-      path,
-      key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
-      saved: savedMajor,
-      requested: requestedMajor,
-      editable: true,
-    };
+    const changes: Array<StructuredSettingChange> = [];
+    if (savedMajor !== requestedMajor)
+      changes.push({
+        service,
+        path,
+        key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
+        saved: savedMajor,
+        requested: requestedMajor,
+        editable: true,
+      });
+    if (savedOrioledb !== requestedOrioledb)
+      changes.push({
+        service,
+        path,
+        key: settingKeyLabel(stackOrioledbVersionSetting, projectEnvValues),
+        saved: savedOrioledb,
+        requested: requestedOrioledb,
+        // A catalog upgrade can retire the saved build, which the config then rejects.
+        editable: savedOrioledb === "unset" || orioledbVersions().includes(savedOrioledb),
+      });
+    return changes;
   }
   const endpointName = path.startsWith("endpoints.") ? path.split(".")[1] : undefined;
   const setting =
@@ -326,7 +366,7 @@ const incompatibleSettingChanges = (
     .flatMap((entry) =>
       // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
       entry.change === "incompatible"
-        ? entry.paths.map((path) =>
+        ? entry.paths.flatMap((path) =>
             describeSettingChange(
               entry.service,
               path,
@@ -378,11 +418,13 @@ const incompatibleChange = (
   requested: ReadonlyArray<ServiceCreationInput>,
   projectEnvValues: Readonly<Record<string, string>>,
   stackIdentity: { readonly id: string; readonly name?: string },
+  ownerLive: boolean,
 ):
   | {
       readonly error: StackCommandStartError;
       readonly changes: ReadonlyArray<StructuredSettingChange>;
-      readonly command: string;
+      /** The destroy invocation, when recreating the stack is among the remedies. */
+      readonly command: string | undefined;
     }
   | undefined => {
   const changes = incompatibleSettingChanges(planned, savedConfigById, requested, projectEnvValues);
@@ -395,14 +437,22 @@ const incompatibleChange = (
   );
   const nonEditable = dedupe(changes.filter((change) => !change.editable).map(({ key }) => key));
   const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
+  // A live idle owner never re-plans, but a fresh owner's start re-plans the members the planner
+  // marks endpoints-only, so a stop and start resolves them without deleting data.
+  const replannable =
+    ownerLive &&
+    planned.every(
+      (entry) => !entry.member || entry.change !== "incompatible" || entry.endpointsOnly,
+    );
   // A non-editable change blocks start whatever else changed, so destroy is the only way out.
-  const suggestion =
-    nonEditable.length > 0 || revert === undefined
+  const suggestion = replannable
+    ? `Run \`supabase stack stop --stack-id ${stackIdentity.id}\`, then \`supabase stack start --stack-id ${stackIdentity.id}\` to apply the new ports.`
+    : nonEditable.length > 0 || revert === undefined
       ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
       : `${revert} to keep the stack and its data, or run ${destroyClause}`;
   return {
     changes,
-    command,
+    command: replannable ? undefined : command,
     error: new StackCommandStartError({
       reason: "invalid-config",
       message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
@@ -420,31 +470,45 @@ const selectedCreations = (
     return !exclusions.includes(capability);
   });
 
+/** Names a changed endpoint the way the connection summary does: `api`, or `service.endpoint`. */
+const endpointLabel = (change: EndpointPortChange) =>
+  change.endpoint === "http" && apiRoute(change.service) !== undefined
+    ? "api"
+    : `${change.service}.${change.endpoint}`;
+
+/** The JSON `endpoints` keys a change moves: every HTTP key on the shared API listener, else its own. */
+const endpointKeys = (change: EndpointPortChange, reported: ReadonlyArray<string>) =>
+  endpointLabel(change) !== "api"
+    ? [`${change.service}.${change.endpoint}`]
+    : reported.filter((key) => {
+        const [service, endpoint] = key.split(".");
+        return endpoint === "http" && service !== undefined && apiRoute(service) !== undefined;
+      });
+
 const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
   status.lifecycle === "running" && status.health === "healthy";
 
-const startReport = (
+const startReport = Effect.fn("experimental.stack.start.report")(function* (
   stack: Pick<Stack, "composition">,
   instances: ReadonlyArray<{
     readonly id: string;
     readonly service: ServiceCreation["service"];
     readonly status: Effect.Effect<Observation, StackError>;
   }>,
-) =>
-  Effect.gen(function* () {
-    const { members } = yield* stack.composition.describe;
-    const activation = new Map(members.map((member) => [member.id, member.activation]));
-    const views = yield* Effect.forEach(instances, (instance) =>
-      instance.status.pipe(
-        Effect.map((observation): StackServiceView => ({
-          service: instance.service,
-          observation,
-          activation: activation.get(instance.id),
-        })),
-      ),
-    );
-    return { views, endpoints: stackEndpoints(views) };
-  }).pipe(Effect.mapError(stackError));
+) {
+  const { members } = yield* stack.composition.describe;
+  const activation = new Map(members.map((member) => [member.id, member.activation]));
+  const views = yield* Effect.forEach(instances, (instance) =>
+    instance.status.pipe(
+      Effect.map((observation): StackServiceView => ({
+        service: instance.service,
+        observation,
+        activation: activation.get(instance.id),
+      })),
+    ),
+  );
+  return { views, endpoints: stackEndpoints(views) };
+}, Effect.mapError(stackError));
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -486,21 +550,71 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ),
     );
     const postgresUser = yield* resolveNativePostgresUser(selectedRuntime);
-    const ensurePostgresUser =
-      postgresUser._tag === "Unavailable"
-        ? new StackCommandStartError({
-            reason: "lifecycle",
-            message: postgresUser.message,
-            suggestion: postgresUser.suggestion,
-          })
-        : postgresUser._tag === "StepDown"
-          ? output.info(postgresUser.message)
-          : Effect.void;
-    const configBeforeCreate =
-      target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
+    const ensurePostgresUser = Match.valueTags(postgresUser, {
+      Unavailable: (unavailable) =>
+        new StackCommandStartError({
+          reason: "lifecycle",
+          message: unavailable.message,
+          suggestion: unavailable.suggestion,
+        }),
+      StepDown: (stepDown) => output.info(stepDown.message),
+      NotNeeded: () => Effect.void,
+    });
+    // Every project-context load prints the config deprecation WARNs, so it happens at most once.
+    const startConfig = yield* Effect.cached(loadStartConfig(target.projectRoot, fs, path));
+    if (target.id === undefined || !target.hostRunning) yield* startConfig;
     if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
+    const resolveRequested = (
+      stackId: string,
+      config: Effect.Success<ReturnType<typeof loadStartConfig>>["config"],
+    ) =>
+      Effect.gen(function* () {
+        const creations = yield* config.creations(stackId).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: error.message,
+                cause: error,
+              }),
+          ),
+        );
+        return yield* Effect.forEach(
+          selectedCreations(creations, exclusions),
+          withProjectFunctionsEnv,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: cause.message,
+                cause,
+              }),
+          ),
+        );
+      });
+    // The requested creations travel into the owner's own startup: a freshly spawned owner
+    // re-plans and commits a changed endpoint's port while it alone holds the stack's lease,
+    // before it registers endpoint namespaces from the saved state. An owner that is already live
+    // ignores them and keeps applying endpoint changes only after stop and start, so the liveness
+    // observed above never decides whether a replacement owner that wins a stop race re-plans. A
+    // configuration that cannot resolve only fails a start whose owner was not running.
+    const resolveForReplan = (stackId: string) =>
+      Effect.gen(function* () {
+        const loaded = yield* startConfig;
+        return yield* resolveRequested(stackId, loaded.config);
+      });
+    const requestedForReplan =
+      target.id === undefined
+        ? undefined
+        : target.hostRunning
+          ? yield* resolveForReplan(target.id).pipe(
+              Effect.option,
+              Effect.map(Option.getOrUndefined),
+            )
+          : yield* resolveForReplan(target.id);
     const startupComplete = yield* Ref.make(false);
     const stack = yield* Effect.acquireRelease(
       target.id === undefined
@@ -512,7 +626,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             startOwner: true,
             ...(target.name === undefined ? {} : { name: target.name }),
           })
-        : stackApi.open({ id: target.id, stateRoot, cacheRoot, startOwner: true }),
+        : stackApi.open({
+            id: target.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            ...(requestedForReplan === undefined ? {} : { requestedCreations: requestedForReplan }),
+          }),
       (stack) =>
         Ref.get(startupComplete).pipe(
           Effect.flatMap((complete) =>
@@ -530,7 +650,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ),
     ).pipe(
       Effect.mapError((cause) =>
-        stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
+        stackAcquireError(cause, {
+          selectedRuntime,
+          runtime,
+          creating: target.id === undefined,
+          ...(requestedForReplan === undefined ? {} : { replanned: requestedForReplan }),
+        }),
       ),
     );
     const statusPointer = statusEnvPointer(
@@ -542,6 +667,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       },
       currentShellPlatform(),
     );
+    // Set once a fully stopped stack's owner reports the endpoint changes it applied at its own
+    // startup; a stack that was already running never re-plans, so this stays empty for it.
+    let endpointChanges: ReadonlyArray<EndpointPortChange> = [];
     const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
       Effect.gen(function* () {
         const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
@@ -558,6 +686,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               .filter(({ activation }) => activation === "lazy")
               .map(({ service }) => service),
             env,
+            ...(endpointChanges.length === 0
+              ? {}
+              : {
+                  endpoint_changes: endpointChanges.map((change) => ({
+                    endpoint: endpointLabel(change),
+                    keys: endpointKeys(change, Object.keys(report.endpoints)),
+                    from: change.from,
+                    to: change.to,
+                  })),
+                }),
           });
         if (message.length > 0) yield* output.success(message);
         yield* output.raw(
@@ -649,6 +787,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack is in a partial lifecycle state",
         suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
       });
+    endpointChanges = yield* stack.startupEndpointChanges.pipe(Effect.mapError(stackError));
+    for (const change of endpointChanges)
+      yield* output.info(`${endpointLabel(change)}: ${change.from} → ${change.to}`);
     if (target.id !== undefined) yield* ensurePostgresUser;
     const shadowDatabase =
       composition.members.length === 0
@@ -660,27 +801,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const { config, keys, toml } =
-      configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
-    const creations = yield* config.creations(stack.id).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    const requested = yield* Effect.forEach(
-      selectedCreations(creations, exclusions),
-      withProjectFunctionsEnv,
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStartError({ reason: "invalid-config", message: cause.message, cause }),
-      ),
-    );
+    const { context, config, keys, toml } = yield* startConfig;
+    // Reuses the creations already resolved for the re-plan above instead of reading the
+    // Functions dotenv a second time; only a new or already-running stack has none yet.
+    const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
     if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",
@@ -743,7 +867,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         );
     const initialComposition = composition.members.length === 0;
     const serviceKindsChanged = !sameKinds(currentInstances, requested);
-    const planned = yield* stack.composition.plan(requested).pipe(Effect.mapError(stackError));
+    // `requested` is the whole desired composition (exclusions already applied), not a partial
+    // comparison, so an excluded sibling's saved port must not anchor a shared endpoint's port.
+    const planned = yield* stack.composition
+      .plan(requested, { requestKind: "complete" })
+      .pipe(Effect.mapError(stackError));
     const stackIdentity = {
       id: stack.id,
       ...(target.name === undefined ? {} : { name: target.name }),
@@ -755,13 +883,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       requested,
       config.projectEnvValues,
       stackIdentity,
+      target.hostRunning,
     );
     if (rejected !== undefined) {
       const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
       if (Option.isSome(machineErrorContext))
         yield* machineErrorContext.value.set({
           stack_changes: rejected.changes,
-          recreate_command: rejected.command,
+          ...(rejected.command === undefined ? {} : { recreate_command: rejected.command }),
         });
       return yield* rejected.error;
     }
@@ -901,10 +1030,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (initialComposition) {
       const storage = members.find((instance) => instance.service === "storage");
       if (storage !== undefined) {
-        const context = yield* loadLocalProjectContext(
-          target.projectRoot,
-          (message) => new SeedConfigLoadError({ message }),
-        );
         if (hasConfiguredBuckets(context.config)) {
           yield* Effect.annotateCurrentSpan({ "stack.storage_seeded": true });
           yield* storage.start.pipe(

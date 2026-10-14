@@ -113,8 +113,8 @@ export const commandSettingsLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const provider = yield* ConfigProvider.ConfigProvider;
         const read = <A>(config: Config.Config<A>) => config.parse(provider);
-        const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
-        const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
+        const profileEnvValue = yield* read(Config.option(Config.String("SUPABASE_PROFILE")));
+        const supabaseHome = yield* read(Config.option(Config.String("SUPABASE_HOME")));
         const resolvedSupabaseHome = resolveSupabaseHomeValue(
           path,
           supabaseHome,
@@ -144,25 +144,25 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
-        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
+        const rawDbPassword = yield* read(Config.option(Config.String("SUPABASE_DB_PASSWORD")));
         const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
         );
 
-        const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
+        const rawGithubToken = yield* read(Config.option(Config.String("GITHUB_TOKEN")));
         const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
         );
 
-        const rawAccessToken = yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN")));
+        const rawAccessToken = yield* read(Config.option(Config.String("SUPABASE_ACCESS_TOKEN")));
         const accessToken = Option.filter(rawAccessToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
         );
 
-        const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
+        const rawProjectId = yield* read(Config.option(Config.String("SUPABASE_PROJECT_ID")));
         const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
-        const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
+        const workdirEnvValue = yield* read(Config.option(Config.String("SUPABASE_WORKDIR")));
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
           workdirEnvValue,

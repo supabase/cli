@@ -25,9 +25,14 @@ import {
 import { DbConfigLoadError } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { parseDotEnv } from "./dotenv.ts";
-import { strToArr } from "./local-config-values.ts";
+import {
+  deprecatedOrioleDBVersionEnvWarning,
+  readOrioleDBVersionEnvOverride,
+  strToArr,
+} from "./local-config-values.ts";
 import { ramInBytes } from "./size-units.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
+import { Output } from "../shared/output/output.service.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
 type EnvLookup = (name: string) => string | undefined;
@@ -773,7 +778,7 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 const DEFAULT_SUPABASE_ENV = "development";
 
 export const configEnvOption = Effect.fnUntraced(function* (name: string) {
-  return yield* Config.option(Config.string(name)).pipe(
+  return yield* Config.option(Config.String(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
     ),
@@ -1046,6 +1051,7 @@ const ENV_OVERRIDE_NAMES = [
   "SUPABASE_DB_SHADOW_PORT",
   "SUPABASE_DB_MAJOR_VERSION",
   "SUPABASE_DB_ORIOLEDB_VERSION",
+  "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
   "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
   "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
   "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
@@ -1067,6 +1073,34 @@ const ENV_OVERRIDE_NAMES = [
 ] as const;
 
 type EnvOverrideName = (typeof ENV_OVERRIDE_NAMES)[number];
+
+/**
+ * The `SUPABASE_*` override lookup `readDbToml` exposes as `envLookup`: a non-empty shell value
+ * wins, then a non-empty value from the project `.env` files.
+ */
+export const envOverrideLookup = Effect.fnUntraced(function* (
+  projectEnv: Readonly<Record<string, string>>,
+) {
+  const shellOverrideEnv = yield* resolveShellEnv(ENV_OVERRIDE_NAMES);
+  return (name: EnvOverrideName): string | undefined => {
+    const fromShell = shellOverrideEnv.get(name);
+    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
+    const fromFile = projectEnv[name];
+    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
+  };
+});
+
+/**
+ * Prints the `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` deprecation WARN on stderr when `envLookup`
+ * finds it set. Commands call it once after their main config read; a command that loads the
+ * local project context gets the WARN from that load instead.
+ */
+export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
+  envLookup: DbTomlValues["envLookup"],
+) {
+  const warning = yield* deprecatedOrioleDBVersionEnvWarning(envLookup);
+  if (warning !== undefined) yield* (yield* Output).raw(`${warning}\n`, "stderr");
+});
 
 /**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
@@ -1133,16 +1167,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // the deprecation warning.
     doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
   }
-  const shellOverrideEnv = yield* resolveShellEnv(ENV_OVERRIDE_NAMES);
   // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
-  // value/default. An empty env value is ignored, and the project `.env` files are
-  // loaded into the environment first, so consult both.
-  const envOverride = (name: EnvOverrideName): string | undefined => {
-    const fromShell = shellOverrideEnv.get(name);
-    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
-    const fromFile = projectEnv[name];
-    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
-  };
+  // value/default.
+  const envOverride = yield* envOverrideLookup(projectEnv);
   const shellRefEnv = yield* resolveShellEnv([
     ...envRefNames(doc),
     ...Object.keys(asRecord(doc?.["remotes"]) ?? {}).map(remoteProjectIdEnvName),
@@ -1314,7 +1341,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(expandEnv(value, lookup)) : Option.none();
   const orioledbVersionRaw =
-    (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
+    (remoteWins("db.orioledb_version") ? undefined : readOrioleDBVersionEnvOverride(envOverride)) ??
     db?.["orioledb_version"];
   const orioledbVersion = expandString(orioledbVersionRaw);
   // The defaults-only fallback says nothing about the project's engine.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Predicate } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
@@ -23,7 +23,7 @@ const testRoot = Command.make("supabase").pipe(
 const tmp = useTempWorkdir("supabase-migration-alias-int-");
 
 describe("migration command integration", () => {
-  it.live("accepts the Go-compatible plural migrations alias", () => {
+  it.effect("accepts the Go-compatible plural migrations alias", () => {
     const layer = Layer.mergeAll(
       buildTestRuntime({
         out: mockOutput({ format: "text" }),

@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -10,10 +10,10 @@ import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 
 const config = {
-  token: Argument.string("token").pipe(
+  token: Argument.String("token").pipe(
     Argument.withDescription("Deletion token (UUID) printed when the feedback was submitted."),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project the feedback was submitted with."),
     Flag.optional,
   ),

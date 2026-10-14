@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { DateTime, Effect, Layer } from "effect";
 
 import { DebugFlag } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
@@ -6,10 +6,11 @@ import { DebugLogger } from "./debug-logger.service.ts";
 const pad = (n: number): string => String(n).padStart(2, "0");
 
 /** Formats a timestamp matching Go's `log.LstdFlags`: `YYYY/MM/DD HH:MM:SS`. */
-function formatTimestamp(now: Date): string {
+function formatTimestamp(now: DateTime.DateTime): string {
+  const local = DateTime.toParts(DateTime.setZone(now, DateTime.zoneMakeLocal()));
   return (
-    `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ` +
-    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    `${local.year}/${pad(local.month)}/${pad(local.day)} ` +
+    `${pad(local.hour)}:${pad(local.minute)}:${pad(local.second)}`
   );
 }
 
@@ -25,7 +26,10 @@ export const debugLoggerLayer = Layer.effect(
 
     return DebugLogger.of({
       debug: writeLine,
-      http: (method, url) => writeLine(`${formatTimestamp(new Date())} HTTP ${method}: ${url}`),
+      http: (method, url) =>
+        Effect.flatMap(DateTime.now, (now) =>
+          writeLine(`${formatTimestamp(now)} HTTP ${method}: ${url}`),
+        ),
     });
   }),
 );

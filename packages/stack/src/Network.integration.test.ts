@@ -4,10 +4,11 @@ import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, 
 import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { HttpClient } from "effect/unstable/http";
+import { HttpBody, HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import { freshWrites } from "./host/Endpoints.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
@@ -597,8 +598,18 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/** A pinned port above the auto range, so it never meets a registry row from an auto allocation. */
-const pinnedPort = () => 33000 + (Math.abs(Hash.string(randomUUID())) % 16000);
+/** Ports Windows runners listen on: RDP, WinRM, Delivery Optimization and Windows services. */
+const windowsHeldPorts = new Set([3389, 5040, 5357, 5985, 5986, 7680]);
+
+/**
+ * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
+ * neither another test's auto allocation nor an outbound socket can already hold it. It stays
+ * under 9000, where other files pin fixed ports.
+ */
+const pinnedPort = (): number => {
+  const port = 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
+  return windowsHeldPorts.has(port) ? pinnedPort() : port;
+};
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
   Effect.scoped(
@@ -696,4 +707,50 @@ it.live("a pinned shared listener keeps its reservation until its last route clo
       expect(yield* reservedPort(root, "stack", "api")).toBeUndefined();
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "sends writes to a fresh-writes endpoint's dedicated and joined routes over fresh connections",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-fresh-writes-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(stack("stack"));
+        const target = yield* backend;
+        let connections = 0;
+        target.server.on("connection", () => {
+          connections += 1;
+        });
+        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+        yield* rest.bind;
+        const studio = yield* network.register({
+          id: "studio",
+          endpoints: {
+            http: {
+              ...joinEndpoint(target, Effect.succeed(true)),
+              freshWrites: freshWrites({ service: "studio" }, "http"),
+            },
+          },
+        });
+        yield* studio.bind;
+        const api = yield* rest.address("api", "host");
+        const dedicated = yield* studio.address("http", "host");
+        const post = (port: number, path: string) =>
+          Effect.gen(function* () {
+            const client = yield* HttpClient.HttpClient;
+            const response = yield* client.post(`http://127.0.0.1:${port}${path}`, {
+              body: HttpBody.text("{}"),
+            });
+            return yield* response.text;
+          }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+        for (const _ of [1, 2]) expect(yield* post(api.port, "/rest")).toBe("backend:/rest");
+        expect(connections).toBe(1);
+        for (const _ of [1, 2]) expect(yield* post(api.port, "/mcp")).toBe("backend:/api/mcp");
+        for (const _ of [1, 2]) expect(yield* post(dedicated.port, "/x")).toBe("backend:/x");
+        expect(connections).toBe(5);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

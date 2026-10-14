@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Config, Effect, Option, type Path } from "effect";
 
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 
@@ -31,12 +31,14 @@ export interface PgDeltaContext {
  * unrelated ambient `SUPABASE_PROJECT_ID` could win back over the matched remote's id.
  */
 export function resolvePgDeltaProjectId(
+  path: Path.Path,
   cliProjectId: Option.Option<string>,
   toml: { readonly projectId: Option.Option<string>; readonly appliedRemote: string | undefined },
   workdir: string,
 ): string {
   return sanitizeProjectId(
     resolveLocalProjectId(
+      path,
       toml.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliProjectId),
       Option.getOrUndefined(toml.projectId),
       workdir,
@@ -53,7 +55,11 @@ export function edgeRuntimeId(projectId: string): string {
 }
 
 /** Recognizes `PGDELTA_DEBUG=1`/`true`/`yes` (case-insensitive). */
-export function isPgDeltaDebugEnabled(): boolean {
-  const value = (process.env["PGDELTA_DEBUG"] ?? "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
-}
+export const isPgDeltaDebugEnabled = Config.String("PGDELTA_DEBUG").pipe(
+  Config.withDefault(""),
+  Config.map((raw) => {
+    const value = raw.trim().toLowerCase();
+    return value === "1" || value === "true" || value === "yes";
+  }),
+  Effect.orElseSucceed(() => false),
+);

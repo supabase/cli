@@ -10,8 +10,8 @@
  */
 
 import { Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
@@ -151,12 +151,14 @@ export function resolveVectorDockerSocketPlan(
 }
 
 function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    return Stream.runFold(
+      stream,
+      () => "",
+      (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+    ).pipe(Effect.map((text) => text + decoder.decode()));
+  });
 }
 
 /**

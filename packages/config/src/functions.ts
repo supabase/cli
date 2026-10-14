@@ -11,7 +11,7 @@ const links = [
   },
 ];
 
-const functionName = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
+const functionName = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/u));
 const defaultEnabled = true;
 const defaultVerifyJwt = true;
 const defaultFunctions = {};
@@ -20,7 +20,7 @@ const defaultImportMap = "";
 const defaultEntrypoint = "";
 const defaultStaticFiles: string[] = [];
 const defaultEnv = {};
-const envName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/));
+const envName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/u));
 
 const func = Schema.Struct({
   enabled: Schema.Boolean.annotate({

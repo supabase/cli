@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Config, Effect, FileSystem, Option, Path } from "effect";
+import { FetchHttpClient } from "effect/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -25,6 +26,17 @@ import {
 } from "./storage-credentials.errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackStorageEndpoint } from "./stack-storage.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `resolveStorageCredentials` for a remote project. */
+export const storageCredentials = block("storage-credentials", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "required",
+    context: "a remote project and no SUPABASE_AUTH_SERVICE_ROLE_KEY",
+    request: { query: { reveal: "true" } },
+  },
+]);
 
 /**
  * Resolves Storage gateway credentials (base URL, service-role key, and local
@@ -78,9 +90,16 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 
   if (opts.projectRef !== "") {
     const baseUrl = `https://${opts.projectRef}.${cliSettings.projectHost}`;
-    const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-    if (envKey !== undefined && envKey.length > 0) {
-      return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies StorageCredentials;
+    const envKey = yield* Config.option(Config.String("SUPABASE_AUTH_SERVICE_ROLE_KEY")).pipe(
+      Effect.mapError(
+        () =>
+          new StorageConfigError({
+            message: "failed to resolve environment variable: SUPABASE_AUTH_SERVICE_ROLE_KEY",
+          }),
+      ),
+    );
+    if (Option.isSome(envKey) && envKey.value.length > 0) {
+      return { baseUrl, apiKey: envKey.value, localKongCa: undefined } satisfies StorageCredentials;
     }
     // Resolved lazily so the local path never triggers auth.
     const api = yield* (yield* CommandPlatformApiFactory).make;
@@ -293,28 +312,18 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
 });
 
 /**
- * Returns a fetch that injects `tls.ca` into every request, trusting the
- * given CA PEM for HTTPS connections to the local Kong gateway. Bun's fetch
- * accepts `{ tls: { ca } }` via `BunFetchRequestInit`, which extends
- * `RequestInit`, so no `as` cast is needed.
+ * Scopes Storage gateway calls to plain `globalThis.fetch`, trusting
+ * `localKongCa` for a local https gateway through a `FetchHttpClient.RequestInit`
+ * carrying Bun's `tls.ca` option. Storage calls never use DNS-over-HTTPS, so this
+ * always replaces the shared DoH-wrapped fetch at the gateway scope. `RequestInit`
+ * values replace rather than merge, so this one hides an outer one and an inner
+ * one drops the CA.
  */
-function kongCaFetch(ca: string): typeof globalThis.fetch {
-  const fetchImpl = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const caInit: BunFetchRequestInit = { ...init, tls: { ca } };
-    return globalThis.fetch(input, caInit);
+export const withStorageGatewayFetch =
+  (localKongCa: string | undefined) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
+    const plain = effect.pipe(Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch));
+    if (localKongCa === undefined) return plain;
+    const caInit: BunFetchRequestInit = { tls: { ca: localKongCa } };
+    return plain.pipe(Effect.provideService(FetchHttpClient.RequestInit, caInit));
   };
-  return Object.assign(fetchImpl, { preconnect: globalThis.fetch.preconnect });
-}
-
-/**
- * `FetchHttpClient.Fetch` override for Storage gateway calls: a CA-trusting
- * fetch for a local https gateway, plain `globalThis.fetch` otherwise. Storage
- * calls never use DNS-over-HTTPS, so this always replaces the shared
- * DoH-wrapped client at the gateway scope.
- */
-export function storageGatewayFetch(localKongCa: string | undefined): typeof globalThis.fetch {
-  return localKongCa !== undefined ? kongCaFetch(localKongCa) : globalThis.fetch;
-}

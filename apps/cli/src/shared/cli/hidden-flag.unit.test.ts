@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
 import { BunServices } from "@effect/platform-bun";
-import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
+import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";

@@ -2,7 +2,7 @@ import { userInfo } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { NodeServices } from "@effect/platform-node";
 import { Context, Effect, FileSystem, Layer, Path, Predicate, Scope, Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
 import { errcode, openDatabase } from "./drivers/Sqlite.ts";

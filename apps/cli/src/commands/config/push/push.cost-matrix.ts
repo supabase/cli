@@ -1,7 +1,6 @@
-import { Effect } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { Effect, Predicate } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
@@ -41,14 +40,12 @@ export const getCostMatrix = Effect.fn("config.push.fetchCostMatrix")(function* 
   );
 
   const response = yield* httpClient.execute(request).pipe(
-    Effect.mapError((cause) => {
-      const description = HttpClientError.isHttpClientError(cause)
-        ? (cause.reason.description ?? cause.reason._tag)
-        : String(cause);
-      return new ConfigPushListAddonsNetworkError({
-        message: `failed to list addons: ${description}`,
-      });
-    }),
+    Effect.mapError(
+      (cause) =>
+        new ConfigPushListAddonsNetworkError({
+          message: `failed to list addons: ${cause.reason.description ?? cause.reason._tag}`,
+        }),
+    ),
   );
 
   if (response.status !== 200) {
@@ -99,18 +96,19 @@ interface ParsedAddon {
  *  uses a plain string, not the enum the generated client declares. */
 function readAddons(parsed: unknown): ReadonlyArray<ParsedAddon> {
   if (typeof parsed !== "object" || parsed === null) return [];
-  const available = (parsed as { available_addons?: unknown }).available_addons;
+  const available = Predicate.hasProperty(parsed, "available_addons")
+    ? parsed.available_addons
+    : undefined;
   if (!Array.isArray(available)) return [];
   const addons: Array<ParsedAddon> = [];
   for (const entry of available) {
     if (typeof entry !== "object" || entry === null) continue;
-    const type = (entry as { type?: unknown }).type;
-    const variantsRaw = (entry as { variants?: unknown }).variants;
+    const type = Predicate.hasProperty(entry, "type") ? entry.type : undefined;
+    const variantsRaw = Predicate.hasProperty(entry, "variants") ? entry.variants : undefined;
     if (typeof type !== "string" || !Array.isArray(variantsRaw)) continue;
     const variants = variantsRaw.map((v) => {
-      const name = (v as { name?: unknown }).name;
-      const price = (v as { price?: unknown }).price;
-      const description = (price as { description?: unknown } | undefined)?.description;
+      const name: unknown = v.name;
+      const description: unknown = v.price?.description;
       return {
         name: typeof name === "string" ? name : "",
         price: { description: typeof description === "string" ? description : "" },

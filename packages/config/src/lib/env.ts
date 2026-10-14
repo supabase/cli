@@ -6,7 +6,7 @@ export const ENV_PATTERN = "^env\\((.*)\\)$";
 export const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
 // Stricter matcher used when `goViperCompat` is off: only SCREAMING_SNAKE_CASE names match.
 export const ENV_CAPTURE_REGEX_STRICT = /^env\(([A-Z_][A-Z0-9_]*)\)$/;
-const envRegex = new RegExp(ENV_PATTERN);
+const envRegex = new RegExp(ENV_PATTERN, "u");
 
 export function isEnvReference(value: string, goViperCompat: boolean): boolean {
   return (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).test(value);

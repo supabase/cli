@@ -12,8 +12,32 @@ import {
   Stream,
   Redacted,
 } from "effect";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import {
   alwaysReadyHttpClientLayer,
@@ -30,14 +54,17 @@ import {
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
-  withEnvVar,
+  withConfigEnv,
+  withEmptyConfigEnv,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -59,6 +86,7 @@ import {
   DbConnection,
   type PgConnInput,
 } from "../../../../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../../../../command-internal/db-connection.errors.ts";
 import {
   PgDeltaEngine,
   PgDeltaEngineError,
@@ -67,6 +95,7 @@ import {
 } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 
@@ -94,6 +123,8 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
+  /** Runs the real resolver and linked-project cache; `workdir` must be a real directory. */
+  realLayers?: boolean;
 }
 
 const SYNC_STACK_ID = "e".repeat(64);
@@ -161,6 +192,7 @@ function syncStackApi(workdir: string, port: number) {
       stop: unusedSync,
       restart: unusedSync,
     },
+    startupEndpointChanges: unusedSync,
     stop: unusedSync,
     destroy: unusedSync,
     gateway: unusedGateway,
@@ -233,7 +265,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
+            ? Effect.fail(new DbExecError({ message: "boom" }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
@@ -244,11 +276,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               ? sql.findIndex((statement) => statement.startsWith("ALTER"))
               : -1;
           return failureIndex >= 0
-            ? Effect.fail({
-                _tag: "DbExecError",
-                message: "boom",
-                statementIndex: failureIndex,
-              } as never)
+            ? Effect.fail(new DbExecError({ message: "boom", statementIndex: failureIndex }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) {
                   dbBatches.push(sql);
@@ -301,6 +329,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const nextFiles = opts.renderedFiles ?? [];
   const planErrors = [...(opts.planErrors ?? [])];
   let planCalls = 0;
+  const planDebug: Array<boolean> = [];
   const declarativeExportCalls: Array<ReadonlyArray<string>> = [];
   const engine = Layer.succeed(
     PgDeltaEngine,
@@ -315,9 +344,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
           };
         }),
-      planDeclarativeSchema: () =>
+      planDeclarativeSchema: (input) =>
         Effect.gen(function* () {
           planCalls += 1;
+          planDebug.push(input.debug);
           const planError = planErrors.shift();
           if (planError !== undefined) return yield* planError;
           const fs = yield* FileSystem.FileSystem;
@@ -353,15 +383,27 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }).pipe(Effect.provide(BunServices.layer)),
     }),
   );
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     seam,
     engine,
     mockLocalDockerEngineUnavailableLayer,
     dbConn,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: dbConn,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
@@ -385,6 +427,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true
       ? [stackBackendLayer("stack"), syncStackApi(workdir, STACK_APPLY_PORT)]
       : []),
@@ -398,8 +441,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbConnectPorts,
     cache,
     telemetry,
+    projectHttp,
     localPostgresImageChecks,
     declarativeExportCalls,
+    planDebug,
     get planCalls() {
       return planCalls;
     },
@@ -415,9 +460,6 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
 });
-
-const failError = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
 const seedDeclarative = (workdir: string) =>
   Effect.gen(function* () {
@@ -481,25 +523,23 @@ const uuidLoadError = () =>
 
 describe("db schema declarative sync integration", () => {
   const tmp = useTempWorkdir();
-  useShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
-      expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+      const error = yield* Effect.flip(dbSchemaDeclarativeSync(flags()));
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeMutuallyExclusiveFlagsError",
         message:
           "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -512,11 +552,10 @@ describe("db schema declarative sync integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -527,17 +566,15 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(
-          ENV,
-          "1",
-          Effect.exit(
+        const error = yield* withConfigEnv(
+          { [ENV]: "1" },
+          Effect.flip(
             dbSchemaDeclarativeSync(
               flags({ apply: Option.some(true), noApply: Option.some(true) }),
             ),
           ),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
+        expect(error).toMatchObject({
           _tag: "DeclarativeMutuallyExclusiveFlagsError",
           message:
             "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -555,9 +592,11 @@ describe("db schema declarative sync integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withEnvVar(ENV, "1", Effect.exit(dbSchemaDeclarativeSync(flags())));
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        const error = yield* withConfigEnv(
+          { [ENV]: "1" },
+          Effect.flip(dbSchemaDeclarativeSync(flags())),
+        );
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -566,9 +605,7 @@ describe("db schema declarative sync integration", () => {
     "--apply and --no-apply together with SUPABASE_EXPERIMENTAL set only in the project .env fail with the mutex error",
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
-      return withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        undefined,
+      return withEmptyConfigEnv(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -577,13 +614,12 @@ describe("db schema declarative sync integration", () => {
             path.join(tmp.current, "supabase", ".env"),
             "SUPABASE_EXPERIMENTAL=true\n",
           );
-          const exit = yield* Effect.exit(
+          const error = yield* Effect.flip(
             dbSchemaDeclarativeSync(
               flags({ apply: Option.some(true), noApply: Option.some(true) }),
             ),
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(failError(exit)).toMatchObject({
+          expect(error).toMatchObject({
             _tag: "DeclarativeMutuallyExclusiveFlagsError",
             message:
               "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -597,11 +633,10 @@ describe("db schema declarative sync integration", () => {
     // The gate runs first, so `--experimental` is required here for the mutex error to surface.
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ apply: Option.some(false), noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeMutuallyExclusiveFlagsError",
       });
     }).pipe(Effect.provide(layer));
@@ -610,11 +645,10 @@ describe("db schema declarative sync integration", () => {
   it.effect("fails when there are no declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect((failError(exit) as { message: string }).message).toContain(
-        "no declarative schema found",
-      );
+      const error = yield* Effect.flip(dbSchemaDeclarativeSync(flags()));
+      expect(error).toMatchObject({
+        message: expect.stringContaining("no declarative schema found"),
+      });
       expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
     }).pipe(Effect.provide(s.layer));
   });
@@ -662,9 +696,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -802,7 +837,7 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(
           flags({
             noCache: true,
@@ -811,8 +846,7 @@ describe("db schema declarative sync integration", () => {
           }),
         ),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -831,11 +865,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -946,6 +979,18 @@ describe("db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect.each([
+    { value: "1", debug: true },
+    { value: "", debug: false },
+  ])('passes PGDELTA_DEBUG="$value" through to the pg-delta planner', ({ value, debug }) => {
+    const s = setup(tmp.current, { experimental: true, diffSql: "" });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.planDebug).toEqual([debug]);
+    }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
+  });
+
   it.effect(
     "--no-apply: writes the timestamped migration, surfaces drop warnings, no apply",
     () => {
@@ -1013,12 +1058,11 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedUuidDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining("schemas/app/tables/members.sql:3"),
       });
-      const error = failError(exit);
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
         suggestion: expect.stringContaining(
@@ -1152,8 +1196,8 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining(
           "This supabase/schemas tree looks like a legacy pg-delta export.",
@@ -1162,7 +1206,7 @@ describe("db schema declarative sync integration", () => {
           "Upgrade without changing the active supabase/schemas tree:",
         ),
       });
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
       });
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
@@ -1205,10 +1249,10 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
-        Effect.exit,
+      const error = yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
+        Effect.flip,
       );
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
       });
@@ -1430,9 +1474,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
+      expect(error).toMatchObject({
         message: "supabase start is not running.",
       });
       expect(
@@ -1528,14 +1573,107 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeApplyError",
         message: 'unknown pg-delta transaction mode "batched"',
       });
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
+  });
+});
+
+describe("db schema declarative sync permissions through the real resolver and cache", () => {
+  const tmp = useTempWorkdir();
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    calls.map(({ method, url }) => `${method} ${url}`);
+  const saveLinkedRef = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
+    yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
+  });
+
+  it.effect(
+    "the bootstrap mints a login role and fills the cache when it picks the linked project",
+    () => {
+      const s = setup(tmp.current, {
+        realLayers: true,
+        experimental: true,
+        stdinIsTty: true,
+        diffSql: "",
+        projectId: Option.some(VALID_REF),
+        promptConfirmResponses: [true], // generate a new one? yes
+        promptSelectResponses: ["linked"],
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* reachableDirectHost;
+        yield* saveLinkedRef;
+        yield* seedMigration(tmp.current);
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        const exit = yield* Effect.exit(
+          dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+        ).pipe(Effect.provide(s.layer));
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(s.declarativeExportCalls).toHaveLength(1);
+        // The bootstrap's calls carry a prerequisite, so the exact check skips them: assert them
+        // directly.
+        expect(asLines(requests)).toEqual([loginRoleRequest]);
+        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "db schema declarative sync",
+          activeFlags: { "no-cache": true, "no-apply": true },
+          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("the bootstrap fills the cache but mints no login role when it picks local", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      projectId: Option.some(VALID_REF),
+      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
+      promptSelectResponses: ["local"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* saveLinkedRef;
+      yield* seedMigration(tmp.current);
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      const exit = yield* Effect.exit(
+        dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      ).pipe(Effect.provide(s.layer));
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(s.declarativeExportCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      assertPermissionDrift({
+        command: "db schema declarative sync",
+        activeFlags: { "no-apply": true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

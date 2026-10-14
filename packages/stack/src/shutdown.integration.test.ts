@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import * as PromiseStack from "./index.ts";
 import { HostEndpoint } from "./HostProcess.ts";
@@ -123,6 +123,7 @@ it.live("Effect stop reports shutdown-exit when the acknowledged owner remains a
       expect(Schema.is(StackError)(error)).toBe(true);
       if (!Schema.is(StackError)(error)) return yield* Effect.die("unexpected shutdown error");
       expect(error.operation).toBe("shutdown-exit");
+      expect(error.kind).toBe("owner-exit");
       expect(error.message).toContain("shutdown acknowledgement");
     }),
   ).pipe(Effect.provide(layer)),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Console, Effect, Exit, Layer } from "effect";
-import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
@@ -71,7 +71,7 @@ describe("group command exit codes (CLI-1906)", () => {
  * service `withoutParseErrorHelpDump` overrides and replays through.
  *
  * `branchesCommand` covers the `UnrecognizedOption` shape end to end. `MissingOption`/
- * `InvalidValue` need a genuinely required flag or `Flag.choice`, which every shipped command
+ * `InvalidValue` need a genuinely required flag or `Flag.Literals`, which every shipped command
  * with one also wraps in its own management-API runtime layer — a minimal synthetic
  * `Command.make` runs through the same `Command.runWith`/`showHelp()` machinery without that
  * overhead. A real subprocess run against `sso add` is covered end to end by `sso.e2e.test.ts`.
@@ -95,7 +95,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   // `type`'s `-t` alias mirrors the real `sso add --type`/`-t` flag, so the short-alias case
   // below exercises the same shape without pulling in a management-API runtime layer.
   const requiredFlagCommand = Command.make("test-required-flag", {
-    type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+    type: Flag.Literals("type", ["saml"] as const).pipe(Flag.withAlias("t")),
   });
 
   const runRequiredFlagCommand = (args: ReadonlyArray<string>, console: Console.Console) =>
@@ -180,7 +180,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   );
 
   it.effect(
-    "an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
+    "an invalid Flag.Literals value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
     () =>
       Effect.gen(function* () {
         const { console, calls } = fakeConsole();
@@ -232,7 +232,7 @@ describe("nested command parsing", () => {
     Effect.gen(function* () {
       let receivedPaths: ReadonlyArray<string> = [];
       const db = Command.make("db", {
-        paths: Argument.string("path").pipe(Argument.variadic()),
+        paths: Argument.String("path").pipe(Argument.variadic()),
       }).pipe(
         Command.withHandler(({ paths }) =>
           Effect.sync(() => {

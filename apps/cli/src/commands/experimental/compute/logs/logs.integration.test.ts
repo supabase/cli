@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Effect,
@@ -13,7 +13,8 @@ import {
   Stdio,
   Tracer,
 } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
+import { TestClock } from "effect/testing";
 import {
   makeComputeProject,
   setupCompute,
@@ -63,6 +64,8 @@ const GET_COMPUTE_ROUTE = `GET ${computeRoute("/api")}`;
 const T1 = 1_788_187_525_212;
 const T2 = 1_788_187_531_671;
 const T3 = 1_788_187_532_576;
+const AFTER_BURSTS = T2 + 20_000_000;
+const DAYS_AFTER_ROWS = T3 + 2 * 86_400_000;
 
 function project() {
   return makeComputeProject({
@@ -155,7 +158,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints a compute's own output oldest first", () =>
+  it.effect("prints a compute's own output oldest first", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -183,7 +186,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("composes a request line from attributes rather than the message", () =>
+  it.effect("composes a request line from attributes rather than the message", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -209,7 +212,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prints a build event with its reason", () =>
+  it.effect("prints a build event with its reason", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -229,7 +232,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("always sends both timestamp bounds, under a 24 hour span", () =>
+  it.effect("always sends both timestamp bounds, under a 24 hour span", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -240,27 +243,29 @@ describe("compute logs", () => {
       return yield* Effect.gen(function* () {
         yield* computeLogs(flags());
 
-        const query = sentQuery(http.requests[0]!);
-        const start = query.iso_timestamp_start;
-        const end = query.iso_timestamp_end;
+        const [request] = http.requests;
+        assert.isDefined(request);
+        const query = sentQuery(request);
+        const start = query.iso_timestamp_start ?? "";
+        const end = query.iso_timestamp_end ?? "";
 
         // A lone bound yields a one-minute window server-side and sending neither
         // is an outright error, so both must always be present.
         expect(start).toBeTruthy();
         expect(end).toBeTruthy();
-        expect(start!.endsWith("Z")).toBe(true);
-        expect(end!.endsWith("Z")).toBe(true);
+        expect(start.endsWith("Z")).toBe(true);
+        expect(end.endsWith("Z")).toBe(true);
         // Over 24h the server silently clamps to start+24h, returning an older
         // slice than the one asked for.
         expect(
-          DateTime.toEpochMillis(DateTime.makeUnsafe(end!)) -
-            DateTime.toEpochMillis(DateTime.makeUnsafe(start!)),
+          DateTime.toEpochMillis(DateTime.makeUnsafe(end)) -
+            DateTime.toEpochMillis(DateTime.makeUnsafe(start)),
         ).toBeLessThan(24 * 60 * 60 * 1000);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("filters on the subservice attribute, never the empty source column", () =>
+  it.effect("filters on the subservice attribute, never the empty source column", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -271,7 +276,9 @@ describe("compute logs", () => {
       return yield* Effect.gen(function* () {
         yield* computeLogs(flags());
 
-        const sql = sentQuery(http.requests[0]!).sql ?? "";
+        const [request] = http.requests;
+        assert.isDefined(request);
+        const sql = sentQuery(request).sql ?? "";
         expect(sql).toContain("log_attributes['worker'] = 'api'");
         expect(sql).toContain("and log_attributes['subservice'] in (");
         expect(sql).not.toContain("log_attributes['source']");
@@ -281,7 +288,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("narrows to one stream for --kind, and to all three without it", () =>
+  it.effect("narrows to one stream for --kind, and to all three without it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -291,11 +298,15 @@ describe("compute logs", () => {
 
       return yield* Effect.gen(function* () {
         yield* computeLogs(flags({ kind: Option.some("requests") }));
-        const narrowed = sentQuery(http.requests[0]!).sql ?? "";
+        const [narrowedRequest] = http.requests;
+        assert.isDefined(narrowedRequest);
+        const narrowed = sentQuery(narrowedRequest).sql ?? "";
         expect(narrowed).toContain("in ('worker_ingress_logs')");
 
         yield* computeLogs(flags());
-        const all = sentQuery(http.requests[1]!).sql ?? "";
+        const [, allRequest] = http.requests;
+        assert.isDefined(allRequest);
+        const all = sentQuery(allRequest).sql ?? "";
         expect(all).toContain("'worker_guest_logs'");
         expect(all).toContain("'worker_ingress_logs'");
         expect(all).toContain("'worker_api_logs'");
@@ -303,7 +314,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("renders a stream it has never heard of rather than failing", () =>
+  it.effect("renders a stream it has never heard of rather than failing", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -325,7 +336,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("strips escape sequences a compute printed", () =>
+  it.effect("strips escape sequences a compute printed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -346,7 +357,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps a blank guest line as a line", () =>
+  it.effect("keeps a blank guest line as a line", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -368,7 +379,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("makes no request at all for --tail 0", () =>
+  it.effect("makes no request at all for --tail 0", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -387,7 +398,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("passes --tail through as the row limit", () =>
+  it.effect("passes --tail through as the row limit", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -398,12 +409,14 @@ describe("compute logs", () => {
       return yield* Effect.gen(function* () {
         yield* computeLogs(flags({ tail: 7 }));
 
-        expect(sentQuery(http.requests[0]!).sql).toContain("limit 7");
+        const [request] = http.requests;
+        assert.isDefined(request);
+        expect(sentQuery(request).sql).toContain("limit 7");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a compute that is not deployed rather than an empty screen", () =>
+  it.effect("reports a compute that is not deployed rather than an empty screen", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -424,7 +437,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("says so when a deployed compute has simply been quiet", () =>
+  it.effect("says so when a deployed compute has simply been quiet", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -443,7 +456,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("treats absent, null and empty result identically", () =>
+  it.effect("treats absent, null and empty result identically", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -468,7 +481,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails on a 200 that carries a query error", () =>
+  it.effect("fails on a 200 that carries a query error", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -490,7 +503,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reads the structured form of a query error too", () =>
+  it.effect("reads the structured form of a query error too", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -515,7 +528,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("maps 402 to a usage error and 429 to a rate limit error", () =>
+  it.effect("maps 402 to a usage error and 429 to a rate limit error", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -533,7 +546,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("points at the project ref when the logs 404 names no such project", () =>
+  it.effect("points at the project ref when the logs 404 names no such project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -550,14 +563,14 @@ describe("compute logs", () => {
         const error = yield* computeLogs(flags()).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
-        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   // The analytics route is not gated on the alpha's allow-list, so only a body
   // no other branch claims is left to read as the family's refusal.
-  it.live("reports a project outside the alpha for an unclassifiable 404", () =>
+  it.effect("reports a project outside the alpha for an unclassifiable 404", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -573,7 +586,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports an unexpected status, which is where a rejected query lands", () =>
+  it.effect("reports an unexpected status, which is where a rejected query lands", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -589,7 +602,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a transport failure", () =>
+  it.effect("reports a transport failure", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -605,7 +618,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an impossible compute name before any request", () =>
+  it.effect("rejects an impossible compute name before any request", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({ workdir: repo.dir, routes: {} });
@@ -619,7 +632,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before spending the query", () =>
+  it.effect("refuses -o env before spending the query", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -637,7 +650,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits only the payload on stdout for -o json", () =>
+  it.effect("emits only the payload on stdout for -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -679,7 +692,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits exactly one structured result for --output-format json", () =>
+  it.effect("emits exactly one structured result for --output-format json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -698,7 +711,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry even when the query fails", () =>
+  it.effect("flushes telemetry even when the query fails", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, telemetry } = setupCompute({
@@ -717,7 +730,7 @@ describe("compute logs", () => {
   // The command has run by the time the ref fails to resolve, so its post-run
   // event still has to be written. Resolution sits above the query, so the
   // failing-query test above does not cover this path.
-  it.live("flushes telemetry when the project ref cannot be resolved", () =>
+  it.effect("flushes telemetry when the project ref cannot be resolved", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, telemetry, http } = setupCompute({
@@ -736,7 +749,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses the project ref from the flag and echoes it in suggestions", () =>
+  it.effect("uses the project ref from the flag and echoes it in suggestions", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -761,8 +774,9 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps printing new lines, sending both bounds on every poll", () =>
+  it.effect("keeps printing new lines, sending both bounds on every poll", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(DAYS_AFTER_ROWS);
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
         workdir: repo.dir,
@@ -786,19 +800,22 @@ describe("compute logs", () => {
         // start silently yields a one-minute window and neither is an error.
         for (const request of http.requests) {
           const query = sentQuery(request);
-          expect(query.iso_timestamp_start).toBeTruthy();
-          expect(query.iso_timestamp_end).toBeTruthy();
+          const start = query.iso_timestamp_start ?? "";
+          const end = query.iso_timestamp_end ?? "";
+          expect(start).toBeTruthy();
+          expect(end).toBeTruthy();
           expect(
-            DateTime.toEpochMillis(DateTime.makeUnsafe(query.iso_timestamp_end!)) -
-              DateTime.toEpochMillis(DateTime.makeUnsafe(query.iso_timestamp_start!)),
+            DateTime.toEpochMillis(DateTime.makeUnsafe(end)) -
+              DateTime.toEpochMillis(DateTime.makeUnsafe(start)),
           ).toBeLessThan(24 * 60 * 60 * 1000);
         }
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("traces the history read but records follow polls only as a count", () =>
+  it.effect("traces the history read but records follow polls only as a count", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer } = setupCompute({
         workdir: repo.dir,
@@ -824,17 +841,14 @@ describe("compute logs", () => {
         Effect.withTracerEnabled(true),
       );
 
-      expect(spans.map((span) => span.name)).toEqual([
-        "compute.logs",
-        "v1GetProjectLogs",
-        "http.client GET",
-      ]);
+      expect(spans.map((span) => span.name)).toEqual(["compute.logs", "v1GetProjectLogs", "GET"]);
       expect(spans[0]?.attributes.get("poll.attempt_count")).toBe(4);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not reprint a line an overlapping window returns again", () =>
+  it.effect("does not reprint a line an overlapping window returns again", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
@@ -859,8 +873,9 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("still emits a line that arrived late, inside the grace window", () =>
+  it.effect("still emits a line that arrived late, inside the grace window", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
@@ -916,8 +931,9 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a log-entry event per line under stream-json", () =>
+  it.effect("emits a log-entry event per line under stream-json", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
@@ -950,7 +966,7 @@ describe("compute logs", () => {
 
   // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
   // nothing — so this pair asks for the text rendering, not for JSON.
-  it.live("renders text when -o pretty overrides --output-format json", () =>
+  it.effect("renders text when -o pretty overrides --output-format json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -971,8 +987,9 @@ describe("compute logs", () => {
 
   // Same precedence, on the branch that refuses a tail: `-o pretty` means this
   // run has no single-payload format to be incompatible with.
-  it.live("allows --follow when -o pretty overrides --output-format json", () =>
+  it.effect("allows --follow when -o pretty overrides --output-format json", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
@@ -989,7 +1006,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses --follow for the single-payload output formats", () =>
+  it.effect("refuses --follow for the single-payload output formats", () =>
     Effect.gen(function* () {
       const repo = yield* project();
 
@@ -1049,7 +1066,7 @@ describe("compute logs", () => {
 
   // No history query means zero rows proves nothing, so the tail has to ask
   // directly — otherwise a typo waits forever on logs that cannot arrive.
-  it.live("still checks the compute exists for --tail 0 --follow", () =>
+  it.effect("still checks the compute exists for --tail 0 --follow", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -1074,7 +1091,7 @@ describe("compute logs", () => {
   // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
   // happens for text runs too. Out of Date range that throws `RangeError`, which
   // is a defect rather than the typed unreadable-response failure.
-  it.live("fails typed rather than throwing on an out-of-range timestamp", () =>
+  it.effect("fails typed rather than throwing on an out-of-range timestamp", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -1094,8 +1111,9 @@ describe("compute logs", () => {
 
   // A 404 answers the same way every time. Retrying it held the error back for a
   // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
-  it.live("surfaces a definitive poll failure without retrying it", () =>
+  it.effect("surfaces a definitive poll failure without retrying it", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
@@ -1118,8 +1136,9 @@ describe("compute logs", () => {
   );
 
   // A rate limit is the server asking for exactly that, so it still rides out.
-  it.live("retries a rate-limited poll", () =>
+  it.effect("retries a rate-limited poll", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
@@ -1145,8 +1164,9 @@ describe("compute logs", () => {
 
   // `--tail` bounds the history a run opens with; reusing it as the poll size
   // meant `--tail 1 --follow` asked each poll for a single row.
-  it.live("polls with a page size independent of --tail", () =>
+  it.effect("polls with a page size independent of --tail", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
@@ -1161,16 +1181,20 @@ describe("compute logs", () => {
       return yield* Effect.gen(function* () {
         yield* computeLogs(flags({ tail: 1, follow: true }), followFor(0));
 
-        expect(sentQuery(http.requests[0]!).sql ?? "").toContain("limit 1");
-        expect(sentQuery(http.requests[1]!).sql ?? "").toContain("limit 1000");
+        const [history, poll] = http.requests;
+        assert.isDefined(history);
+        assert.isDefined(poll);
+        expect(sentQuery(history).sql ?? "").toContain("limit 1");
+        expect(sentQuery(poll).sql ?? "").toContain("limit 1000");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   // The query orders newest-first, so a full page means there is more below it.
   // Advancing the cursor on that page alone dropped the remainder for good.
-  it.live("drains a burst larger than one page before advancing the cursor", () =>
+  it.effect("drains a burst larger than one page before advancing the cursor", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(AFTER_BURSTS);
       const repo = yield* project();
       const fullPage = Array.from({ length: 1000 }, (_, index) =>
         computeLogRow({ id: `burst-${index}`, tsMs: T2 + index, message: `burst ${index}` }),
@@ -1209,8 +1233,9 @@ describe("compute logs", () => {
   // The drain walks backwards from the newest rows, so running out of pages
   // leaves the *oldest* part of the burst unfetched while the cursor advances
   // past it. Those lines are gone, and a silent hole is worse than a noisy one.
-  it.live("says so on stderr when a burst outruns the page budget", () =>
+  it.effect("says so on stderr when a burst outruns the page budget", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(AFTER_BURSTS);
       const repo = yield* project();
       // Five full pages, each older than the last so every page narrows the window
       // and the loop runs to its bound rather than stopping early.
@@ -1249,8 +1274,9 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("warns once about a skipped burst, however long the tail runs", () =>
+  it.effect("warns once about a skipped burst, however long the tail runs", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(AFTER_BURSTS);
       const repo = yield* project();
       const fullPage = (page: number, poll: number) =>
         logsResponse(
@@ -1285,8 +1311,9 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("records exit 130 on SIGINT and still runs its finalizers", () =>
+  it.effect("records exit 130 on SIGINT and still runs its finalizers", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(T3);
       const repo = yield* project();
       const { layer, processControl, telemetry } = setupCompute({
         workdir: repo.dir,

@@ -1,5 +1,5 @@
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref, Result } from "effect";
 
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -37,16 +37,12 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  let resolvedProjectRef = Option.none<string>();
+  const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef).pipe(
-      Effect.tap((projectRef) =>
-        Effect.sync(() => {
-          resolvedProjectRef = Option.some(projectRef);
-        }),
-      ),
-    );
+    const ref = yield* resolver
+      .resolve(flags.projectRef)
+      .pipe(Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))));
     yield* Effect.annotateCurrentSpan("project.ref", ref);
 
     const fetching =
@@ -66,7 +62,7 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     }
     const rawBody = yield* response.text.pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(
+      Effect.mapError(
         (cause) => new FunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
       ),
     );
@@ -80,15 +76,15 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
       });
     }
     const decodedFunctions = decodeFunctionsResponse(rawBody);
-    if (!decodedFunctions.ok) {
+    if (Result.isFailure(decodedFunctions)) {
       yield* fetching?.fail() ?? Effect.void;
       return yield* new FunctionsListNetworkError({
-        message: decodedFunctions.message,
+        message: decodedFunctions.failure,
         decode: true,
       });
     }
     yield* fetching?.clear ?? Effect.void;
-    const { functions, isNil } = decodedFunctions.value;
+    const { functions, isNil } = decodedFunctions.success;
     yield* Effect.annotateCurrentSpan("function.count", functions.length);
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -123,11 +119,13 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
     yield* output.raw(renderFunctionsTable(functions));
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        Option.match(resolvedProjectRef, {
-          onNone: () => Effect.void,
-          onSome: (ref) => linkedProjectCache.cache(ref),
-        }),
+      Ref.get(resolvedProjectRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

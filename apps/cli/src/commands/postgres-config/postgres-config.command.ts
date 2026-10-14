@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { postgresConfigDeleteCommand } from "./delete/delete.command.ts";
 import { postgresConfigGetCommand } from "./get/get.command.ts";
 import { postgresConfigUpdateCommand } from "./update/update.command.ts";

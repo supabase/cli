@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -7,13 +7,13 @@ import { notebooksProjectRefSafeFlags } from "../notebooks.shared.ts";
 import { notebooksPull } from "./pull.handler.ts";
 
 const config = {
-  notebookId: Argument.string("Notebook id").pipe(
+  notebookId: Argument.String("Notebook id").pipe(
     Argument.withDescription(
       "UUID of the notebook to replace locally. Pulls only locally missing notebooks if omitted.",
     ),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

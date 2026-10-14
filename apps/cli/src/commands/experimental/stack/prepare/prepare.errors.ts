@@ -1,13 +1,15 @@
-import { StackError } from "@supabase/stack/effect";
-import { Data, Schema } from "effect";
+import type { StackError } from "@supabase/stack/effect";
+import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStackPrepareError")<{
-  readonly reason: "flags" | "invalid-config" | "runtime" | "artifact" | "lifecycle" | "unknown";
+  readonly reason: "flags" | "invalid-config" | "runtime" | "lifecycle" | "stack";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -15,36 +17,23 @@ export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStac
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "flags":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
-      case "lifecycle":
-        return actionability.invalidConfig;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "runtime":
-        return actionability.dockerNotRunning;
-      case "artifact":
-        return actionability.externalNetwork;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "lifecycle":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }
 
 /** Maps an internal stack failure to the prepare command's stable error boundary. */
-export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
-  const message =
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-      ? error.message
-      : String(error);
-  return new StackCommandPrepareError({
-    reason: Schema.is(StackError)(error)
-      ? error.operation === "prepareService"
-        ? "artifact"
-        : "unknown"
-      : "unknown",
-    message,
+export const stackPrepareError = (error: StackError): StackCommandPrepareError =>
+  new StackCommandPrepareError({
+    reason: "stack",
+    message: error.message,
     cause: error,
   });
-};

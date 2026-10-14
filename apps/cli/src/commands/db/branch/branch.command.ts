@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { dbBranchCreateCommand } from "./create/create.command.ts";
 import { dbBranchDeleteCommand } from "./delete/delete.command.ts";
 import { dbBranchListCommand } from "./list/list.command.ts";

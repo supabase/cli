@@ -150,7 +150,7 @@ describe("pullPayload", () => {
     expect(payload["confirmed"]).toBe(false);
     expect(payload["dry_run"]).toBe(false);
     expect(payload["dirty_paths"]).toEqual(["supabase/config.toml"]);
-    expect((payload["steps"] as Record<string, unknown>)["migration_history"]).toEqual({
+    expect(payload["steps"]).toHaveProperty("migration_history", {
       status: "skipped",
       written: [],
       detail: { files: [] },
@@ -203,7 +203,7 @@ describe("pullPayload", () => {
     const payload = pullPayload(aggregate);
     expect(payload["wrote"]).toBe(true);
     expect(payload["dirty_paths"]).toEqual([]);
-    expect((payload["steps"] as Record<string, unknown>)["migration_history"]).toEqual({
+    expect(payload["steps"]).toHaveProperty("migration_history", {
       status: "failed",
       written: [],
       detail: {},
@@ -279,7 +279,7 @@ describe("pullPayload", () => {
       results,
     };
     const payload = pullPayload(aggregate);
-    expect(Object.keys(payload["steps"] as Record<string, unknown>)).toEqual(["config"]);
+    expect(payload["steps"]).toStrictEqual({ config: expect.anything() });
   });
 });
 
@@ -537,7 +537,7 @@ describe("renderPullSummary", () => {
     // Continuation lines don't start with the step name, so a naive
     // step-row scanner (e.g. this suite's own `rowFor`/`stepLine` helpers)
     // never mistakes one for a fake status row.
-    expect(lines[dbRowIndex + 1]!.trimStart().startsWith("db")).toBe(false);
+    expect(lines[dbRowIndex + 1]?.trimStart().startsWith("db")).toBe(false);
   });
 
   it("adds no continuation lines for a failed step with no suggestion", () => {
@@ -563,7 +563,7 @@ describe("renderPullSummary", () => {
     };
     const lines = renderPullSummary(aggregate).split("\n");
     const dbRowIndex = lines.findIndex((line) => line.startsWith("  db"));
-    expect(lines[dbRowIndex + 1]!.startsWith("  functions")).toBe(true);
+    expect(lines[dbRowIndex + 1]?.startsWith("  functions")).toBe(true);
   });
 });
 

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -13,7 +13,6 @@ import {
   DELETE_OBJECTS_LIMIT,
   type StorageGateway,
 } from "../../../command-internal/storage-gateway.ts";
-import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
 import {
   assertStorageWorkdir,
@@ -60,7 +59,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
@@ -75,7 +74,9 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
+    }
     // `.env` loads before the confirmation prompt, so a `SUPABASE_YES` set only in
     // `supabase/.env` also auto-confirms.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
@@ -117,7 +118,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
             if (!flags.recursive) {
               return yield* new StorageMissingFlagError();
             }
-            const buckets = yield* gateway.listBuckets();
+            const buckets = yield* gateway.listBuckets;
             for (const b of buckets) groups.set(b.name, [""]);
           }
 
@@ -162,7 +163,14 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     );
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );
@@ -231,8 +239,7 @@ const removeStoragePathAll = Effect.fn("storage.rm.removeAll")(function* (
           summary.buckets_deleted.push(bucket);
         }),
       ),
-      Effect.catch((error) =>
-        error instanceof StorageGatewayStatusError &&
+      Effect.catchTag("StorageGatewayStatusError", (error) =>
         error.body.includes('"error":"Bucket not found"')
           ? output.raw(`Bucket not found: ${bucket}\n`, "stderr")
           : Effect.fail(error),

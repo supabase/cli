@@ -1,7 +1,7 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, FileSystem, Option, Path, Predicate, Schema } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
@@ -62,10 +62,6 @@ interface ResolvedSigningKeysConfig {
   }>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 const StoredSigningKeyJwkJson = Schema.Record(Schema.String, Schema.Unknown);
 const signingKeyJson = Schema.fromJsonString(StoredSigningKeyJwkJson);
 const signingKeysFileJson = Schema.fromJsonString(Schema.Array(StoredSigningKeyJwkJson), {
@@ -94,7 +90,9 @@ function styleIfTty(
   return enabled ? styleText(format, text) : text;
 }
 
-const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgorithm) {
+const generatePrivateKey = Effect.fn("GenSigningKey.generateKey")(function* (
+  algorithm: SigningAlgorithm,
+) {
   const keyId = randomUUID();
 
   if (algorithm === "RS256") {
@@ -103,7 +101,7 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
       publicExponent: 0x10001,
     });
     const exported = privateKey.export({ format: "jwk" });
-    if (!isRecord(exported)) {
+    if (!Predicate.isObject(exported)) {
       return yield* new GenSigningKeyGenerateError({
         message: "failed to generate signing key: rsa jwk export failed",
       });
@@ -128,7 +126,7 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
 
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const exported = privateKey.export({ format: "jwk" });
-  if (!isRecord(exported)) {
+  if (!Predicate.isObject(exported)) {
     return yield* new GenSigningKeyGenerateError({
       message: "failed to generate signing key: ec jwk export failed",
     });

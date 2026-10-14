@@ -1,7 +1,7 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/process";
+import { Effect, FileSystem, Match, Option, Path, Predicate, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -26,7 +26,10 @@ import {
 } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -146,12 +149,14 @@ const GEN_TYPES_SCAN_SPEC = {
 } as const;
 
 function collectByteStream<E>(stream: Stream.Stream<Uint8Array, E>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    return Stream.runFold(
+      stream,
+      () => "",
+      (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+    ).pipe(Effect.map((text) => text + decoder.decode()));
+  });
 }
 
 // Keep in sync with the value-bearing flags on the root command and `gen types` itself.
@@ -315,17 +320,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
    * stderr in the message, which could name a host the tool itself failed to reach; they are
    * never a database connectivity failure, so they never earn the pooler retry.
    */
-  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean => {
-    switch (error._tag) {
-      case "DbConnectError":
-        return error.ipv6Unreachable ?? false;
-      case "GenTypesToolNotInstalledError":
-      case "GenTypesToolFailedError":
-        return false;
-      case "GenTypesGenerationError":
-        return isIPv6ConnectivityErrorCause(error);
-    }
-  };
+  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean =>
+    Match.valueTags(error, {
+      DbConnectError: (connectError) => connectError.ipv6Unreachable ?? false,
+      GenTypesToolNotInstalledError: () => false,
+      GenTypesToolFailedError: () => false,
+      GenTypesGenerationError: (generationError) => isIPv6ConnectivityErrorCause(generationError),
+    });
 
   const runGenerate = Effect.fn("gen.types.generate")(function* (input: {
     readonly conn: PgConnInput;
@@ -397,12 +398,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
           Effect.as("project" as const),
-          Effect.catch((cause) =>
-            isProjectNotFound(cause)
-              ? runPreviewBranchTypes(projectRef, includedSchemas).pipe(
-                  Effect.as("branch" as const),
-                )
-              : Effect.fail(cause),
+          Effect.catchIf(isProjectNotFound, () =>
+            runPreviewBranchTypes(projectRef, includedSchemas).pipe(Effect.as("branch" as const)),
           ),
         );
         if (projectResult === "branch") return;
@@ -468,7 +465,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               primary.connection_string,
               cliSettings.poolerHost,
             );
-            return parsed._tag === "ok"
+            return Predicate.isTagged(parsed, "ok")
               ? Option.some(pinSupabaseTls({ ...parsed.conn, password: branchPassword }))
               : Option.none<PgConnInput>();
           }),
@@ -612,6 +609,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         "stack.backend": backend.kind,
       });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
+      yield* warnDeprecatedOrioleDBVersionEnv(config.envLookup);
       const projectEnvValues = Object.fromEntries(
         Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
       );

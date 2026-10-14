@@ -9,9 +9,9 @@
  */
 
 import { Crypto, Effect, FileSystem, Option, Path } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import type { GlobalFlag } from "effect/unstable/cli";
+import { HttpClient } from "effect/http";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import type { GlobalFlag } from "effect/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
@@ -136,7 +136,10 @@ export const buildLocalDbContainerInputs = (
     // See {@link resolveDockerNetworkMode} for the full flag/env/fallback precedence.
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: yield* viperEnvStringWithProjectFallback(
+        "SUPABASE_NETWORK_ID",
+        projectEnvValues,
+      ),
       projectId,
     });
     // Only needed on Linux; Docker Desktop already resolves `host.docker.internal` elsewhere.

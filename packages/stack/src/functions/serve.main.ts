@@ -75,17 +75,17 @@ const bootstrapConfig = Effect.runSync(
   Effect.gen(function* () {
     const read = <A>(config: Config.Config<A>) => config.pipe(Config.option);
     return {
-      hostPort: yield* read(Config.string("SUPABASE_INTERNAL_HOST_PORT")),
-      functionsRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
-      filesRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
-      jwtSecret: yield* read(Config.string("SUPABASE_INTERNAL_JWT_SECRET")),
-      supabaseUrl: yield* read(Config.string("SUPABASE_URL")),
-      wallclock: yield* read(Config.string("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
-      publishableKey: yield* read(Config.string("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
-      secretKey: yield* read(Config.string("SUPABASE_INTERNAL_SECRET_KEY")),
-      functionsConfig: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
-      debug: yield* read(Config.string("SUPABASE_INTERNAL_DEBUG")),
-      jwks: yield* read(Config.string("SUPABASE_JWKS")),
+      hostPort: yield* read(Config.String("SUPABASE_INTERNAL_HOST_PORT")),
+      functionsRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
+      filesRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
+      jwtSecret: yield* read(Config.String("SUPABASE_INTERNAL_JWT_SECRET")),
+      supabaseUrl: yield* read(Config.String("SUPABASE_URL")),
+      wallclock: yield* read(Config.String("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
+      publishableKey: yield* read(Config.String("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
+      secretKey: yield* read(Config.String("SUPABASE_INTERNAL_SECRET_KEY")),
+      functionsConfig: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
+      debug: yield* read(Config.String("SUPABASE_INTERNAL_DEBUG")),
+      jwks: yield* read(Config.String("SUPABASE_JWKS")),
     };
   }).pipe(
     Effect.provideService(

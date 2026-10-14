@@ -1,7 +1,16 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+  type PermissionFragment,
+} from "../../../../../command-internal/command-permissions/model.ts";
+import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -12,24 +21,24 @@ import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 
 const config = {
-  overwrite: Flag.boolean("overwrite").pipe(
+  overwrite: Flag.Boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
   ),
   // Not named `--output`/`-o`: that's reserved for the global machine-format flag
   // (`OutputFlag`), and a leaf string flag would shadow it — `generate -o json` would write a
   // directory literally named `json` instead of requesting JSON output.
-  outputDir: Flag.string("output-dir").pipe(
+  outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription(
       "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
     ),
     Flag.optional,
   ),
-  reset: Flag.boolean("reset").pipe(
+  reset: Flag.Boolean("reset").pipe(
     Flag.withDescription("Reset local database before generating (local data will be lost)."),
     Flag.withDefault(false),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -40,7 +49,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Generates declarative schema from the database specified by the connection string (must be percent-encoded).",
     ),
@@ -48,20 +57,27 @@ const config = {
   ),
   // Explicit-target selection keys off presence, not the bool value, so model `--linked`/
   // `--local` as `Option` (like `--db-url`) so `--linked=false` still takes the explicit path.
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Generates declarative schema from the linked project."),
     Flag.optional,
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Generates declarative schema from the local database."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
   ),
 } as const;
+
+// Without a target flag, a run whose workdir has migrations can ask where to generate from.
+const noTargetFlag = (fragment: PermissionFragment) =>
+  (["db-url", "local", "linked"] as const).reduce(
+    (current, flag) => withCondition(current, { flag, present: false }),
+    fragment,
+  );
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
@@ -75,6 +91,34 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "overwrite",
+          "output-dir",
+          "reset",
+          "schema",
+          "no-cache",
+          "strict-coverage",
+        ],
+      },
+      withCondition(compose(dbConfigLinked, linkedProjectCache), { flag: "linked" }),
+      noTargetFlag(
+        compose(
+          withContext(
+            dbConfigLinked,
+            "migrations exist and the user picks the linked project in the target prompt, which needs an interactive terminal or --yes and a linked project ref",
+          ),
+          withContext(
+            linkedProjectCache,
+            "migrations exist and SUPABASE_PROJECT_ID or supabase/.temp/project-ref gives a ref, whichever target is picked",
+          ),
+        ),
+      ),
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.

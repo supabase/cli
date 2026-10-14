@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
 import { Data, Deferred, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeTypegenHost } from "./types.typegen-host.ts";
 
 interface SpawnCall {

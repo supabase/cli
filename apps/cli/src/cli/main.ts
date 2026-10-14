@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Stdio } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";

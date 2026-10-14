@@ -5,8 +5,8 @@ Deprecated wrapper around native `db pull`. Commits remote schema changes as
 `--experimental` / `SUPABASE_EXPERIMENTAL` take the same in-process declarative
 export as `db pull --experimental` (Go's `pull.Run` honored that gate for
 commit too). Does not print `Finished supabase db pull.` Every invocation
-prints cobra's `Command "commit" is deprecated, use "db pull" instead.` to
-stderr.
+prints `Command "commit" is deprecated and will be removed in v3, use "db pull" instead.`
+to stderr.
 
 See [`db/pull/SIDE_EFFECTS.md`](../../pull/SIDE_EFFECTS.md) for the shared
 migration-style pull surface (shadow, cache, API, history repair). Differences
@@ -65,6 +65,6 @@ Same envelope as migration-style `db pull`.
 
 ## Notes
 
-- Deprecated: use `db pull` instead.
+- Deprecated: use `db pull` instead; removed in v3.
 - `--schema` / `-s` restricts the commit to specific schemas.
 - `--db-url` and `--linked` are mutually exclusive.

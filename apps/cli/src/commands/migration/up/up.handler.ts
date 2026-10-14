@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Match, Option, Path } from "effect";
 
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -6,7 +6,10 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
@@ -70,6 +73,7 @@ const runUp = Effect.fnUntraced(function* (
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": target.connType ?? "local",
       "db.is_local": cfg.isLocal,
@@ -88,35 +92,39 @@ const runUp = Effect.fnUntraced(function* (
 
         const remote = yield* listRemoteMigrations(session);
         const local = yield* listLocalMigrationPaths(fs, path, migrationsDir);
-        const result = findPendingMigrations(local, remote);
-
-        let pending: ReadonlyArray<string>;
-        if (result.kind === "missing-local") {
-          return yield* new MigrationMissingLocalError({
-            message: "Remote migration versions not found in local migrations directory.",
-            suggestion: suggestRevertHistory(
-              result.versions,
-              (target.connType ?? "local") === "local",
-            ),
-          });
-        } else if (result.kind === "missing-remote") {
-          if (!flags.includeAll) {
-            return yield* new MigrationMissingRemoteError({
-              message:
-                "Found local migration files to be inserted before the last migration on remote database.",
-              suggestion: suggestIgnoreFlag(result.paths),
-            });
-          }
-          // Slices the same version-ordered list `result.paths` was taken from; indexing
-          // a name-ordered list with this offset would skip a pending migration and
-          // re-apply an already-applied one.
-          pending = [
-            ...result.paths,
-            ...sortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
-          ];
-        } else {
-          pending = result.paths;
-        }
+        const pending = yield* Match.value(findPendingMigrations(local, remote)).pipe(
+          Match.discriminatorsExhaustive("kind")({
+            "missing-local": (result) =>
+              Effect.fail(
+                new MigrationMissingLocalError({
+                  message: "Remote migration versions not found in local migrations directory.",
+                  suggestion: suggestRevertHistory(
+                    result.versions,
+                    (target.connType ?? "local") === "local",
+                  ),
+                }),
+              ),
+            "missing-remote": (result) => {
+              if (!flags.includeAll) {
+                return Effect.fail(
+                  new MigrationMissingRemoteError({
+                    message:
+                      "Found local migration files to be inserted before the last migration on remote database.",
+                    suggestion: suggestIgnoreFlag(result.paths),
+                  }),
+                );
+              }
+              // Slices the same version-ordered list `result.paths` was taken from; indexing
+              // a name-ordered list with this offset would skip a pending migration and
+              // re-apply an already-applied one.
+              return Effect.succeed([
+                ...result.paths,
+                ...sortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
+              ]);
+            },
+            pending: (result) => Effect.succeed(result.paths),
+          }),
+        );
 
         yield* upsertVaultSecrets(session, toml.vault);
 

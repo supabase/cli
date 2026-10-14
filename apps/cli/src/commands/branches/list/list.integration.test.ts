@@ -119,7 +119,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("branches list integration", () => {
-  it.live("renders a Glamour table with all 8 columns in text mode", () => {
+  it.effect("renders a Glamour table with all 8 columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -136,7 +136,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders literal `|` characters in branch fields (Go parity)", () => {
+  it.effect("renders literal `|` characters in branch fields (Go parity)", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH_PIPE] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -145,7 +145,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty table when API returns []", () => {
+  it.effect("renders an empty table when API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -154,7 +154,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with { branches } for --output-format=json", () => {
+  it.effect("emits a success event with { branches } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -164,7 +164,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -172,7 +172,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -182,7 +182,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact YAML for --output yaml", () => {
+  it.effect("emits Go-byte-exact YAML for --output yaml", () => {
     // Omits every optional field to assert how absent values render.
     const zeroBranch: Branches[number] = {
       id: "00000000-0000-0000-0000-000000000000",
@@ -237,7 +237,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
+  it.effect("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -245,7 +245,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("wraps result as { branches = [...] } for --output toml", () => {
+  it.effect("wraps result as { branches = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -265,7 +265,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesEnvNotSupportedError for --output env", () => {
+  it.effect("fails with BranchesEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
@@ -278,7 +278,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (table render)", () => {
+  it.effect("treats --output pretty as identical to text mode (table render)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -286,7 +286,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag wins over --output-format", () => {
+  it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
@@ -298,7 +298,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes the resolved project ref to listAllBranches", () => {
+  it.effect("passes the resolved project ref to listAllBranches", () => {
     const { layer, api } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -308,7 +308,7 @@ describe("branches list integration", () => {
   });
 
   describe("parent-scoped resolution after linking a branch (CLI-2167 follow-up)", () => {
-    it.live(
+    it.effect(
       "resolves the linked PARENT (not the branch's own ref) when linked to a branch, and renders the table",
       () => {
         const { layer, out, api, workdir } = setup({
@@ -327,7 +327,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "an explicit --project-ref still wins over both the cache and the project-ref file",
       () => {
         const { layer, api, workdir } = setup({
@@ -343,20 +343,23 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live("a valid SUPABASE_PROJECT_ID wins over both the cache and the project-ref file", () => {
-      const { layer, api, workdir } = setup({
-        projectId: Option.some(ENV_REF),
-        response: [SAMPLE_BRANCH],
-      });
-      return Effect.gen(function* () {
-        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
-        yield* branchesList({ projectRef: Option.none() });
-        expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "a valid SUPABASE_PROJECT_ID wins over both the cache and the project-ref file",
+      () => {
+        const { layer, api, workdir } = setup({
+          projectId: Option.some(ENV_REF),
+          response: [SAMPLE_BRANCH],
+        });
+        return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
+          yield* branchesList({ projectRef: Option.none() });
+          expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live(
+    it.effect(
       "SUPABASE_PROJECT_ID merely restating the linked branch ref is deduped; the cached parent wins (PR #6168 review)",
       () => {
         const { layer, api, workdir } = setup({
@@ -372,7 +375,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID hard-fails with InvalidProjectRefError even when a valid cache/file exists (PR #6168 review)",
       () => {
         const { layer, api, workdir } = setup({
@@ -392,7 +395,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID with no cache and no file falls back to the unchanged InvalidProjectRefError",
       () => {
         const { layer, api } = setup({ projectId: Option.some("not-a-valid-ref") });
@@ -407,7 +410,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live("nothing linked anywhere, non-TTY, fails with the unchanged not-linked error", () => {
+    it.effect("nothing linked anywhere, non-TTY, fails with the unchanged not-linked error", () => {
       const { layer, api } = setup({ projectId: Option.none() });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
@@ -419,7 +422,7 @@ describe("branches list integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "the cache alone is never proof of a link: no project-ref file/env means ProjectRefNotLinkedError, no API call (PR #6168 review)",
       () => {
         const { layer, api, workdir } = setup({
@@ -438,7 +441,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a normal (non-branch) linked state via the project-ref file alone is unaffected",
       () => {
         const { layer, api, workdir } = setup({
@@ -462,7 +465,7 @@ describe("branches list integration", () => {
       project_ref: "zzzzzzzzzzzzzzzzzzzz",
     };
 
-    it.live("marks the linked branch's NAME cell with (active) and no other row", () => {
+    it.effect("marks the linked branch's NAME cell with (active) and no other row", () => {
       const { layer, out, workdir } = setup({
         projectId: Option.none(),
         response: [SAMPLE_BRANCH, OTHER_BRANCH],
@@ -475,7 +478,7 @@ describe("branches list integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "omits the marker entirely for --output json (Go machine format, byte-identical to before)",
       () => {
         const { layer, out, workdir } = setup({
@@ -491,7 +494,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "omits the marker/field entirely for --output-format json (structured payload untouched)",
       () => {
         const { layer, out, workdir } = setup({
@@ -508,7 +511,7 @@ describe("branches list integration", () => {
       },
     );
 
-    it.live("renders no marker when the linked ref matches no listed branch", () => {
+    it.effect("renders no marker when the linked ref matches no listed branch", () => {
       const { layer, out } = setup({
         projectId: Option.some(EXPLICIT_REF),
         response: [SAMPLE_BRANCH],
@@ -520,7 +523,7 @@ describe("branches list integration", () => {
     });
   });
 
-  it.live("fails with BranchesListUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with BranchesListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
@@ -533,7 +536,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with BranchesListNetworkError on transport failure", () => {
+  it.effect("fails with BranchesListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
@@ -546,7 +549,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on success", () => {
+  it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* branchesList({ projectRef: Option.none() });
@@ -555,7 +558,7 @@ describe("branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes linked-project cache + telemetry state on failure", () => {
+  it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesList({ projectRef: Option.none() }));

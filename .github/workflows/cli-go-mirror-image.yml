@@ -32,7 +32,7 @@ jobs:
         env:
           TAG: ${{ github.event.client_payload.image || inputs.image }}
         run: |
-          echo "image=${TAG##*/}" >> $GITHUB_OUTPUT
+          echo "image=${TAG##*/}" >> "$GITHUB_OUTPUT"
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:

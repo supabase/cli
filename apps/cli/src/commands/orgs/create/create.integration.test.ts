@@ -64,7 +64,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 describe("orgs create integration", () => {
-  it.live('prints "Created organization: <id>" then a Glamour table in text mode', () => {
+  it.effect('prints "Created organization: <id>" then a Glamour table in text mode', () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -74,7 +74,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends POST /v1/organizations with { name } body", () => {
+  it.effect("sends POST /v1/organizations with { name } body", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -85,7 +85,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits Go-byte-exact preamble + indented JSON for --output json", () => {
+  it.effect("emits Go-byte-exact preamble + indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -95,7 +95,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits preamble + YAML object for --output yaml", () => {
+  it.effect("emits preamble + YAML object for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -104,7 +104,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits preamble + TOML for --output toml", () => {
+  it.effect("emits preamble + TOML for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -114,7 +114,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits preamble + env vars for --output env (create-only branch)", () => {
+  it.effect("emits preamble + env vars for --output env (create-only branch)", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -124,7 +124,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event with org fields for --output-format=json", () => {
+  it.effect("emits a success event with org fields for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -134,7 +134,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a success event for --output-format=stream-json", () => {
+  it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -142,7 +142,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --output pretty as identical to text mode (preamble + table)", () => {
+  it.effect("treats --output pretty as identical to text mode (preamble + table)", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -152,7 +152,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output flag wins over --output-format", () => {
+  it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -160,7 +160,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with OrgsCreateUnexpectedStatusError on HTTP 503", () => {
+  it.effect("fails with OrgsCreateUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
@@ -173,7 +173,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with OrgsCreateNetworkError on transport failure", () => {
+  it.effect("fails with OrgsCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
@@ -188,19 +188,22 @@ describe("orgs create integration", () => {
 
   // Exercises the `creating?.fail() ?? Effect.void` undefined branch — when
   // --output-format != "text", no spinner exists, so the `??` fallback fires.
-  it.live("propagates a transport failure when --output-format=json suppresses the spinner", () => {
-    const { layer } = setup({ format: "json", network: "fail" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("OrgsCreateNetworkError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "propagates a transport failure when --output-format=json suppresses the spinner",
+    () => {
+      const { layer } = setup({ format: "json", network: "fail" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("OrgsCreateNetworkError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupTracked();
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
@@ -208,7 +211,7 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on failure", () => {
+  it.effect("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
       yield* Effect.exit(orgsCreate({ name: "Acme" }));

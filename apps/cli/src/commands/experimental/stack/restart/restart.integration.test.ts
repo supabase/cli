@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -150,7 +150,7 @@ describe("stack restart", () => {
     60_000,
   );
 
-  it.live("rejects an unconfigured namespace without starting an owner", () =>
+  it.effect("rejects an unconfigured namespace without starting an owner", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       const error = yield* stackRestart(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
@@ -160,7 +160,7 @@ describe("stack restart", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("identifies failed members when a composition restart fails", () =>
+  it.effect("identifies failed members when a composition restart fails", () =>
     Effect.gen(function* () {
       const f = yield* fixture();
       const failure = new StackError({

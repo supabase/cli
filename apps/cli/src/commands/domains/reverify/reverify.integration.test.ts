@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -65,10 +65,12 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
+const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
+
+const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 describe("domains reverify integration", () => {
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -96,7 +98,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the initializing status to stderr in text mode", () => {
+  it.effect("prints the initializing status to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
@@ -108,7 +110,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
@@ -117,7 +119,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
+  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
@@ -126,15 +128,43 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
+  it.effect(
+    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
+        expect(out.stderrText).toBe(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        );
+        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
+        expect(parsed.custom_hostname).toBe("shop.acme.dev");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
-      expect(out.stdoutText.startsWith("{")).toBe(true);
+      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
+      expect(
+        out.stderrText.startsWith(
+          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
+        ),
+      ).toBe(true);
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
+  it.effect("does not warn when --include-raw-output is not set", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* domainsReverify(baseFlags);
+      expect(out.stderrText).not.toContain("deprecated");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));
@@ -146,7 +176,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError on transport failure", () => {
+  it.effect("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));
@@ -157,7 +187,7 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error without a spinner in json mode", () => {
+  it.effect("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsReverify(baseFlags));

@@ -18,7 +18,7 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import type { CompositionConfig } from "../Orchestrator.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
 import type { CatalogError, ServiceEndpoint } from "../services/Recipe.ts";

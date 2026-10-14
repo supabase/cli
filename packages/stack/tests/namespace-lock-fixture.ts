@@ -1,6 +1,6 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { Console, Effect } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "../src/StackNamespace.ts";
 

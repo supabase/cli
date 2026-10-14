@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type {
   Observation,
@@ -107,6 +107,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
       stop: Effect.die("unused"),
       restart: Effect.die("unused"),
     },
+    startupEndpointChanges: Effect.die("unused"),
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
     gateway: unusedGateway,
@@ -249,7 +250,7 @@ const runStatusEnv = (input: {
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("stack start export pointer", () => {
-  it.live(
+  it.effect(
     "the printed pointer's argv resolves --workdir and the named --stack to that stack, not the caller's cwd or the project's default stack",
     () =>
       Effect.gen(function* () {
@@ -277,7 +278,7 @@ describe("stack start export pointer", () => {
       }),
   );
 
-  it.live(
+  it.effect(
     "quotes a workdir and stack name that need it, and the same raw values still resolve that stack",
     () =>
       Effect.gen(function* () {

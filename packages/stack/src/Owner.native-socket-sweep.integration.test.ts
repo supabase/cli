@@ -13,7 +13,7 @@ import {
   Ref,
   Schema,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as Owner from "./Owner.ts";
 import { NativeRuntimeRootBase, nativeRuntimeRootPath } from "./runtime/postgres-user.ts";
 import { ServiceCreation } from "./services/Catalog.ts";

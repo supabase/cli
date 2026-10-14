@@ -1,7 +1,7 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import type * as CliCommand from "effect/cli/Command";
 import { services } from "./services.handler.ts";
 import { servicesRuntimeLayer } from "./services.layers.ts";
 

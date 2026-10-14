@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -29,7 +29,7 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
   const linkedProjectCache = yield* LinkedProjectCache;
   const resolver = yield* ProjectRefResolver;
 
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
@@ -45,7 +45,9 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
     // `--local` clears the ref; otherwise the linked path resolves it. No network access yet,
     // safe before the URL parse below.
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
-    linkedRef = projectRef;
+    if (projectRef !== "") {
+      yield* Ref.set(linkedRef, Option.some(projectRef));
+    }
 
     // Config is always loaded; a `[remotes.*]` match prints the override line.
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
@@ -84,7 +86,14 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Ref.get(linkedRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );

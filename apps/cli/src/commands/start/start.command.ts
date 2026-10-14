@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
@@ -32,11 +32,11 @@ export const startExcludeFlag = stringSliceFlag(
 
 const config = {
   exclude: startExcludeFlag,
-  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withDefault(false),
   ),
-  preview: Flag.boolean("preview").pipe(
+  preview: Flag.Boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
     Flag.withDefault(false),
     Flag.withHidden,

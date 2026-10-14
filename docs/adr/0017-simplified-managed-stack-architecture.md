@@ -106,7 +106,16 @@ Fresh automatic claims draw from
 `20000..32767` with a start derived from the stack's project root, identifier, and
 listener key, and stride `257`, making up to 64 bounded
 `EADDRINUSE`/`EACCES` attempts per newly selected binding while skipping
-durable sibling claims. Sticky values do not migrate. Failed acquisition
+durable sibling claims. Sticky values are stable: they do not migrate on their
+own, but a stopped stack's own owner startup re-plans an endpoint whose saved
+port differs from the current configuration while it alone holds the stack's
+lease: it saves the requested endpoint intents, releases the changed
+endpoints' registry rows, and claims the new ports through its normal endpoint
+binding. A taken fixed port fails the start with the usual port conflict; the
+saved intent stays as requested and nothing is rolled back. The requested
+creations reach the owner through a private, short-lived file the owner deletes
+after reading, never through argv. A concurrent start attaches to whichever
+owner wins the lease instead of re-planning again. Failed acquisition
 preserves the
 previous successful arrays, including claims removed or reconfigured by the
 new definition, and releases attempted sockets; those arrays change only after

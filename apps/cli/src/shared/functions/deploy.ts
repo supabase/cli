@@ -23,8 +23,8 @@ import {
   type PlatformError,
   Schema,
 } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
@@ -414,7 +414,7 @@ const hostError = (pathname: string) => (error: PlatformError.PlatformError) =>
 const unknownHostError = (pathname: string) => (error: PlatformError.PlatformError) =>
   new Cause.UnknownError(hostError(pathname)(error), "An error occurred in Effect.tryPromise");
 
-const debugEnvEnabled = Config.option(Config.string("DEBUG")).pipe(
+const debugEnvEnabled = Config.option(Config.String("DEBUG")).pipe(
   Effect.map(Option.exists((value) => value === "true")),
   Effect.orDie,
 );
@@ -2212,7 +2212,7 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
 
     if (seenDeprecatedImportMap.size > 0) {
       yield* output.raw(
-        `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
+        `WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: ${[...seenDeprecatedImportMap].join(", ")}\n`,
         "stderr",
       );
     }
@@ -2604,7 +2604,10 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           envOverride:
             context.projectEnvValues === undefined
               ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
+              : yield* viperEnvStringWithProjectFallback(
+                  "SUPABASE_NETWORK_ID",
+                  context.projectEnvValues,
+                ),
           projectId: context.projectId,
         });
         yield* deployViaDocker({

@@ -1,5 +1,5 @@
 import { Effect, Layer, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { isBitbucketPipeline } from "./bitbucket-pipeline.ts";
 import { containerCliExitCode, spawnContainerCli } from "./container-cli.ts";

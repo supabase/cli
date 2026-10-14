@@ -5,12 +5,17 @@ import {
   type CliConfig,
 } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { Config, Console, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
-import { envOverride, envOverrideMajorVersion } from "./local-config-values.ts";
+import {
+  deprecatedOrioleDBVersionEnvWarning,
+  envOverride,
+  envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
+} from "./local-config-values.ts";
 import { resolveProjectEnvironmentValues } from "./project-environment.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
@@ -38,6 +43,14 @@ export const loadLocalProjectContext = <E>(
   FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
 > =>
   Effect.gen(function* () {
+    const supabaseEnv =
+      Option.getOrUndefined(
+        yield* Config.option(Config.String("SUPABASE_ENV")).pipe(
+          Effect.mapError(() =>
+            mapConfigLoadError("failed to resolve environment variable: SUPABASE_ENV"),
+          ),
+        ),
+      ) || "development";
     // `workdir` is already the fully-resolved chdir target, so `search: false` stops
     // `@supabase/config` from climbing ancestors and picking up an unrelated project's
     // config.toml when `workdir` has none of its own.
@@ -47,7 +60,7 @@ export const loadLocalProjectContext = <E>(
       search: false,
       // Omits `.env.local` when `SUPABASE_ENV=test`, matching
       // `resolveProjectEnvironmentValues`'s gating for the project-root pass.
-      skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
+      skipEnvLocal: supabaseEnv === "test",
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
@@ -55,10 +68,13 @@ export const loadLocalProjectContext = <E>(
     // Must resolve before `loadCliConfig` decodes config.toml: an `env(...)`-valued `project_id`
     // needs these values available to the decoder already. `workdir` is passed through so dotenv
     // files under `<workdir>/supabase` are still discovered even when `projectEnv` is `null`.
-    const projectEnvValues = yield* Effect.try({
-      try: () => resolveProjectEnvironmentValues(projectEnv, workdir),
-      catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
-    });
+    const projectEnvValues = yield* resolveProjectEnvironmentValues(
+      projectEnv,
+      workdir,
+      supabaseEnv,
+    ).pipe(
+      Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
+    );
 
     // An absent config.toml is not a failure — a project id still resolves from the workdir
     // basename default. Only a malformed file is a hard error.
@@ -73,6 +89,16 @@ export const loadLocalProjectContext = <E>(
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
+    // Printed beside the loader's deprecated-config WARNs, on the same real console, so it shares
+    // their once-per-context-load cadence.
+    const orioleDBEnvWarning = yield* deprecatedOrioleDBVersionEnvWarning((name) =>
+      envOverride(name, undefined, projectEnvValues),
+    );
+    if (orioleDBEnvWarning !== undefined) {
+      yield* Console.error(orioleDBEnvWarning).pipe(
+        Effect.provideService(Console.Console, globalThis.console),
+      );
+    }
     const config =
       loaded?.config ??
       (yield* Schema.decodeEffect(CliConfigSchema)({}).pipe(
@@ -83,14 +109,25 @@ export const loadLocalProjectContext = <E>(
         mapConfigLoadError(`failed to resolve hostname: ${cause.message}`),
       ),
     );
+    const path = yield* Path.Path;
     // When a `[remotes.<ref>]` block matched `projectRef` above, its own `project_id` field is
     // what selected it, so a stale or differently-scoped `SUPABASE_PROJECT_ID` must not win over
     // it here.
     const projectId = sanitizeProjectId(
       resolveLocalProjectId(
+        path,
         loaded?.appliedRemote !== undefined
           ? undefined
-          : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
+          : (projectEnvValues["SUPABASE_PROJECT_ID"] ??
+              Option.getOrUndefined(
+                yield* Config.option(Config.String("SUPABASE_PROJECT_ID")).pipe(
+                  Effect.mapError(() =>
+                    mapConfigLoadError(
+                      "failed to resolve environment variable: SUPABASE_PROJECT_ID",
+                    ),
+                  ),
+                ),
+              )),
         config.project_id,
         workdir,
         projectRef,
@@ -107,8 +144,7 @@ export const loadLocalProjectContext = <E>(
 /** Records OrioleDB selection for commands whose only local config read is this context. */
 export const recordLocalProjectOrioleDbTelemetry = (context: LocalProjectContext) =>
   Effect.try(() => ({
-    version: envOverride(
-      "SUPABASE_DB_ORIOLEDB_VERSION",
+    version: envOverrideOrioleDBVersion(
       context.config.db.orioledb_version,
       context.projectEnvValues,
     ),

@@ -1,7 +1,7 @@
 import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Context, Effect, FileSystem, Layer, Redacted, Schema, Stream } from "effect";
 import { makeStandaloneService } from "./standalone-service.ts";
 import { makeDatabase, type BackendEndpoint } from "../src/services/Database.ts";

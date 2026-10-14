@@ -1,5 +1,5 @@
 import { expect } from "@effect/vitest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Effect, Schema } from "effect";
 import { service, type Runtime, type WholeStack } from "./fixture.ts";
 

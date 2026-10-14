@@ -2,10 +2,10 @@ import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { resolveAccessToken } from "./resolve-token.ts";
@@ -17,6 +17,23 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { billingUrl } from "./profile.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `suggestUpgrade`'s entitlement lookup. */
+export const upgradeSuggestion = block("upgrade-suggest", [
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+  {
+    operationId: "v1-get-organization-entitlements",
+    kind: "best-effort",
+    context:
+      "after a 4xx response that carries no plan-gate error, at a call site that names a feature",
+  },
+]);
 
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {

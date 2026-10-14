@@ -1,4 +1,4 @@
-import type { CliOutput, HelpDoc } from "effect/unstable/cli";
+import type { CliOutput, HelpDoc } from "effect/cli";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 

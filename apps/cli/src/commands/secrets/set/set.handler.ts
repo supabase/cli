@@ -7,7 +7,7 @@ import {
 import { loadCliConfig, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
-import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Redacted, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -35,19 +35,14 @@ const mapSetError = mapHttpError({
   statusMessage: (_status, body) => `Unexpected error setting project secrets: ${body}`,
 });
 
-const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-
-// Excludes arrays: `Object.entries` on an array yields index keys ("0", "1", ...), which would
-// otherwise fabricate spurious secret names from a misconfigured `secrets = [...]` field.
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const decodeCliConfig = Schema.decodeUnknownResult(CliConfigSchema);
+const decodeBulkCreateSecretsInput = Schema.decodeEffect(V1BulkCreateSecretsInput);
 
 /**
  * Best-effort recovery of `[edge_runtime.secrets]` from a document that failed schema decode
  * (not a raw parse failure). Matches the CLI's established per-field decode tolerance: an
  * unrelated bad field, or a single bad entry inside `secrets` itself, must not discard every
- * otherwise-valid secret. `Schema.decodeUnknownSync` has no such tolerance, so this re-slices
+ * otherwise-valid secret. A whole-document decode has no such tolerance, so this re-slices
  * `edge_runtime.secrets` out of the pre-decode document and decodes each entry independently.
  */
 function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null {
@@ -55,19 +50,20 @@ function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null 
     return null;
   }
   const edgeRuntime = cause.document.edge_runtime;
-  const secretsField = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
+  const secretsField = Predicate.isObject(edgeRuntime) ? edgeRuntime.secrets : undefined;
   // A malformed, non-object `secrets` field arrives wrapped in `Redacted`; unwrap before the
-  // `isRecord` check below, or the wrapper object itself gets misread as a one-entry map and
+  // `isObject` check below, or the wrapper object itself gets misread as a one-entry map and
   // fabricates a bogus secret from its internal fields.
   const secrets = Redacted.isRedacted(secretsField) ? Redacted.value(secretsField) : secretsField;
-  const decodableSecrets = isRecord(secrets) ? filterDecodableSecrets(secrets) : undefined;
-  try {
-    return decodeCliConfig({
-      edge_runtime: decodableSecrets !== undefined ? { secrets: decodableSecrets } : {},
-    });
-  } catch {
-    return null;
-  }
+  // Excludes arrays: `Object.entries` on an array yields index keys ("0", "1", ...), which would
+  // otherwise fabricate spurious secret names from a misconfigured `secrets = [...]` field.
+  const decodableSecrets = Predicate.isObject(secrets)
+    ? filterDecodableSecrets(secrets)
+    : undefined;
+  const recovered = decodeCliConfig({
+    edge_runtime: decodableSecrets !== undefined ? { secrets: decodableSecrets } : {},
+  });
+  return Result.isSuccess(recovered) ? recovered.success : null;
 }
 
 /**
@@ -80,11 +76,8 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
   const kept: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(secrets)) {
     const plainValue = Redacted.isRedacted(value) ? Redacted.value(value) : value;
-    try {
-      decodeCliConfig({ edge_runtime: { secrets: { [name]: plainValue } } });
+    if (Result.isSuccess(decodeCliConfig({ edge_runtime: { secrets: { [name]: plainValue } } }))) {
       kept[name] = plainValue;
-    } catch {
-      // Drop this entry only.
     }
   }
   return kept;
@@ -207,12 +200,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           (cause) =>
             new SecretsEnvFileOpenError({
               message: `failed to open env file: ${String(cause)}`,
-              reason:
-                cause.reason._tag === "NotFound"
-                  ? "not_found"
-                  : cause.reason._tag === "PermissionDenied"
-                    ? "permission"
-                    : "other",
+              reason: Predicate.isTagged(cause.reason, "NotFound")
+                ? "not_found"
+                : Predicate.isTagged(cause.reason, "PermissionDenied")
+                  ? "permission"
+                  : "other",
             }),
         ),
       );
@@ -273,11 +265,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
 
     // Validated up front so a schema-invalid entry in a later batch can't leave the project
     // partially updated after earlier batches already uploaded.
-    yield* Effect.forEach(
-      batches,
-      (batch) => Schema.decodeEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
-      { discard: true },
-    ).pipe(
+    yield* Effect.forEach(batches, (batch) => decodeBulkCreateSecretsInput({ ref, body: batch }), {
+      discard: true,
+    }).pipe(
       Effect.mapError(
         (cause) => new SecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
       ),

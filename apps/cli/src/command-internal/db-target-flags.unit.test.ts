@@ -209,7 +209,7 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
       const current = calls[i]!;
       if (!VALUE_FLAG_KINDS.includes(current.kind)) continue;
 
-      // Name declared as a literal string (e.g. `Flag.string("schema")`); a name passed as an
+      // Name declared as a literal string (e.g. `Flag.String("schema")`); a name passed as an
       // identifier doesn't match and is silently skipped — see INDIRECT_NAME_FILES above.
       const remainder = source.slice(current.index);
       const nameMatch = remainder.match(/^Flag\.\w+\(\s*"([a-zA-Z0-9-]+)"/);

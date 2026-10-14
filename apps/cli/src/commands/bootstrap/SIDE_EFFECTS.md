@@ -61,15 +61,16 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                                            | Required? |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| `SUPABASE_WORKDIR`            | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                                 | no        |
-| `SUPABASE_DB_PASSWORD`        | DB password (`-p` flag → env → prompt/generate)                                                                                                                    | no        |
-| `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                                 | no        |
-| `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                       | no        |
-| `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                       | no        |
-| `SUPABASE_YES`                | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                               | no        |
-| `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; other non-empty values fail closed | no        |
+| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required? |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_WORKDIR`                       | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                                                                                                         | no        |
+| `SUPABASE_DB_PASSWORD`                   | DB password (`-p` flag → env → prompt/generate)                                                                                                                                                                                            | no        |
+| `GITHUB_TOKEN`                           | raise the GitHub API rate limit for template fetch                                                                                                                                                                                         | no        |
+| `SUPABASE_ACCESS_TOKEN`                  | auth bypass for ensure-login                                                                                                                                                                                                               | no        |
+| `SUPABASE_PROFILE`                       | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                                                                                               | no        |
+| `SUPABASE_YES`                           | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                                                                                                       | no        |
+| `SUPABASE_EXPERIMENTAL_STACK`            | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; other non-empty values fail closed                                                                         | no        |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no        |
 
 ## Exit Codes
 
@@ -156,7 +157,7 @@ suppressed; a single structured result is emitted for the whole command:
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former subprocess
   delegation, CLI-1617, which had to route the resolved password across process boundaries).
-- **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify()` +
+- **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify` +
   `Effect.retry(retry)` policy as the api-keys and health-poll steps. A retried attempt re-runs
   the whole push (connect, list pending migrations/seeds/roles, prompt, apply).
 - The api-keys, health, and push retries use the same backoff policy:

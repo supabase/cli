@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
@@ -81,7 +81,7 @@ describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", ()
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -93,7 +93,7 @@ describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", ()
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

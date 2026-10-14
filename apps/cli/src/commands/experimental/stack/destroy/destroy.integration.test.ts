@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import { Effect, FileSystem, Layer, Option, Path, Schema, Sink, Stdio, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { jsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -107,7 +107,7 @@ const fixture = Effect.fn("StackDestroyTest.fixture")(function* (
 });
 
 describe("stack destroy", () => {
-  it.live("requires confirmation before starting an owner or changing saved state", () =>
+  it.effect("requires confirmation before starting an owner or changing saved state", () =>
     Effect.gen(function* () {
       const f = yield* fixture(false);
       const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
@@ -119,7 +119,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("asks on an interactive terminal and keeps the stack when declined", () =>
+  it.effect("asks on an interactive terminal and keeps the stack when declined", () =>
     Effect.gen(function* () {
       const f = yield* fixture(false, { answer: false });
       const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
@@ -170,7 +170,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("refuses a stack with an unknown service kind and names its directory", () =>
+  it.effect("refuses a stack with an unknown service kind and names its directory", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const statePath = f.path.join(f.locations.stateRoot, f.stack.id, "state.json");
@@ -210,7 +210,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("dispatches a full ID with no registration to its deleted-stack cleanup", () =>
+  it.effect("dispatches a full ID with no registration to its deleted-stack cleanup", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const id = "d".repeat(64);
@@ -245,7 +245,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("reports a full ID as not found, with the engine that could not be searched", () =>
+  it.effect("reports a full ID as not found, with the engine that could not be searched", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const id = "d".repeat(64);
@@ -382,7 +382,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("rejects --stack combined with repeated --stack-id flags", () =>
+  it.effect("rejects --stack combined with repeated --stack-id flags", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
 
@@ -405,7 +405,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("asks once for every selected stack and keeps them all when declined", () =>
+  it.effect("asks once for every selected stack and keeps them all when declined", () =>
     Effect.gen(function* () {
       const f = yield* fixture(false, { answer: false });
       const second = yield* f.api.create({
@@ -430,7 +430,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("destroys nothing and names every later --stack-id that is not found", () =>
+  it.effect("destroys nothing and names every later --stack-id that is not found", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const missing = ["0000", "1111", "2222"]
@@ -455,7 +455,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("fails a single stack with its own destroy error", () =>
+  it.effect("fails a single stack with its own destroy error", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
 
@@ -464,14 +464,14 @@ describe("stack destroy", () => {
         Effect.flip,
       );
 
-      expect(error).toMatchObject({ reason: "unknown", message: "engine refused" });
+      expect(error).toMatchObject({ reason: "stack", message: "engine refused" });
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         f.stack.id,
       ]);
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("points a batch at the engine only when it was unreachable for every stack", () =>
+  it.effect("points a batch at the engine only when it was unreachable for every stack", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const second = yield* f.api.create({
@@ -489,7 +489,7 @@ describe("stack destroy", () => {
         );
 
       expect(yield* destroyWith([f.stack.id])).toMatchObject({
-        reason: "unknown",
+        reason: "stack",
         suggestion: `Resolve each error, then run ${retry} to retry the stacks that failed.`,
       });
       expect(yield* destroyWith(ids)).toMatchObject({

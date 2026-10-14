@@ -1,11 +1,10 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { Effect, FileSystem, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 
 import {
   resolveStorageCredentials,
-  storageGatewayFetch,
+  withStorageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
 import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
 import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
@@ -30,7 +29,7 @@ import {
  * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
-const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const decodeDefaultCliConfig = Schema.decodeEffect(CliConfigSchema);
 
 interface LoadedStorageConfig {
   readonly config: CliConfig;
@@ -70,7 +69,7 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
       });
     }
     return {
-      config: decodeDefaultCliConfig({}),
+      config: yield* decodeDefaultCliConfig({}).pipe(Effect.orDie),
       document: undefined,
       appliedRemote: undefined,
     } satisfies LoadedStorageConfig;
@@ -92,10 +91,10 @@ export const assertStorageWorkdir = Effect.fnUntraced(function* (workdir: string
 
 /**
  * Resolves Storage credentials and runs `body` against a freshly-built gateway, with
- * `FetchHttpClient.Fetch` overridden for gateway calls only (CA-trusting for a local
- * https gateway, otherwise plain `fetch`). Credential lookup runs before that
- * override scope, so it still honors `--dns-resolver https` through the Management
- * API client.
+ * `FetchHttpClient.Fetch` pinned to plain `fetch` for gateway calls only and, for a
+ * local https gateway, the Kong CA supplied through `FetchHttpClient.RequestInit`.
+ * Credential lookup runs before that scope, so it still honors `--dns-resolver https`
+ * through the Management API client.
  */
 export const connectStorageGateway = <E, R>(
   opts: { readonly projectRef: string; readonly config: CliConfig; readonly userAgent: string },
@@ -115,7 +114,7 @@ export const connectStorageGateway = <E, R>(
       return yield* body(gateway);
     });
     return yield* withStackStorageGuidance({ local: opts.projectRef === "" }, gatewayOps).pipe(
-      Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
+      withStorageGatewayFetch(credentials.localKongCa),
     );
   });
 

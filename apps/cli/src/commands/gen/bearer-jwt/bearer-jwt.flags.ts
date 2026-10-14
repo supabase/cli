@@ -54,7 +54,7 @@ function isLeapYear(year: number): boolean {
 }
 
 function daysInMonth(year: number, month: number): number {
-  return month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1]!;
+  return month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month - 1] ?? 0);
 }
 
 /**

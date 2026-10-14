@@ -59,6 +59,8 @@ mise install
 | pnpm          | `devEngines.packageManager` field in `package.json` |
 | Go            | `mise.toml`                                         |
 | golangci-lint | `mise.toml`                                         |
+| jactionlint   | `mise.toml`                                         |
+| shellcheck    | `mise.toml`                                         |
 
 The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
 
@@ -66,7 +68,7 @@ Once installed, `mise` activates these versions automatically whenever your shel
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, pnpm, Go, jactionlint, and shellcheck installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`. `pnpm check:all` runs jactionlint, which only checks workflow `run:` scripts when shellcheck is on `PATH`.
 
 ### Install dependencies
 

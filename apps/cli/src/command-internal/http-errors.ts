@@ -1,7 +1,7 @@
 import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
 import { Effect } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
 // failure). Anything in this set surfaces as an `UnexpectedStatusError`; everything else maps

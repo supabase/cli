@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { emitSuccessTrailer } from "../../shared/cli/success-trailer.ts";
 import { Output } from "../../shared/output/output.service.ts";

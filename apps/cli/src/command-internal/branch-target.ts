@@ -1,6 +1,6 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
@@ -10,6 +10,12 @@ import {
   type NetworkErrorFactory,
   type StatusErrorFactory,
 } from "./http-errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `findBranchName`'s branch listing. */
+export const branchTarget = block("branch-target", [
+  { operationId: "v1-list-all-branches", kind: "best-effort" },
+]);
 
 type BranchLookupBranches = typeof V1ListAllBranchesOutput.Type;
 

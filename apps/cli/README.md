@@ -101,7 +101,7 @@ See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for a full ex
 
 ## Architecture
 
-The CLI is built on `effect/unstable/cli`.
+The CLI is built on `effect/cli`.
 
 Important areas:
 

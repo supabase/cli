@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { Context, Data, Effect, FileSystem, Layer, Path, Schema, Stream } from "effect";
 import { expect, it } from "@effect/vitest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import { HostEndpoint } from "../HostProcess.ts";
 import * as StackNamespace from "../StackNamespace.ts";

@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -17,22 +17,22 @@ const excludeFlag = stringSliceFlag(
 
 const config = {
   exclude: excludeFlag,
-  stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
-  stackId: Flag.string("stack-id").pipe(
+  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Open an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  runtime: Flag.choice("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
+  runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
     Flag.withDescription(
       "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
     ),
     Flag.withDefault("auto" as const),
   ),
-  preparation: Flag.choice("preparation", ["background", "on-demand"] as const).pipe(
+  preparation: Flag.Literals("preparation", ["background", "on-demand"] as const).pipe(
     Flag.withDescription("Artifact preparation policy."),
     Flag.withDefault("background" as const),
   ),
-  eager: Flag.boolean("eager").pipe(
+  eager: Flag.Boolean("eager").pipe(
     Flag.withDescription(
       "Activate all enabled capabilities before returning and disable automatic idle stops.",
     ),
