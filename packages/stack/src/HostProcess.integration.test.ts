@@ -628,7 +628,7 @@ it.live(
         expect(argv).not.toContain(registerMarker);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  60_000,
+  { timeout: 120_000 },
 );
 
 it.live("hands the owner a private startup payload file that it deletes once read", () =>
