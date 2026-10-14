@@ -35,13 +35,16 @@ No files are written.
 
 ## API Routes
 
-| Method | Path                                        | Auth         | Request body           | Response (used fields)                     |
-| ------ | ------------------------------------------- | ------------ | ---------------------- | ------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                   | TypeScript type definitions text           |
-| `GET`  | `/v1/projects/{ref}`                        | Bearer token | none                   | (presence only; `404` ⇒ branch ref)        |
-| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                   | `db_host`, `db_port`, `db_user`, `db_pass` |
-| `POST` | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }` | temporary `role` and `password`            |
-| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                   | primary pooler `connection_string`         |
+| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                   |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | -------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                                      | TypeScript type definitions text                         |
+| `GET`    | `/v1/projects/{ref}`                        | Bearer token | none                                      | (presence only; `404` ⇒ branch ref)                      |
+| `GET`    | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                                      | `db_host`, `db_port`, `db_user`, `db_pass`               |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password`                          |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string`                       |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses`                                  |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none                                                     |
+| `GET`    | `/v1/projects`                              | Bearer token | none                                      | project list shown when no project ref is saved (prompt) |
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
