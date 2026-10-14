@@ -297,7 +297,7 @@ jobs:
       matrix:
         # Native artifacts exist for macOS and Linux only, and macOS runners have
         # no Docker; Linux coverage for both backends comes from test-stack-e2e.
-        os: [blacksmith-6vcpu-macos-latest]
+        os: [macos-latest]
         suite: [lifecycle, confinement, idle, isolation]
         # Concurrent scenarios slow each other on macOS runners, so the
         # heaviest ones run alone.
