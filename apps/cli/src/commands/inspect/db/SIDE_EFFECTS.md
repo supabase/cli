@@ -27,12 +27,12 @@ no new config reads.
 
 ## API Routes (MAY fire on `--linked`, inside the resolver)
 
-| Method   | Path                                      | Auth         | When                                    |
-| -------- | ----------------------------------------- | ------------ | --------------------------------------- |
-| `POST`   | `/v1/projects/{ref}/login-role`           | Bearer token | `--linked`, to create a temp login role |
-| `GET`    | pooler config endpoint                    | Bearer token | `--linked`, pooler fallback             |
-| `GET`    | `/v1/projects/{ref}/network-bans`         | Bearer token | `--linked`, on pooler retry             |
-| `DELETE` | `/v1/projects/{ref}/network-bans` (unban) | Bearer token | `--linked`, when a self-ban is detected |
+| Method   | Path                                        | Auth         | When                                                                                 |
+| -------- | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `--linked` with no database password, to create a temp login role                    |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | `--linked` with `--project-ref`, direct host unreachable, no usable saved pooler URL |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | `--linked`, from the 3rd failed temp-role connect (list bans)                        |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `--linked`, only when bans are listed (clear a self-ban)                             |
 
 ## Environment Variables
 

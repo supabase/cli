@@ -1,11 +1,17 @@
 import { Command } from "effect/cli";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbTableStats } from "./table-stats.handler.ts";
-import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import {
+  INSPECT_DB_FLAGS,
+  INSPECT_DB_PERMISSIONS,
+  inspectDbCommandHandler,
+} from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
 export const inspectDbTableStatsCommand = Command.make("table-stats", INSPECT_DB_FLAGS).pipe(
   Command.withDescription("Show combined table size, index size, and estimated row count."),
   Command.withShortDescription("Show table stats"),
+  withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableStats)),
   Command.provide(inspectDbRuntimeLayer("table-stats")),
 );
