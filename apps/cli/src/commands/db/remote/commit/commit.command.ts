@@ -1,6 +1,14 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../../command-internal/command-permissions/model.ts";
+import { dbConfig, dbConfigPoolerFallback } from "../../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
@@ -39,6 +47,17 @@ export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
     "Deprecated: use db pull instead; removed in v3. Commit remote changes as a new migration.",
   ),
   Command.withShortDescription("Commit remote changes as a new migration"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["schema"] },
+        dbConfig,
+        dbConfigPoolerFallback,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "linked" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbRemoteCommit(flags).pipe(
       withCommandTelemetry({

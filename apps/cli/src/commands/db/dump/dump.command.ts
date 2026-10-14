@@ -2,6 +2,14 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig, dbConfigPoolerFallback } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
@@ -106,6 +114,29 @@ export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbDumpCommand = Command.make("dump", config).pipe(
   Command.withDescription("Dumps data or schemas from the remote database."),
   Command.withShortDescription("Dumps data or schemas from the remote database"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [],
+          noApiEffectFlags: [
+            "dry-run",
+            "data-only",
+            "use-copy",
+            "exclude",
+            "role-only",
+            "keep-comments",
+            "file",
+            "schema",
+          ],
+        },
+        dbConfig,
+        dbConfigPoolerFallback,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "linked" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbDump(flags).pipe(
       withCommandTelemetry({
