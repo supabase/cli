@@ -376,12 +376,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { suite: cli, shard: 1, shards: 6, name: cli 1/6 }
-          - { suite: cli, shard: 2, shards: 6, name: cli 2/6 }
-          - { suite: cli, shard: 3, shards: 6, name: cli 3/6 }
-          - { suite: cli, shard: 4, shards: 6, name: cli 4/6 }
-          - { suite: cli, shard: 5, shards: 6, name: cli 5/6 }
-          - { suite: cli, shard: 6, shards: 6, name: cli 6/6 }
+          - { suite: cli, shard: 1, shards: 5, name: cli 1/5 }
+          - { suite: cli, shard: 2, shards: 5, name: cli 2/5 }
+          - { suite: cli, shard: 3, shards: 5, name: cli 3/5 }
+          - { suite: cli, shard: 4, shards: 5, name: cli 4/5 }
+          - { suite: cli, shard: 5, shards: 5, name: cli 5/5 }
           - { suite: cli-e2e, shard: 1, shards: 2, name: cli-e2e 1/2 }
           - { suite: cli-e2e, shard: 2, shards: 2, name: cli-e2e 2/2 }
     steps:
