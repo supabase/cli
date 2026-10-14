@@ -53,7 +53,7 @@ export function realLinkedProjectCache(opts: {
 
 /**
  * The real `DbConfigResolver` on the linked path: the direct host (`db.<ref>.invalid`) is
- * unreachable once the test file mocks `node:net` to refuse it, so the resolver falls back to
+ * unreachable once the test file mocks `node:net` with `refuseInvalidDbHosts`, so the resolver falls back to
  * the pooler and mints a login role through {@link stubManagementApi}. Provide the same `env`
  * to the running effect as a `ConfigProvider`, since the resolver reads it when it resolves.
  */

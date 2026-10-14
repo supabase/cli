@@ -1,23 +1,13 @@
-import type { NetConnectOpts } from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { vi } from "vitest";
 
-// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
 vi.mock("node:net", (importOriginal) =>
-  importOriginal<typeof import("node:net")>().then((net) => ({
-    ...net,
-    connect: (options: NetConnectOpts) => {
-      const host = "host" in options ? options.host : undefined;
-      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
-        return net.connect(options);
-      }
-      const socket = new net.Socket();
-      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
-      return socket;
-    },
-  })),
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
