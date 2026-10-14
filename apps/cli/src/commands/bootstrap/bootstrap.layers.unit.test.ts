@@ -16,6 +16,7 @@ import {
 import {
   VALID_TOKEN,
   isolatedHomeLayer,
+  mockCommandPlatformApiService,
   mockCommandSettings,
   mockCommandCredentialsLayer,
   mockLinkedProjectCacheLayer,
@@ -36,7 +37,6 @@ import {
 } from "../../command-internal/global-flags.ts";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
-import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
@@ -65,10 +65,7 @@ function ambientStubs() {
   // CommandPlatformApiFactory, and ProjectRefResolver as satisfiable in the outer context; the
   // runtime layer's own provisions take precedence at runtime.
   const heavyServiceStubs = Layer.mergeAll(
-    Layer.succeed(CommandPlatformApi, {
-      v1: new Proxy({}, { get: () => () => Effect.die("not needed for layer-exposure test") }),
-      executeRaw: () => Effect.die("not needed for layer-exposure test"),
-    } as unknown as import("@supabase/api/effect").ApiClient),
+    mockCommandPlatformApiService().layer,
     Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),
     }),
@@ -110,7 +107,7 @@ function ambientStubs() {
 }
 
 describe("bootstrapRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

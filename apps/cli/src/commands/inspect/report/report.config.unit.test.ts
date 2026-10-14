@@ -12,7 +12,7 @@ const makeWorkdir = Effect.fnUntraced(function* (
   configToml?: string,
   dotEnv?: string,
 ) {
-  const workdir = yield* fs.makeTempDirectory({ prefix: "supabase-report-config-" });
+  const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-report-config-" });
   if (configToml !== undefined || dotEnv !== undefined) {
     yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
   }

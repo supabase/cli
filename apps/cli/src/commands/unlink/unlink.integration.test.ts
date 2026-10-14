@@ -89,7 +89,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 describe("unlink integration", () => {
-  it.live("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
+  it.effect("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
     const { layer, out, credentials, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -101,7 +101,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes 'Unlinking project: <ref>' to stderr", () => {
+  it.effect("writes 'Unlinking project: <ref>' to stderr", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -110,7 +110,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("succeeds when no credential is stored (keyring not-found ignored)", () => {
+  it.effect("succeeds when no credential is stored (keyring not-found ignored)", () => {
     // The mock returns true here; a real not-found returns false without erroring —
     // either way unlink succeeds.
     const { layer, out, workdir } = setup();
@@ -121,7 +121,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError when the project-ref file is absent", () => {
+  it.effect("fails with ProjectRefNotLinkedError when the project-ref file is absent", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(unlink());
@@ -134,7 +134,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the keyring delete errors (permission denied)", () => {
+  it.effect("fails when the keyring delete errors (permission denied)", () => {
     const { layer, workdir } = setup({ deleteFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -148,7 +148,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
+  it.effect("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
     const { layer, workdir } = setup({ removeFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -162,7 +162,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces both messages when temp removal and keyring delete both fail", () => {
+  it.effect("surfaces both messages when temp removal and keyring delete both fail", () => {
     const { layer, workdir } = setup({ removeFails: true, deleteFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -176,7 +176,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry via ensuring", () => {
+  it.effect("flushes telemetry via ensuring", () => {
     const { layer, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -185,7 +185,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json output: emits a structured success and suppresses the Finished line", () => {
+  it.effect("json output: emits a structured success and suppresses the Finished line", () => {
     const { layer, out, workdir } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -196,7 +196,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stream-json output: emits a structured success", () => {
+  it.effect("stream-json output: emits a structured success", () => {
     const { layer, out, workdir } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);

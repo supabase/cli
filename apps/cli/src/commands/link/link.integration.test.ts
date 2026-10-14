@@ -1,7 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Stdio,
+} from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
@@ -329,7 +340,7 @@ function transportFailureForMock() {
 
 describe("link integration", () => {
   describe("plain project-ref linking", () => {
-    it.live("links a project, writing the project-ref and version files", () => {
+    it.effect("links a project, writing the project-ref and version files", () => {
       const { layer, out, workdir } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -346,7 +357,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("skips the storage migration file when the API has no migration version", () => {
+    it.effect("skips the storage migration file when the API has no migration version", () => {
       const { layer, workdir } = setup({ storageConfig: { ok: { migrationVersion: null } } });
       return Effect.gen(function* () {
         yield* link(flags());
@@ -354,7 +365,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("writes linked-project.json with ref/name/org metadata", () => {
+    it.effect("writes linked-project.json with ref/name/org metadata", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -370,7 +381,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("emits cli_project_linked + org/project groupIdentify keyed by org id", () => {
+    it.effect("emits cli_project_linked + org/project groupIdentify keyed by org id", () => {
       const { layer, analytics } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -393,7 +404,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves the ref from SUPABASE_PROJECT_ID when no flag is given", () => {
+    it.effect("resolves the ref from SUPABASE_PROJECT_ID when no flag is given", () => {
       const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
         yield* link(flags({ projectRef: Option.none() }));
@@ -401,7 +412,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("positional valid ref beats SUPABASE_PROJECT_ID as the link target", () => {
+    it.effect("positional valid ref beats SUPABASE_PROJECT_ID as the link target", () => {
       const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
         yield* link(flags({ refOrBranch: Option.some(POSITIONAL_REF), projectRef: Option.none() }));
@@ -409,7 +420,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails in non-TTY with no --project-ref and no PROJECT_ID", () => {
+    it.effect("fails in non-TTY with no --project-ref and no PROJECT_ID", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags({ projectRef: Option.none() })));
@@ -422,7 +433,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "fails with InvalidProjectRefError for a malformed ref from SUPABASE_PROJECT_ID (env stays strict)",
       () => {
         const { layer } = setup({ projectId: Option.some("BADREF") });
@@ -436,28 +447,31 @@ describe("link integration", () => {
       },
     );
 
-    it.live("tolerates a 404 project (branch linking): writes project-ref, skips telemetry", () => {
-      const { layer, workdir, analytics } = setup({
-        project: { fail: statusCodeFailure(404) },
-      });
-      return Effect.gen(function* () {
-        yield* link(flags());
-        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
-        expect(yield* existsTemp(workdir, "postgres-version")).toBe(false);
-        expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
-        expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
-        expect(analytics.groupIdentified).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "tolerates a 404 project (branch linking): writes project-ref, skips telemetry",
+      () => {
+        const { layer, workdir, analytics } = setup({
+          project: { fail: statusCodeFailure(404) },
+        });
+        return Effect.gen(function* () {
+          yield* link(flags());
+          expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+          expect(yield* existsTemp(workdir, "postgres-version")).toBe(false);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
+          expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
+          expect(analytics.groupIdentified).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live("fails with project-paused error + dashboard suggestion when INACTIVE", () => {
+    it.effect("fails with project-paused error + dashboard suggestion when INACTIVE", () => {
       const { layer } = setup({
         project: { ok: { ...HEALTHY_PROJECT, status: "INACTIVE" } },
       });
       return Effect.gen(function* () {
         const error = yield* Effect.flip(link(flags()));
+        expect(Predicate.isTagged(error, "ProjectPausedError")).toBe(true);
         expect(error).toMatchObject({
-          _tag: "ProjectPausedError",
           message: expect.stringContaining("project is paused"),
           suggestion: expect.stringContaining(
             `An admin must unpause it from the Supabase dashboard at https://supabase.com/dashboard/project/${VALID_REF}`,
@@ -466,7 +480,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("warns to stderr when status is not ACTIVE_HEALTHY but still links", () => {
+    it.effect("warns to stderr when status is not ACTIVE_HEALTHY but still links", () => {
       const { layer, out, workdir } = setup({
         project: { ok: { ...HEALTHY_PROJECT, status: "COMING_UP" } },
       });
@@ -479,7 +493,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with LinkProjectStatusError on an unexpected status", () => {
+    it.effect("fails with LinkProjectStatusError on an unexpected status", () => {
       const { layer } = setup({ project: { fail: statusCodeFailure(500) } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
@@ -492,7 +506,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with auth error when api-keys returns non-200", () => {
+    it.effect("fails with auth error when api-keys returns non-200", () => {
       const { layer } = setup({ apiKeys: { fail: statusCodeFailure(401) } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
@@ -507,7 +521,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with missing-key error when api-keys are empty", () => {
+    it.effect("fails with missing-key error when api-keys are empty", () => {
       const { layer } = setup({ apiKeys: { ok: [] } });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(link(flags()));
@@ -520,7 +534,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves keys by legacy name when no type field is present", () => {
+    it.effect("resolves keys by legacy name when no type field is present", () => {
       const { layer, out, workdir } = setup({
         apiKeys: {
           ok: [
@@ -536,7 +550,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with missing-key error when the only secret key is not service_role", () => {
+    it.effect("fails with missing-key error when the only secret key is not service_role", () => {
       const { layer } = setup({
         apiKeys: {
           ok: [
@@ -558,7 +572,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("ignores best-effort service errors without failing the link", () => {
+    it.effect("ignores best-effort service errors without failing the link", () => {
       const { layer, out, workdir } = setup({
         storageConfig: { fail: statusCodeFailure(500) },
         poolerConfig: { fail: statusCodeFailure(503) },
@@ -573,7 +587,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("removes pooler-url and skips the pooler fetch when --skip-pooler is set", () => {
+    it.effect("removes pooler-url and skips the pooler fetch when --skip-pooler is set", () => {
       const { layer, workdir, apiMock } = setup();
       return Effect.gen(function* () {
         yield* writeTempContent(workdir, "pooler-url", "stale-pooler-url");
@@ -583,7 +597,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails when writing the project-ref file errors", () => {
+    it.effect("fails when writing the project-ref file errors", () => {
       // Makes `<workdir>/supabase` a file so every temp write fails; with no version in the
       // project status, project-ref is the first mandatory write to hit the broken path.
       const out = mockOutput({ format: "text" });
@@ -618,7 +632,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("flushes telemetry and runs the linked-project cache via ensuring", () => {
+    it.effect("flushes telemetry and runs the linked-project cache via ensuring", () => {
       const { layer, telemetry, linkedCache } = setup();
       return Effect.gen(function* () {
         yield* link(flags());
@@ -627,7 +641,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("json output: emits a structured success and suppresses the Finished line", () => {
+    it.effect("json output: emits a structured success and suppresses the Finished line", () => {
       const { layer, out, workdir } = setup({ format: "json" });
       return Effect.gen(function* () {
         yield* link(flags());
@@ -639,7 +653,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("stream-json output: emits a structured success", () => {
+    it.effect("stream-json output: emits a structured success", () => {
       const { layer, out } = setup({ format: "stream-json" });
       return Effect.gen(function* () {
         yield* link(flags());
@@ -650,7 +664,7 @@ describe("link integration", () => {
   });
 
   describe("ref-or-branch argument conflicts", () => {
-    it.live(
+    it.effect(
       "fails with LinkRefArgConflictError when both the positional and --project-ref are set",
       () => {
         const { layer, telemetry, linkedCache } = setup();
@@ -670,7 +684,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "treats an empty-string positional as absent, falling through to the no-value behavior",
       () => {
         const { layer } = setup();
@@ -688,7 +702,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "treats an empty-string --project-ref as absent, falling through to the no-value behavior",
       () => {
         const { layer } = setup();
@@ -704,7 +718,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "an empty-string positional alongside a real --project-ref links normally (no conflict)",
       () => {
         const { layer, workdir } = setup();
@@ -715,7 +729,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "links directly from a positional ref argument without calling the branches endpoint",
       () => {
         const { layer, workdir, apiMock } = setup();
@@ -729,7 +743,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: parent chain", () => {
-    it.live(
+    it.effect(
       "THE HEADLINE REGRESSION: relinking a different branch resolves via the cached real parent, not the previously-linked branch ref",
       () => {
         // Simulates the state left behind by a prior `supabase link feature-branch`:
@@ -755,7 +769,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "SUPABASE_PROJECT_ID wins over both the cache file and the project-ref file when ref-shaped",
       () => {
         const { layer, apiMock } = setup({
@@ -776,7 +790,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "a garbage SUPABASE_PROJECT_ID hard-fails the branch lookup with LinkParentRefInvalidError, never falling through to the cache (PR #6168 review)",
       () => {
         // The first present candidate decides, even if invalid — a typo'd override must not
@@ -800,7 +814,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "degrades to the project-ref file when the linked-project.json cache is unreadable or has no usable ref",
       () => {
         const { layer, apiMock, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
@@ -829,7 +843,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkParentRefInvalidError when a parent candidate exists but none is ref-shaped",
       () => {
         const { layer, workdir, apiMock } = setup();
@@ -854,26 +868,29 @@ describe("link integration", () => {
       },
     );
 
-    it.live("fails with LinkBranchNotLinkedError when no parent candidate exists anywhere", () => {
-      const { layer, apiMock } = setup();
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("LinkBranchNotLinkedError");
-          expect(causeText).toContain(`Cannot resolve "feature-branch": it is not a project ref`);
-          expect(causeText).toContain(
-            "If it is a branch name, link the parent project first: supabase link --project-ref",
+    it.effect(
+      "fails with LinkBranchNotLinkedError when no parent candidate exists anywhere",
+      () => {
+        const { layer, apiMock } = setup();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
-        }
-        expect(apiMock.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("LinkBranchNotLinkedError");
+            expect(causeText).toContain(`Cannot resolve "feature-branch": it is not a project ref`);
+            expect(causeText).toContain(
+              "If it is a branch name, link the parent project first: supabase link --project-ref",
+            );
+          }
+          expect(apiMock.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
-    it.live(
+    it.effect(
       "cache alone (linked-project.json with no project-ref file) is never proof of a link: fails with LinkBranchNotLinkedError, no API call (PR #6168 review)",
       () => {
         const { layer, apiMock, workdir } = setup();
@@ -897,7 +914,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "treats an unreadable project-ref path (e.g. a directory) as no candidate rather than failing",
       () => {
         const { layer, workdir, apiMock } = setup();
@@ -922,7 +939,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: 404-path cache write/invalidation (PR #6168 review)", () => {
-    it.live(
+    it.effect(
       "name-resolved branch link with no cache file (P1 fix): persists {ref: parentRef}, and a follow-up branch resolution proves the parent chain survives",
       () => {
         const { layer, workdir, apiMock } = setup({
@@ -949,7 +966,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "name-resolved branch link whose cache already agrees with the parent: cache left byte-identical (richer record not clobbered by the ref-only write)",
       () => {
         const { layer, workdir } = setup({
@@ -968,7 +985,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link whose ref IS among the stale cache's branches: keeps the cache, link still succeeds",
       () => {
         const { layer, workdir, apiMock } = setup({
@@ -987,7 +1004,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link whose ref is NOT among the stale cache's branches: deletes the cache, link still succeeds",
       () => {
         const { layer, workdir } = setup({
@@ -1003,7 +1020,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "raw ref-shaped 404 link where the correlation lookup itself fails: DELETES the unverified cache, link still succeeds (fail-safe, PR #6168 review)",
       () => {
         const { layer, workdir } = setup({
@@ -1022,7 +1039,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: matching and safety", () => {
-    it.live(
+    it.effect(
       "resolves a positional branch name via the parent linked in the project-ref temp file",
       () => {
         const { layer, workdir, apiMock } = setup({ branches: { ok: [LINK_BRANCH] } });
@@ -1038,7 +1055,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "resolves a branch name passed via --project-ref using the same linked-parent lookup",
       () => {
         const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
@@ -1050,7 +1067,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live("resolves a branch by its UUID", () => {
+    it.effect("resolves a branch by its UUID", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       return Effect.gen(function* () {
         yield* writeLinkedParentRef(workdir, PARENT_REF);
@@ -1059,7 +1076,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("resolves a branch by an UPPERCASE-hex UUID spelling (PR #6168 review)", () => {
+    it.effect("resolves a branch by an UPPERCASE-hex UUID spelling (PR #6168 review)", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       return Effect.gen(function* () {
         yield* writeLinkedParentRef(workdir, PARENT_REF);
@@ -1073,7 +1090,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "fails with LinkBranchNotReadyError and never falls through to link the parent, even with SUPABASE_PROJECT_ID set",
       () => {
         const { layer, workdir, apiMock } = setup({
@@ -1100,7 +1117,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live("a failed branch lookup leaves an existing project-ref file untouched", () => {
+    it.effect("a failed branch lookup leaves an existing project-ref file untouched", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       // The project-ref file doubles as the existing link and the parent candidate here.
       return Effect.gen(function* () {
@@ -1115,7 +1132,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: message variants", () => {
-    it.live("caps the available-branches list at 20 names with a remainder count", () => {
+    it.effect("caps the available-branches list at 20 names with a remainder count", () => {
       const { layer, workdir } = setup({ branches: { ok: manyBranches(25) } });
       return Effect.gen(function* () {
         yield* writeLinkedParentRef(workdir, PARENT_REF);
@@ -1134,7 +1151,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live('suggests a case-insensitive near-miss ("Did you mean")', () => {
+    it.effect('suggests a case-insensitive near-miss ("Did you mean")', () => {
       const { layer, workdir } = setup({
         branches: { ok: [LINK_BRANCH, LINK_BRANCH_STAGING] },
       });
@@ -1152,7 +1169,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "includes a ref-typo hint for an all-lowercase value not found in an empty branch list",
       () => {
         const { layer, workdir } = setup({ branches: { ok: [] } });
@@ -1176,7 +1193,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live("omits the ref-typo hint when the value is not purely lowercase letters", () => {
+    it.effect("omits the ref-typo hint when the value is not purely lowercase letters", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       return Effect.gen(function* () {
         yield* writeLinkedParentRef(workdir, PARENT_REF);
@@ -1193,7 +1210,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("lists sorted available branch names when the branch is not found", () => {
+    it.effect("lists sorted available branch names when the branch is not found", () => {
       const { layer, workdir, telemetry, linkedCache } = setup({
         branches: { ok: [LINK_BRANCH_ZETA, LINK_BRANCH_ALPHA] },
       });
@@ -1215,7 +1232,7 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
+    it.effect(
       "surfaces a dedicated message when listing branches 404s (parent may itself be a branch)",
       () => {
         const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(404) } });
@@ -1239,7 +1256,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkBranchListStatusError when listing branches returns a non-200, non-404 status",
       () => {
         const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(500) } });
@@ -1258,7 +1275,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "fails with LinkBranchListNetworkError when listing branches fails at the transport layer",
       () => {
         const { layer, workdir } = setup({ branches: { fail: transportFailureForMock() } });
@@ -1279,7 +1296,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: output contract", () => {
-    it.live(
+    it.effect(
       "text mode: shows the Resolving branch... spinner, writes the resolved line to stderr, and keeps stdout to the Finished line",
       () => {
         const { layer, out, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
@@ -1300,7 +1317,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "json mode: emits branch + parent_project_ref in the success payload with zero progress events",
       () => {
         const { layer, out, workdir } = setup({
@@ -1324,7 +1341,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "json mode: a branch-list failure produces zero progress events (spinner suppressed)",
       () => {
         const { layer, out, workdir } = setup({
@@ -1346,7 +1363,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live("stream-json mode: emits branch + parent_project_ref in the success payload", () => {
+    it.effect("stream-json mode: emits branch + parent_project_ref in the success payload", () => {
       const { layer, out, workdir } = setup({
         format: "stream-json",
         branches: { ok: [LINK_BRANCH] },
@@ -1367,7 +1384,7 @@ describe("link integration", () => {
   });
 
   describe("branch-name resolution: telemetry", () => {
-    it.live(
+    it.effect(
       "fires cli_project_linked with linked_via/parent_project_ref and a project group, no groupIdentify, and never the branch name",
       () => {
         const analytics = mockContextualAnalytics();
@@ -1384,19 +1401,19 @@ describe("link integration", () => {
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
-          const properties = capture?.properties as { groups?: unknown } | undefined;
+          const properties = capture?.properties;
           expect(properties).toMatchObject({
             linked_via: "branch",
             parent_project_ref: PARENT_REF,
           });
-          expect(properties?.groups).toEqual({ project: BRANCH_PROJECT_REF });
+          expect(properties?.["groups"]).toEqual({ project: BRANCH_PROJECT_REF });
           expect(analytics.groupIdentified).toHaveLength(0);
           expect(yield* jsonText(analytics.captured)).not.toContain("feature-branch");
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
+    it.effect(
       "default-branch link (getProject(parent) returns 200): the normal 200 arm ALSO carries linked_via/parent_project_ref, plus its usual org/project groupIdentify richness (PR #6168 review)",
       () => {
         const analytics = mockContextualAnalytics();
@@ -1411,12 +1428,12 @@ describe("link integration", () => {
           yield* link(flags({ refOrBranch: Option.some("main"), projectRef: Option.none() }));
           const captures = analytics.captured.filter((c) => c.event === "cli_project_linked");
           expect(captures).toHaveLength(1);
-          const properties = captures[0]?.properties as { groups?: unknown } | undefined;
+          const properties = captures[0]?.properties;
           expect(properties).toMatchObject({
             linked_via: "branch",
             parent_project_ref: PARENT_REF,
           });
-          expect(properties?.groups).toEqual({ organization: "org_123", project: PARENT_REF });
+          expect(properties?.["groups"]).toEqual({ organization: "org_123", project: PARENT_REF });
           expect(analytics.groupIdentified).toEqual([
             {
               groupType: "organization",
@@ -1436,7 +1453,7 @@ describe("link integration", () => {
   });
 
   describe("telemetry: --project-ref redaction (CLI-2167)", () => {
-    it.live(
+    it.effect(
       "does not redact --project-ref in cli_command_executed when it is ref-shaped (Go parity: cmd/link.go:52)",
       () => {
         const out = mockOutput({ format: "text" });
@@ -1473,7 +1490,7 @@ describe("link integration", () => {
       },
     );
 
-    it.live(
+    it.effect(
       "redacts --project-ref in cli_command_executed when it is a branch name, not a ref",
       () => {
         const out = mockOutput({ format: "text" });

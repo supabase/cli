@@ -1,5 +1,5 @@
-import { Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
-import * as HttpClientError from "effect/http/HttpClientError";
+import { Effect, FileSystem, Option, Path, Redacted, Ref, Schedule } from "effect";
+import type * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -88,10 +88,10 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   // process mutation; every step reads its own `workdir` var, never `process.cwd()`, so nothing
   // else depends on the chdir staying in effect.
   const originalCwd = process.cwd();
-  let createdRef: string | undefined;
+  const createdRef = yield* Ref.make<string | undefined>(undefined);
   // Hoisted so the linked-project-cache finalizer writes beside the other `supabase/.temp/`
   // files instead of `cliSettings.workdir`.
-  let resolvedWorkdir: string | undefined;
+  const resolvedWorkdir = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
@@ -108,7 +108,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const workdir = path.isAbsolute(workdirInput)
       ? workdirInput
       : path.join(runtimeInfo.cwd, workdirInput);
-    resolvedWorkdir = workdir;
+    yield* Ref.set(resolvedWorkdir, workdir);
 
     const samples = yield* templateService.listSamples;
     const allTemplates = [...samples, SCRATCH_TEMPLATE];
@@ -205,12 +205,12 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       emitStructuredResult: false,
     });
     const projectRef = created.ref;
-    createdRef = projectRef.length > 0 ? projectRef : undefined;
+    yield* Ref.set(createdRef, projectRef.length > 0 ? projectRef : undefined);
     yield* Effect.annotateCurrentSpan("project.ref", projectRef);
 
     // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
     // the health-poll and push retries below.
-    const apiKeysNotify = bootstrapRetryNotify();
+    const apiKeysNotify = yield* bootstrapRetryNotify;
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
       return yield* getProjectApiKeys(projectRef);
@@ -240,12 +240,20 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
-    const healthNotify = bootstrapRetryNotify();
+    const healthNotify = yield* bootstrapRetryNotify;
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
-      const services = yield* api.v1
-        .getServicesHealth({ ref: projectRef, services: ["db"] })
-        .pipe(Effect.catch(mapHealthError));
+      const services = yield* api.v1.getServicesHealth({ ref: projectRef, services: ["db"] }).pipe(
+        Effect.catchTags({
+          HttpClientError: mapHealthHttpError,
+          SchemaError: (cause) =>
+            Effect.fail(
+              new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true }),
+            ),
+          HttpBodyError: healthTransportError,
+          SupabaseApiInputError: healthTransportError,
+        }),
+      );
       for (const service of services) {
         if (!service.healthy) {
           return yield* new BootstrapHealthError({
@@ -265,8 +273,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
     const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
-    let envFileWritten = true;
-    yield* Effect.gen(function* () {
+    const envFileWritten = yield* Effect.gen(function* () {
       const examplePath = path.join(workdir, ".env.example");
       const hasExample = yield* fs.exists(examplePath);
       let example: Record<string, string> | undefined;
@@ -283,14 +290,11 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
       yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
     }).pipe(
+      Effect.as(true),
       Effect.catch((cause) =>
-        Effect.gen(function* () {
-          envFileWritten = false;
-          yield* output.raw(
-            `Failed to create .env file: ${cause instanceof Error ? cause.message : String(cause)}\n`,
-            "stderr",
-          );
-        }),
+        output
+          .raw(`Failed to create .env file: ${cause.message}\n`, "stderr")
+          .pipe(Effect.as(false)),
       ),
       Effect.withSpan("bootstrap.writeDotEnv"),
     );
@@ -319,7 +323,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
     // command, since its CommandSettings-based resolvers would be stale after this handler's
     // own chdir above.
-    const pushNotify = bootstrapRetryNotify();
+    const pushNotify = yield* bootstrapRetryNotify;
     yield* dbPushCore({
       workdir,
       projectRef,
@@ -361,41 +365,30 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       }),
     ),
     Effect.ensuring(
-      Effect.suspend(() =>
-        createdRef === undefined
-          ? Effect.void
-          : linkedProjectCache.cache(createdRef, resolvedWorkdir),
+      Effect.flatMap(
+        Effect.all([Ref.get(createdRef), Ref.get(resolvedWorkdir)]),
+        ([ref, workdir]) =>
+          ref === undefined ? Effect.void : linkedProjectCache.cache(ref, workdir),
       ),
     ),
     Effect.ensuring(telemetryState.flush),
   );
 });
 
-// True when `cause` is the generated client's undecodable `SchemaError`, not a transport failure.
-function isDecodeFailureCause(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
-    return false;
-  }
-  return cause._tag === "SchemaError";
-}
+const healthTransportError = (cause: unknown) =>
+  Effect.fail(new BootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }));
 
 // Non-200 branch: `Error status <status>: <body>`.
-const mapHealthError = (cause: unknown): Effect.Effect<never, BootstrapHealthError> => {
-  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-    const status = cause.response.status;
-    return cause.response.text.pipe(
-      Effect.orElseSucceed(() => ""),
-      Effect.map(sanitizeErrorBody),
-      Effect.flatMap((body) =>
-        Effect.fail(
-          new BootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
-        ),
-      ),
-    );
-  }
-  return Effect.fail(
-    isDecodeFailureCause(cause)
-      ? new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
-      : new BootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+const mapHealthHttpError = (
+  cause: HttpClientError.HttpClientError,
+): Effect.Effect<never, BootstrapHealthError> => {
+  if (cause.response === undefined) return healthTransportError(cause);
+  const status = cause.response.status;
+  return cause.response.text.pipe(
+    Effect.orElseSucceed(() => ""),
+    Effect.map(sanitizeErrorBody),
+    Effect.flatMap((body) =>
+      Effect.fail(new BootstrapHealthError({ message: `Error status ${status}: ${body}`, status })),
+    ),
   );
 };

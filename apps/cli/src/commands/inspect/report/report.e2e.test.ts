@@ -34,7 +34,7 @@ describe("supabase inspect report", () => {
             /^\d{4}-\d{2}-\d{2}$/.test(name),
           );
           expect(dated.length).toBe(1);
-          expect(yield* fs.exists(path.join(outputDir, dated[0]!))).toBe(true);
+          expect(yield* fs.exists(path.join(outputDir, dated[0] ?? ""))).toBe(true);
         }),
       ).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,

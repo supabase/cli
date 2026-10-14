@@ -29,7 +29,7 @@ export function squashLineByLineDiff(before: string, after: string): string {
   let anchorIndex = 0;
   let out = "";
   for (const line of afterTokens) {
-    const anchorText = anchorIndex < beforeTokens.length ? beforeTokens[anchorIndex]! : "";
+    const anchorText = beforeTokens[anchorIndex] ?? "";
     if (line === anchorText) {
       anchorIndex++;
       continue;

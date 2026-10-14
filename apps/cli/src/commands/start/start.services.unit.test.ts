@@ -1,6 +1,6 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { Predicate, Schema } from "effect";
+import { assert, describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
@@ -145,13 +145,16 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
     const overrides: Record<string, unknown> = {};
     for (const atom of GATE_ATOMS) {
       const segments = atom.split(".");
+      const leaf = segments.pop();
+      assert(leaf !== undefined);
       let node = overrides;
-      for (let index = 0; index < segments.length - 1; index++) {
-        const segment = segments[index]!;
+      for (const segment of segments) {
         node[segment] ??= {};
-        node = node[segment] as Record<string, unknown>;
+        const child = node[segment];
+        assert(Predicate.isObject(child));
+        node = child;
       }
-      node[segments.at(-1)!] = enabled.has(atom);
+      node[leaf] = enabled.has(atom);
     }
     return decodeConfig({ project_id: "start-services-gate-cross-check", ...overrides });
   }
@@ -160,8 +163,7 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
     return path
       .split(".")
       .reduce<unknown>(
-        (value, key) =>
-          value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined,
+        (value, key) => (Predicate.hasProperty(value, key) ? value[key] : undefined),
         config,
       );
   }
@@ -187,12 +189,11 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
   }
 
   function expectGatesMatchMetadata(config: CliConfig, label: string) {
-    const realGates = realGatesFor(config);
-    for (const service of Object.keys(realGates) as ReadonlyArray<keyof StartGates>) {
+    for (const [service, gate] of Object.entries(realGatesFor(config))) {
       const meta = startServiceMeta(service);
-      expect(meta, `start.services.ts is missing metadata for "${service}"`).toBeDefined();
-      const expected = evaluateEnabledGate(meta!.enabledGate, config);
-      expect(realGates[service], `${service} (${label})`).toBe(expected);
+      assert(meta !== undefined, `start.services.ts is missing metadata for "${service}"`);
+      const expected = evaluateEnabledGate(meta.enabledGate, config);
+      expect(gate, `${service} (${label})`).toBe(expected);
     }
   }
 

@@ -392,6 +392,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
+          const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
           const exportSchema = (target: PgDeltaDatabaseEndpoint) =>
             pgDeltaEngine.exportDeclarativeSchema({
               context: ctx,
@@ -401,7 +402,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: isPgDeltaDebugEnabled(),
+              debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
@@ -657,7 +658,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     },
                     schema: diffSchema,
                     formatOptions,
-                    debug: isPgDeltaDebugEnabled(),
+                    debug: yield* isPgDeltaDebugEnabled,
                     strictCoverage: flags.strictCoverage,
                   });
                 }

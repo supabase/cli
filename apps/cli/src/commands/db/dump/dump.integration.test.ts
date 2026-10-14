@@ -14,11 +14,38 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -37,9 +64,14 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
-import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  DbConnection,
+  type DbSession,
+  type PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
@@ -183,6 +215,15 @@ const unusedStackApi = Layer.succeed(StackApi, {
   find: () => Effect.die("unused"),
   findDeleted: () => Effect.die("unused"),
 });
+
+const connectedSession: DbSession = {
+  exec: () => Effect.void,
+  execBatch: () => Effect.void,
+  query: () => Effect.succeed([]),
+  extensionExists: () => Effect.succeed(false),
+  copyToCsv: () => Effect.succeed(new Uint8Array()),
+  queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+};
 
 function mockResolver(opts: {
   conn?: PgConnInput;
@@ -408,6 +449,8 @@ interface SetupOpts {
   stdoutIsPipe?: boolean;
   env?: Readonly<Record<string, string>>;
   dockerInstalled?: boolean;
+  /** Runs the real resolver and linked-project cache, with `workdir` a real directory. */
+  realLayers?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -429,22 +472,42 @@ function setup(opts: SetupOpts = {}) {
   });
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: Layer.succeed(DbConnection, {
+            connect: () => Effect.succeed(connectedSession),
+          }),
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     projectRef.layer,
     docker.layer,
     bundled.layer,
     unusedStackApi,
     mockCommandSettings({
-      workdir: opts.workdir ?? "/work/project",
+      workdir,
       projectId: opts.projectId ?? Option.none(),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
-    processEnvLayer(opts.env ?? {}),
+    processEnvLayer(
+      opts.realLayers === true
+        ? { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, ...opts.env }
+        : (opts.env ?? {}),
+    ),
     Layer.succeed(
       NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
@@ -452,7 +515,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker, bundled, cache };
+  return { layer, out, telemetry, resolver, docker, bundled, cache, projectHttp };
 }
 
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
@@ -489,7 +552,7 @@ const failSuggestion = (
 describe("db dump integration", () => {
   const tmp = useTempWorkdir();
 
-  it.live("errors when --use-copy is used without --data-only", () => {
+  it.effect("errors when --use-copy is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags({ useCopy: true, local: Option.some(true) })).pipe(
@@ -500,7 +563,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
     () => {
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
@@ -513,7 +576,7 @@ describe("db dump integration", () => {
     },
   );
 
-  it.live("errors when --exclude is used without --data-only", () => {
+  it.effect("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -524,7 +587,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects combining --data-only and --role-only", () => {
+  it.effect("rejects combining --data-only and --role-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -537,7 +600,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects combining --keep-comments and --data-only", () => {
+  it.effect("rejects combining --keep-comments and --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -550,7 +613,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects combining --schema and --role-only", () => {
+  it.effect("rejects combining --schema and --role-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags({ schema: ["public"], roleOnly: Option.some(true) })).pipe(
@@ -563,7 +626,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects combining --linked and --local", () => {
+  it.effect("rejects combining --linked and --local", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -576,7 +639,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
+  it.effect("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -589,7 +652,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --data-only=false --role-only as a conflict (Go flag.Changed)", () => {
+  it.effect("rejects --data-only=false --role-only as a conflict (Go flag.Changed)", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -602,7 +665,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
+  it.effect("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -610,7 +673,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the expanded pg_dump script on --dry-run without running a container", () => {
+  it.effect("prints the expanded pg_dump script on --dry-run without running a container", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
@@ -621,7 +684,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
+  it.effect("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -636,7 +699,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
+  it.effect("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -646,7 +709,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
+  it.effect("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -667,7 +730,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dumps schema from the local database to stdout", () => {
+  it.effect("dumps schema from the local database to stdout", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true) }));
@@ -685,7 +748,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dumps only data with column inserts", () => {
+  it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dataOnly: Option.some(true), local: Option.some(true) }));
@@ -694,7 +757,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dumps only data without column inserts when --use-copy is set", () => {
+  it.effect("dumps only data without column inserts when --use-copy is set", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(
@@ -704,7 +767,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dumps only roles", () => {
+  it.effect("dumps only roles", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ roleOnly: Option.some(true), local: Option.some(true) }));
@@ -713,7 +776,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("limits the dump to selected schemas", () => {
+  it.effect("limits the dump to selected schemas", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
@@ -721,7 +784,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
+  it.effect("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
     // The handler receives an already-split array (CSV-split at the flag level by
     // `parseSchemaFlags`) and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
@@ -731,7 +794,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves a relative --file against the workdir", () => {
+  it.effect("resolves a relative --file against the workdir", () => {
     const { layer } = setup({
       isLocal: true,
       stdout: "CREATE SCHEMA public;\n",
@@ -744,7 +807,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors --network-id over host networking", () => {
+  it.effect("honors --network-id over host networking", () => {
     const { layer, docker } = setup({ isLocal: true, networkId: "custom_net" });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true) }));
@@ -752,7 +815,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
     () => {
       // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
@@ -772,7 +835,7 @@ describe("db dump integration", () => {
     },
   );
 
-  it.live("defaults to the linked connection when neither --local nor --db-url is set", () => {
+  it.effect("defaults to the linked connection when neither --local nor --db-url is set", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
       yield* dbDump(flags({}));
@@ -780,7 +843,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("keeps an explicit local db-url on the bundled client path", () => {
+  it.effect("keeps an explicit local db-url on the bundled client path", () => {
     const { layer, bundled } = setup({
       conn: {
         host: "127.0.0.1",
@@ -808,7 +871,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  it.live("points a Windows tool container at the host for a loopback stack db-url", () => {
+  it.effect("points a Windows tool container at the host for a loopback stack db-url", () => {
     const conn = {
       host: "127.0.0.1",
       port: 55432,
@@ -830,25 +893,28 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  it.live("points a named-network legacy tool container at the host for a loopback db-url", () => {
-    const { layer, docker } = setup({
-      conn: { ...LOCAL_CONN, port: 55432 },
-      isLocal: false,
-      networkId: "custom_net",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(
-        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
-      );
-      expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
-      expect(docker.lastOpts?.env).toMatchObject({
-        PGHOST: "host.docker.internal",
-        PGPORT: "55432",
+  it.effect(
+    "points a named-network legacy tool container at the host for a loopback db-url",
+    () => {
+      const { layer, docker } = setup({
+        conn: { ...LOCAL_CONN, port: 55432 },
+        isLocal: false,
+        networkId: "custom_net",
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* dbDump(
+          flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+        );
+        expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
+        expect(docker.lastOpts?.env).toMatchObject({
+          PGHOST: "host.docker.internal",
+          PGPORT: "55432",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
+  it.effect("caches the linked project even when connection resolution fails (Go PostRun)", () => {
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward. So an
     // IPv6/pooler/login-role failure during resolution still refreshes the
@@ -866,7 +932,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
     () => {
       // `linkedRefForCache` must check `flags.projectRef` before config.toml's
@@ -888,7 +954,7 @@ describe("db dump integration", () => {
     },
   );
 
-  it.live("does not cache when the linked ref is unknown and resolution fails", () => {
+  it.effect("does not cache when the linked ref is unknown and resolution fails", () => {
     // No config project_id or .temp/project-ref file, so the up-front pre-capture
     // itself fails "not linked" before `resolve()` is reached; nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
@@ -899,7 +965,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("caches the linked project from the resolved ref on a successful dump", () => {
+  it.effect("caches the linked project from the resolved ref on a successful dump", () => {
     const { layer, cache } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -912,7 +978,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dumps the project given via --project-ref without a linked workdir", () => {
+  it.effect("dumps the project given via --project-ref without a linked workdir", () => {
     // No fixed `opts.ref`; only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache, resolver } = setup({
@@ -928,7 +994,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
     // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
     const { layer, cache } = setup({
@@ -945,7 +1011,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "rejects a malformed --project-ref on the linked path before resolving or caching",
     () => {
       // `loadProjectRef` validates before `resolver.resolve()` runs, so a malformed
@@ -963,7 +1029,7 @@ describe("db dump integration", () => {
     },
   );
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, resolver, cache } = setup({ isLocal: true });
     return Effect.gen(function* () {
@@ -979,7 +1045,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the dump to --file and reports the absolute path on stderr", () => {
+  it.effect("writes the dump to --file and reports the absolute path on stderr", () => {
     const { layer, out } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -993,7 +1059,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with exit 1 when the container exits non-zero", () => {
+  it.effect("fails with exit 1 when the container exits non-zero", () => {
     const { layer } = setup({ isLocal: true, exitCode: 1, stdout: "partial\n" });
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
@@ -1012,7 +1078,7 @@ describe("db dump integration", () => {
   const IPV6_STDERR =
     'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname';
 
-  it.live("linked: retries through the IPv4 pooler on a container IPv6 failure", () => {
+  it.effect("linked: retries through the IPv4 pooler on a container IPv6 failure", () => {
     const { layer, out, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1034,7 +1100,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
+  it.effect("linked: preserves the original dump error when the pooler fallback fails", () => {
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1050,7 +1116,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("linked: does not retry when the failure is not an IPv6 connectivity error", () => {
+  it.effect("linked: does not retry when the failure is not an IPv6 connectivity error", () => {
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1066,7 +1132,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("linked: keeps the original error when no pooler fallback is available", () => {
+  it.effect("linked: keeps the original error when no pooler fallback is available", () => {
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1086,7 +1152,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
+  it.effect("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
     const { layer, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1105,7 +1171,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("linked: no IPv6 suggestion on a non-IPv6 container failure", () => {
+  it.effect("linked: no IPv6 suggestion on a non-IPv6 container failure", () => {
     const { layer } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -1119,7 +1185,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json mode: emits the SQL to stdout with no machine envelope", () => {
+  it.effect("json mode: emits the SQL to stdout with no machine envelope", () => {
     const { layer, out } = setup({ format: "json", isLocal: true, stdout: "CREATE SCHEMA x;\n" });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true) }));
@@ -1128,7 +1194,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stream-json mode: emits the SQL to stdout with no machine envelope", () => {
+  it.effect("stream-json mode: emits the SQL to stdout with no machine envelope", () => {
     const { layer, out } = setup({
       format: "stream-json",
       isLocal: true,
@@ -1202,7 +1268,7 @@ describe("db dump integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
+  it.effect("windows: warns when a piped stdout dump contains non-ASCII text", () => {
     const { layer, out } = setup({
       isLocal: true,
       stdout: UNICODE_SQL,
@@ -1218,7 +1284,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stays silent when a piped Windows dump writes to --file", () => {
+  it.effect("stays silent when a piped Windows dump writes to --file", () => {
     const { layer, out } = setup({
       isLocal: true,
       stdout: UNICODE_SQL,
@@ -1247,7 +1313,7 @@ describe("db dump integration", () => {
     ["when the dump is ASCII-only", { ...PIPED_WIN32, stdout: "select 'plain \x7f';\n" }],
   ];
   for (const [scenario, over] of SILENT) {
-    it.live(`stays silent ${scenario}`, () => {
+    it.effect(`stays silent ${scenario}`, () => {
       const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...over });
       return Effect.gen(function* () {
         yield* dbDump(flags({ local: Option.some(true) }));
@@ -1259,7 +1325,7 @@ describe("db dump integration", () => {
 
   describe("managed stack dump", () => {
     for (const runtime of ["native", "docker"] as const) {
-      it.live(`streams schema output through the ${runtime} stack tool`, () => {
+      it.effect(`streams schema output through the ${runtime} stack tool`, () => {
         const { layer, out } = setup({ isLocal: true, stdout: "" });
         return Effect.gen(function* () {
           yield* dbDump(flags({ local: Option.some(true) }));
@@ -1271,5 +1337,134 @@ describe("db dump integration", () => {
         );
       });
     }
+  });
+});
+
+describe("db dump permissions through the real resolver and cache", () => {
+  const tmp = useTempWorkdir("supabase-db-dump-");
+  const IPV6_STDERR =
+    'could not translate host name "db.abcdefghijklmnopqrst.invalid" to address: No address associated with hostname';
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+
+  it.effect("mints a login role and fills the cache for the default linked target", () => {
+    const { layer, out, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(flags({ projectRef: Option.some(VALID_REF) })).pipe(Effect.provide(layer));
+      expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const { layer, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(
+        flags({
+          linked: Option.some(true),
+          projectRef: Option.some(VALID_REF),
+          password: Option.some("secret"),
+        }),
+      ).pipe(Effect.provide(layer));
+      expect(asLines(requests)).toEqual([poolerRequest]);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("makes no Management API request for --local and caches nothing", () => {
+    const { layer, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.provide(layer));
+      expect(requests).toEqual([]);
+      expect(projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("retries through the pooler after a container IPv6 failure", () => {
+    const { layer, docker, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      results: [
+        { exitCode: 1, stderr: IPV6_STDERR },
+        { exitCode: 0, stdout: "CREATE SCHEMA x;\n" },
+      ],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      const fs = yield* FileSystem.FileSystem;
+      // No --project-ref: the linked ref comes from the saved file, so only the fallback block
+      // accounts for the pooler config request.
+      yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(flags()).pipe(Effect.provide(layer));
+      expect(docker.allOpts).toHaveLength(2);
+      expect(docker.allOpts[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
+      expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "db dump",
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 });
