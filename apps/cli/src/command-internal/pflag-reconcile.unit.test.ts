@@ -315,7 +315,6 @@ describe("pflagProfileValue", () => {
 describe("resolvePflagProfile", () => {
   const services = (args: ReadonlyArray<string>, homeDir: string, profileEnvValue: string) =>
     Layer.mergeAll(
-      BunServices.layer,
       Layer.succeed(ProfileFlag, "supabase"),
       Layer.succeed(CliArgs, { args }),
       mockCommandSettings({ workdir: homeDir, profileEnvValue: Option.some(profileEnvValue) }),
