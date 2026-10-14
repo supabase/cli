@@ -6,19 +6,19 @@ Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every M
 
 ## Files Written
 
-| Path                                             | Format | When                                                         |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
+| Path                                           | Format | When                                                         |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
-| Method | Path                                        | Auth         | When                                                                          | Response (used fields)                                                                  |
-| ------ | ------------------------------------------- | ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/branches/{name}`        | Bearer token | input is neither a UUID nor a `^[a-z]{20}$` ref pattern (named-branch lookup) | `{project_ref, ...}`                                                                    |
-| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | always — branch detail / config                                               | `{ref, db_host, db_port, db_user?, db_pass?, jwt_secret?, postgres_version, status, …}` |
-| `GET`  | `/v1/projects/{ref}/api-keys`               | Bearer token | only when `--output` is not `pretty`                                          | `[{name, api_key?}]`                                                                    |
-| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | only when `--output` is not `pretty`                                          | `[SupavisorConfigResponse]` — handler filters for `database_type === "PRIMARY"`         |
+| Method | Path                                        | Auth         | When                                                                                                                                                        | Response (used fields)                                                                  |
+| ------ | ------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/branches/{name}`        | Bearer token | input is neither a UUID nor a `^[a-z]{20}$` ref pattern (named-branch lookup)                                                                               | `{project_ref, ...}`                                                                    |
+| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | always — branch detail / config                                                                                                                             | `{ref, db_host, db_port, db_user?, db_pass?, jwt_secret?, postgres_version, status, …}` |
+| `GET`  | `/v1/projects/{ref}/api-keys`               | Bearer token | with `-o` other than `pretty`, or with no `-o` when the output format is json or stream-json (`--output-format`, `--agent yes`, or a detected coding agent) | `[{name, api_key?}]`                                                                    |
+| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | with `-o` other than `pretty`, or with no `-o` when the output format is json or stream-json (`--output-format`, `--agent yes`, or a detected coding agent) | `[SupavisorConfigResponse]` — handler filters for `database_type === "PRIMARY"`         |
 
 ## Environment Variables
 
