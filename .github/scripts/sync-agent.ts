@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   AI_REVIEW_MARKER,
   type AiReviewState,
+  isSuperseded,
   parseAiReviewState,
 } from "./ai-review/post-review.ts";
 import {
@@ -747,7 +748,9 @@ async function collect(outputDir: string): Promise<void> {
   comments.push(...reviews);
   const aiReview = reviews.findLast(
     (review) =>
-      isLogin(review.user?.login, AI_REVIEW_LOGIN) && review.body.includes(AI_REVIEW_MARKER),
+      isLogin(review.user?.login, AI_REVIEW_LOGIN) &&
+      review.body.includes(AI_REVIEW_MARKER) &&
+      !isSuperseded(review.body),
   );
   const aiReviewState = aiReview ? parseAiReviewState(aiReview.body) : null;
   const aiThreads = await fetchAiReviewThreads(token, repository, pull.number);

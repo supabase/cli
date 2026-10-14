@@ -645,11 +645,12 @@ export function renderReviewBody(
   );
   const verdicts = computeVerdictCounts(review.findings);
 
-  // The state line leads the body so truncation never drops it.
+  // The markers lead the body so truncation never drops them.
   const state = footer.headSha
     ? `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete === true, findings: posted.length })}\n`
     : "";
-  const sections: string[] = [`${state}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
+  const header = `${AI_REVIEW_MARKER}\n${state}`;
+  const sections: string[] = [`${header}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
 
   if (posted.length > 0) {
     const rows = posted.map(
@@ -727,8 +728,6 @@ export function renderReviewBody(
       `Models: ${footer.modelsFooter} · Trigger: \`${footer.trigger}\` · [Workflow run](${footer.runUrl})`,
       "",
       "This review runs once per PR. A maintainer can request another with a `/ai-review` comment.",
-      "",
-      AI_REVIEW_MARKER,
     ].join("\n"),
   );
 

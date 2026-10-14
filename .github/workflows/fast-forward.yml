@@ -88,7 +88,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVIEW_COMMIT_ID: ${{ github.event.review.commit_id }}
-          REVIEWER_LOGIN: ${{ github.event.review.user.login }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

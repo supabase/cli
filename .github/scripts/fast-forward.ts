@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { analyzeCommits } from "../../apps/cli/scripts/analyze-commits-title.js";
 import {
   type GitRunner,
@@ -205,21 +207,14 @@ export const AUTO_APPROVER_LOGIN = "supabase-oss";
 export interface PullRequestReview {
   user: { login: string } | null;
   state: string;
-  author_association: string;
 }
 
 /**
- * Whether a collaborator's latest approving or blocking review requests changes; comments do not change a verdict,
- * and reviews from people outside the repository never hold automation.
+ * Whether anyone's latest approving or blocking review requests changes; comments do not change a verdict. Every
+ * reviewer counts because `author_association` hides private org membership; a maintainer dismisses a stray one.
  */
 export function hasChangesRequested(reviews: PullRequestReview[]): boolean {
-  return [
-    ...latestVerdicts(
-      reviews.filter((review) =>
-        ["OWNER", "MEMBER", "COLLABORATOR"].includes(review.author_association),
-      ),
-    ).values(),
-  ].includes("CHANGES_REQUESTED");
+  return [...latestVerdicts(reviews).values()].includes("CHANGES_REQUESTED");
 }
 
 function latestVerdicts(reviews: PullRequestReview[]): Map<string, string> {
@@ -664,6 +659,15 @@ function parseArguments(args: string[]): { prNumber: number; dryRun: boolean } {
   return { prNumber, dryRun };
 }
 
+function reviewerLogin(event: unknown): string | undefined {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+  const review = isRecord(event) ? event.review : undefined;
+  const user = isRecord(review) ? review.user : undefined;
+  const login = isRecord(user) ? user.login : undefined;
+  return typeof login === "string" ? login : undefined;
+}
+
 async function main(): Promise<void> {
   const { prNumber, dryRun } = parseArguments(process.argv.slice(2));
   const repository = process.env.REPOSITORY ?? requireEnv("GITHUB_REPOSITORY");
@@ -672,7 +676,11 @@ async function main(): Promise<void> {
   if (!reviewCommitId && !dryRun) {
     throw new Error("REVIEW_COMMIT_ID is required");
   }
-  const approver = process.env.REVIEWER_LOGIN || undefined;
+  // Read from the event so a sync PR running an older copy of the workflow still identifies the approver.
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  const approver = eventPath
+    ? reviewerLogin(JSON.parse(readFileSync(eventPath, "utf8")))
+    : undefined;
   const outcome = await runFastForward(io, { reviewCommitId, approver, dryRun });
   console.log(JSON.stringify(outcome));
   if (outcome.status === "refused") {

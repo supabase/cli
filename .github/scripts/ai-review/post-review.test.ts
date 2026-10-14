@@ -703,9 +703,9 @@ describe("buildReviewPayload", () => {
 
     expect(payload.commit_id).toBe(footer.headSha);
     expect(payload.comments).toHaveLength(1);
-    expect(
-      parseAiReviewState(truncateReviewBody(`${payload.body}${"x".repeat(70_000)}`, footer.runUrl)),
-    ).toEqual({
+    const truncated = truncateReviewBody(`${payload.body}${"x".repeat(70_000)}`, footer.runUrl);
+    expect(truncated).toContain(AI_REVIEW_MARKER);
+    expect(parseAiReviewState(truncated)).toEqual({
       head: "a".repeat(40),
       complete: false,
       findings: 2,

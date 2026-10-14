@@ -130,6 +130,11 @@ jobs:
               --force-with-lease="refs/heads/sync/develop-into-next:$HEAD_SHA" \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
           fi
+          # The workflow suggestions hold the head before any reply counts a withheld fix as answered.
+          if [ "$CHANGED" != "" ]; then
+            (cd trusted && REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
+              bun .github/scripts/sync-agent.ts suggest)
+          fi
           if [ -f "$OUTPUT_DIR/replies.json" ]; then
             jq -c '.[]' "$OUTPUT_DIR/replies.json" | while read -r reply; do
               gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments/$(jq -r .commentId <<<"$reply")/replies" \
@@ -141,13 +146,8 @@ jobs:
               fi
             done
           fi
-          if [ "$CHANGED" != "" ]; then
-            cd trusted
-            REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
-              bun .github/scripts/sync-agent.ts suggest
-          fi
 
-  # A green head both AI review models saw, with every finding fixed or declined and no reviewer requesting changes.
+  # A green head both AI review models saw, with every finding fixed or declined and no change request.
   # The approval runs fast-forward.yml, which re-checks the head and its checks before moving `next`.
   approve:
     name: Approve the reviewed sync

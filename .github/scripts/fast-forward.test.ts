@@ -735,12 +735,8 @@ describe("runFastForward sync", () => {
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
   });
 
-  test("lands the sync bot's approval only while it is active and no collaborator requests changes", async () => {
-    const review = (login: string, state: string, author_association = "COLLABORATOR") => ({
-      user: { login },
-      state,
-      author_association,
-    });
+  test("lands the sync bot's approval only while it is active and nobody requests changes", async () => {
+    const review = (login: string, state: string) => ({ user: { login }, state });
     const approved = review(AUTO_APPROVER_LOGIN, "APPROVED");
     const attempt = async (reviews: ReturnType<typeof review>[]) => {
       const { repo, head, io } = resolvedSyncScenario();
@@ -760,10 +756,13 @@ describe("runFastForward sync", () => {
       status: "refused",
       moved: false,
     });
-    expect(await attempt([approved, review("outsider", "CHANGES_REQUESTED", "NONE")])).toEqual({
-      status: "fast-forwarded",
-      moved: true,
-    });
+    expect(
+      await attempt([
+        review("maintainer", "CHANGES_REQUESTED"),
+        review("maintainer", "APPROVED"),
+        approved,
+      ]),
+    ).toEqual({ status: "fast-forwarded", moved: true });
   });
 
   test("lands the approved head merged with a target move without pulling in the moved source", async () => {
