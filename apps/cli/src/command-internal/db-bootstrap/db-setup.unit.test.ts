@@ -974,7 +974,7 @@ describe("startInitCurrentBranch", () => {
           path.join(workdir, "supabase", ".branches", "_current_branch"),
         );
         expect(content).toBe("main");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
       yield* fixtureFs.remove(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(BunServices.layer));
   });
@@ -996,7 +996,7 @@ describe("startInitCurrentBranch", () => {
         yield* startInitCurrentBranch(fs, path, workdir);
         const content = yield* fs.readFileString(path.join(branchesDir, "_current_branch"));
         expect(content).toBe("feature-x");
-      }).pipe(Effect.provide(BunServices.layer));
+      });
       yield* fixtureFs.remove(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(BunServices.layer));
   });
