@@ -1,106 +1,94 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
-import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
-import { Clock, DateTime, Effect, FileSystem, Path } from "effect";
+import { Effect } from "effect";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { upgradeNoticeHook } from "./upgrade-notice.ts";
 
-const captureStderr = <E, R>(body: Effect.Effect<void, E, R>) =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const written: Array<string> = [];
-      const realWrite = process.stderr.write.bind(process.stderr);
-      process.stderr.write = ((chunk: unknown) => {
-        written.push(String(chunk));
-        return true;
-      }) as typeof process.stderr.write;
-      return { written, realWrite };
-    }),
-    ({ written }) => Effect.as(body, written),
-    ({ realWrite }) =>
-      Effect.sync(() => {
-        process.stderr.write = realWrite;
-      }),
-  );
-
 describe("upgrade notice user-level cache", () => {
-  const userCache = Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-upgrade-notice-home-" });
-    const workdir = path.join(root, "outside-project");
-    const supabaseHome = path.join(root, "supabase-home");
-    yield* fs.makeDirectory(workdir);
-    return { fs, workdir, supabaseHome, cacheFile: path.join(supabaseHome, "cli-latest") };
+  let root: string;
+  let workdir: string;
+  let supabaseHome: string;
+  let cacheFile: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-home-"));
+    workdir = join(root, "outside-project");
+    supabaseHome = join(root, "supabase-home");
+    cacheFile = join(supabaseHome, "cli-latest");
+    mkdirSync(workdir);
   });
 
-  /** Ages the cache against the live clock, which the hook's freshness check reads. */
-  const writeUserCache = Effect.fnUntraced(function* (
-    { fs, supabaseHome, cacheFile }: Effect.Success<typeof userCache>,
-    tag: string,
-    ageMs: number,
-  ) {
-    yield* fs.makeDirectory(supabaseHome, { recursive: true });
-    yield* fs.writeFileString(cacheFile, tag);
-    const then = DateTime.toDateUtc(DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - ageMs));
-    yield* fs.utimes(cacheFile, then, then);
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
   });
+
+  function writeUserCache(tag: string, ageMs: number) {
+    mkdirSync(supabaseHome, { recursive: true });
+    writeFileSync(cacheFile, tag);
+    const then = new Date(Date.now() - ageMs);
+    utimesSync(cacheFile, then, then);
+  }
 
   /** Runs the production hook with real `SUPABASE_HOME` resolution and a stub release fetch. */
-  const runHook = Effect.fnUntraced(function* (
-    { workdir, supabaseHome }: Effect.Success<typeof userCache>,
-    latestTag: string,
-  ) {
+  async function runHook(latestTag: string) {
     let fetchCalls = 0;
-    const written = yield* captureStderr(
-      withEnvVar(
-        "SUPABASE_HOME",
-        supabaseHome,
-        withEnvVar(
-          "SUPABASE_NO_UPDATE_NOTIFIER",
-          "0",
-          upgradeNoticeHook(
-            ["projects", "list"],
-            {
-              cleanShowHelp: false,
-              delegatedToGo: false,
-              workingDirectory: workdir,
-              isValueTakingFlagToken: () => false,
-            },
-            () => {
-              fetchCalls += 1;
-              return Promise.resolve(latestTag);
-            },
-          ),
+    const written: Array<string> = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    const realEnv = {
+      SUPABASE_HOME: process.env["SUPABASE_HOME"],
+      SUPABASE_NO_UPDATE_NOTIFIER: process.env["SUPABASE_NO_UPDATE_NOTIFIER"],
+    };
+    process.env["SUPABASE_HOME"] = supabaseHome;
+    process.env["SUPABASE_NO_UPDATE_NOTIFIER"] = "0";
+    process.stderr.write = ((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await Effect.runPromise(
+        upgradeNoticeHook(
+          ["projects", "list"],
+          {
+            cleanShowHelp: false,
+            delegatedToGo: false,
+            workingDirectory: workdir,
+            isValueTakingFlagToken: () => false,
+          },
+          () => {
+            fetchCalls += 1;
+            return Promise.resolve(latestTag);
+          },
         ),
-      ),
-    );
+      );
+    } finally {
+      process.stderr.write = realWrite;
+      for (const [key, value] of Object.entries(realEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
     return { fetchCalls, stderr: stripVTControlCharacters(written.join("")) };
+  }
+
+  it("serves a fresh SUPABASE_HOME cache outside a project without fetching", async () => {
+    writeUserCache("v99.99.99", 60_000);
+
+    const { fetchCalls, stderr } = await runHook("v99.99.100");
+
+    expect(fetchCalls).toBe(0);
+    expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
   });
 
-  it.live("serves a fresh SUPABASE_HOME cache outside a project without fetching", () =>
-    Effect.gen(function* () {
-      const ctx = yield* userCache;
-      yield* writeUserCache(ctx, "v99.99.99", 60_000);
+  it("refetches a stale SUPABASE_HOME cache and records the new tag", async () => {
+    writeUserCache("v2.100.0", 11 * 60 * 60 * 1000);
 
-      const { fetchCalls, stderr } = yield* runHook(ctx, "v99.99.100");
+    const { fetchCalls } = await runHook("v99.99.100");
 
-      expect(fetchCalls).toBe(0);
-      expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("refetches a stale SUPABASE_HOME cache and records the new tag", () =>
-    Effect.gen(function* () {
-      const ctx = yield* userCache;
-      yield* writeUserCache(ctx, "v2.100.0", 11 * 60 * 60 * 1000);
-
-      const { fetchCalls } = yield* runHook(ctx, "v99.99.100");
-
-      expect(fetchCalls).toBe(1);
-      expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+    expect(fetchCalls).toBe(1);
+    expect(readFileSync(cacheFile, "utf8")).toBe("v99.99.100");
+  });
 });

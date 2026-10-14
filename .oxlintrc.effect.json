@@ -115,14 +115,12 @@
     "!apps/cli/src/command-internal/temp-paths.*",
     "!apps/cli/src/command-internal/tenant-*",
     "!apps/cli/src/command-internal/timestamp.format.*",
-    "!apps/cli/src/command-internal/upgrade-notice.*",
     "!apps/cli/src/command-internal/upgrade-suggest.*",
     "!apps/cli/src/command-internal/vault-decrypt.*",
     "!apps/cli/src/command-internal/vault.*",
     "!apps/cli/src/command-internal/viper-env.*",
     "!apps/cli/src/command-internal/workdir-project.*",
     "!apps/cli/src/command-internal/workdir-search.ts",
-    "!apps/cli/src/command-internal/workdir-validation.ts",
-    "apps/cli/src/command-internal/upgrade-notice.ts"
+    "!apps/cli/src/command-internal/workdir-validation.ts"
   ]
 }
