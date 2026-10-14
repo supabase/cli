@@ -1,4 +1,5 @@
 import { Cause, Option, Predicate } from "effect";
+import type { PlatformError } from "effect";
 import type { CliError as EffectCliError } from "effect/cli";
 import type { StackError, StackFailureKind } from "@supabase/stack/effect";
 
@@ -1158,10 +1159,55 @@ const defectSystemErrorCodes = new Set([
   "EXDEV",
 ]);
 
+// Data descriptors only, so reading a defect never runs a getter.
+const ownValue = (record: object, key: string): unknown =>
+  Object.getOwnPropertyDescriptor(record, key)?.value;
+
+const platformErrorReasons: ReadonlySet<string> = new Set<PlatformError.SystemErrorTag>([
+  "AlreadyExists",
+  "BadResource",
+  "Busy",
+  "InvalidData",
+  "NotFound",
+  "PermissionDenied",
+  "TimedOut",
+  "UnexpectedEof",
+  "Unknown",
+  "WouldBlock",
+  "WriteZero",
+]);
+
+// The Effect platform services, and the CLI's stdin reader, that raise PlatformError for local I/O.
+const platformErrorModules: ReadonlySet<string> = new Set([
+  "ChildProcess",
+  "Crypto",
+  "FileSystem",
+  "Path",
+  "Stdin",
+  "Stdio",
+  "Terminal",
+]);
+
+/**
+ * Names a PlatformError's closed reason and the platform module and method that raised it. The
+ * method is an identifier those modules pass as a literal, never a caller value.
+ */
+function platformErrorOperation(error: Error): string | undefined {
+  const reason = ownValue(error, "reason");
+  if (!isErrorRecord(reason)) return undefined;
+  const tag = ownValue(reason, "_tag");
+  const module = ownValue(reason, "module");
+  const method = ownValue(reason, "method");
+  if (typeof tag !== "string" || !platformErrorReasons.has(tag)) return undefined;
+  if (typeof module !== "string" || !platformErrorModules.has(module)) return undefined;
+  const name = typeof method === "string" ? safeIdentifier(method) : undefined;
+  return name === undefined ? undefined : `${tag}:${module}.${name}`;
+}
+
 /**
  * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
- * for a non-error value. Instance fields other than an errno code are never read, so only
- * source-owned identifiers reach telemetry.
+ * for a non-error value. A PlatformError adds its closed reason and known raising operation. No
+ * other instance field is read, so only source-owned identifiers reach telemetry.
  */
 function defectIdentity(defect: unknown): string {
   try {
@@ -1169,8 +1215,11 @@ function defectIdentity(defect: unknown): string {
     if (!isErrorRecord(error)) return typeof error;
     if (!(error instanceof Error)) return "object";
     const base = readStableTaggedPrototypeName(error, true) ?? "Error";
-    // A data descriptor, so reading the code never runs a getter.
-    const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
+    if (base === "PlatformError") {
+      const operation = platformErrorOperation(error);
+      if (operation !== undefined) return `${base}:${operation}`;
+    }
+    const code = ownValue(error, "code");
     return typeof code === "string" && defectSystemErrorCodes.has(code) ? `${base}:${code}` : base;
   } catch {
     return "Unreadable";
