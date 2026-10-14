@@ -241,8 +241,8 @@ export function runContainerCliExpectSuccess<E>(
 }
 
 /**
- * Like {@link containerCliExitCode}, but also returns the child's stdout and stderr — reading them
- * instead of ignoring them avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
+ * Like {@link containerCliExitCode}, but also returns the child's stdout — reading it instead of
+ * ignoring it avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
  * {@link containerCliExitCode}.
  */
 export const containerCliExitCodeAndStdout = (
@@ -255,7 +255,7 @@ export const containerCliExitCodeAndStdout = (
       const options = {
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "ignore",
       } satisfies ChildProcess.CommandOptions;
       const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
@@ -268,15 +268,11 @@ export const containerCliExitCodeAndStdout = (
       );
       // Read stdout concurrently with the exit code: Node's "exit" event can fire before a fast
       // process's stdio finishes draining, so awaiting the exit code first would race the stream.
-      const [exitCode, stdout, stderr] = yield* Effect.all(
-        [
-          handle.exitCode.pipe(Effect.map(Number)),
-          collectText(handle.stdout),
-          collectText(handle.stderr),
-        ],
+      const [exitCode, stdout] = yield* Effect.all(
+        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
         { concurrency: "unbounded" },
       );
-      return { exitCode, stdout, stderr };
+      return { exitCode, stdout };
     }),
   );
 
