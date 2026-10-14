@@ -442,6 +442,54 @@ describe("makeSupabaseApiClient", () => {
     expect(requests).toBe(0);
   });
 
+  test("executeRaw forwards extraBody fields and lets validated fields win", async () => {
+    const bodies: unknown[] = [];
+    await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(
+            operationDefinitions.v1UpdatePostgresConfig,
+            { ref: "abcdefghijklmnopqrst", effective_cache_size: "4GB" },
+            {
+              extraBody: {
+                effective_cache_size: "1GB",
+                future_parameter: "on",
+              },
+            },
+          ),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            bodies.push(JSON.parse(requestBodyText(request)));
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+
+    expect(bodies).toEqual([{ effective_cache_size: "4GB", future_parameter: "on" }]);
+  });
+
+  test("executeRaw rejects extraBody on operations without a JSON field body", async () => {
+    let requests = 0;
+    const exit = await Effect.runPromiseExit(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(operationDefinitions.v1ListAllProjects, {}, { extraBody: { a: 1 } }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(requests).toBe(0);
+  });
+
   test("retries transport errors for GET requests", async () => {
     const { requestTimes, result } = await onVirtualClock(
       Effect.gen(function* () {

@@ -304,9 +304,12 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
           .executeRaw(
             operationDefinitions.v1CreateASsoProvider,
             { ref, ...body },
-            reconciledToken === undefined
-              ? undefined
-              : { baseUrl: apiUrl, accessToken: reconciledToken },
+            {
+              retry: { requestTimeoutMs: Number.POSITIVE_INFINITY },
+              ...(reconciledToken === undefined
+                ? {}
+                : { baseUrl: apiUrl, accessToken: reconciledToken }),
+            },
           )
           .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
         const rawBody: unknown = yield* response.json;

@@ -388,7 +388,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           .executeRaw(
             operationDefinitions.v1UpdateASsoProvider,
             { ref, provider_id: providerId, ...body },
-            requestOptions,
+            { ...requestOptions, retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
           )
           .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
         const rawBody: unknown = yield* response.json;

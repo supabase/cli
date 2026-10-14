@@ -419,8 +419,7 @@ describe("postgres-config update", () => {
       expect(error?._tag).toBe("PostgresConfigUpdateSerializeError");
       expect(error?.message).toBe(
         "unknown Postgres config parameters: max_conections, bogus " +
-          "(for a stored override this CLI version does not know, upgrade the CLI or remove them with " +
-          "`supabase postgres-config delete --config max_conections,bogus`)",
+          "(if this is a newly supported parameter, upgrade the CLI)",
       );
       expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
       expect(cache.cached).toBe(true);
@@ -428,32 +427,58 @@ describe("postgres-config update", () => {
   });
 
   it.effect(
-    "names a stored override the update contract cannot send back and how to remove it",
+    "forwards a stored override the typed contract does not model when updating another key",
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
-        byMethod: { GET: { status: 200, body: { wal_keep_size: "1GB", stored_only_key: "x" } } },
+        byMethod: {
+          GET: { status: 200, body: { wal_keep_size: "1GB", stored_only_key: "x" } },
+          PUT: {
+            status: 200,
+            body: { wal_keep_size: "1GB", stored_only_key: "x", max_connections: 100 },
+          },
+        },
       });
       const layer = runtimeWith({ out, api });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          postgresConfigUpdate({
-            projectRef: Option.none(),
-            config: ["max_connections=100"],
-            replaceExistingOverrides: false,
-            noRestart: false,
-          }),
-        );
-        expect(failure(exit)?.message).toBe(
-          "unknown Postgres config parameter: stored_only_key " +
-            "(for a stored override this CLI version does not know, upgrade the CLI or remove it with " +
-            "`supabase postgres-config delete --config stored_only_key`)",
-        );
-        expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
+        yield* postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["max_connections=100"],
+          replaceExistingOverrides: false,
+          noRestart: false,
+        });
+        expect(api.requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
+        expect(api.requests[1]?.body).toEqual({
+          wal_keep_size: "1GB",
+          stored_only_key: "x",
+          max_connections: 100,
+        });
+        expect(out.stdoutText).toContain("stored_only_key");
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("lets a --config value replace the stored value of the same key", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        GET: { status: 200, body: { max_connections: 50, stored_only_key: "x" } },
+        PUT: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+      },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["max_connections=100"],
+        replaceExistingOverrides: false,
+        noRestart: false,
+      });
+      expect(api.requests[1]?.body).toEqual({ max_connections: 100, stored_only_key: "x" });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("reports a value the typed contract rejects with its parameter name", () => {
     const out = mockOutput({ format: "text" });
@@ -730,31 +755,24 @@ describe("postgres-config delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("names the remaining stored override the update contract cannot send back", () => {
+  it.effect("forwards a stored override the update contract does not model", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       byMethod: {
         GET: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+        PUT: { status: 200, body: { stored_only_key: "x", restart_database: false } },
       },
     });
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        postgresConfigDelete({
-          projectRef: Option.none(),
-          config: ["max_connections"],
-          noRestart: false,
-        }),
-      );
-      const error = failure(exit);
-      expect(error?._tag).toBe("PostgresConfigDeleteSerializeError");
-      expect(error?.message).toBe(
-        "unknown Postgres config parameter: stored_only_key " +
-          "(for a stored override this CLI version does not know, upgrade the CLI or remove it with " +
-          "`supabase postgres-config delete --config stored_only_key`)",
-      );
-      expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
+      yield* postgresConfigDelete({
+        projectRef: Option.none(),
+        config: ["max_connections"],
+        noRestart: true,
+      });
+      expect(api.requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
+      expect(api.requests[1]?.body).toEqual({ stored_only_key: "x", restart_database: false });
     }).pipe(Effect.provide(layer));
   });
 

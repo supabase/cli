@@ -31,28 +31,30 @@ export const postgresConfigDelete = Effect.fn("postgres-config.delete")(function
     yield* Effect.gen(function* () {
       const deleting =
         output.format === "text" ? yield* output.task("Deleting Postgres config...") : undefined;
-      const currentConfig = yield* fetchCurrentPostgresConfig(ref).pipe(
+      const preserved = yield* fetchCurrentPostgresConfig(ref).pipe(
         Effect.tapError(() => deleting?.fail() ?? Effect.void),
       );
 
       for (const key of flags.config) {
-        delete currentConfig[key.trim()];
+        delete preserved[key.trim()];
       }
 
-      if (flags.noRestart) {
-        currentConfig["restart_database"] = false;
-      }
+      const changes = flags.noRestart ? { restart_database: false } : {};
 
-      const updated = yield* putPostgresConfig(ref, currentConfig, {
-        serializeError: (args) => new PostgresConfigDeleteSerializeError(args),
-        networkError: PostgresConfigDeleteNetworkError,
-        statusError: PostgresConfigDeleteUnexpectedStatusError,
-        unmarshalError: (args) => new PostgresConfigDeleteUnmarshalError(args),
-        networkMessage: (description) => `failed to delete config overrides: ${description}`,
-        statusMessage: (status, body) =>
-          `unexpected delete config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
-      }).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
+      const updated = yield* putPostgresConfig(
+        ref,
+        { changes, preserved },
+        {
+          serializeError: (args) => new PostgresConfigDeleteSerializeError(args),
+          networkError: PostgresConfigDeleteNetworkError,
+          statusError: PostgresConfigDeleteUnexpectedStatusError,
+          unmarshalError: (args) => new PostgresConfigDeleteUnmarshalError(args),
+          networkMessage: (description) => `failed to delete config overrides: ${description}`,
+          statusMessage: (status, body) =>
+            `unexpected delete config overrides status ${status}: ${body}`,
+          unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
+        },
+      ).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
 
       yield* deleting?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(updated);

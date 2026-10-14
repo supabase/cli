@@ -23,7 +23,7 @@
 
 The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwise the command fetches current overrides first, merges the new values locally, then sends the final merged object back via `PUT`.
 
-The merged object is validated locally against the API's request schema before the `PUT`, which mirrors the platform's strict validation: unknown keys (including unknown keys already stored in the project's overrides) and wrongly typed values fail locally and no `PUT` is sent. An unknown-key failure names the key and suggests upgrading the CLI or removing it with `delete --config <key>`; a number given for a size or duration parameter (`work_mem=4096`) suggests passing the value with its unit (`work_mem=4096kB`). The `PUT` is sent once and never retried, since a retried `restart_database` write could restart the database twice, and its response is read as a raw JSON object so every returned key is shown.
+The keys passed with `--config` (and `restart_database`) are validated locally against the API's request schema before the `PUT`, which mirrors the platform's strict validation: unknown keys and wrongly typed values fail locally and no `PUT` is sent. Stored overrides are forwarded unvalidated, so a stored key this CLI version does not know is preserved. An unknown-key failure names the key and suggests upgrading the CLI; a number given for a size or duration parameter (`work_mem=4096`) suggests passing the value with its unit (`work_mem=4096kB`). The `PUT` is sent once and never retried, since a retried `restart_database` write could restart the database twice, and its response is read as a raw JSON object so every returned key is shown.
 
 ## Environment Variables
 

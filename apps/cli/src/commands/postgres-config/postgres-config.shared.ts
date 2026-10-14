@@ -194,8 +194,7 @@ function describeConfigProblems(issue: SchemaIssue.Issue, config: PostgresConfig
     const plural = unknownKeys.length > 1;
     messages.push(
       `unknown Postgres config ${plural ? "parameters" : "parameter"}: ${unknownKeys.join(", ")} ` +
-        `(for a stored override this CLI version does not know, upgrade the CLI or remove ` +
-        `${plural ? "them" : "it"} with \`supabase postgres-config delete --config ${unknownKeys.join(",")}\`)`,
+        `(if this is a newly supported parameter, upgrade the CLI)`,
     );
   }
   for (const invalid of problems.invalidValues) {
@@ -219,9 +218,19 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
 }
 
 /**
- * PUTs the full overrides map after validating it against the platform's strict request schema,
- * so a bad key or value fails naming the key instead of as an opaque 400. The PUT is never
- * retried: with `restart_database` a resent write restarts the database twice.
+ * The overrides to PUT, split by provenance. `changes` is what the user asked for;
+ * `preserved` is the stored overrides to resend untouched, since the PUT replaces the full map.
+ */
+export interface PostgresConfigWrite {
+  readonly changes: PostgresConfigMap;
+  readonly preserved: PostgresConfigMap;
+}
+
+/**
+ * PUTs the full overrides map. `changes` is validated against the platform's strict request
+ * schema, so a bad key or value fails naming the key instead of as an opaque 400; `preserved` is
+ * forwarded unvalidated so a stored override this CLI's schema does not know is never dropped.
+ * The PUT is never retried: with `restart_database` a resent write restarts the database twice.
  */
 export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   SerErr,
@@ -230,22 +239,25 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   UnmErr,
 >(
   ref: string,
-  config: PostgresConfigMap,
+  { changes, preserved }: PostgresConfigWrite,
   errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
 ) {
   const api = yield* CommandPlatformApi;
 
   const input = yield* decodeUpdateInput(
-    { ...config, ref },
+    { ...changes, ref },
     { onExcessProperty: "error", errors: "all" },
   ).pipe(
     Effect.mapError((error) =>
-      errors.serializeError({ message: describeConfigProblems(error.issue, config) }),
+      errors.serializeError({ message: describeConfigProblems(error.issue, changes) }),
     ),
+  );
+  const extraBody = Object.fromEntries(
+    Object.entries(preserved).filter(([key]) => !Object.hasOwn(changes, key)),
   );
 
   const response = yield* api
-    .executeRaw(updateOperation, input, { retry: { maxRetries: 0 } })
+    .executeRaw(updateOperation, input, { retry: { maxRetries: 0 }, extraBody })
     .pipe(Effect.catch(mapHttpError(errors)));
 
   const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));

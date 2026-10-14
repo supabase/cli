@@ -51,6 +51,15 @@ export interface SupabaseApiRetryOptions {
   readonly requestTimeoutMs?: number | undefined;
 }
 
+/**
+ * Request options for `executeRaw`. `extraBody` fields are forwarded unvalidated, for
+ * read-modify-write of server state the spec does not fully describe.
+ */
+export interface SupabaseApiRawRequestOptions extends SupabaseApiRequestOptions {
+  /** Extra JSON body fields; fields the operation's schema declares take precedence. */
+  readonly extraBody?: Readonly<Record<string, unknown>> | undefined;
+}
+
 export interface SupabaseApiClientOptions {
   readonly retry?: SupabaseApiRetryOptions | undefined;
   readonly transformClient?:
@@ -80,7 +89,7 @@ export interface SupabaseApiClientShape {
   readonly executeRaw: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
     input: OperationInput<Id>,
-    options?: SupabaseApiRequestOptions,
+    options?: SupabaseApiRawRequestOptions,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError>;
 }
 
@@ -524,13 +533,18 @@ function encodeBody(
   request: HttpClientRequest.HttpClientRequest,
   definition: OperationDefinition,
   input: object,
+  extraBody: Readonly<Record<string, unknown>> | undefined,
 ): Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError> {
+  if (extraBody !== undefined && definition.requestBody.kind !== "json") {
+    return Effect.die(`${definition.id} has no JSON field body to extend with extraBody.`);
+  }
+
   if (definition.requestBody.kind === "none") {
     return Effect.succeed(request);
   }
 
   if (definition.requestBody.kind === "json") {
-    const payload: Record<string, unknown> = {};
+    const payload: Record<string, unknown> = { ...extraBody };
     for (const field of definition.requestBody.fields) {
       const value = Reflect.get(input, field);
       if (value !== undefined) {
@@ -569,6 +583,7 @@ function encodeBody(
 function buildRequest(
   definition: OperationDefinition,
   input: object,
+  extraBody?: Readonly<Record<string, unknown>>,
 ): Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError> {
   const path = interpolatePath(definition.path, definition.pathParams, input);
   let request = HttpClientRequest.make(definition.method)(path);
@@ -608,7 +623,7 @@ function buildRequest(
     }
   }
 
-  return encodeBody(request, definition, input);
+  return encodeBody(request, definition, input, extraBody);
 }
 
 function executeRequest(
@@ -718,7 +733,7 @@ export function makeSupabaseApiClient(
       executeRaw: (definition, input, requestOptions) =>
         Effect.gen(function* () {
           const validated = yield* decodeInput(definition, input);
-          const request = yield* buildRequest(definition, validated);
+          const request = yield* buildRequest(definition, validated, requestOptions?.extraBody);
           return yield* prepared
             .execute(request)
             .pipe(Effect.provideService(RequestOverrides, requestOptions));

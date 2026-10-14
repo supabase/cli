@@ -14,6 +14,7 @@ import {
 export type {
   SupabaseApiError,
   SupabaseApiInputErrorSource,
+  SupabaseApiRawRequestOptions,
   SupabaseApiRequestOptions,
   SupabaseApiRetryOptions,
 } from "./internal/client.ts";
