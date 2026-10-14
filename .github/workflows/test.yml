@@ -191,8 +191,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PATTERN: >-
             ^(pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|mise\.toml|turbo\.json|\.github/workflows/test\.yml|\.github/actions/
-            |packages/stack/(package\.json|vitest[^/]*|src/(host|namespace|identity|storage)/
-            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy)[.]|src/whole-stack\.native)
+            |packages/stack/(package\.json|vitest[^/]*|src/(host|namespace|identity|storage|internal)/
+            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy|StackNamespace)[.]|src/whole-stack\.native)
             |apps/cli/src/commands/(db/reset|experimental/stack/start)/)
         run: |
           if [ "$EVENT" != "pull_request" ] || [ "$FULL" = "true" ] || [ "$BASE_REF" = "main" ] || [[ "$BASE_REF" == v*.x ]]; then
