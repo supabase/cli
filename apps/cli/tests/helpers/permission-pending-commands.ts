@@ -1,18 +1,6 @@
 /** Leaf command paths that don't declare their permissions with `withPermissions` yet. */
 export const PENDING_COMMANDS: ReadonlyArray<string> = [
-  "backups list",
-  "backups restore",
-
   "bootstrap",
-
-  "branches create",
-  "branches delete",
-  "branches disable",
-  "branches get",
-  "branches list",
-  "branches pause",
-  "branches unpause",
-  "branches update",
 
   "completion bash",
   "completion fish",
