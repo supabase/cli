@@ -778,29 +778,6 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3, keeping stdout clean",
-    () => {
-      const { layer, out } = setup({
-        isLocal: true,
-        stdout: "CREATE SCHEMA public;\n",
-        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
-      });
-      const consoleErrors: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        consoleErrors.push(args.map((a) => String(a)).join(" "));
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(flags({ local: Option.some(true) }));
-        const warning =
-          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
-        const stderrLines = [...out.stderrText.split("\n"), ...consoleErrors];
-        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
-        expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
-
   it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
     return Effect.gen(function* () {

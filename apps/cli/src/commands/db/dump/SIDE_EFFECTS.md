@@ -38,8 +38,6 @@ image), to stdout or `--file`.
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password; ignored for a target other than the linked project (see Notes)                                                                                                                                                                               |
 | `SUPABASE_ACCESS_TOKEN`                              | `--linked` auth                                                                                                                                                                                                                                                  |
-| `SUPABASE_DB_ORIOLEDB_VERSION`                       | overrides `db.orioledb_version`, selecting the OrioleDB `pg_dump` image                                                                                                                                                                                          |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`             | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                       |
 | `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                                                    |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                                                 |
 | `SUPABASE_USE_SLIM_IMAGES`                           | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
@@ -85,7 +83,7 @@ shell inherits the suppressing variables and is missed.
 
 ## Notes
 
-- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   `--linked`) > default. The linked-database password env is withheld when the target differs
   from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with

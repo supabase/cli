@@ -124,7 +124,6 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       return yield* new ResetLocalDbNotRunningError({ message: "The local stack is not running." });
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
-    const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
     const config = yield* loadStackConfig(workdir).pipe(
       Effect.mapError((cause) => resetFailed(cause.message)),
     );
@@ -223,6 +222,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // The database is already rebuilt, so any typed seeding failure only warns; defects and
     // interruption still propagate.
     yield* Effect.gen(function* () {
+      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
       const capability = storage === undefined ? undefined : yield* storage.status;
       const decision = classifyStorageCapability(capability);

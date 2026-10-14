@@ -1231,46 +1231,6 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "smart mode: warns once about SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION when the local reset reloads the config",
-    () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        stdinIsTty: true,
-        yes: true,
-        promptSelectResponses: ["local"],
-      });
-      const consoleErrors: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        consoleErrors.push(args.map((a) => String(a)).join(" "));
-      });
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* seedMigration(tmp.current);
-        yield* fs.writeFileString(
-          path.join(tmp.current, "supabase", "config.toml"),
-          'project_id = "test"\n',
-        );
-        yield* fs.writeFileString(
-          path.join(tmp.current, "supabase", ".env"),
-          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n",
-        );
-        yield* dbSchemaDeclarativeGenerate(flags());
-        expect(localResetCreateArgs(s.child.spawned)).not.toBeUndefined();
-        const warning =
-          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
-        const stderrLines = [
-          ...s.out.rawChunks
-            .filter((c) => c.stream === "stderr")
-            .flatMap((c) => c.text.split("\n")),
-          ...consoleErrors,
-        ];
-        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
-      }).pipe(Effect.provide(s.layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
-
   it.effect("smart mode: forwards --network-id to the local reset", () => {
     const s = setup(tmp.current, {
       experimental: true,

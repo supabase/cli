@@ -176,7 +176,6 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_AUTH_JWT_SECRET` / `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                        | local path: override `auth.jwt_secret` / `auth.service_role_key` (shell or project dotenv, `encrypted:` decrypted) — feeds the recreated Postgres container (jwt secret), the fresh-database setup jobs (both) and the legacy-backend bucket-seed Storage service-role key, same as `seed buckets`. Not consulted on the stack backend, which uses the stack's own service-role JWT | no                                                      |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                                               | forces the recreated container/network onto an existing Docker network — legacy backend only                                                                                                                                                                                                                                                                                        | no                                                      |
 | `SUPABASE_EXPERIMENTAL_STACK`                                                                                        | `1`/`0` selects the stack backend for the local path, overriding `experimental.stack`                                                                                                                                                                                                                                                                                               | no (→ `experimental.stack` → legacy)                    |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                             | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                                                                                                          | no                                                      |
 
 ## Connection loss during migration apply
 
@@ -274,7 +273,7 @@ to those defaults (the usual outcome for an interactive terminal).
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671).
-- **Config value precedence** (ADR 0032): explicit flag > shell env > project
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The linked-database password env is
   withheld when the target differs from `.temp/project-ref`: stderr gets

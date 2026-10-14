@@ -43,16 +43,15 @@ before migrations unless `--skip-vault` is set.
 
 ## Environment Variables
 
-| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`                  | auth token for the `--linked` resolver path                                                                                                                                                                                                | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`                   | password for the linked/remote connection; ignored for a target other than the linked project (see Notes)                                                                                                                                  | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_DB_SEED_ENABLED`               | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed`                                                                                               | no                                                      |
-| `SUPABASE_*` config overrides            | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                                                                                                                            | no                                                      |
-| `SUPABASE_YES`                           | auto-confirm prompts                                                                                                                                                                                                                       | no (also `--yes`)                                       |
-| `SUPABASE_PROJECT_ID`                    | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes                                                                                                                              | no                                                      |
-| `DOTENV_PRIVATE_KEY*`                    | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                            | no                                                      |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                      |
+| Variable                      | Purpose                                                                                                                                      | Required?                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`       | auth token for the `--linked` resolver path                                                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`        | password for the linked/remote connection; ignored for a target other than the linked project (see Notes)                                    | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_DB_SEED_ENABLED`    | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed` | no                                                      |
+| `SUPABASE_*` config overrides | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                              | no                                                      |
+| `SUPABASE_YES`                | auto-confirm prompts                                                                                                                         | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`         | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes                                | no                                                      |
+| `DOTENV_PRIVATE_KEY*`         | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                              | no                                                      |
 
 ## Exit Codes
 
@@ -108,7 +107,7 @@ stdout is payload-only. A single `result` object is emitted:
   target is a hard error rather than a silently discarded flag (deliberately
   stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
   non-linked target).
-- **Config value precedence** (ADR 0032): explicit flag > shell env > project
+- **Config value precedence** (ADR 0031): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The whole config is decoded up
   front, so an invalid value fails the command before any connection.

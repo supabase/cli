@@ -178,8 +178,8 @@ describe("config pipeline stages", () => {
       );
 
       expect(warnings).toEqual([
-        "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
-        'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
+        "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+        'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
       ]);
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {

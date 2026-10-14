@@ -593,14 +593,12 @@ const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (
   for (const section of deprecatedSections) {
     const replacement = section.replace(/inbucket$/, "local_smtp");
     yield* onWarning(
-      `WARN: config section [${section}] is deprecated and will be removed in v3, use [${replacement}] instead.`,
+      `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
     );
   }
   for (const path of deprecatedOrioleDBPaths) {
     const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
-    yield* onWarning(
-      `WARN: ${path} is deprecated and will be removed in v3, use ${replacement} instead.`,
-    );
+    yield* onWarning(`WARN: ${path} is deprecated. Please use ${replacement} instead.`);
   }
   return { format, content, document, normalized } as const;
 });
@@ -737,7 +735,7 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   if (cliCompat) {
     for (const ext of deprecatedProviders) {
       yield* onWarning(
-        `WARN: disabling deprecated "${ext}" provider. It will be removed in v3, use [auth.external.${ext}_oidc] instead.`,
+        `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
       );
     }
   }

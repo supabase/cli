@@ -64,14 +64,6 @@ export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.orioledb_version": "deprecated; promoted to db.orioledb_version before resolution",
 };
 
-/**
- * Deprecated env names a schema leaf still honours after its canonical derived name, in order. The
- * config loader warns once when one of them is set.
- */
-export const CLI_CONFIG_ENV_ALIASES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "db.orioledb_version": ["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"],
-};
-
 const emptyString = () => "";
 
 /**

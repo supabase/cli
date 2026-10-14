@@ -451,17 +451,6 @@ export const cliConfigValuesLayer = Layer.effect(
         });
       }
 
-      for (const key of cliConfigRegistry.keys) {
-        const [canonical, ...aliases] = key.env;
-        for (const alias of aliases) {
-          if (canonical !== undefined && lookupEnv(alias) !== undefined) {
-            yield* warnDeprecationOnce(
-              `WARN: ${alias} is deprecated and will be removed in v3, use ${canonical} instead.`,
-            );
-          }
-        }
-      }
-
       const envValues: Record<string, string> = Object.create(null);
       for (const name of new Set([...Object.keys(projectEnv.values), ...shell.entries().keys()])) {
         const value = lookupEnv(name);

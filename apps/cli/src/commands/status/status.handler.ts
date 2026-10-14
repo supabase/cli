@@ -47,7 +47,6 @@ import {
 import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
 import {
   STATUS_FIELDS,
-  deprecatedStatusFieldWarning,
   gateStatusState,
   resolveStatusLocalState,
   statusContainerIds,
@@ -248,16 +247,6 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // `values` spreads last so an `--override-name`-renamed field always wins a key collision
     // with the linked-state extension, never the other way round.
     const valuesWithLinkedState = { ...linkedStateFields(linkedState), ...values };
-
-    // `INBUCKET_URL` appears only in the machine formats, never the pretty table.
-    const machineFormat =
-      outputFlagFormat === undefined
-        ? output.format === "json" || output.format === "stream-json"
-        : outputFlagFormat !== "pretty";
-    const deprecationWarning = deprecatedStatusFieldWarning(state, overrides);
-    if (machineFormat && deprecationWarning !== undefined) {
-      yield* output.raw(deprecationWarning, "stderr");
-    }
 
     if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");

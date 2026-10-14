@@ -446,9 +446,6 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   return { workdir, layer, stdio, processControl };
 }
 
-const INBUCKET_WARNING =
-  "WARN: INBUCKET_URL is deprecated and will be removed in v3, use MAILPIT_URL instead.\n";
-
 describe("status integration", () => {
   it.effect("shows the running stack as a pretty table", () => {
     const { layer, out } = setup();
@@ -463,7 +460,6 @@ describe("status integration", () => {
       expect(out.stdoutText).toContain("📦 Storage (S3)");
       expect(out.stdoutText).toContain("postgresql://postgres:postgres@");
       expect(out.stderrText).not.toContain("Stopped services:");
-      expect(out.stderrText).not.toContain("INBUCKET_URL");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1027,21 +1023,15 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "outputs env vars with -o env, warning on stderr that INBUCKET_URL is removed in v3",
-    () => {
-      const { layer, out } = setup({ outputFlag: Option.some("env") });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* status(flags());
-        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
-        expect(out.stdoutText).toContain("DB_URL=");
-        expect(out.stdoutText).toContain("INBUCKET_URL=");
-        expect(out.stdoutText).not.toContain("deprecated");
-        expect(out.stderrText).toContain(INBUCKET_WARNING);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("outputs env vars with -o env", () => {
+    const { layer, out } = setup({ outputFlag: Option.some("env") });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags());
+      expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+      expect(out.stdoutText).toContain("DB_URL=");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("prints API_URL but no REST_URL with -o env when [api] enabled = false", () => {
     const { layer, out } = setup({
@@ -2146,47 +2136,32 @@ content_path = "./supabase/templates/password_changed_notification.html"
       },
     );
 
-    it.effect(
-      "--output-format json, not linked: linked_project is null, INBUCKET_URL warning on stderr only",
-      () => {
-        const { layer, out } = setup({ format: "json" });
-        return Effect.gen(function* () {
-          yield* writeConfig();
-          yield* status(flags());
-          const success = out.messages.find((m) => m.type === "success");
-          expect(success?.data).toMatchObject({
-            linked_project: null,
-            INBUCKET_URL: expect.any(String),
-          });
-          expect(out.stderrText).toBe(INBUCKET_WARNING);
-          expect(out.stdoutText).toBe("");
-        }).pipe(Effect.provide(layer));
-      },
-    );
+    it.effect("--output-format json, not linked: linked_project is null", () => {
+      const { layer, out } = setup({ format: "json" });
+      return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* status(flags());
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({ linked_project: null });
+      }).pipe(Effect.provide(layer));
+    });
 
-    it.effect(
-      "--output-format stream-json, branch-linked: nests linked_project (smoke), INBUCKET_URL warning on stderr only",
-      () => {
-        const { layer, out, workdir } = setup({
-          format: "stream-json",
-          branches: { ok: [LINKED_BRANCH] },
+    it.effect("--output-format stream-json, branch-linked: nests linked_project (smoke)", () => {
+      const { layer, out, workdir } = setup({
+        format: "stream-json",
+        branches: { ok: [LINKED_BRANCH] },
+      });
+      return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        yield* writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        yield* status(flags());
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({
+          linked_project: { project_ref: LINKED_BRANCH_REF },
         });
-        return Effect.gen(function* () {
-          yield* writeConfig();
-          yield* writeProjectRefFile(workdir, LINKED_BRANCH_REF);
-          yield* writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, {
-            name: "Parent Project",
-          });
-          yield* status(flags());
-          const success = out.messages.find((m) => m.type === "success");
-          expect(success?.data).toMatchObject({
-            linked_project: { project_ref: LINKED_BRANCH_REF },
-          });
-          expect(out.stderrText).toBe(INBUCKET_WARNING);
-          expect(out.stdoutText).toBe("");
-        }).pipe(Effect.provide(layer));
-      },
-    );
+      }).pipe(Effect.provide(layer));
+    });
 
     describe("json/stream-json FAILURE envelope carries linked_project (CLI-2167 follow-up)", () => {
       it.effect(
