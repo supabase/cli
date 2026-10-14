@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
 import {
@@ -184,14 +184,10 @@ describe("diffDeclarativeToMigrations", () => {
         "create table public.accounts();",
       );
       yield* fs.writeFileString(path.join(declDir, ".pgdelta-export.json"), "{ not json at all");
-      const exit = yield* diffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect(String((error as { message?: string } | undefined)?.message)).toBe(
-          `malformed export manifest ${path.join(declDir, ".pgdelta-export.json")}: ${jsonParseErrorMessage("{ not json at all")}`,
-        );
-      }
+      const error = yield* diffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(Effect.flip);
+      expect(error.message).toBe(
+        `malformed export manifest ${path.join(declDir, ".pgdelta-export.json")}: ${jsonParseErrorMessage("{ not json at all")}`,
+      );
       expect(calls).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
   });
@@ -202,17 +198,11 @@ describe("diffDeclarativeToMigrations", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "decl-orch-" });
-      const exit = yield* diffDeclarativeToMigrations(
+      const error = yield* diffDeclarativeToMigrations(
         ctx(dir, path.join(dir, "missing")),
         toml,
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect((error as { message: string }).message).toContain(
-          "No declarative schema directory found",
-        );
-      }
+      ).pipe(Effect.flip);
+      expect(error.message).toContain("No declarative schema directory found");
       expect(calls).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
   });

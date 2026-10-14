@@ -60,6 +60,7 @@ import {
   DbConnection,
   type PgConnInput,
 } from "../../../../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../../../../command-internal/db-connection.errors.ts";
 import {
   PgDeltaEngine,
   PgDeltaEngineError,
@@ -68,6 +69,7 @@ import {
 } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 
@@ -235,7 +237,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
+            ? Effect.fail(new DbExecError({ message: "boom" }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
@@ -246,11 +248,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               ? sql.findIndex((statement) => statement.startsWith("ALTER"))
               : -1;
           return failureIndex >= 0
-            ? Effect.fail({
-                _tag: "DbExecError",
-                message: "boom",
-                statementIndex: failureIndex,
-              } as never)
+            ? Effect.fail(new DbExecError({ message: "boom", statementIndex: failureIndex }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) {
                   dbBatches.push(sql);
@@ -422,9 +420,6 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   noApply: over.noApply ?? Option.none(),
 });
 
-const failError = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
-
 const seedDeclarative = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -492,19 +487,18 @@ describe("db schema declarative sync integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
-      expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+      const error = yield* Effect.flip(dbSchemaDeclarativeSync(flags()));
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeMutuallyExclusiveFlagsError",
         message:
           "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -517,11 +511,10 @@ describe("db schema declarative sync integration", () => {
     () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
+        const error = yield* Effect.flip(
           dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -532,16 +525,15 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withConfigEnv(
+        const error = yield* withConfigEnv(
           { [ENV]: "1" },
-          Effect.exit(
+          Effect.flip(
             dbSchemaDeclarativeSync(
               flags({ apply: Option.some(true), noApply: Option.some(true) }),
             ),
           ),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)).toMatchObject({
+        expect(error).toMatchObject({
           _tag: "DeclarativeMutuallyExclusiveFlagsError",
           message:
             "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -559,12 +551,11 @@ describe("db schema declarative sync integration", () => {
       });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
-        const exit = yield* withConfigEnv(
+        const error = yield* withConfigEnv(
           { [ENV]: "1" },
-          Effect.exit(dbSchemaDeclarativeSync(flags())),
+          Effect.flip(dbSchemaDeclarativeSync(flags())),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
+        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -582,13 +573,12 @@ describe("db schema declarative sync integration", () => {
             path.join(tmp.current, "supabase", ".env"),
             "SUPABASE_EXPERIMENTAL=true\n",
           );
-          const exit = yield* Effect.exit(
+          const error = yield* Effect.flip(
             dbSchemaDeclarativeSync(
               flags({ apply: Option.some(true), noApply: Option.some(true) }),
             ),
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(failError(exit)).toMatchObject({
+          expect(error).toMatchObject({
             _tag: "DeclarativeMutuallyExclusiveFlagsError",
             message:
               "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
@@ -602,11 +592,10 @@ describe("db schema declarative sync integration", () => {
     // The gate runs first, so `--experimental` is required here for the mutex error to surface.
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ apply: Option.some(false), noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeMutuallyExclusiveFlagsError",
       });
     }).pipe(Effect.provide(layer));
@@ -615,11 +604,10 @@ describe("db schema declarative sync integration", () => {
   it.effect("fails when there are no declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect((failError(exit) as { message: string }).message).toContain(
-        "no declarative schema found",
-      );
+      const error = yield* Effect.flip(dbSchemaDeclarativeSync(flags()));
+      expect(error).toMatchObject({
+        message: expect.stringContaining("no declarative schema found"),
+      });
       expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
     }).pipe(Effect.provide(s.layer));
   });
@@ -667,9 +655,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -807,7 +796,7 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(
           flags({
             noCache: true,
@@ -816,8 +805,7 @@ describe("db schema declarative sync integration", () => {
           }),
         ),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -836,11 +824,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
@@ -1030,12 +1017,11 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedUuidDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining("schemas/app/tables/members.sql:3"),
       });
-      const error = failError(exit);
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
         suggestion: expect.stringContaining(
@@ -1169,8 +1155,8 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining(
           "This supabase/schemas tree looks like a legacy pg-delta export.",
@@ -1179,7 +1165,7 @@ describe("db schema declarative sync integration", () => {
           "Upgrade without changing the active supabase/schemas tree:",
         ),
       });
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
       });
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
@@ -1222,10 +1208,10 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
-        Effect.exit,
+      const error = yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
+        Effect.flip,
       );
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
         message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
       });
@@ -1447,9 +1433,10 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)).toMatchObject({
+      const error = yield* Effect.flip(
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
+      expect(error).toMatchObject({
         message: "supabase start is not running.",
       });
       expect(
@@ -1545,10 +1532,10 @@ describe("db schema declarative sync integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* seedDeclarative(tmp.current);
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      expect(failError(exit)).toMatchObject({
+      expect(error).toMatchObject({
         _tag: "DeclarativeApplyError",
         message: 'unknown pg-delta transaction mode "batched"',
       });

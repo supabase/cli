@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { Predicate } from "effect";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   apiResponseToAdvisorLints,
@@ -129,11 +130,9 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     expect(lints[0]?.name).toBe("rls_disabled_in_public");
     expect(lints[0]?.level).toBe("ERROR");
     expect(lints[0]?.categories).toEqual(["SECURITY"]);
-    expect(Object.keys(lints[0]?.metadata as Record<string, unknown>)).toEqual([
-      "entity",
-      "schema",
-      "type",
-    ]);
+    const metadata = lints[0]?.metadata;
+    assert(Predicate.isObject(metadata));
+    expect(Object.keys(metadata)).toEqual(["entity", "schema", "type"]);
   });
 
   it("accepts an unknown advisor name (closed-enum divergence guard)", () => {
@@ -245,16 +244,14 @@ describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
     const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
     });
-    const meta = result[0]?.metadata as Record<string, unknown>;
-    expect(meta?.["fkey_columns"]).toEqual([0, 2]);
+    expect(result[0]?.metadata).toMatchObject({ fkey_columns: [0, 2] });
   });
 
   it("normalizes a fully-null fkey_columns array to all zeros", () => {
     const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, null] } }],
     });
-    const meta = result[0]?.metadata as Record<string, unknown>;
-    expect(meta?.["fkey_columns"]).toEqual([0, 0]);
+    expect(result[0]?.metadata).toMatchObject({ fkey_columns: [0, 0] });
   });
 
   it("still throws on non-number, non-null fkey_columns elements (Go UnmarshalTypeError)", () => {

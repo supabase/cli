@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import {
   DnsResolverFlag,
@@ -69,7 +69,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
   // linked-project cache finalizer can read it after the body resolves it.
-  let linkedProjectRef: string | undefined;
+  const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
@@ -107,7 +107,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         ? cliSettings.projectId
         : yield* readProjectRefFile(fs, path, cliSettings.workdir);
       if (Option.isSome(linkedRef)) {
-        linkedProjectRef = linkedRef.value;
+        yield* Ref.set(linkedProjectRef, linkedRef.value);
         toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef.value);
       }
     }
@@ -136,6 +136,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const local: LocalConn = { port: toml.port, password: toml.password };
 
+    const resolvedLinkedProjectRef = yield* Ref.get(linkedProjectRef);
     const run: DeclarativeRunContext = {
       pgDelta: {
         // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
@@ -157,7 +158,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
-      ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
+      ...(resolvedLinkedProjectRef !== undefined
+        ? { linkedProjectRef: resolvedLinkedProjectRef }
+        : {}),
     };
 
     const hasExplicitTarget =
@@ -220,7 +223,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {
-          linkedProjectRef = linkedRef.value;
+          yield* Ref.set(linkedProjectRef, linkedRef.value);
         }
       }
       target = yield* resolveSmartTargetEndpoint(
@@ -264,8 +267,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
     // token is missing, or the GET is non-200.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
+      Effect.flatMap(Ref.get(linkedProjectRef), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),
@@ -275,7 +278,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, dir: string) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.length > 0;
 });
 
@@ -290,10 +295,8 @@ const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
   const entries = yield* fs
     .readDirectory(dir)
     .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.succeed<ReadonlyArray<string>>([])
-          : Effect.fail(error),
+      Effect.catchReason("PlatformError", "NotFound", () =>
+        Effect.succeed<ReadonlyArray<string>>([]),
       ),
     );
   return entries.length > 0;
@@ -308,7 +311,7 @@ const hasMigrationFiles = Effect.fnUntraced(function* (
   // path-is-a-file, not-exist, …), so generate continues into the no-migrations local flow. The
   // real diff path keeps `listLocalMigrations`'s hard error behavior instead.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   return migrations.length > 0;
 });

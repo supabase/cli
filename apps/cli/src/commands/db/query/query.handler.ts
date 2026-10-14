@@ -1,4 +1,14 @@
-import { DateTime, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import {
+  DateTime,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Ref,
+  Schema,
+} from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
@@ -48,6 +58,11 @@ const MISSING_TOKEN_MESSAGE =
 
 const BOUNDARY_BYTES = 16;
 
+const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
+  element === null || Predicate.isObject(element);
+
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
@@ -55,7 +70,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   // Set only when the linked preflight resolves a ref, so the `Effect.ensuring` finalizer at the
   // end of this handler can refresh the linked-project cache even if a later step fails.
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -197,20 +212,14 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
 
       // The API returns a JSON array of row objects for SELECT, or a plain command tag for
       // DDL/DML; anything else is printed verbatim.
-      const decoded = Schema.decodeOption(Schema.fromJsonString(Schema.Unknown))(body);
+      const decoded = yield* decodeJsonBody(body).pipe(Effect.option);
       if (Option.isNone(decoded)) {
         return yield* output.raw(`${body}\n`);
       }
-      const parsed = decoded.value;
-      const isRowArray =
-        Array.isArray(parsed) &&
-        parsed.every(
-          (element) => element === null || (typeof element === "object" && !Array.isArray(element)),
-        );
-      if (!isRowArray) {
+      const rows = decoded.value;
+      if (!Array.isArray(rows) || !rows.every(isRowObject)) {
         return yield* output.raw(`${body}\n`);
       }
-      const rows = parsed as ReadonlyArray<Record<string, unknown> | null>;
       yield* Effect.annotateCurrentSpan("query.row_count", rows.length);
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
@@ -255,7 +264,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       // strict loader: a real ref-file read error surfaces instead of being treated as not-linked.
       const ref = yield* projectRef.loadProjectRef(flags.projectRef);
       // Recorded now so the cache finalizer still fires if a later step fails.
-      linkedRefForCache = ref;
+      yield* Ref.set(linkedRefForCache, ref);
       // Loads and validates the remote-merged config and resolves the live DB connection (TCP
       // probe, pooler fallback, temp login-role mint) purely to surface early failures — the
       // linked query itself uses the Management API, so this resolved connection is discarded.
@@ -364,8 +373,8 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // fails — `linkedRefForCache` is only set on the linked path, so `--local`/`--db-url` never
     // trigger this.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),

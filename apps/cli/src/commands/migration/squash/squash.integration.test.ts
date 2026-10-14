@@ -1,17 +1,7 @@
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Config,
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-} from "effect";
+import { Config, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -63,7 +53,23 @@ import {
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import { DbSetupError } from "../../../command-internal/db-bootstrap/db-setup.ts";
+import { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { ShadowDbError } from "../../../command-internal/db-bootstrap/shadow-database.ts";
+import { MigrationApplyError } from "../../../command-internal/migration-apply.ts";
+import {
+  MigrationFileNotFoundError,
+  MigrationInvalidVersionError,
+  MigrationPasswordFlagsError,
+  MigrationTargetFlagsError,
+} from "../migration.errors.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
+import {
+  MigrationSquashBaselineError,
+  MigrationSquashDumpError,
+  MigrationSquashMissingVersionError,
+  MigrationSquashWriteError,
+} from "./squash.errors.ts";
 import { migrationSquash } from "./squash.handler.ts";
 
 // Distinguishes squash's three pg_dump containers from the shadow's setup jobs by env:
@@ -174,10 +180,8 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
           }
           return real.open(path, openOpts).pipe(
             Effect.map((file) => {
-              if (
-                opts.failWriteAllFromCall === undefined ||
-                path !== migrationFile(opts.failWriteAllFromCall.file)
-              ) {
+              const failWriteAll = opts.failWriteAllFromCall;
+              if (failWriteAll === undefined || path !== migrationFile(failWriteAll.file)) {
                 return file;
               }
               let writeAllCalls = 0;
@@ -185,7 +189,7 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
                 ...file,
                 writeAll: (buffer: Uint8Array) => {
                   writeAllCalls += 1;
-                  return writeAllCalls >= opts.failWriteAllFromCall!.fromCall
+                  return writeAllCalls >= failWriteAll.fromCall
                     ? Effect.fail(simulatedFsError(path, "writeAll"))
                     : file.writeAll(buffer);
                 },
@@ -458,12 +462,6 @@ const migrationExists = Effect.fnUntraced(function* (workdir: string, file: stri
 const stdout = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stdoutText);
 const stderr = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stderrText);
 
-const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
-  if (!Exit.isFailure(exit)) return undefined;
-  const failure = Cause.findErrorOption(exit.cause);
-  return Option.isSome(failure) ? (failure.value as { readonly _tag?: string })._tag : undefined;
-};
-
 const tmp = useTempWorkdir();
 
 describe("migration squash", () => {
@@ -471,46 +469,39 @@ describe("migration squash", () => {
     it.effect("rejects --linked combined with --local", () => {
       const s = setup(tmp.current, { args: ["--linked", "--local"] });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ linked: true, local: true })).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-          );
-        }
+        const error = yield* migrationSquash(flags({ linked: true, local: true })).pipe(
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+        expect(error.message).toBe(
+          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+        );
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect("rejects --db-url combined with --password", () => {
       const s = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--password", "y"] });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        const error = yield* migrationSquash(
           flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("y") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationPasswordFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-          );
-        }
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationPasswordFlagsError);
+        expect(error.message).toBe(
+          "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+        );
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect("rejects --project-ref on the default local target", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ projectRef: Option.some(VALID_REF) })).pipe(
-          Effect.exit,
+        const error = yield* migrationSquash(flags({ projectRef: Option.some(VALID_REF) })).pipe(
+          Effect.flip,
         );
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-          );
-        }
+        expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+        expect(error.message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
         // The guard fires before any resolver call, shadow/dump work, or cache write.
         expect(s.resolverCalls).toEqual([]);
         expect(s.shadowSpawned).toEqual([]);
@@ -525,19 +516,16 @@ describe("migration squash", () => {
         args: ["--db-url", "postgresql://x", "--project-ref", VALID_REF],
       });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        const error = yield* migrationSquash(
           flags({
             dbUrl: Option.some("postgresql://x"),
             projectRef: Option.some(VALID_REF),
           }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-          );
-        }
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+        expect(error.message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
         expect(s.resolverCalls).toEqual([]);
         expect(s.shadowSpawned).toEqual([]);
         expect(s.dumpCalls).toEqual([]);
@@ -551,16 +539,11 @@ describe("migration squash", () => {
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const exit = yield* migrationSquash(flags({ version: Option.some("0_init") })).pipe(
-            Effect.exit,
+          const error = yield* migrationSquash(flags({ version: Option.some("0_init") })).pipe(
+            Effect.flip,
           );
-          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "invalid version number",
-            );
-          }
+          expect(error).toBeInstanceOf(MigrationInvalidVersionError);
+          expect(error.message).toBe("invalid version number");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -568,16 +551,11 @@ describe("migration squash", () => {
     it.effect("rejects an out-of-int64-range --version with the same bare message", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        const error = yield* migrationSquash(
           flags({ version: Option.some("99999999999999999999") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "invalid version number",
-          );
-        }
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
+        expect(error.message).toBe("invalid version number");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -585,14 +563,11 @@ describe("migration squash", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
-        const exit = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "glob supabase/migrations/9_*.sql: file does not exist",
-          );
-        }
+        const error = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(MigrationFileNotFoundError);
+        expect(error.message).toBe("glob supabase/migrations/9_*.sql: file does not exist");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -601,10 +576,10 @@ describe("migration squash", () => {
       // repair's identical ordering test.
       const s = setup(tmp.current, { failResolve: true });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ version: Option.some("not-a-number") })).pipe(
-          Effect.exit,
+        const error = yield* migrationSquash(flags({ version: Option.some("not-a-number") })).pipe(
+          Effect.flip,
         );
-        expect(failureTag(exit)).toBe("ProjectRefNotLinkedError");
+        expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -623,14 +598,9 @@ describe("migration squash", () => {
     it.effect("fails with 'version not found' when the migrations directory is empty", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "version not found",
-          );
-        }
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationSquashMissingVersionError);
+        expect(error.message).toBe("version not found");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -640,8 +610,8 @@ describe("migration squash", () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "20211208000000_init.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashMissingVersionError);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -653,7 +623,7 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* writeProjectFile(tmp.current, "migrations", "not a directory");
           const error = yield* migrationSquash(flags()).pipe(Effect.flip);
-          expect((error as { message: string }).message).toContain("failed to read directory");
+          expect(error.message).toContain("failed to read directory");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -897,8 +867,8 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* seedMigration(tmp.current, "1_target.sql");
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("ShadowDbError");
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ShadowDbError);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         // Nothing to release; the container was never created (see createShadowDatabase's doc).
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toEqual([]);
@@ -916,8 +886,8 @@ describe("migration squash", () => {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
           yield* writeProjectFile(tmp.current, "config.toml", '[db]\nhealth_timeout = "0s"\n');
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("HealthCheckTimeoutError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(HealthCheckTimeoutError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -932,8 +902,8 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("DbSetupError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(DbSetupError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -946,8 +916,8 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql", "create table boom;\n");
         yield* seedMigration(tmp.current, "1_target.sql");
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationApplyError");
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationApplyError);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -960,14 +930,9 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "error running container: exit 1",
-            );
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashDumpError);
+          expect(error.message).toBe("error running container: exit 1");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -985,8 +950,8 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashDumpError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           // Truncated by the earlier O_TRUNC, then only the partial stream the dying
           // container wrote before failing; no separator/diff was ever appended.
@@ -1011,16 +976,11 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            const message =
-              Option.isSome(failure) && (failure.value as { message: string }).message;
-            expect(message).toContain("failed to open migration file:");
-            // Relativized: the absolute tmp workdir never leaks.
-            expect(message).not.toContain(tmp.current);
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to open migration file:");
+          // Relativized: the absolute tmp workdir never leaks.
+          expect(error.message).not.toContain(tmp.current);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -1041,14 +1001,9 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(
-              Option.isSome(failure) && (failure.value as { message: string }).message,
-            ).toContain("failed to copy docker logs:");
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to copy docker logs:");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -1068,16 +1023,11 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            const message =
-              Option.isSome(failure) && (failure.value as { message: string }).message;
-            expect(message).toContain("failed to write line:");
-            // Relativized: the absolute tmp workdir never leaks.
-            expect(message).not.toContain(tmp.current);
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to write line:");
+          // Relativized: the absolute tmp workdir never leaks.
+          expect(error.message).not.toContain(tmp.current);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(yield* readMigration(tmp.current, "1_target.sql")).toBe("full;\n");
         }).pipe(Effect.provide(s.layer));
@@ -1116,19 +1066,17 @@ describe("migration squash", () => {
           yield* seedMigration(tmp.current, "1_target.sql");
           yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
-          const data = success?.data as {
-            readonly removed: ReadonlyArray<string>;
-            readonly removeFailures: ReadonlyArray<{
-              readonly path: string;
-              readonly message: string;
-            }>;
-          };
-          expect(data.removed).toEqual([]);
-          expect(data.removeFailures).toHaveLength(1);
-          expect(data.removeFailures[0]?.path).toBe("supabase/migrations/0_init.sql");
-          expect(data.removeFailures[0]?.message).toContain(
-            "FileSystem.remove (supabase/migrations/0_init.sql)",
-          );
+          expect(success?.data).toMatchObject({
+            removed: [],
+            removeFailures: [
+              {
+                path: "supabase/migrations/0_init.sql",
+                message: expect.stringContaining(
+                  "FileSystem.remove (supabase/migrations/0_init.sql)",
+                ),
+              },
+            ],
+          });
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1238,14 +1186,9 @@ describe("migration squash", () => {
         const s = setupRemote({ confirm: true, failSql: "INSERT INTO supabase_migrations" });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashBaselineError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(
-              Option.isSome(failure) && (failure.value as { message: string }).message,
-            ).toContain("failed to update migration history:");
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashBaselineError);
+          expect(error.message).toContain("failed to update migration history:");
           expect(s.execs).toContain("ROLLBACK");
           // Exactly one COMMIT: createMigrationTable's own setup transaction, which runs
           // before the baseline's BEGIN/DELETE/INSERT batch and never itself reaches COMMIT.
@@ -1358,7 +1301,7 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
           expect(s.debugLogs).toHaveLength(1);
           expect(s.debugLogs[0]).toContain("failed to read directory");
           expect(s.debugLogs[0]).toContain("simulated failure");
@@ -1366,13 +1309,8 @@ describe("migration squash", () => {
           // The empty-version glob fails, surfacing as the baseline's missing-file error
           // and proving resolvedVersion genuinely stayed "" rather than falling back to
           // the squash target.
-          expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "glob supabase/migrations/_*.sql: file does not exist",
-            );
-          }
+          expect(error).toBeInstanceOf(MigrationFileNotFoundError);
+          expect(error.message).toBe("glob supabase/migrations/_*.sql: file does not exist");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1384,10 +1322,10 @@ describe("migration squash", () => {
         args: ["--linked"],
       });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        const error = yield* migrationSquash(
           flags({ linked: true, version: Option.some("bad") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe(VALID_REF);
       }).pipe(Effect.provide(s.layer));
@@ -1405,10 +1343,10 @@ describe("migration squash", () => {
           args: ["--linked", "--project-ref", FLAG_REF],
         });
         return Effect.gen(function* () {
-          const exit = yield* migrationSquash(
+          const error = yield* migrationSquash(
             flags({ linked: true, projectRef: Option.some(FLAG_REF), version: Option.some("bad") }),
-          ).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
+          ).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationInvalidVersionError);
           expect(s.cache.cached).toBe(true);
           expect(s.cache.cachedRef).toBe(FLAG_REF);
           expect(s.cache.cachedRef).not.toBe(VALID_REF);

@@ -13,7 +13,7 @@ import {
   Stream,
   Redacted,
 } from "effect";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { vi } from "vitest";
@@ -90,10 +90,10 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = command._tag === "StandardCommand" ? command.args : [];
+        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
         spawned.push({ args });
 
-        if (command._tag !== "StandardCommand") {
+        if (!ChildProcess.isStandardCommand(command)) {
           return yield* PlatformError.systemError({
             _tag: "NotFound",
             module: "ChildProcess",
@@ -435,7 +435,7 @@ describe("db start", () => {
     vi.unstubAllEnvs();
   });
 
-  it.live("reports an already-running database without starting a container", () => {
+  it.effect("reports an already-running database without starting a container", () => {
     const { layer, out, telemetry, child } = setup({ running: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -446,7 +446,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "reports an already-running database from the direct Engine-API answer without touching the container CLI",
     () => {
       const { layer, out, child } = setup({});
@@ -467,7 +467,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",
     () => {
       const { layer, out, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
@@ -498,7 +498,7 @@ describe("db start", () => {
     15_000,
   );
 
-  it.live("fresh volume: a non-dial connect failure is not retried", () => {
+  it.effect("fresh volume: a non-dial connect failure is not retried", () => {
     const s = setup({
       route: freshVolumeRoute(defaultRoute()),
       connectFailures: 1,
@@ -511,7 +511,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "PG <= 14 on a fresh volume: execs schema/globals SQL directly instead of the PG15+ one-shot migrate jobs",
     () => {
       const { layer, out, child, dbSession } = setup({
@@ -528,7 +528,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a fresh volume with realtime disabled skips the realtime migrate job AND never attempts JWKS resolution",
     () => {
       // globalThis.fetch is stubbed to fail so any JWKS resolution attempt would blow up the
@@ -557,7 +557,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a fresh volume with realtime enabled fails with a typed error when JWKS resolution fails",
     () => {
       const previousFetch = globalThis.fetch;
@@ -588,7 +588,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "restarts against an existing volume: skips the SetupLocalDatabase-equivalent pipeline but still writes _current_branch",
     () => {
       const { layer, out, child, dbSession } = setup();
@@ -611,7 +611,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("installs pg_net on an existing volume from effective Webhooks config", () => {
+  it.effect("installs pg_net on an existing volume from effective Webhooks config", () => {
     const { layer, out, child, dbSession } = setup({
       configContents: 'project_id = "test"\n[experimental.webhooks]\nenabled = false\n',
       projectEnvContents: "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
@@ -628,7 +628,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "--from-backup on a fresh volume: uses the restore entrypoint, binds the backup file, and skips the SetupLocalDatabase-equivalent pipeline entirely",
     () => {
       const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
@@ -647,26 +647,20 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     '--from-backup against an existing volume fails with "backup volume already exists" and rolls back without creating a container',
     () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        const exit = yield* dbStart(flags("/abs/host/backup.sql")).pipe(
+        const error = yield* dbStart(flags("/abs/host/backup.sql")).pipe(
           Effect.provide(layer),
-          Effect.exit,
+          Effect.flip,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const error = Cause.squash(exit.cause);
-          expect(error).toMatchObject({
-            _tag: "StartBackupVolumeExistsError",
-            message: "backup volume already exists",
-          });
-          expect((error as { suggestion?: string }).suggestion).toContain(
-            "supabase stop --no-backup",
-          );
-        }
+        expect(error).toMatchObject({
+          _tag: "StartBackupVolumeExistsError",
+          message: "backup volume already exists",
+          suggestion: expect.stringContaining("supabase stop --no-backup"),
+        });
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         // The volume this guard detected must never be pruned, even though the rollback still
         // removes everything else on failure.
@@ -676,7 +670,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("resolves a relative --from-backup against the caller cwd, not the workdir", () => {
+  it.effect("resolves a relative --from-backup against the caller cwd, not the workdir", () => {
     const { layer, child } = setup({
       route: freshVolumeRoute(defaultRoute()),
       cwd: "/caller/here",
@@ -688,7 +682,7 @@ describe("db start", () => {
     });
   });
 
-  it.live("treats an empty --from-backup as a normal no-backup start", () => {
+  it.effect("treats an empty --from-backup as a normal no-backup start", () => {
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(flags("")).pipe(Effect.provide(layer));
@@ -769,7 +763,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("proceeds with no config file (missing config is tolerated)", () => {
+  it.effect("proceeds with no config file (missing config is tolerated)", () => {
     const { layer, child } = setup({ skipConfig: true, route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -777,7 +771,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "fails with a typed error on a malformed supabase/.env file, before any container is created",
     () => {
       const { layer, child } = setup({ projectEnvContents: "not a valid env line at all\n" });
@@ -792,7 +786,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("fails fast on a malformed config.toml", () => {
+  it.effect("fails fast on a malformed config.toml", () => {
     const { layer, child, telemetry } = setup({ configContents: 'project_id = "unterminated\n' });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -805,7 +799,7 @@ describe("db start", () => {
     });
   });
 
-  it.live("fails fast on an undecryptable secret even when the db is already running", () => {
+  it.effect("fails fast on an undecryptable secret even when the db is already running", () => {
     const { layer, out } = setup({
       configContents: '[db]\nroot_key = "encrypted:anything"\n',
       running: true,
@@ -820,7 +814,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "--network-id forces the created network/container onto the override, not the generated network name",
     () => {
       const { layer, child } = setup({
@@ -839,7 +833,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
+  it.effect("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -852,7 +846,7 @@ describe("db start", () => {
     }).pipe((body) => withConfigEnv({ SUPABASE_NETWORK_ID: "env-network" }, body));
   });
 
-  it.live(
+  it.effect(
     "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
     () => {
       const { layer, child } = setup({
@@ -873,7 +867,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_DB_HEALTH_TIMEOUT, before any container is created",
     () => {
       const { layer, child } = setup({
@@ -892,7 +886,7 @@ describe("db start", () => {
 
   // Config loading decodes every duration field unconditionally for every command, including
   // `db start`, even though it never starts GoTrue itself.
-  it.live.each([
+  it.effect.each([
     ["auth.email.max_frequency", '[auth.email]\nmax_frequency = "not-a-duration"\n'],
     ["auth.sms.max_frequency", '[auth.sms]\nmax_frequency = "not-a-duration"\n'],
     ["auth.sessions.timebox", '[auth.sessions]\ntimebox = "not-a-duration"\n'],
@@ -920,7 +914,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT override, before any container is created",
     () => {
       // auth.rate_limit has no enabled-gated validation — it's decoded unconditionally
@@ -943,7 +937,7 @@ describe("db start", () => {
 
   // Config loading decodes the entire config struct unconditionally in one pass, including
   // every field below, regardless of whether `db start` itself reads it.
-  it.live.each([
+  it.effect.each([
     ["edge_runtime.inspector_port", "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", "not-a-port"],
     ["edge_runtime.policy", "SUPABASE_EDGE_RUNTIME_POLICY", "not-a-policy"],
     ["api.max_rows", "SUPABASE_API_MAX_ROWS", "not-a-uint"],
@@ -974,7 +968,7 @@ describe("db start", () => {
     },
   );
 
-  it.live.each([
+  it.effect.each([
     ["realtime.ip_version", "SUPABASE_REALTIME_IP_VERSION", "IPv5"],
     ["realtime.max_header_length", "SUPABASE_REALTIME_MAX_HEADER_LENGTH", "not-a-uint"],
   ] as const)(
@@ -997,7 +991,7 @@ describe("db start", () => {
     },
   );
 
-  it.live.each([
+  it.effect.each([
     ["db.settings.max_connections", "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS", "bogus"],
     ["db.settings.track_commit_timestamp", "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP", "bogus"],
   ] as const)(
@@ -1020,7 +1014,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_STORAGE_ENABLED override even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1040,7 +1034,7 @@ describe("db start", () => {
     },
   );
 
-  it.live.each([
+  it.effect.each([
     ["edge_runtime.enabled", "SUPABASE_EDGE_RUNTIME_ENABLED", "not-a-bool"],
     ["db.network_restrictions.enabled", "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED", "not-a-bool"],
     ["studio.enabled", "SUPABASE_STUDIO_ENABLED", "not-a-bool"],
@@ -1065,7 +1059,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_STUDIO_API_URL override even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1085,7 +1079,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error when local_smtp is enabled with a zero port even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1105,7 +1099,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_AUTH_JWT_EXPIRY override even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1125,7 +1119,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error on a malformed SUPABASE_API_PORT override even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1145,7 +1139,7 @@ describe("db start", () => {
     },
   );
 
-  it.live.each([
+  it.effect.each([
     ["auth.enable_signup", "SUPABASE_AUTH_ENABLE_SIGNUP", "not-a-bool"],
     ["auth.enable_anonymous_sign_ins", "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS", "not-a-bool"],
     [
@@ -1181,7 +1175,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
     () => {
       // auth.passkey has no @supabase/config schema, so the malformed value must live in
@@ -1204,7 +1198,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
     () => {
       // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
@@ -1227,7 +1221,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override, matching Go's Config.Load",
     () => {
       // The [auth.hook.send_email] section must be present for the env override to reach the
@@ -1250,7 +1244,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled, matching Go's Config.Load",
     () => {
       // [auth.email.smtp] must be present in config.toml for the env override to reach the
@@ -1273,7 +1267,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "ignores SUPABASE_AUTH_EMAIL_SMTP_PORT when [auth.email.smtp] is absent from config.toml",
     () => {
       const { layer, child } = setup({
@@ -1288,7 +1282,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override, matching Go's Config.Load",
     () => {
       // [storage.image_transformation] must be present in config.toml for the env override to
@@ -1310,7 +1304,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
     () => {
       const { layer, child } = setup({
@@ -1324,7 +1318,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override, matching Go's Config.Load",
     () => {
       // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
@@ -1346,7 +1340,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override even when Postgres is already running",
     () => {
       const { layer, child } = setup({
@@ -1367,7 +1361,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "ignores SUPABASE_DB_SSL_ENFORCEMENT_ENABLED when [db.ssl_enforcement] is absent from config.toml",
     () => {
       const { layer, child } = setup({
@@ -1381,7 +1375,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fails with a typed config error when [experimental.webhooks] is present without enabled = true, even when Postgres is already running",
     () => {
       // Experimental validation rejects any present [experimental.webhooks] section whose
@@ -1405,7 +1399,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("starts normally when [experimental.webhooks] is absent from config.toml", () => {
+  it.effect("starts normally when [experimental.webhooks] is absent from config.toml", () => {
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1413,7 +1407,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "never mentions api.auto_expose_new_tables on stderr, whatever the flag is set to",
     () => {
       // Each case's config.toml is written just before its own run — writing all three up
@@ -1439,7 +1433,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
     () => {
       // The deprecation WARN is Console.error-pinned to the real console, not this file's
@@ -1465,7 +1459,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("fails on a malformed auth duration field even when the db is already running", () => {
+  it.effect("fails on a malformed auth duration field even when the db is already running", () => {
     const { layer, out } = setup({
       configContents: 'project_id = "test"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
       running: true,
@@ -1482,7 +1476,7 @@ describe("db start", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "warns when auth.sms.enable_signup is true but no SMS provider is enabled, matching Go's (s *sms) validate()",
     () => {
       const { layer, out } = setup({
@@ -1496,7 +1490,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
     () => {
       const { layer, out } = setup({
@@ -1511,7 +1505,7 @@ describe("db start", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "does not add the Linux-only host.docker.internal extra host on a non-Linux platform",
     () => {
       const { layer, child } = setup({
@@ -1526,7 +1520,7 @@ describe("db start", () => {
     },
   );
 
-  it.live("propagates a Docker inspect failure", () => {
+  it.effect("propagates a Docker inspect failure", () => {
     const { layer } = setup({ runningFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -1537,7 +1531,7 @@ describe("db start", () => {
     });
   });
 
-  it.live("propagates a container-create failure and rolls back", () => {
+  it.effect("propagates a container-create failure and rolls back", () => {
     const base = defaultRoute();
     const route = freshVolumeRoute((args) => {
       if (args[0] === "create") return { exitCode: 1, stderr: ["boom"] };
@@ -1552,7 +1546,7 @@ describe("db start", () => {
     });
   });
 
-  it.live("emits a json result when the database is already running", () => {
+  it.effect("emits a json result when the database is already running", () => {
     const { layer, out } = setup({ running: true, format: "json" });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1561,7 +1555,7 @@ describe("db start", () => {
     });
   });
 
-  it.live("emits a json result after starting the database", () => {
+  it.effect("emits a json result after starting the database", () => {
     const { layer, out, child } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1764,7 +1758,7 @@ describe("db start stack backend", () => {
       findDeleted: () => Effect.die("unused"),
     });
 
-  it.live("creates and starts only the primary database", () => {
+  it.effect("creates and starts only the primary database", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
     const fixture = stackFixture(false);
     return Effect.gen(function* () {
@@ -1782,7 +1776,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("destroys a newly created database when catalog setup fails", () => {
+  it.effect("destroys a newly created database when catalog setup fails", () => {
     const { layer } = setup({ catalogFails: true });
     const fixture = stackFixture(false);
     return Effect.gen(function* () {
@@ -1802,7 +1796,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "resumes the existing database when its pinned version matches the configured major",
     () => {
       const { layer, out, catalogApplied } = setup({ recordCatalog: true });
@@ -1824,7 +1818,7 @@ describe("db start stack backend", () => {
     },
   );
 
-  it.live("rejects a different database major when resuming the saved stack", () => {
+  it.effect("rejects a different database major when resuming the saved stack", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
     const fixture = stackFixture(true, false, false, "15.13.0.161");
     return Effect.gen(function* () {
@@ -1844,7 +1838,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("rejects a standalone database outside the saved composition", () => {
+  it.effect("rejects a standalone database outside the saved composition", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
     const fixture = stackFixture(true, false, true);
     return Effect.gen(function* () {
@@ -1873,7 +1867,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("does not launch a stopped stack while resolving local credentials", () => {
+  it.effect("does not launch a stopped stack while resolving local credentials", () => {
     const { layer } = setup();
     const fixture = stackFixture(true, false);
     return Effect.gen(function* () {
@@ -1892,7 +1886,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("uses the running primary's observed connection without launching its owner", () => {
+  it.effect("uses the running primary's observed connection without launching its owner", () => {
     const { layer, out } = setup();
     const fixture = stackFixture(true, true);
     const provided = Layer.mergeAll(
@@ -1912,7 +1906,7 @@ describe("db start stack backend", () => {
     });
   });
 
-  it.live("refuses --from-backup", () => {
+  it.effect("refuses --from-backup", () => {
     const { layer } = setup();
     const fixture = stackFixture(false);
     return Effect.gen(function* () {

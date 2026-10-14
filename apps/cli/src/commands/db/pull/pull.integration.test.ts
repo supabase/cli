@@ -95,6 +95,23 @@ const pgDeltaDiffEnvelope = (
     })),
   });
 
+const PulledSchemaFiles = Schema.Struct({
+  schemaWritten: Schema.String,
+  schemaFiles: Schema.Array(Schema.String),
+});
+
+const PgDeltaPlanEnvelope = Schema.fromJsonString(
+  Schema.Struct({
+    files: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        sql: Schema.String,
+        transactionMode: Schema.Literals(["transactional", "none"]),
+      }),
+    ),
+  }),
+);
+
 interface SetupOpts {
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
@@ -205,42 +222,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               : {}),
           });
         }
-        try {
-          const parsed: unknown = JSON.parse(stdout);
-          if (typeof parsed !== "object" || parsed === null) throw new Error("invalid envelope");
-          const rawFiles = Reflect.get(parsed, "files");
-          if (!Array.isArray(rawFiles)) throw new Error("invalid envelope");
-          const files = rawFiles.map((raw, index) => {
-            if (typeof raw !== "object" || raw === null) throw new Error("invalid file");
-            const sql = Reflect.get(raw, "sql");
-            const name = Reflect.get(raw, "name");
-            const transactionMode = Reflect.get(raw, "transactionMode");
-            if (typeof sql !== "string" || typeof name !== "string") {
-              throw new Error("invalid file");
-            }
-            if (transactionMode !== "transactional" && transactionMode !== "none") {
-              throw new Error(`unknown transaction mode ${String(transactionMode)}`);
-            }
-            return {
-              sequence: index + 1,
-              name,
-              sql,
-              transactionMode,
-            };
-          });
-          return Effect.succeed({
+        return Schema.decodeEffect(PgDeltaPlanEnvelope)(stdout).pipe(
+          Effect.map(({ files }) => ({
             changes: files.length > 0,
             sql: files.map((file) => file.sql).join("\n"),
-            files,
-          });
-        } catch (cause) {
-          return Effect.fail(
-            new PgDeltaEngineError({
-              message: "failed to parse pg-delta diff output",
-              cause,
-            }),
-          );
-        }
+            files: files.map((file, index) => ({
+              sequence: index + 1,
+              name: file.name,
+              sql: file.sql,
+              transactionMode: file.transactionMode,
+            })),
+          })),
+          Effect.mapError(
+            (cause) =>
+              new PgDeltaEngineError({
+                message: "failed to parse pg-delta diff output",
+                cause,
+              }),
+          ),
+        );
       },
       exportDeclarativeSchema: (input) => {
         engineCalls.push({
@@ -345,7 +345,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         historyUpserts.push(params);
       }
-      return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
+      return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
     };
     return {
       exec,
@@ -747,14 +747,12 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ diffEngine: Option.some("pg-delta") }));
         const success = s.out.messages.find((m) => m.type === "success");
-        const data = success?.data as
-          | { schemaWritten?: string; schemaFiles?: Array<string> }
-          | undefined;
-        expect(data?.schemaFiles).toHaveLength(3);
-        expect(data?.schemaFiles?.[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
-        expect(data?.schemaFiles?.[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
-        expect(data?.schemaFiles?.[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
-        expect(data?.schemaWritten).toBe(data?.schemaFiles?.[0]);
+        const data = yield* Schema.decodeUnknownEffect(PulledSchemaFiles)(success?.data);
+        expect(data.schemaFiles).toHaveLength(3);
+        expect(data.schemaFiles[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
+        expect(data.schemaFiles[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
+        expect(data.schemaFiles[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
+        expect(data.schemaWritten).toBe(data.schemaFiles[0]);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1225,13 +1223,11 @@ describe("db pull", () => {
         remoteHistoryUpdated: true,
         engine: "migra",
       });
-      const data = success?.data as
-        | { schemaWritten?: string; schemaFiles?: Array<string> }
-        | undefined;
-      expect(data?.schemaWritten).toMatch(/_remote_schema\.sql$/u);
+      const data = yield* Schema.decodeUnknownEffect(PulledSchemaFiles)(success?.data);
+      expect(data.schemaWritten).toMatch(/_remote_schema\.sql$/u);
       // Single-unit case: exactly one path, matching `schemaWritten`.
-      expect(data?.schemaFiles).toHaveLength(1);
-      expect(data?.schemaFiles?.[0]).toBe(data?.schemaWritten);
+      expect(data.schemaFiles).toHaveLength(1);
+      expect(data.schemaFiles[0]).toBe(data.schemaWritten);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1268,14 +1264,9 @@ describe("db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* dbPull(flags()).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = Exit.isFailure(exit)
-          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
-          : undefined;
-        const message = (error as { message?: string } | undefined)?.message ?? "";
-        expect(message).toContain("Cannot read properties of undefined");
-        expect(message).not.toContain("No schema changes found");
+        const error = yield* dbPull(flags()).pipe(Effect.flip);
+        expect(error.message).toContain("Cannot read properties of undefined");
+        expect(error.message).not.toContain("No schema changes found");
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1516,9 +1507,7 @@ describe("db pull", () => {
         const writtenPath = path.join(dir, file ?? "");
         // Confirms the failure happened after the write, not instead of it.
         expect(yield* fs.exists(writtenPath)).toBe(true);
-        expect((error as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual([
-          writtenPath,
-        ]);
+        expect(error).toMatchObject({ writtenSoFar: [writtenPath] });
         expect(s.historyUpserts.length).toBe(0);
       }).pipe(Effect.provide(s.layer));
     },
