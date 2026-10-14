@@ -55,9 +55,7 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "functions new",
   "functions serve",
 
-  "gen bearer-jwt",
   "gen keys",
-  "gen signing-key",
 
   "init",
 
