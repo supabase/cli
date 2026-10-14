@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   type CheckRun,
+  AUTO_APPROVER_LOGIN,
   type FastForwardIo,
   type GraphqlQuery,
   type Promotion,
@@ -427,6 +428,7 @@ function scenarioIo(
   const io: FastForwardIo = {
     git: makeGit(checkout),
     getPullRequest: async () => pullRequest,
+    listReviews: async () => [],
     listCheckRuns: async () => checks,
     findOpenPullRequest: async (base, head) => {
       lookups.push(`${base}<-${head}`);
@@ -731,6 +733,36 @@ describe("runFastForward sync", () => {
     expect(outcome.status).toBe("fast-forwarded");
     expect(repo.remoteTip("develop")).toBe(head);
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+  });
+
+  test("lands the sync bot's approval only while it is active and nobody requests changes", async () => {
+    const review = (login: string, state: string) => ({ user: { login }, state });
+    const approved = review(AUTO_APPROVER_LOGIN, "APPROVED");
+    const attempt = async (reviews: ReturnType<typeof review>[]) => {
+      const { repo, head, io } = resolvedSyncScenario();
+      const before = repo.remoteTip("develop");
+      const outcome = await runFastForward(
+        { ...io, listReviews: async () => reviews },
+        { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+      );
+      return { status: outcome.status, moved: repo.remoteTip("develop") !== before };
+    };
+
+    expect(await attempt([approved, review("maintainer", "CHANGES_REQUESTED")])).toEqual({
+      status: "refused",
+      moved: false,
+    });
+    expect(await attempt([approved, review(AUTO_APPROVER_LOGIN, "DISMISSED")])).toEqual({
+      status: "refused",
+      moved: false,
+    });
+    expect(
+      await attempt([
+        review("maintainer", "CHANGES_REQUESTED"),
+        review("maintainer", "APPROVED"),
+        approved,
+      ]),
+    ).toEqual({ status: "fast-forwarded", moved: true });
   });
 
   test("lands the approved head merged with a target move without pulling in the moved source", async () => {
