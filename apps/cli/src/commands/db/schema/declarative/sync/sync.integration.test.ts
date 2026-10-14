@@ -23,7 +23,10 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
 
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
+
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -1595,15 +1598,6 @@ describe("db schema declarative sync permissions through the real resolver and c
     yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
     yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
   });
-  const reachableDirectHost = Effect.acquireRelease(
-    Effect.sync(() => {
-      fixtureNet.directHostReachable = true;
-    }),
-    () =>
-      Effect.sync(() => {
-        fixtureNet.directHostReachable = false;
-      }),
-  );
 
   it.effect(
     "the bootstrap mints a login role and fills the cache when it picks the linked project",
@@ -1624,9 +1618,10 @@ describe("db schema declarative sync permissions through the real resolver and c
         yield* saveLinkedRef;
         yield* seedMigration(tmp.current);
         yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-        yield* Effect.exit(
+        const exit = yield* Effect.exit(
           dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
         ).pipe(Effect.provide(s.layer));
+        expect(Exit.isSuccess(exit)).toBe(true);
         expect(s.declarativeExportCalls).toHaveLength(1);
         // The bootstrap's calls carry a prerequisite, so the exact check skips them: assert them
         // directly.
@@ -1662,9 +1657,10 @@ describe("db schema declarative sync permissions through the real resolver and c
       yield* saveLinkedRef;
       yield* seedMigration(tmp.current);
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }))).pipe(
-        Effect.provide(s.layer),
-      );
+      const exit = yield* Effect.exit(
+        dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      ).pipe(Effect.provide(s.layer));
+      expect(Exit.isSuccess(exit)).toBe(true);
       expect(s.declarativeExportCalls).toHaveLength(1);
       expect(requests).toEqual([]);
       expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);

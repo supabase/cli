@@ -49,7 +49,7 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     kind: "required",
     when: [{ flag: "password", present: false }],
     context:
-      "no database password from --password (an empty value counts as none), SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
+      "no database password from --password, SUPABASE_DB_PASSWORD or the project .env (an empty --password still mints a login role; an ad-hoc project ref ignores the last two)",
   },
   {
     operationId: "v1-get-pooler-config",
@@ -82,16 +82,17 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
 ];
 
 /**
- * The same calls as {@link dbConfig}, for a command that reaches the linked path without
- * selecting the linked target (`db diff --from linked`, the declarative target prompt).
+ * The same calls as {@link dbConfig} without its target condition, for a command that reaches the
+ * linked path some other way: `db diff --from linked`, a `--linked` flag with no default target, or
+ * a target prompt.
  */
 export const dbConfigLinked = block("db-config", linkedEntries);
 
 /**
  * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
- * include it with `withDbTarget`. `db dump`'s container fallback is {@link dbConfigPoolerFallback};
- * `gen types --project-id` fetches the pooler config without `--project-ref`, so that command
- * declares its own entry.
+ * include it with `withDbTarget`. The container retry that `db dump`, `db pull` and
+ * `db remote commit` run is {@link dbConfigPoolerFallback}; `gen types --project-id` fetches the
+ * pooler config without `--project-ref`, so that command declares its own entry.
  */
 export const dbConfig = block(
   "db-config",
@@ -102,8 +103,8 @@ export const dbConfig = block(
 );
 
 /**
- * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a dump or diff container fails
- * with an IPv6 connectivity error against the direct database host.
+ * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a linked dump, declarative export
+ * or pull diff fails with an IPv6 connectivity error against a direct host the CLI could reach.
  */
 export const dbConfigPoolerFallback = block("db-config-pooler-fallback", [
   {
@@ -111,14 +112,14 @@ export const dbConfigPoolerFallback = block("db-config-pooler-fallback", [
     kind: "required",
     when: [{ dbTarget: ["linked"] }],
     context:
-      "the dump or diff container fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+      "a linked dump, declarative export or pull diff fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-create-login-role",
     kind: "required",
     when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
     context:
-      "the same retry, and no database password from --password, SUPABASE_DB_PASSWORD or the project .env",
+      "the same retry, and no database password from --password (an empty value still mints a login role), SUPABASE_DB_PASSWORD or the project .env",
   },
   {
     operationId: "v1-list-all-network-bans",

@@ -12,7 +12,10 @@ vi.mock("node:net", (importOriginal) =>
     importOriginal<typeof import("node:net")>(),
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -1275,15 +1278,6 @@ describe("db schema declarative generate permissions through the real resolver a
     yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
     yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
   });
-  const reachableDirectHost = Effect.acquireRelease(
-    Effect.sync(() => {
-      fixtureNet.directHostReachable = true;
-    }),
-    () =>
-      Effect.sync(() => {
-        fixtureNet.directHostReachable = false;
-      }),
-  );
 
   it.effect("mints a login role and fills the cache for --linked", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });

@@ -1910,12 +1910,6 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       const pooler = yield* resolvePoolerFallback(dir, localFlags);
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([]);
-      expect(
-        applicableOperations(
-          { status: "mapped", operations: dbConfigPoolerFallback.operations, noApiEffectFlags: [] },
-          { local: true },
-        ),
-      ).toEqual([]);
       assertFallbackDrift(requests, { local: true });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });

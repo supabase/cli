@@ -25,9 +25,15 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
 
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
+
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
-import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
   realDbConfigResolver,
@@ -58,6 +64,7 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import {
@@ -1366,6 +1373,13 @@ describe("db dump permissions through the real resolver and cache", () => {
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
@@ -1390,6 +1404,13 @@ describe("db dump permissions through the real resolver and cache", () => {
         command: "db dump",
         activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
@@ -1419,7 +1440,6 @@ describe("db dump permissions through the real resolver and cache", () => {
   });
 
   it.live("retries through the pooler after a container IPv6 failure", () => {
-    fixtureNet.directHostReachable = true;
     const { layer, docker, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1430,6 +1450,7 @@ describe("db dump permissions through the real resolver and cache", () => {
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
+      yield* reachableDirectHost;
       const fs = yield* FileSystem.FileSystem;
       // No --project-ref: the linked ref comes from the saved file, so only the fallback block
       // accounts for the pooler config request.
@@ -1446,14 +1467,6 @@ describe("db dump permissions through the real resolver and cache", () => {
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          fixtureNet.directHostReachable = false;
-        }),
-      ),
-    );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 });

@@ -25,8 +25,14 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
 );
 
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
+
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
-import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -72,6 +78,7 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -2514,6 +2521,13 @@ describe("db pull and db remote commit permissions through the real resolver and
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(BunServices.layer),
@@ -2544,6 +2558,13 @@ describe("db pull and db remote commit permissions through the real resolver and
           password: true,
         },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(
@@ -2580,7 +2601,6 @@ describe("db pull and db remote commit permissions through the real resolver and
   });
 
   it.effect("retries the initial dump through the pooler after a container IPv6 failure", () => {
-    fixtureNet.directHostReachable = true;
     // No --project-ref: the ref comes from the saved file, so only the fallback block accounts
     // for the pooler config request.
     const s = setup(tmp.current, {
@@ -2594,6 +2614,7 @@ describe("db pull and db remote commit permissions through the real resolver and
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
+      yield* reachableDirectHost;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       const error = yield* dbPull(flags()).pipe(Effect.provide(s.layer), Effect.flip);
       expect(error.message).toBe("No schema changes found");
@@ -2609,17 +2630,11 @@ describe("db pull and db remote commit permissions through the real resolver and
     }).pipe(
       Effect.scoped,
       Effect.provide(BunServices.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          fixtureNet.directHostReachable = false;
-        }),
-      ),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
 
   it.effect("db remote commit mints a login role and fills the cache for the linked target", () => {
-    fixtureNet.directHostReachable = true;
     const s = setup(tmp.current, {
       realLayers: true,
       migrations: ["20240101000000"],
@@ -2639,6 +2654,7 @@ describe("db pull and db remote commit permissions through the real resolver and
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
+      yield* reachableDirectHost;
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbRemoteCommit(commitFlags()).pipe(Effect.provide(s.layer));
@@ -2653,20 +2669,21 @@ describe("db pull and db remote commit permissions through the real resolver and
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(BunServices.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          fixtureNet.directHostReachable = false;
-        }),
-      ),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
 
   it.effect("db remote commit does not mint a login role when --password is given", () => {
-    fixtureNet.directHostReachable = true;
     const s = setup(tmp.current, {
       realLayers: true,
       migrations: ["20240101000000"],
@@ -2686,6 +2703,7 @@ describe("db pull and db remote commit permissions through the real resolver and
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
+      yield* reachableDirectHost;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbRemoteCommit(commitFlags({ linked: true, password: Option.some("secret") })).pipe(
         Effect.provide(s.layer),
@@ -2700,11 +2718,6 @@ describe("db pull and db remote commit permissions through the real resolver and
     }).pipe(
       Effect.scoped,
       Effect.provide(BunServices.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          fixtureNet.directHostReachable = false;
-        }),
-      ),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
