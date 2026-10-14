@@ -1158,10 +1158,31 @@ const defectSystemErrorCodes = new Set([
   "EXDEV",
 ]);
 
+// Data descriptors only, so reading a defect never runs a getter.
+const ownValue = (record: object, key: string): unknown =>
+  Object.getOwnPropertyDescriptor(record, key)?.value;
+
+/** Names a PlatformError's closed reason and the Effect module and method that raised it. */
+function platformErrorOperation(error: Error): string | undefined {
+  const reason = ownValue(error, "reason");
+  if (!isErrorRecord(reason)) return undefined;
+  const tag = ownValue(reason, "_tag");
+  const module = ownValue(reason, "module");
+  const method = ownValue(reason, "method");
+  const parts = [
+    typeof tag === "string" ? safeIdentifier(tag) : undefined,
+    typeof module === "string" ? safeIdentifier(module) : undefined,
+    typeof method === "string" ? safeIdentifier(method) : undefined,
+  ];
+  return parts.every((part) => part !== undefined)
+    ? `${parts[0]}:${parts[1]}.${parts[2]}`
+    : undefined;
+}
+
 /**
  * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
- * for a non-error value. Instance fields other than an errno code are never read, so only
- * source-owned identifiers reach telemetry.
+ * for a non-error value. A PlatformError adds its reason tag and raising operation. No other
+ * instance field is read, so only source-owned identifiers reach telemetry.
  */
 function defectIdentity(defect: unknown): string {
   try {
@@ -1169,8 +1190,11 @@ function defectIdentity(defect: unknown): string {
     if (!isErrorRecord(error)) return typeof error;
     if (!(error instanceof Error)) return "object";
     const base = readStableTaggedPrototypeName(error, true) ?? "Error";
-    // A data descriptor, so reading the code never runs a getter.
-    const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
+    if (base === "PlatformError") {
+      const operation = platformErrorOperation(error);
+      if (operation !== undefined) return `${base}:${operation}`;
+    }
+    const code = ownValue(error, "code");
     return typeof code === "string" && defectSystemErrorCodes.has(code) ? `${base}:${code}` : base;
   } catch {
     return "Unreadable";

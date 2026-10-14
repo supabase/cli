@@ -1,4 +1,4 @@
-import { Cause, Data } from "effect";
+import { Cause, Data, PlatformError } from "effect";
 import { CliError } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@supabase/api/effect";
@@ -297,7 +297,7 @@ describe("classifyCliCauseActionability", () => {
     });
   });
 
-  it("names an unclassified defect by its source-owned tag and errno code, never instance data", () => {
+  it("names an unclassified defect by its source-owned tag, errno code, or platform operation, never instance data", () => {
     const secret = "privateToken";
     class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
       readonly message: string;
@@ -323,6 +323,24 @@ describe("classifyCliCauseActionability", () => {
         "error:Defect:Error",
       ],
       [secret, "error:Defect:string"],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({
+            _tag: "Busy",
+            module: "FileSystem",
+            method: "readFile",
+            pathOrDescriptor: secret,
+            description: secret,
+          }),
+        ),
+        "error:Defect:PlatformError:Busy:FileSystem.readFile",
+      ],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({ _tag: "Unknown", module: secret, method: "a b" }),
+        ),
+        "error:Defect:PlatformError",
+      ],
     ];
 
     for (const [defect, fingerprint] of cases) {
