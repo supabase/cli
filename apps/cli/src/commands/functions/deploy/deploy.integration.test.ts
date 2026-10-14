@@ -29,6 +29,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
@@ -37,7 +38,7 @@ import {
   shouldChmodBundleOutputDirectory,
 } from "../../../shared/functions/deploy.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
@@ -156,6 +157,7 @@ describe("functions deploy", () => {
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -192,7 +194,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+  it.effect("prints a duplicated slug argument verbatim", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -220,6 +222,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -277,6 +280,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -341,6 +345,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -457,6 +462,7 @@ describe("functions deploy", () => {
         ),
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -531,6 +537,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -582,6 +589,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -658,6 +666,7 @@ describe("functions deploy", () => {
       const brokenPipe = new Error("EPIPE: broken pipe, write");
       const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out: {
             ...out,
@@ -704,6 +713,7 @@ describe("functions deploy", () => {
     const gate = Deferred.makeUnsafe<void>();
     const continued = Deferred.makeUnsafe<void>();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: {
           ...out,
@@ -820,6 +830,7 @@ describe("functions deploy", () => {
       });
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -876,6 +887,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const child = mockDockerBundleSpawner();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({ handler: deployedHelloWorld }),
@@ -894,7 +906,11 @@ describe("functions deploy", () => {
       const path = yield* Path.Path;
       yield* writeCliConfig(tempRoot.current);
       yield* writeLocalFunction(tempRoot.current, "hello-world");
-      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+      // A dangling `.temp` link reads as unlinked yet cannot be created.
+      yield* fs.symlink(
+        path.join(tempRoot.current, "missing-target"),
+        path.join(tempRoot.current, "supabase", ".temp"),
+      );
 
       const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
         Effect.flip,
@@ -933,6 +949,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1028,6 +1045,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1115,6 +1133,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1210,10 +1229,11 @@ describe("functions deploy", () => {
     });
   });
 
-  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with the exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1240,13 +1260,14 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
+  describe("--jobs validation", () => {
     function setupJobsTest(rawArgs: ReadonlyArray<string>) {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1275,7 +1296,7 @@ describe("functions deploy", () => {
       });
     });
 
-    it.effect("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
+    it.effect("rejects --jobs > 1 with --use-docker=false and no --use-api", () => {
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1323,6 +1344,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1376,6 +1398,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1405,7 +1428,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("bundler routing with --use-api=false (Go parity: cmd/functions.go:79-80)", () => {
+  describe("bundler routing with --use-api=false", () => {
     it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
       // `useDocker` forces the API path only when `useApi` resolves to true, so
       // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
@@ -1434,6 +1457,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1476,13 +1500,14 @@ describe("functions deploy", () => {
     );
   });
 
-  describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
+  describe("no-functions error styling (structured output stays plain)", () => {
     // Uses a marker `styleEmphasis` instead of `functionsDeploy`'s real `bold`
     // hook, which is TTY-gated and inert under vitest.
     function setupNoFunctionsTest(format: "text" | "json") {
       const out = mockOutput({ format });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1504,7 +1529,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -1555,6 +1580,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1586,6 +1612,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1617,43 +1644,42 @@ describe("functions deploy", () => {
       },
     );
 
-    it.effect(
-      "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockCommandPlatformApi();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
-          }),
-        );
+    it.effect("reports a Config.Validate failure before an invalid slug's format error", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
 
-          const error = yield* functionsDeploy({
-            ...baseFlags,
-            functionNames: ["1-invalid-slug"],
-          }).pipe(Effect.flip);
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["1-invalid-slug"],
+        }).pipe(Effect.flip);
 
-          expect(error).toBeInstanceOf(Error);
-          expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
-          expect(api.requests).toEqual([]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.effect("still rejects an invalid slug once the config itself is valid", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1680,7 +1706,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("Docker bundling path Go-parity config/env wiring (CLI-1963)", () => {
+  describe("Docker bundling path config/env wiring (CLI-1963)", () => {
     function mockFunctionCreateApi() {
       return mockCommandPlatformApi({
         handler: (request) => {
@@ -1712,6 +1738,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1748,6 +1775,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1780,6 +1808,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1815,6 +1844,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1853,6 +1883,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1892,59 +1923,57 @@ describe("functions deploy", () => {
       },
     );
 
-    it.live(
-      "labels the bundler container with the resolved project id (Go parity: docker.go:349-386)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockFunctionCreateApi();
-        const child = mockDockerBundleSpawner();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          child.layer,
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
-          }),
-        );
+    it.live("labels the bundler container with the resolved project id", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          const path = yield* Path.Path;
-          yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
-          yield* writeLocalFunction(tempRoot.current, "hello-world");
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
-          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+        yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
-          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toEqual(
-            expect.arrayContaining([
-              "--label",
-              "com.supabase.cli.project=test-project",
-              "--label",
-              "com.docker.compose.project=test-project",
-            ]),
-          );
-          // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
-          const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
-          expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toEqual(
+          expect.arrayContaining([
             "--label",
             "com.supabase.cli.project=test-project",
             "--label",
             "com.docker.compose.project=test-project",
-          ]);
-          // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
-          const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
-          expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
-            "-w",
-            toDockerPath(tempRoot.current, path),
-          ]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+          ]),
+        );
+        // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
+        const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
+        expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+          "--label",
+          "com.supabase.cli.project=test-project",
+          "--label",
+          "com.docker.compose.project=test-project",
+        ]);
+        // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
+        const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
+        expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
+          "-w",
+          toDockerPath(tempRoot.current, path),
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
@@ -1954,6 +1983,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -1975,10 +2005,10 @@ describe("functions deploy", () => {
 
           expect(child.spawned[2]).toEqual({
             command: "docker",
-            args: ["network", "inspect", "supabase_network_abcdefghijklmnopqrst"],
+            args: ["network", "inspect", "supabase_network_nested"],
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toContain("supabase_network_abcdefghijklmnopqrst");
+          expect(runCommand?.args).toContain("supabase_network_nested");
           expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
@@ -2015,6 +2045,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2052,7 +2083,7 @@ describe("functions deploy", () => {
     },
   );
 
-  describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
+  describe("docker-not-running warning styling (only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Uses a marker `styleWarning` instead of `functionsDeploy`'s real
       // `yellow` hook, which is TTY-gated and inert under vitest.
@@ -2080,6 +2111,7 @@ describe("functions deploy", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2108,7 +2140,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",

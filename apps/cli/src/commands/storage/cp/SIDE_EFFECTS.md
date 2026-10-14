@@ -95,7 +95,7 @@ backend — same roles as `storage ls`.
 
 ## Notes
 
-- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+- **`--project-ref`** overrides ONLY the linked-ref
   resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.
@@ -129,8 +129,7 @@ backend — same roles as `storage ls`.
   server-returned object name. `path.join` normalizes `..`, so a hostile or
   compromised endpoint returning a name like `../../../etc/...` can resolve a
   write **outside** `localPath` — parent dirs are `mkdir -p`'d and files open
-  `O_TRUNC`, making it a write/overwrite primitive. This is inherited from the
-  old Go CLI's behavior and is intentionally **not** guarded, to preserve
-  behavioral parity. Blast radius is gated behind `--experimental` + `cp -r` +
+  `O_TRUNC`, making it a write/overwrite primitive. This is intentionally
+  **not** guarded. Blast radius is gated behind `--experimental` + `cp -r` +
   remote→local + a hostile endpoint. `downloadSingle` is unaffected (user-supplied
   path, `O_EXCL` `wx`).

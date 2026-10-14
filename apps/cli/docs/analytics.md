@@ -49,6 +49,12 @@ installs the command span plus the per-invocation analytics context:
 That same context is then inherited by milestone events captured inside the command handler, which
 lets one CLI invocation share a single `command_run_id`.
 
+The wrapper also rejects the removed global `--create-ticket` flag (with any value) before the
+handler runs. The rejection happens inside the instrumented region, so it still emits
+`cli_command_executed` with an `error_fingerprint` ending in `:removed_flag`. A command that fails
+earlier, such as on a missing credential in its runtime layer, or that shows help, reports that
+instead.
+
 ## Event Model
 
 The primary analytics event is:
@@ -79,9 +85,8 @@ and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
 A `workflow` property is reserved in the catalog but not emitted yet.
 
-Not every failure is classified: pure Go-proxy commands report through the Go
-binary, which does not emit these fields, and events from CLI versions before
-they existed never carry them. KPI queries therefore scope to
+Not every failure is classified: events from CLI versions before these fields
+existed never carry them. KPI queries therefore scope to
 `error_kind IS NOT NULL`, and the `classificationCoverage` metric definition
 reports the classified share of failures so the covered fraction is explicit
 rather than assumed.

@@ -1,12 +1,12 @@
 # `supabase db diff`
 
-Native Effect port. Diffs the local project's expected schema (a throwaway shadow
+Diffs the local project's expected schema (a throwaway shadow
 database) against a target database (local / linked / `--db-url`), using one of
 three native engines: bundled in-process pg-delta, migra (edge-runtime), or
 pgAdmin (CLI-1968 — a native `docker run` of the differ container, no
-edge-runtime involved). `--use-pg-schema` is the CLI's sole remaining Go
-delegation on this command — a documented keep-in-Go exception (CLI-1960), not a
-pending port.
+edge-runtime involved). `--use-pg-schema` is removed: the flag stays parsed
+(hidden) only so using it fails with an actionable removal error instead of an
+unknown-flag parse error — see "`--use-pg-schema` is removed" below.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
@@ -29,7 +29,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 | Path                                                                                                      | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                          | TOML                                                                                  | always (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/config.json` or `config.toml`                                                         | JSON / TOML                                                                           | always, `config.json` preferred (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                 | dotenv                                                                                | shadow provisioning (all native targets, including the explicit `--from/--to migrations` shadow)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                    | PEM                                                                                   | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute)        | text (existence/readability only — bytes discarded, used only to validate the config) | only when `auth.enabled`, for every configured template and every notification with `enabled = true` — via the same `readDbToml`/`checkDbToml` `Config.Validate` pipeline shared by every `db`/`migration` subcommand that loads config (`db dump`/`pull`/`reset`/`push`/`schema declarative generate`/`sync`, `migration up`/`down`/`squash` — documented once here rather than duplicated per file, CLI-2339); the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
@@ -66,7 +66,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   Pipelines, which drops the mount).
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
   in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
-  `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
+  `command-internal/db-bootstrap/shadow-database.ts`). Explicit
   `--from/--to migrations` provisions its migrations shadow through the pg-delta shadow layer
   (`pgdelta-next-shadow.layer.ts`), which builds on the same shadow-baseline cache
   primitives (`acquireShadowDatabase`), with no declarative-schema-override branch.
@@ -106,14 +106,14 @@ of this command's own target resolve, ahead of the differ container.
 | Variable                                                                              | Purpose                                                                                                                                                                                                                                    | Required? |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
 | `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                                        | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                                                                                                | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked); ignored for a target other than the linked project (see Notes)                                                                                                                                                | no        |
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                                                     | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                                           | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                        | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                                        | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                  | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                      | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                                                      | no        |
+| `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                               | overrides `[experimental.pgdelta].enabled` (default true; `false` selects migra); a value that is not a boolean fails the command                                                                                                          | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                                                     | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                                                    | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                                             | no        |
@@ -124,10 +124,10 @@ of this command's own target resolve, ahead of the differ container.
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
 through the same primitives.
 
-`SUPABASE_EXPERIMENTAL_PG_DELTA` is **read, no effect** on the pgadmin path: the pg-delta
-engine-selection lookup (`shouldUsePgDelta`) runs unconditionally, before the
-`--use-pgadmin` branch, but the pgadmin branch is chosen first and never consults the
-resulting `useDelta` value.
+`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` has no effect on the pgadmin path: `--use-pgadmin`
+always selects the pgadmin engine. The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is
+**not read**: pg-delta is the default engine, and an explicit `enabled = false` rollback is
+authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
 docker-run layer receives the loaded project environment on each invocation. A registry
@@ -143,7 +143,8 @@ migra/pg-delta-engine-specific).
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                              |
 | `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
-| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`; `--project-ref` combined with `--use-pg-schema` (see Notes)       |
+| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`                                                                    |
+| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                         |
 
 ## Output
 
@@ -171,8 +172,14 @@ the ordered plan units separately for application through `db reset` or `db push
 Progress strings still go to stderr; stdout carries a single structured envelope
 `{ diff, file, files, schemas, engine, dropStatements, advisories? }` instead of
 the raw SQL. Bundled pg-delta reports the best-effort
-`DeclarativeSchemaNotUsedAsDiffBaseline` advisory for a non-empty `--file` diff
-when declarative files exist.
+`DeclarativeSchemaNotUsedAsDiffBaseline` advisory when declarative files exist and
+the diff passes a non-empty `--file` or targets the local database. Only `--file` runs
+also print a stderr note: the `-f` baseline note for a written migration, or a note that
+the files are not read when the diff is empty. Both end with next steps:
+`supabase db schema declarative sync` (with `--experimental` when config disables pg-delta)
+and, when migra would read that directory (local target, no `schema_paths`, and pg-delta
+enabled in config or the directory is `supabase/schemas`; never on the stack backend),
+`--use-migra`.
 
 In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
 representation as text stdout; the machine envelope does not restore the per-unit
@@ -183,11 +190,11 @@ transaction metadata.
 - **Status lines go to STDOUT in text mode, not stderr** — unlike the migra/pg-delta path's
   stderr diagnostics. So `db diff --use-pgadmin > out.sql` captures them. In `json`/`stream-json`
   mode these are diagnostics, not payload, so they redirect to STDERR instead — see below.
-- **Progress-streaming UX delta**: this port batches progress instead of streaming it live —
-  `DockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so this
-  port buffers each run's stderr via `runCapture` and only filters/emits its status lines once
+- **Progress batching**: progress is batched instead of streamed live —
+  `DockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so
+  each run's stderr is buffered via `runCapture` and its status lines are filtered/emitted only once
   that run's container has already exited — one status BATCH per `--schema` run, not a
-  continuous stream. That batch is processed and emitted before this port's own exit-code
+  continuous stream. That batch is processed and emitted before the exit-code
   check, so a run that goes on to exit non-zero still has its own captured statuses printed
   first, not dropped. See `pgadmin-diff.ts`'s own doc comment on `diffSchemaPgAdmin`
   for the full rationale and the possible follow-up (adding an `onStderr` hook to `runStream`).
@@ -204,11 +211,22 @@ transaction metadata.
 
 ## Notes / Delegation
 
-- `--use-migra` (default), `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
-  mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
-  mutually-exclusive target group (default `--local`).
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
+  (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
+  invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
+  block. The linked-database password env is withheld when the target differs from
+  `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
+  temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
+- **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
+  so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
+  stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
+  `--use-migra` or `--use-pgadmin` (a true value) always wins; `--use-migra=false` keeps pg-delta; the stack backend always uses pg-delta.
+- `--use-migra`, `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine group
+  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`); `--db-url` /
+  `--linked` / `--local` are a mutually-exclusive target group (default
+  `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
+  Notes below), so it is never a live member of the group.
+- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
@@ -221,17 +239,11 @@ transaction metadata.
   `--linked` was explicitly set either. It still fires for e.g. `--from local
 --to migrations --project-ref X` (explicit mode, `--linked` unchanged, and
   neither side `linked`), where the flag would otherwise go silently unused
-  (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env
-  var simply leaves unused on a non-linked target). `--use-pgadmin --linked`
+  (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply unused
+  on a non-linked target). `--use-pgadmin --linked`
   honors the flag like every other native engine (CLI-1968 — same target
-  resolve); `--use-pg-schema` rejects it up front, since the delegated Go child
-  never registered `--project-ref` and the flag would otherwise be silently
-  dropped.
-- `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
-  effects are Go's); the Go child's telemetry is disabled so the single
-  `cli_command_executed` event comes from this TS command. When only the deprecated
-  `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` alias is set (shell or project `.env`), its value
-  is passed to the child as `SUPABASE_DB_ORIOLEDB_VERSION` and the deprecation WARN prints once.
+  resolve); `--use-pg-schema` is removed and rejects before any target
+  resolution happens (see Notes below), so this guard never runs for it.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.
@@ -247,7 +259,7 @@ publishes only when the roles file is unchanged, and retention keeps three entri
 A falsy `SUPABASE_SHADOW_CACHE` bypasses this cache. A failed warm restore recreates the database;
 a failed cache export warns and continues with the live shadow.
 
-On by default; setting `SUPABASE_SHADOW_CACHE` to anything not viper-true (`false`/`0`/empty/garbage,
+On by default; setting `SUPABASE_SHADOW_CACHE` to anything that does not parse as true (`false`/`0`/empty/garbage,
 honored from the ambient env AND the project's dotenv, e.g. `supabase/.env`) turns it off,
 restoring the documented uncached lifecycle. A warm hit
 skips the platform baseline, so the `Initialising schema...` progress line does not print —
@@ -268,7 +280,7 @@ platform baseline, so role-level defaults installed by `supabase/roles.sql`
 runs migrations before those defaults take effect. `--use-pgadmin` is NOT cached — its shadow keeps
 the plain create/remove lifecycle.
 
-### `--use-pgadmin` parity quirks and deliberate divergence (CLI-1968)
+### `--use-pgadmin` behaviour
 
 - `source`/`target` are INVERTED relative to the migra/pg-delta path: `source` is the
   USER'S db, `target` is the SHADOW.
@@ -278,8 +290,8 @@ the plain create/remove lifecycle.
 - `AssertSupabaseDbIsRunning` runs for `--linked`/`--db-url` too, and AFTER config load +
   target resolution — every other engine on this command never runs this check at all.
 - The `NOTE: …DESKTOP mode.` prefix (`supabase/pgadmin4#24`) is trimmed from the front of
-  EACH run's own stdout independently (each run is parsed on its own — see the "Deliberate
-  divergence" entry below), not just the front of a single, first run's buffer.
+  EACH run's own stdout independently (each run is parsed on its own — see "Output parsing"
+  below), not just the front of a single, first run's buffer.
 - The differ's stderr is filtered by the progress-line regex and non-matching lines are
   dropped, so a differ failure surfaces only `error running container: exit <n>` — even
   under `--debug`.
@@ -291,7 +303,7 @@ the plain create/remove lifecycle.
 - JSON-parse failures are reported with the stable prefix `failed to parse schema diff output:`
   rather than the raw parser error text.
 
-**Deliberate divergence:** every run's own stdout is genuinely parsed
+**Output parsing:** every run's own stdout is genuinely parsed
 (`parsePgAdminDiffEntries`, trimming that run's own DESKTOP-mode NOTE prefix off its own
 buffer), and every run's filtered DDLs are aggregated into one final diff before the header is
 rendered once (`renderPgAdminDiff`). A multi-`--schema` diff where every run's own
@@ -311,39 +323,13 @@ reachable. Reaching both databases requires `--network-id host` **plus** a `[db]
 5432` config override — a contrived setup no default user runs. Once both are reachable, this
 port reports the real diff.
 
-### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
+### `--use-pg-schema` is removed
 
-`--use-pg-schema` wraps the in-process Go library `stripe/pg-schema-diff`
-(`apps/cli-go/internal/db/diff/pgschema.go`). It is a keep-in-Go exception rather
-than a pending port because:
+The flag is removed: passing it (with any value, including `--use-pg-schema=false`)
+fails with a removal error and a suggestion to use the default pg-delta engine or
+`--use-migra` instead. It is checked before any other engine-conflict or
+target resolution, so combining it with another engine flag (e.g. `--use-pgadmin`)
+still hits the removal error first, not the mutex error.
 
-- it runs **in-process** inside the Go binary, with no container/binary boundary
-  to re-invoke from TS — unlike `--use-pgadmin` (now native, CLI-1968), which shelled
-  out to a container/binary path that could in principle be called from TS;
-- no TS binding and no WASM build of the library exists, or is reasonably
-  buildable, within the M9 "Final Cleanup — Go Removal" milestone's scope;
-- this specific exception (`db diff --use-pg-schema`) was pre-named when the M9
-  milestone was scoped.
-
-The decision record is Linear issue CLI-1960 and the pull request that introduced
-this deprecation notice; re-open only if a TS/WASM binding for
-`stripe/pg-schema-diff` ships. It **is** the CLI's sole remaining Go delegation on
-`db diff` now that `--use-pgadmin`'s delegation is gone (CLI-1968) — the sibling
-`db __db-bootstrap` seam was already removed outright by CLI-1955, and the
-`db __shadow` seam by CLI-1956.
-
-Given that, the flag is now deprecated rather than ported:
-
-- A TS-only stderr deprecation warning is printed immediately before delegating
-  (both text and machine `--output-format` modes — diagnostics stay stderr-only,
-  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`
-  The warning text intentionally does not promise a removal timeline.
-- This is **additive** to (printed before) Go's own pre-existing "experimental"
-  warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and may not include all entities, such as views and grants.` The delegated child
-  still prints its own warning; the TS wrapper does not suppress or replace it.
-- `--help` for the flag now also carries a `Deprecated: …` suffix pointing at the
-  same migration path.
-- Actual flag removal and any PostHog usage-telemetry gate for that removal are
-  explicitly out of scope for CLI-1960 — this is a documentation/deprecation-notice
-  change only, tracked as a follow-up decision outside this milestone, with no
-  owning issue yet.
+The flag definition itself stays in `diff.command.ts` (hidden from `--help`) only
+so misuse produces this actionable error instead of an unknown-flag parse error.

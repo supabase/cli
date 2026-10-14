@@ -27,6 +27,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -583,7 +584,7 @@ function withConfirmSideEffect(
 }
 
 interface SetupOpts {
-  readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+  readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -662,6 +663,7 @@ function setupRuntime(
   });
 
   const layer = Layer.mergeAll(
+    configValuesLayer({ output: outputLayer }),
     buildTestRuntime({
       out: { layer: outputLayer },
       api,
@@ -673,7 +675,7 @@ function setupRuntime(
       linkedProjectCache: linkedProjectCache.layer,
       processControl: { layer: processControl.layer },
       analytics: { layer: analytics.layer },
-      goOutput: opts.goOutput ?? Option.none(),
+      outputFlag: opts.outputFlag ?? Option.none(),
     }),
     machineErrorContextLayer,
     commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
@@ -1437,7 +1439,7 @@ describe("pull integration", () => {
   it.effect(
     "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
     () => {
-      const { layer, api } = setup({ goOutput: Option.some("json") });
+      const { layer, api } = setup({ outputFlag: Option.some("json") });
       return Effect.gen(function* () {
         yield* writeConfig();
         const exit = yield* Effect.exit(runPull(pullFlags()));

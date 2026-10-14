@@ -374,7 +374,7 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
 });
 
 describe("db advisors — local", () => {
-  it.effect("queries the local database and prints the Go pretty JSON array", () => {
+  it.effect("queries the local database and prints the pretty JSON array", () => {
     const { layer, out, connection, api } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
@@ -740,21 +740,18 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "resolves the linked DB config before fetching advisors (Go root PersistentPreRunE)",
-    () => {
-      // Resolved even though the linked lint-gathering path discards the connection.
-      const { layer, resolver, api } = setup({
-        securityLints: [securityLint],
-        args: ["--linked"],
-      });
-      return Effect.gen(function* () {
-        yield* dbAdvisors(flags({ type: Option.some("security") }));
-        expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
-        expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("resolves the linked DB config before fetching advisors", () => {
+    // Resolved even though the linked lint-gathering path discards the connection.
+    const { layer, resolver, api } = setup({
+      securityLints: [securityLint],
+      args: ["--linked"],
+    });
+    return Effect.gen(function* () {
+      yield* dbAdvisors(flags({ type: Option.some("security") }));
+      expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
+      expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("fails on the linked DB-config error before any advisor API call", () => {
     // The DB-config resolve fails before the linked lint-gathering path runs, so the advisors
@@ -773,7 +770,7 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("runs the identity stitch on each advisor response (Go identityTransport)", () => {
+  it.effect("runs the identity stitch on each advisor response", () => {
     // Every Management API response is wrapped in identity stitching; the raw-HTTP advisor path
     // must run the same stitch, once per response.
     const { layer, identityStitch } = setup({
@@ -787,7 +784,7 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
+  it.effect("resolves the linked ref via the non-prompting load", () => {
     // `resolve` opens an interactive project picker on a TTY; `--linked` must avoid it.
     const { layer, projectRef } = setup({
       securityLints: [securityLint],
@@ -844,24 +841,21 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "fails with the invalid-token message before any API call (Go LoadAccessTokenFS)",
-    () => {
-      const { layer, api } = setup({ invalidToken: true, args: ["--linked"] });
-      return Effect.gen(function* () {
-        const error = yield* Effect.flip(dbAdvisors(flags()));
-        expect(error).toBeInstanceOf(DbAdvisorsInvalidTokenError);
-        expect(error).toMatchObject({
-          message: expect.stringContaining("Invalid access token format"),
-          suggestion: expect.stringContaining("supabase login"),
-        });
-        // The token gate fails before any advisors request is made.
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("fails with the invalid-token message before any API call", () => {
+    const { layer, api } = setup({ invalidToken: true, args: ["--linked"] });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(dbAdvisors(flags()));
+      expect(error).toBeInstanceOf(DbAdvisorsInvalidTokenError);
+      expect(error).toMatchObject({
+        message: expect.stringContaining("Invalid access token format"),
+        suggestion: expect.stringContaining("supabase login"),
+      });
+      // The token gate fails before any advisors request is made.
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
+  it.effect("fails on a 200 with a non-JSON content type (a JSON content type is required)", () => {
     // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
     // status-200 error.
     const { layer } = setup({ securityNonJson: true, args: ["--linked"] });

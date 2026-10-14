@@ -6,12 +6,14 @@ import { withPermissions } from "../../../../../command-internal/command-permiss
 import { compose, withContext } from "../../../../../command-internal/command-permissions/model.ts";
 import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -113,4 +115,6 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
     }),
   ),
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

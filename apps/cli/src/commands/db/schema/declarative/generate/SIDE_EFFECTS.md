@@ -54,17 +54,17 @@ formatting without disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                             |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | success (files written, or skipped after a declined prompt)           |
-| `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
-| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
-| `1`  | non-interactive mode with no explicit target                          |
-| `1`  | local-database bring-up / pg-delta engine / export failure            |
+| Code | Condition                                                                            |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | success (files written, or skipped after a declined prompt)                          |
+| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`) |
+| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)                     |
+| `1`  | non-interactive mode with no explicit target                                         |
+| `1`  | local-database bring-up / pg-delta engine / export failure                           |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
-first, so a closed gate (missing `--experimental`) surfaces before a
+first, so a closed gate (`enabled = false` and no `--experimental`) surfaces before a
 `--db-url`/`--linked`/`--local` conflict is ever checked.
 
 ## Output
@@ -81,13 +81,13 @@ always go to stderr, in every `--output-format`. On success:
 
 ## Notes
 
-- Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
+- Open by default. The gate closes only when `[experimental.pgdelta] enabled = false`
+  and `--experimental` is omitted.
 - `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
   smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
 - `--output-dir <dir>` selects a destination for this invocation without changing
-  config or activating it for later syncs (TS-only; deliberately not
-  `--output`/`-o`, which the legacy root reserves for the global machine-format
-  flag — see `docs/go-cli-divergences.md`).
+  config or activating it for later syncs (deliberately not `--output`/`-o`, which
+  the root command reserves for the global machine-format flag).
 - When `declarative_schema_path` is unset, the new `supabase/schemas` default is
   empty, and the former `supabase/database` default still contains `.sql` files
   or an export manifest, a WARNING on stderr explains the default move and how
