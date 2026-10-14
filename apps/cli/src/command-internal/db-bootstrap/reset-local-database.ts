@@ -125,7 +125,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
     const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
-    const config = yield* loadStackConfig(workdir, { context }).pipe(
+    const config = yield* loadStackConfig(workdir).pipe(
       Effect.mapError((cause) => resetFailed(cause.message)),
     );
     const toml = yield* readDbToml(fs, path, workdir);

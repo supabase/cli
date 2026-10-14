@@ -410,6 +410,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
