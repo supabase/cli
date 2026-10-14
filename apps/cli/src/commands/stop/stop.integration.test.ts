@@ -5,6 +5,7 @@ import {
   Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -14,6 +15,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -616,27 +618,73 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("waits for another stack's prune instead of failing", () =>
+  const PRUNE_RUNNING = "Error response from daemon: a prune operation is already running";
+
+  const networkPruneRoute = (failures: number, stderr: string) => {
+    const route = defaultRoute();
+    let remaining = failures;
+    return (args: ReadonlyArray<string>): RouteResult => {
+      if (args[0] === "network" && args[1] === "prune" && remaining > 0) {
+        remaining -= 1;
+        return { exitCode: 1, stderr: [stderr] };
+      }
+      return route(args);
+    };
+  };
+
+  /** Each retry sleeps only after the previous attempt, so the clock steps until `stop` settles. */
+  const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+    TestClock.adjust("100 millis").pipe(
+      Effect.repeat({ while: () => fiber.pollUnsafe() === undefined, times: 1_000 }),
+      Effect.andThen(Fiber.join(fiber)),
+    );
+
+  const networkPrunes = (spawned: ReadonlyArray<SpawnRecord>) =>
+    spawned.filter((s) => s.args[0] === "network" && s.args[1] === "prune");
+
+  it.effect("waits for another stack's prune instead of failing", () =>
     Effect.gen(function* () {
-      const route = defaultRoute();
-      let busyPrunes = 2;
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
-        route: (args) => {
-          if (args[0] === "network" && args[1] === "prune" && busyPrunes > 0) {
-            busyPrunes -= 1;
-            return {
-              exitCode: 1,
-              stderr: ["Error response from daemon: a prune operation is already running"],
-            };
-          }
-          return route(args);
-        },
+        route: networkPruneRoute(2, PRUNE_RUNNING),
       });
-      yield* stop(flags()).pipe(Effect.provide(layer));
-      expect(
-        child.spawned.filter((s) => s.args[0] === "network" && s.args[1] === "prune"),
-      ).toHaveLength(3);
+      const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.forkChild);
+      yield* joinAdvancingClock(fiber);
+      expect(networkPrunes(child.spawned)).toHaveLength(3);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails once another stack's prune outlasts the retry budget", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: networkPruneRoute(Number.POSITIVE_INFINITY, PRUNE_RUNNING),
+      });
+      const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.exit, Effect.forkChild);
+      const exit = yield* joinAdvancingClock(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("StopNetworkPruneError");
+        expect(Cause.pretty(exit.cause)).toContain("a prune operation is already running");
+      }
+      expect(networkPrunes(child.spawned)).toHaveLength(41);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails on the first unrelated prune error", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: networkPruneRoute(1, "Error response from daemon: permission denied"),
+      });
+      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "failed to prune networks: Error response from daemon: permission denied",
+        );
+      }
+      expect(networkPrunes(child.spawned)).toHaveLength(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

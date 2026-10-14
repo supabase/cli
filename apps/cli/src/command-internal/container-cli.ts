@@ -245,7 +245,7 @@ export function runContainerCliExpectSuccess<E>(
  * instead of ignoring them avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
  * {@link containerCliExitCode}.
  */
-export const containerCliExitCodeAndStdout = (
+export const containerCliOutput = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   podmanArgs?: ReadonlyArray<string>,

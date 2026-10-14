@@ -8,7 +8,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import {
   containerCliExitCode,
-  containerCliExitCodeAndStdout,
+  containerCliOutput,
   describeContainerCliFailure,
   dockerSupportsVolumePruneAllFlag,
 } from "./container-cli.ts";
@@ -95,19 +95,37 @@ const reportPruned = (debug: boolean, label: string, stdout: string) =>
  * Docker runs one prune at a time per daemon and rejects concurrent ones, even with different
  * label filters, so stacks stopping at the same moment wait for each other's prune.
  */
-const pruneWaitingForConcurrentPrune = (
+const pruneWaitingForConcurrentPrune = Effect.fn("DockerRemoveAll.prune")(function* (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   podmanArgs?: ReadonlyArray<string>,
-) =>
-  containerCliExitCodeAndStdout(spawner, args, podmanArgs).pipe(
+) {
+  let attempts = 0;
+  const result = yield* containerCliOutput(spawner, args, podmanArgs).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        attempts += 1;
+      }),
+    ),
     Effect.repeat({
-      while: (result) =>
-        result.exitCode !== 0 && /a prune operation is already running/iu.test(result.stderr),
+      while: (output) =>
+        output.exitCode !== 0 && /a prune operation is already running/iu.test(output.stderr),
       schedule: Schedule.spaced("250 millis").pipe(Schedule.jittered),
       times: 40,
     }),
   );
+  yield* Effect.annotateCurrentSpan({
+    "docker.prune.kind": args[0] ?? "",
+    "docker.prune.attempts": attempts,
+    "docker.prune.exit_code": result.exitCode,
+  });
+  return result;
+});
+
+const pruneFailureMessage = (kind: string, stderr: string) => {
+  const detail = stderr.trim();
+  return detail.length > 0 ? `failed to prune ${kind}: ${detail}` : `failed to prune ${kind}`;
+};
 
 /** Every failure {@link dockerRemoveAll} can produce. */
 export type DockerRemoveAllError =
@@ -186,7 +204,7 @@ export const dockerRemoveAll = (
     );
     if (containerPrune.exitCode !== 0) {
       return yield* new DockerRemoveAllContainerPruneError({
-        message: "failed to prune containers",
+        message: pruneFailureMessage("containers", containerPrune.stderr),
       });
     }
     yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
@@ -220,7 +238,9 @@ export const dockerRemoveAll = (
         ),
       );
       if (volumePrune.exitCode !== 0) {
-        return yield* new DockerRemoveAllVolumePruneError({ message: "failed to prune volumes" });
+        return yield* new DockerRemoveAllVolumePruneError({
+          message: pruneFailureMessage("volumes", volumePrune.stderr),
+        });
       }
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
@@ -240,7 +260,9 @@ export const dockerRemoveAll = (
       ),
     );
     if (networkPrune.exitCode !== 0) {
-      return yield* new DockerRemoveAllNetworkPruneError({ message: "failed to prune networks" });
+      return yield* new DockerRemoveAllNetworkPruneError({
+        message: pruneFailureMessage("networks", networkPrune.stderr),
+      });
     }
     // Established output text: singular "network", unlike the container/volume reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
