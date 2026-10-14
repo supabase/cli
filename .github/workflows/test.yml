@@ -317,14 +317,13 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
-          cache-salt: -cold${{ github.run_id }}-${{ github.run_attempt }}
 
       # Keyed per suite so each job saves the artifacts it actually prepared.
       - name: Cache native stack artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/supabase-stack-artifacts
-          key: stack-artifacts-cold${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ hashFiles('packages/stack/src/Artifacts.ts') }}
+          key: stack-artifacts-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ hashFiles('packages/stack/src/Artifacts.ts') }}
 
       - name: Run stack native whole-stack scenarios
         working-directory: packages/stack

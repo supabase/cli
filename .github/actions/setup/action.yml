@@ -32,10 +32,6 @@ inputs:
       archive restores slower than the registry downloads it, disable this.
     required: false
     default: "true"
-  cache-salt:
-    description: Temporary measurement salt appended to cache keys.
-    required: false
-    default: ""
   sticky-disks:
     description: >-
       Whether to mount dependency caches from Blacksmith sticky disks on
@@ -134,7 +130,6 @@ runs:
       with:
         version: 2026.9.0
         install_args: ${{ inputs.tools }}
-        cache_key_prefix: mise-v1${{ inputs.cache-salt }}
         cache_key: ${{ inputs.tools != '' && format('mise-{0}-{1}-{2}-{3}', runner.os, runner.arch, inputs.tools, hashFiles('mise.toml', 'mise.lock', '.node-version', '.bun-version', 'package.json')) || '' }}
 
     - name: Resolve pnpm store path
@@ -173,9 +168,9 @@ runs:
         path: |
           ${{ steps.pnpm-store.outputs.path }}/files
           ${{ steps.pnpm-store.outputs.path }}/index*
-        key: pnpm-store-files${{ inputs.cache-salt }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        key: pnpm-store-files-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
-          pnpm-store-files${{ inputs.cache-salt }}-${{ runner.os }}-${{ runner.arch }}-
+          pnpm-store-files-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Resolve pnpm cache path
       if: inputs.dependency-cache == 'true'
@@ -192,7 +187,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm-cache.outputs.path }}/lockfile-verified.jsonl
-        key: pnpm-verify${{ inputs.cache-salt }}-${{ runner.os }}-${{ inputs.dependency-firewall-token != '' && 'firewall' || 'public' }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
+        key: pnpm-verify-${{ runner.os }}-${{ inputs.dependency-firewall-token != '' && 'firewall' || 'public' }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
 
     - name: Resolve Go cache paths
       if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true'
