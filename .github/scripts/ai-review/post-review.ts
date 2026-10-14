@@ -645,9 +645,10 @@ export function renderReviewBody(
   );
   const verdicts = computeVerdictCounts(review.findings);
 
-  // The markers lead the body so truncation never drops them.
+  // The markers lead the body so truncation never drops them. Advisory next-impact findings have no thread, so
+  // counting them keeps any review that raised one from approving a sync.
   const state = footer.headSha
-    ? `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete === true, findings: posted.length })}\n`
+    ? `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete === true, findings: posted.length + review.findings.filter(isAdvisoryNextImpact).length })}\n`
     : "";
   const header = `${AI_REVIEW_MARKER}\n${state}`;
   const sections: string[] = [`${header}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];

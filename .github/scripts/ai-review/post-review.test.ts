@@ -697,6 +697,7 @@ describe("buildReviewPayload", () => {
         makeFinding({ id: "inline", file: "file.ts", line: 10 }),
         makeFinding({ id: "outside", file: "file.ts", line: 99 }),
         makeFinding({ id: "refuted", adjudication: { verdict: "refuted", reason: "No." } }),
+        makeFinding({ id: "advisory", category: "next-impact" }),
       ],
     });
     const payload = buildReviewPayload(review, anchors, { ...footer, reviewsComplete: false });
@@ -708,7 +709,7 @@ describe("buildReviewPayload", () => {
     expect(parseAiReviewState(truncated)).toEqual({
       head: "a".repeat(40),
       complete: false,
-      findings: 2,
+      findings: 3,
     });
   });
 
