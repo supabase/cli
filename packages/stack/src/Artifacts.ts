@@ -267,23 +267,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.83.0",
+      upstreamVersion: "v1.83.1",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.83.0-r0@sha256:57846ea3e88af033b3518731e7eef8d99eea9c0d151a57e95f58fccb019304d3",
-      upstreamImage: "supabase/storage-api:v1.83.0",
+        "ghcr.io/supabase/cli/storage:v1.83.1-r0@sha256:16677fbc579cda2d16aee2582adcbdef62e6d21ad0d9bcbacaceacca0e8e6808",
+      upstreamImage: "supabase/storage-api:v1.83.1",
       natives: {
         "darwin-arm64": {
-          archive: "fc69a80e16b70fe56ea25232189c7241c9073625a6a8e0aecda57c0e06ac1dbc",
-          manifest: "ce54efaa1bba647b3742441ab580d6f23454a0bcec3f6dfeee9129a45c53f240",
+          archive: "ef3dc7153f2ab5e6e5bc8b99a0dba35a5c31881464efbb7b46ae60a17453c4c9",
+          manifest: "2b288c2654c6cf225b0a682ad7cbd66c004ac970cd74a201b9c5520d61ea0a7c",
         },
         "linux-amd64": {
-          archive: "43a22b349e55a887eb54204c5ead98bd89396a43373f1383dadcca75d9400bc8",
-          manifest: "b3ef4e252455b568b325be6290d400bd9ef75868ee49e74278ccde441a05cdaa",
+          archive: "2805e5dbc74d42aa90ef6afca3002a9c73e47cf3dec0ff4a7faa939782f87b2e",
+          manifest: "36f4443178e728c74a40d958a33b9256e11bf088b31e76de758bb7547ba1b293",
         },
         "linux-arm64": {
-          archive: "b8dc2e2167514f6fefff02e6a63b674ba3c7e1cb0f40438f035edbfee79bf57e",
-          manifest: "7925a314dd5ee2d1c037b8de60201c5c4cd75ae5ca9a5b6fc48d208a5bc4d676",
+          archive: "03fc2d224f2abb24ff42d6a6ccd7c5da479f79ccd1d3f5707fdf766d09bc0c10",
+          manifest: "703cd82ab5f5a7b74759e43b9fa316b160a779ed73904bfadfad8b6dc8979ec5",
         },
       },
     },
