@@ -99,13 +99,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "logout",
 
-  "migration down",
-  "migration fetch",
-  "migration list",
-  "migration new",
-  "migration repair",
-  "migration squash",
-  "migration up",
 
   "network-bans get",
   "network-bans remove",
@@ -171,8 +164,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry enable",
   "telemetry status",
 
-  "test db",
-  "test new",
 
   "unlink",
 
