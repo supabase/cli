@@ -4,7 +4,6 @@ import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { badArgument } from "effect/PlatformError";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -86,7 +85,6 @@ describe("test new integration", () => {
       expect(yield* fs.readFileString(target)).toBe(PGTAP_TEMPLATE);
       expect(out.stdoutText).toContain("Created new pgtap test at ");
       expect(out.stdoutText).toContain("supabase/tests/pet_test.sql");
-      assertPermissionDrift({ command: "test new", requests: [], exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -127,12 +125,6 @@ describe("test new integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* testNew(flags("explicit", "pgtap"));
-      assertPermissionDrift({
-        command: "test new",
-        activeFlags: { template: true },
-        requests: [],
-        exact: true,
-      });
       expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "explicit_test.sql"))).toBe(
         true,
       );

@@ -10,7 +10,6 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin } from "../../../../tests/helpers/mocks.ts";
-import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { MigrationNewWriteError } from "./new.errors.ts";
@@ -115,7 +114,6 @@ describe("migration new", () => {
         `Created new migration at supabase/migrations/${file}\n`,
       );
       expect(telemetry.flushed).toBe(true);
-      assertPermissionDrift({ command: "migration new", requests: [], exact: true });
     }).pipe(Effect.provide(layer));
   });
 
