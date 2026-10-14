@@ -26,7 +26,10 @@ import {
 } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -606,6 +609,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         "stack.backend": backend.kind,
       });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
+      yield* warnDeprecatedOrioleDBVersionEnv(config.envLookup);
       const projectEnvValues = Object.fromEntries(
         Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
       );

@@ -7,7 +7,11 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  loadProjectEnv,
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -187,6 +191,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    yield* warnDeprecatedOrioleDBVersionEnv(tomlValues.envLookup);
 
     const backend = yield* currentStackBackend;
     const managedProject =
