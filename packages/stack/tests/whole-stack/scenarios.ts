@@ -181,7 +181,6 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
   (fixture: WholeStack, phase: string, resourceKey?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
-        console.log(`XPHASE ${phase} schema ${Date.now()}`);
         yield* prepareSchema(fixture);
         const authUrl = (yield* service(fixture, "auth").credentials()).url;
         const restUrl = (yield* service(fixture, "rest").credentials()).url;
@@ -189,7 +188,6 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           return yield* Effect.die("Auth/REST URL missing");
         const email = `whole-${phase}-${fixture.stack.id}@example.test`;
         const password = "whole-stack-password";
-        console.log(`XPHASE ${phase} auth-rest ${Date.now()}`);
         const signup = yield* jsonRequest("POST", `${authUrl}/signup`, { email, password });
         expect(signup.status, signup.body).toBe(200);
         const signupBody = yield* Schema.decodeUnknownEffect(
@@ -248,7 +246,6 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
             Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.String }))),
           )(otherRead.body),
         ).toEqual([]);
-        console.log(`XPHASE ${phase} storage-functions ${Date.now()}`);
         yield* exerciseStorageAndFunctions(
           fixture,
           signupBody.access_token,
@@ -258,7 +255,6 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
         );
         yield* Effect.scoped(
           Effect.gen(function* () {
-            console.log(`XPHASE ${phase} mail-realtime ${Date.now()}`);
             const mailUrl = (yield* service(fixture, "mail").credentials()).url;
             const realtimeUrl = (yield* service(fixture, "realtime").credentials()).url;
             if (mailUrl === undefined || realtimeUrl === undefined)
@@ -298,13 +294,10 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
             expect(event.record).toEqual({ id: rowId, value: `${phase}-realtime` });
           }),
         );
-        console.log(`XPHASE ${phase} analytics ${Date.now()}`);
         const analyticsUrl = (yield* service(fixture, "analytics").credentials()).url;
         if (analyticsUrl === undefined) return yield* Effect.die("Analytics URL missing");
         yield* exerciseAnalytics(analyticsUrl, fixture.secret, fixture.stack.id, phase);
-        console.log(`XPHASE ${phase} lifecycle-check ${Date.now()}`);
         yield* assertLifecycle(fixture, "running");
-        console.log(`XPHASE ${phase} end ${Date.now()}`);
         return {
           accessToken: loginBody.access_token,
           rowId,
