@@ -177,9 +177,7 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
             : { defaultFrom }),
         ...(leaf.node.annotations?.["x-secret"] === true ? { secret: true as const } : {}),
         ...(CLI_CONFIG_ENV_EXCLUDED[path] === undefined ? {} : { noEnv: true as const }),
-        ...(envAliases === undefined
-          ? {}
-          : { env: [deriveCliConfigEnvName(path), ...envAliases] }),
+        ...(envAliases === undefined ? {} : { env: [deriveCliConfigEnvName(path), ...envAliases] }),
       },
     ];
   });
