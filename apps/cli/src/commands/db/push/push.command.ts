@@ -1,6 +1,14 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPush } from "./push.handler.ts";
@@ -66,6 +74,25 @@ export const dbPushCommand = Command.make("push", config).pipe(
     "Push new migrations to the remote database. Vault secrets from config.toml are updated before migrations unless --skip-vault is set.",
   ),
   Command.withShortDescription("Push new migrations to the remote database"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [],
+          noApiEffectFlags: [
+            "include-all",
+            "include-roles",
+            "include-seed",
+            "skip-vault",
+            "dry-run",
+          ],
+        },
+        dbConfig,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "linked" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbPush(flags).pipe(
       withCommandTelemetry({

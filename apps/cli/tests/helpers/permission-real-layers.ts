@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { dbConfigLayer } from "../../src/command-internal/db-config.layer.ts";
 import type { DbConfigResolver } from "../../src/command-internal/db-config.service.ts";
@@ -141,3 +142,70 @@ export const primaryPoolerConfigs = (ref: string) => [
     pool_mode: "transaction",
   },
 ];
+
+/** A Management API request as {@link stubManagementApi} records it. */
+export interface StubbedRequest {
+  readonly method: string;
+  readonly path: string;
+}
+
+/** The recorded requests in the shape the drift check takes. */
+export const asRecordedRequests = (requests: ReadonlyArray<StubbedRequest>) =>
+  requests.map(({ method, path }) => ({ method, url: `https://api.supabase.com${path}` }));
+
+/** Serves the pooler config and a login role for `ref`, which is what the resolver asks for on the linked path. */
+export const serveLinkedDatabase =
+  (ref: string) =>
+  (method: string, path: string): Response | undefined => {
+    if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+      return Response.json(primaryPoolerConfigs(ref));
+    }
+    if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+      return Response.json(
+        { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+        { status: 201 },
+      );
+    }
+    return undefined;
+  };
+
+/** Provides `env` to the effect as a `ConfigProvider`, the way {@link realDbConfigResolver} reads it. */
+export const provideEnv = (env: Record<string, string | undefined>) =>
+  Effect.provideService(
+    ConfigProvider.ConfigProvider,
+    ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
+  );
+
+/**
+ * An `HttpClient` that records each request and answers the project lookup for `ref`, which is
+ * what the real linked-project cache fetches.
+ */
+export function recordingProjectHttpClient(ref: string) {
+  const calls: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls.push({ method: request.method, url: request.url });
+      const found = request.method === "GET" && request.url.endsWith(`/v1/projects/${ref}`);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          found
+            ? Response.json({
+                ref,
+                name: "alpha",
+                organization_id: "org-123",
+                organization_slug: "acme",
+              })
+            : Response.json({ message: "unexpected request" }, { status: 404 }),
+        ),
+      );
+    }),
+  );
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
+}

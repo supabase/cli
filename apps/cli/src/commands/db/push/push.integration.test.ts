@@ -1,12 +1,42 @@
 import { createHash } from "node:crypto";
+import type { NetConnectOpts } from "node:net";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", (importOriginal) =>
+  importOriginal<typeof import("node:net")>().then((net) => ({
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  })),
+);
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -174,6 +204,8 @@ function setup(
     // fired as part of `resolve()`'s own connection work, strictly before `dbPushCore`
     // runs; `mockResolver` is otherwise silent, so tests pin output ordering against it.
     simulateInitialisingLoginRole?: boolean;
+    /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+    realLayers?: boolean;
   },
 ) {
   const workdirLayer = Layer.effectDiscard(
@@ -225,11 +257,18 @@ function setup(
           }
         : undefined,
   });
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     workdirLayer,
     out.layer,
     conn.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: conn.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     mockCommandSettings({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
@@ -244,7 +283,12 @@ function setup(
     Layer.succeed(DnsResolverFlag, "native"),
     projectRefLayer,
     telemetry.layer,
-    linkedCache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : linkedCache.layer,
   );
   return {
     layer,
@@ -253,6 +297,7 @@ function setup(
     telemetry,
     linkedCache,
     resolver,
+    projectHttp,
   };
 }
 
@@ -880,6 +925,107 @@ describe("db push", () => {
       expect(out.stdoutText).toBe("Remote database is up to date.\n");
     });
   });
+
+  it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+    // No target flag: push defaults to the linked project.
+    const { layer, projectHttp } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--project-ref", VALID_REF],
+      isLocal: false,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(layer));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db push",
+        activeFlags: { "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const { layer, projectHttp } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--linked", "--project-ref", VALID_REF, "--password", "secret"],
+      isLocal: false,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(VALID_REF),
+        password: Option.some("secret"),
+      }).pipe(Effect.provide(layer));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "db push",
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "makes no Management API request for --local through the real resolver and cache",
+    () => {
+      const { layer, projectHttp } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "push", "--local"],
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(requests).toEqual([]);
+        expect(projectHttp.calls).toEqual([]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+        assertPermissionDrift({
+          command: "db push",
+          activeFlags: { local: true },
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
 
   it.effect("surfaces an apply error with statement context", () => {
     const { layer } = setup(tmp.current, {

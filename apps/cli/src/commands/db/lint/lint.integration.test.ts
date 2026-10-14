@@ -1,13 +1,46 @@
+import type { NetConnectOpts } from "node:net";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", (importOriginal) =>
+  importOriginal<typeof import("node:net")>().then((net) => ({
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  })),
+);
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
+  mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   sequentialExecBatch,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -174,6 +207,8 @@ interface SetupOpts {
   listFails?: boolean;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
+  realLayers?: { readonly workdir: string };
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -191,18 +226,30 @@ function setup(opts: SetupOpts = {}) {
   const processControl = mockProcessControl();
   const projectRef = mockProjectRef();
   const cache = mockLinkedProjectCacheTracked();
+  const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === undefined
+      ? resolver.layer
+      : realDbConfigResolver({
+          workdir: opts.realLayers.workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }),
     connection.layer,
     telemetry.layer,
     processControl.layer,
     projectRef.layer,
-    cache.layer,
+    opts.realLayers === undefined
+      ? cache.layer
+      : realLinkedProjectCache({
+          httpClient: http.layer,
+          cliSettings: mockCommandSettings({ workdir: opts.realLayers.workdir }),
+        }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
-  return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache };
+  return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }
 
 const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
@@ -216,6 +263,8 @@ const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
 });
 
 describe("db lint", () => {
+  const tempRoot = useTempWorkdir("supabase-db-lint-int-");
+
   it.effect("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],
@@ -496,6 +545,128 @@ describe("db lint", () => {
       expect(cache.cachedRef).toBe(FLAG_REF);
       expect(cache.cachedRef).not.toBe(VALID_REF);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+    const { layer, http } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["db", "lint", "--linked", "--project-ref", VALID_REF],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbLint(
+        flags({ schema: ["public"], linked: true, projectRef: Option.some(VALID_REF) }),
+      );
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { linked: true, "project-ref": VALID_REF, schema: true },
+        requests: [...asRecordedRequests(requests), ...http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "makes no Management API request for --local through the real resolver and cache",
+    () => {
+      const { layer, http } = setup({
+        checkRows: { public: [] },
+        args: ["db", "lint", "--local"],
+        realLayers: { workdir: tempRoot.current },
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbLint(flags({ schema: ["public"], local: true }));
+        expect(requests).toEqual([]);
+        expect(http.calls).toEqual([]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          false,
+        );
+        assertPermissionDrift({
+          command: "db lint",
+          activeFlags: { local: true, schema: true },
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("defaults to the local target and makes no Management API request", () => {
+    const { layer, http } = setup({
+      checkRows: { public: [] },
+      args: ["db", "lint"],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbLint(flags({ schema: ["public"] }));
+      expect(requests).toEqual([]);
+      expect(http.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { schema: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("--linked=false still reaches the linked database through the real resolver", () => {
+    const { layer, http } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["db", "lint", "--linked=false", "--project-ref", VALID_REF],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(VALID_REF) }));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { linked: false, "project-ref": VALID_REF, schema: true },
+        requests: [...asRecordedRequests(requests), ...http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 
   it.effect("does not write the linked-project cache for a local run", () => {
