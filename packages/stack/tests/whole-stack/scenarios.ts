@@ -401,6 +401,7 @@ export const allEager = (runtime: Runtime) =>
 export const parallel = (runtime: Runtime) =>
   Effect.scoped(
     Effect.gen(function* () {
+      console.log(`PHASE ${runtime} create ${Date.now()}`);
       const left = yield* wholeStack(runtime);
       const right = yield* wholeStack(runtime);
       yield* Effect.all([assertDefaultPolicy(left), assertDefaultPolicy(right)], {
@@ -409,10 +410,12 @@ export const parallel = (runtime: Runtime) =>
       yield* Effect.all([clearIdleTimers(left), clearIdleTimers(right)], {
         concurrency: "unbounded",
       });
+      console.log(`PHASE ${runtime} start ${Date.now()}`);
       yield* Effect.all([left.stack.composition.start, right.stack.composition.start], {
         concurrency: "unbounded",
       });
       expect(left.stack.id).not.toBe(right.stack.id);
+      console.log(`PHASE ${runtime} exercise ${Date.now()}`);
       const [leftLedger, rightLedger] = yield* Effect.all(
         [
           exerciseStack(left, "parallel-left", "parallel-shared"),
@@ -443,6 +446,7 @@ export const parallel = (runtime: Runtime) =>
       expect(new Set([...leftEndpoints, ...rightEndpoints]).size).toBe(
         leftEndpoints.length + rightEndpoints.length,
       );
+      console.log(`PHASE ${runtime} checks ${Date.now()}`);
       const leftAnalyticsUrl = (yield* service(left, "analytics").credentials()).url;
       const rightAnalyticsUrl = (yield* service(right, "analytics").credentials()).url;
       if (leftAnalyticsUrl === undefined || rightAnalyticsUrl === undefined)
@@ -481,6 +485,7 @@ export const parallel = (runtime: Runtime) =>
             "whole_stack_items",
             "UPDATE",
           );
+          console.log(`PHASE ${runtime} stop-left ${Date.now()}`);
           yield* stopWithDiagnostics(left);
           const reopenedLeft = yield* open({ ...left.locations, id: left.stack.id });
           yield* setStackOwner(left, reopenedLeft);
@@ -491,6 +496,7 @@ export const parallel = (runtime: Runtime) =>
           };
           yield* clearIdleTimers(reopenedLeftFixture);
           yield* refreshLogTails(reopenedLeftFixture);
+          console.log(`PHASE ${runtime} reopen-start ${Date.now()}`);
           yield* reopenedLeft.composition.start;
           expect(
             yield* sql(
@@ -499,6 +505,7 @@ export const parallel = (runtime: Runtime) =>
             ),
           ).toBe("parallel-shared");
           yield* assertStoredImage(reopenedLeftFixture, "parallel-shared");
+          console.log(`PHASE ${runtime} reopen-exercise ${Date.now()}`);
           const reopenedLedger = yield* exerciseStack(
             reopenedLeftFixture,
             "parallel-left-reopened",
@@ -507,11 +514,13 @@ export const parallel = (runtime: Runtime) =>
           const reopenedWorkloads = yield* captureWorkloads(runtime, reopenedLeftFixture);
           yield* assertOwnedPathsPresent(reopenedLeftFixture);
           const ownerPid = yield* captureOwnerPid(reopenedLeftFixture.locations, reopenedLeft.id);
+          console.log(`PHASE ${runtime} destroy-left ${Date.now()}`);
           yield* reopenedLeft.destroy;
           yield* assertOwnerExited(ownerPid);
           yield* clearStackOwner(left);
           yield* assertWorkloadsGone(runtime, reopenedLeftFixture, reopenedWorkloads, true);
           yield* assertOwnedPathsGone(reopenedLeftFixture);
+          console.log(`PHASE ${runtime} right-checks ${Date.now()}`);
           expect((yield* rightRest.status).lifecycle).toBe("running");
           yield* assertStoredMarker(right, "parallel-shared");
           const update = yield* jsonRequest(
@@ -535,7 +544,9 @@ export const parallel = (runtime: Runtime) =>
           });
         }),
       );
+      console.log(`PHASE ${runtime} right-after ${Date.now()}`);
       yield* exerciseStack(right, "parallel-right-after");
+      console.log(`PHASE ${runtime} end ${Date.now()}`);
     }),
   );
 
