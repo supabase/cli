@@ -115,6 +115,7 @@
     "!apps/cli/src/command-internal/temp-paths.*",
     "!apps/cli/src/command-internal/tenant-*",
     "!apps/cli/src/command-internal/timestamp.format.*",
+    "!apps/cli/src/command-internal/upgrade-notice.*",
     "!apps/cli/src/command-internal/upgrade-suggest.*",
     "!apps/cli/src/command-internal/vault-decrypt.*",
     "!apps/cli/src/command-internal/vault.*",
