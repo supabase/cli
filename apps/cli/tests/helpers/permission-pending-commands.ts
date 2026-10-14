@@ -35,10 +35,7 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db branch list",
   "db branch switch",
   "db diff",
-  "db dump",
-  "db pull",
   "db remote changes",
-  "db remote commit",
   "db schema declarative generate",
   "db schema declarative sync",
 
