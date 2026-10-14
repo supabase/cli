@@ -857,7 +857,9 @@ describe("native process group cleanup", () => {
           if (Exit.isFailure(result)) {
             const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
             expect(error).toMatchObject({
-              message: "Native launcher did not report a valid workload process group",
+              message: expect.stringMatching(
+                /^Native launcher did not report a valid workload process group: Native workload failed to start: ENOENT/u,
+              ),
             });
           }
         }),

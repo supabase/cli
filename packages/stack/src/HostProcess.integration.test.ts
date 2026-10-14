@@ -24,8 +24,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- reads the spawned owner's own argv.
-import { execFileSync } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -89,17 +87,31 @@ const savedStack = (
 
 /** The live command line of a running process, read the POSIX or Windows way. */
 const processCommandLine = (pid: number) =>
-  process.platform === "win32"
-    ? execFileSync(
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
-        ],
-        { encoding: "utf8" },
-      )
-    : execFileSync("ps", ["-ww", "-p", String(pid), "-o", "args="], { encoding: "utf8" });
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner.string(
+      process.platform === "win32"
+        ? ChildProcess.make(
+            "powershell",
+            [
+              "-NoProfile",
+              "-Command",
+              `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+            ],
+            { stdin: "ignore" },
+          )
+        : ChildProcess.make("ps", ["-ww", "-p", String(pid), "-o", "args="], { stdin: "ignore" }),
+    );
+  }).pipe(
+    Effect.timeoutOrElse({
+      /* A guard only: PowerShell CIM queries on Windows runners have stalled past 30 seconds. */
+      duration: "45 seconds",
+      orElse: () =>
+        Effect.fail(
+          new ProcessTestError({ message: `Reading the command line of ${pid} timed out` }),
+        ),
+    }),
+  );
 
 /** A loopback listener that accepts connections and never answers, counting each one. */
 const silentListener = Effect.acquireRelease(
@@ -608,13 +620,15 @@ it.live(
           register: savedStack(root, "argv-secrecy", registerMarker),
           requestedCreations,
         });
-        yield* Effect.sync(() => {
-          const argv = processCommandLine(access.endpoint.pid);
-          expect(argv).not.toContain(marker);
-          expect(argv).not.toContain(registerMarker);
-        }).pipe(Effect.ensuring(bestEffortShutdown(root)(access)));
+        const argv = yield* processCommandLine(access.endpoint.pid).pipe(
+          Effect.ensuring(bestEffortShutdown(root)(access)),
+        );
+        expect(argv.trim()).not.toBe("");
+        expect(argv).not.toContain(marker);
+        expect(argv).not.toContain(registerMarker);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  60_000,
 );
 
 it.live("hands the owner a private startup payload file that it deletes once read", () =>

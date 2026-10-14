@@ -601,9 +601,9 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
 /**
  * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
  * neither another test's auto allocation nor an outbound socket can already hold it. It stays
- * under 9000, where other files pin fixed ports.
+ * under 3000, below runner services such as RDP on 3389 and other files' fixed ports.
  */
-const pinnedPort = () => 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
+const pinnedPort = () => 1024 + (Math.abs(Hash.string(randomUUID())) % (3_000 - 1024));
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
   Effect.scoped(
