@@ -73,9 +73,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-      - name: Unlock keyring (for cli-go keyring tests)
-        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
-
       - name: Check code quality
         run: pnpm run check:all
 
@@ -110,7 +107,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          go-cache: "false"
 
       - name: Run unit tests
         run: pnpm run test:unit
@@ -145,7 +141,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          go-cache: "false"
           docker-images: "true"
 
       - name: Run integration tests
@@ -242,7 +237,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
           tools: node bun pnpm
           # Windows unpacks the store archive slower than it downloads the packages.
           pnpm-store-cache: ${{ matrix.os != 'windows-latest' }}
@@ -316,7 +310,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       # Keyed per suite so each job saves the artifacts it actually prepared.
       - name: Cache native stack artifacts
@@ -395,19 +388,6 @@ jobs:
           sticky-disks: "true"
           docker-images: "true"
 
-      - name: Cache Go CLI binary
-        id: cache-go-binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: apps/cli-go/supabase-go
-          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
-            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
-
-      - name: Build Go CLI
-        if: steps.cache-go-binary.outputs.cache-hit != 'true'
-        run: go build -o supabase-go .
-        working-directory: apps/cli-go
-
       # The e2e harness invokes `node apps/cli/dist/supabase.js` with
       # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled binary in
       # `apps/cli/dist/`. Build the CLI explicitly before invoking every
@@ -419,14 +399,11 @@ jobs:
         if: matrix.suite == 'cli'
         run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
           SUPABASE_E2E_WORKERS: "4"
 
       - name: Run cli-e2e end-to-end tests
         if: matrix.suite == 'cli-e2e'
         run: pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e
-        env:
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
       # Vitest writes its results cache under a sha1-named directory. The refresh script
       # (apps/cli/scripts/refresh-e2e-timings.ts) merges these into tests/e2e-timings.json.
@@ -471,7 +448,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          go-cache: "false"
           docker-images: ${{ matrix.runtime == 'docker' }}
           native-artifacts: ${{ matrix.runtime == 'native' }}
 
@@ -519,7 +495,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          go-cache: "false"
 
       - name: Setup Podman
         uses: ./.github/actions/setup-podman
