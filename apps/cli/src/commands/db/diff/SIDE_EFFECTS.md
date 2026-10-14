@@ -229,7 +229,9 @@ transaction metadata.
   dropped.
 - `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
   effects are Go's); the Go child's telemetry is disabled so the single
-  `cli_command_executed` event comes from this TS command.
+  `cli_command_executed` event comes from this TS command. When only the deprecated
+  `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` alias is set (shell or project `.env`), its value
+  is passed to the child as `SUPABASE_DB_ORIOLEDB_VERSION` and the deprecation WARN prints once.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.

@@ -1098,7 +1098,7 @@ export const envOverrideLookup = Effect.fnUntraced(function* (
 export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
   envLookup: DbTomlValues["envLookup"],
 ) {
-  const warning = deprecatedOrioleDBVersionEnvWarning(envLookup);
+  const warning = yield* deprecatedOrioleDBVersionEnvWarning(envLookup);
   if (warning !== undefined) yield* (yield* Output).raw(`${warning}\n`, "stderr");
 });
 

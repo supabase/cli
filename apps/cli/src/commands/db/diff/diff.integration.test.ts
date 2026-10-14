@@ -1382,6 +1382,29 @@ describe("db diff", () => {
     },
   );
 
+  it.effect(
+    "hands the deprecated OrioleDB version alias to the --use-pg-schema Go child under its new name and warns once",
+    () => {
+      const s = setup(tmp.current, {
+        files: { "supabase/.env": "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n" },
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
+        const warning =
+          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+        expect(
+          stderr(s.out)
+            .split("\n")
+            .filter((line) => line === warning),
+        ).toHaveLength(1);
+        expect(s.proxyCalls[0]?.env).toEqual({
+          SUPABASE_TELEMETRY_DISABLED: "1",
+          SUPABASE_DB_ORIOLEDB_VERSION: "17.11.0.002",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("does not print the --use-pg-schema deprecation warning on other diff paths", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {

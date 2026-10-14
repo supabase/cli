@@ -91,7 +91,7 @@ export const loadLocalProjectContext = <E>(
     );
     // Printed beside the loader's deprecated-config WARNs, on the same real console, so it shares
     // their once-per-context-load cadence.
-    const orioleDBEnvWarning = deprecatedOrioleDBVersionEnvWarning((name) =>
+    const orioleDBEnvWarning = yield* deprecatedOrioleDBVersionEnvWarning((name) =>
       envOverride(name, undefined, projectEnvValues),
     );
     if (orioleDBEnvWarning !== undefined) {

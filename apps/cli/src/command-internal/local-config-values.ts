@@ -15,7 +15,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Effect, Option, Schema } from "effect";
+import { Context, Effect, Option, Ref, Schema } from "effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
@@ -1044,13 +1044,33 @@ export function envOverrideOrioleDBVersion(
   );
 }
 
-/** The deprecation warning when `read` finds `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set, if any. */
-export const deprecatedOrioleDBVersionEnvWarning = (
+/**
+ * Set by {@link withSingleOrioleDBVersionEnvWarning}; while unset, every config read that finds the
+ * deprecated OrioleDB env alias prints its WARN.
+ */
+const OrioleDBVersionEnvWarningPrinted = Context.Reference<Option.Option<Ref.Ref<boolean>>>(
+  "supabase/cli/OrioleDBVersionEnvWarningPrinted",
+  { defaultValue: () => Option.none() },
+);
+
+/** Runs `effect` so its config reads print the deprecated OrioleDB env WARN at most once. */
+export const withSingleOrioleDBVersionEnvWarning = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(Ref.make(false), (printed) =>
+    Effect.provideService(effect, OrioleDBVersionEnvWarningPrinted, Option.some(printed)),
+  );
+
+/**
+ * The deprecation warning to print when `read` finds `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set,
+ * unless an enclosing {@link withSingleOrioleDBVersionEnvWarning} already printed it.
+ */
+export const deprecatedOrioleDBVersionEnvWarning = Effect.fnUntraced(function* (
   read: (name: typeof DEPRECATED_ORIOLEDB_VERSION_ENV) => string | undefined,
-): string | undefined =>
-  read(DEPRECATED_ORIOLEDB_VERSION_ENV) === undefined
-    ? undefined
-    : `WARN: ${DEPRECATED_ORIOLEDB_VERSION_ENV} is deprecated and will be removed in v3, use ${ORIOLEDB_VERSION_ENV} instead.`;
+) {
+  if (read(DEPRECATED_ORIOLEDB_VERSION_ENV) === undefined) return undefined;
+  const printed = yield* OrioleDBVersionEnvWarningPrinted;
+  if (Option.isSome(printed) && (yield* Ref.getAndSet(printed.value, true))) return undefined;
+  return `WARN: ${DEPRECATED_ORIOLEDB_VERSION_ENV} is deprecated and will be removed in v3, use ${ORIOLEDB_VERSION_ENV} instead.`;
+});
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
 export function envOverrideDenoVersion(
