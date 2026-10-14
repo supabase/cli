@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -52,6 +51,8 @@ interface SetupOpts {
    * carries a `--profile` the parser would have consumed.
    */
   profileFlag?: string;
+  /** The `SUPABASE_PROFILE` value `CommandSettings` captured. */
+  profileEnv?: string;
 }
 
 function jsonResponse(
@@ -144,7 +145,10 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    profileEnvValue: Option.fromUndefinedOr(opts.profileEnv),
+  });
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
@@ -1042,9 +1046,6 @@ describe("sso add integration", () => {
     return path;
   });
 
-  const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, body);
-
   it.effect(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () =>
@@ -1054,6 +1055,7 @@ describe("sso add integration", () => {
         const { layer, api, cache } = setup({
           cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
           profileFlag: alternate,
+          profileEnv: envProfile,
         });
         return yield* Effect.gen(function* () {
           yield* ssoAdd(defaultFlags);
@@ -1064,7 +1066,7 @@ describe("sso add integration", () => {
           );
           expect(posts[0]?.body).toHaveProperty("domains", ["--profile"]);
           expect(cache.cachedApiUrl).toBe("http://reconciled.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(envProfile, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1096,7 +1098,7 @@ describe("sso add integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1115,7 +1117,7 @@ describe("sso add integration", () => {
         expect(posts[0]?.url).toBe(
           `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1164,7 +1166,7 @@ describe("sso add integration", () => {
           ).toBe(false);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1184,7 +1186,7 @@ describe("sso add integration", () => {
           expect(posts[0]?.url).toBe(
             `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 });

@@ -16,7 +16,6 @@ import {
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -1416,9 +1415,6 @@ describe("sso update integration", () => {
     return path;
   });
 
-  const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, body);
-
   it.effect(
     "profile emulation: repeated --profile resolves last-wins — GET and PUT both target the last file's host",
     () =>
@@ -1442,7 +1438,7 @@ describe("sso update integration", () => {
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
           expect(testSetup.stitchedResponses).toBeGreaterThan(0);
           expect(cache.cachedApiUrl).toBe("http://second.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1469,7 +1465,7 @@ describe("sso update integration", () => {
             );
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1494,7 +1490,7 @@ describe("sso update integration", () => {
             expect(dump).toContain("unexpected error fetching identity provider:");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1531,7 +1527,7 @@ describe("sso update integration", () => {
           const { domains } = yield* decodePutDomains(put?.body);
           expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
           expect(cache.cachedAccessToken).toBeDefined();
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1563,7 +1559,7 @@ describe("sso update integration", () => {
           expect(dump).toContain("Access token not provided. Supply an access token by running");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1599,7 +1595,7 @@ describe("sso update integration", () => {
           expect(dump).not.toContain("Access token not provided");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1626,7 +1622,7 @@ describe("sso update integration", () => {
         yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
         const put = api.requests.find((r) => r.method === "PUT");
         expect(put?.body).toHaveProperty("domains", ["new.com"]);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1645,7 +1641,7 @@ describe("sso update integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1673,7 +1669,7 @@ describe("sso update integration", () => {
             expect(classified.error_fingerprint).toBe("tag:SsoUpdateNetworkError:api_response");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1697,7 +1693,7 @@ describe("sso update integration", () => {
             expect(dump).toContain("unexpected error fetching identity provider: plain text body");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1730,7 +1726,7 @@ describe("sso update integration", () => {
             "http://second.example/v1/organizations/acme/entitlements",
           );
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1751,6 +1747,6 @@ describe("sso update integration", () => {
         ).toBe(false);
       }
       expect(api.requests.length).toBe(0);
-    }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+    }).pipe(Effect.provide(layer));
   });
 });
