@@ -14,8 +14,11 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
+  envOverrideLookup,
+  loadProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -362,6 +365,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
+      // A `migrations` ref provisions a shadow whose project-context load prints this itself.
+      if (migrationsToml === undefined) yield* warnDeprecatedOrioleDBVersionEnv(cfg.envLookup);
       const explicitCtx: PgDeltaContext = {
         projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,
@@ -434,7 +439,21 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // every mode). The delegated Go `db diff --use-pg-schema` still prints its own
       // experimental warning; this is additive, not a replacement, so don't drop it.
       yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+      const envLookup = yield* envOverrideLookup(
+        yield* loadProjectEnv(fs, path, cliSettings.workdir),
+      );
+      yield* warnDeprecatedOrioleDBVersionEnv(envLookup);
+      // The Go child does not know the deprecated alias, so hand it the resolved value.
+      const orioleDBVersionAlias =
+        envLookup("SUPABASE_DB_ORIOLEDB_VERSION") === undefined
+          ? envLookup("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION")
+          : undefined;
+      const env = {
+        SUPABASE_TELEMETRY_DISABLED: "1",
+        ...(orioleDBVersionAlias === undefined
+          ? {}
+          : { SUPABASE_DB_ORIOLEDB_VERSION: orioleDBVersionAlias }),
+      };
       // In machine-output mode the child's stdout is captured and re-emitted as a structured
       // envelope, so scripted callers get valid JSON instead of the raw SQL. The delegated
       // child owns any `--file` write, so the written path isn't introspectable here (`file:

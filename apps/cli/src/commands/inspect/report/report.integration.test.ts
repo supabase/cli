@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   DateTime,
   Effect,
   Exit,
@@ -11,13 +12,32 @@ import {
   Path,
   PlatformError,
 } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockTelemetryStateTracked,
+  useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  realDbConfigResolver,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -133,6 +153,8 @@ interface SetupOpts {
   workdir?: string;
   /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` against `workdir`. */
+  realLayers?: boolean;
 }
 
 function setupReport(opts: SetupOpts = {}) {
@@ -150,7 +172,13 @@ function setupReport(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers !== true || opts.workdir === undefined
+      ? resolver.layer
+      : realDbConfigResolver({
+          workdir: opts.workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }),
     connection.layer,
     telemetry.layer,
     Layer.succeed(DnsResolverFlag, "native"),
@@ -163,7 +191,14 @@ function setupReport(opts: SetupOpts = {}) {
       : mockRuntimeInfo({ cwd: opts.cwd }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
-    cliConfigProviderLayer,
+    opts.realLayers !== true
+      ? cliConfigProviderLayer
+      : ConfigProvider.layer(
+          ConfigProvider.fromEnvRecord(
+            { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+            { preserveEmptyStrings: true },
+          ),
+        ),
   );
   return { layer, out, resolver, connection, telemetry };
 }
@@ -669,5 +704,63 @@ describe("inspect report", () => {
       yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("inspect report through the real database-config resolver", () => {
+  const tempRoot = useTempWorkdir("supabase-inspect-report-int-");
+
+  it.effect("mints a login role for the linked project and writes every CSV", () => {
+    const { layer, connection } = setupReport({
+      csvs: DEFAULT_RULE_CSVS,
+      isLocal: false,
+      cliArgs: ["inspect", "report", "--project-ref", VALID_REF],
+      workdir: tempRoot.current,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(VALID_REF) }));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      const { files } = yield* dateFolderContents(base);
+      expect(files).toHaveLength(14);
+      expect(connection.copiedSql).toHaveLength(14);
+      assertPermissionDrift({
+        command: "inspect report",
+        activeFlags: { "project-ref": VALID_REF, "output-dir": true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
+
+  it.effect("makes no Management API request for --local", () => {
+    const { layer, connection } = setupReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["inspect", "report", "--local"],
+      workdir: tempRoot.current,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* stubManagementApi(requests, () => undefined);
+      yield* inspectReport(flags({ outputDir: base, local: true }));
+      const { files } = yield* dateFolderContents(base);
+      expect(files).toHaveLength(14);
+      expect(connection.copiedSql).toHaveLength(14);
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "inspect report",
+        activeFlags: { local: true, "output-dir": true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
   });
 });

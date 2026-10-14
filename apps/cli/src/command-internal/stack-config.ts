@@ -33,6 +33,7 @@ import {
   envOverrideEdgeRuntimePolicy,
   envOverrideMaxClientConn,
   envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
   envOverridePort,
   envOverridePoolMode,
   envOverrideRealtimeIpVersion,
@@ -132,6 +133,8 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
 export interface StackEndpointSetting {
   readonly configPath: string;
   readonly envVar: string;
+  /** A deprecated alias of `envVar`, honored only while `envVar` is unset. */
+  readonly deprecatedEnvVar?: string;
 }
 
 // Shared by `createCreations` and `stackEndpointSetting`; a new endpoint also needs an entry in
@@ -233,6 +236,7 @@ export const stackMajorVersionSetting: StackEndpointSetting = {
 export const stackOrioledbVersionSetting: StackEndpointSetting = {
   configPath: "db.orioledb_version",
   envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
+  deprecatedEnvVar: "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
 };
 
 const authProviderNames = [
@@ -727,7 +731,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
-      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
+      orioledb_version: envOverrideOrioleDBVersion(db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },

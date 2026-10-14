@@ -101,6 +101,7 @@ The `--output`/`-o` flag does not change deploy output.
 - Requires a linked project unless `--project-ref` is provided.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
+- A Function resolved through a per-function `import_map.json` (no `deno.json`/`deno.jsonc` beside it, no configured or `--import-map` override) prints `WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: <slug>, ...` to stderr once per deploy; stdout is unaffected.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
   global `--yes` skips the prompt.

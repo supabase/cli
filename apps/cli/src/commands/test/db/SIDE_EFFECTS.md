@@ -49,14 +49,15 @@ Managed stack `--local` prove runs the catalog `pg_prove` tool through the ownin
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                              | Required?                                     |
-| ---------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| `SUPABASE_DB_PASSWORD`       | `--linked`: skip temporary login-role creation                       | no                                            |
-| `SUPABASE_ACCESS_TOKEN`      | `--linked`: Management API auth                                      | no (falls back to keyring/file)               |
-| `SUPABASE_SERVICES_HOSTNAME` | `--local`: overrides the local DB host (dev-container/remote Docker) | no (defaults via `DOCKER_HOST` → `127.0.0.1`) |
-| `DOCKER_HOST`                | `--local`: tcp daemon host used when no services-hostname override   | no                                            |
-| `BITBUCKET_CLONE_DIR`        | when set, omit `--security-opt label:disable` (Bitbucket rejects it) | no                                            |
-| `DEBUG` / `--debug`          | append `--verbose` to `pg_prove`                                     | no                                            |
+| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| `SUPABASE_DB_PASSWORD`                   | `--linked`: skip temporary login-role creation                                                                                                                                                                                             | no                                            |
+| `SUPABASE_ACCESS_TOKEN`                  | `--linked`: Management API auth                                                                                                                                                                                                            | no (falls back to keyring/file)               |
+| `SUPABASE_SERVICES_HOSTNAME`             | `--local`: overrides the local DB host (dev-container/remote Docker)                                                                                                                                                                       | no (defaults via `DOCKER_HOST` → `127.0.0.1`) |
+| `DOCKER_HOST`                            | `--local`: tcp daemon host used when no services-hostname override                                                                                                                                                                         | no                                            |
+| `BITBUCKET_CLONE_DIR`                    | when set, omit `--security-opt label:disable` (Bitbucket rejects it)                                                                                                                                                                       | no                                            |
+| `DEBUG` / `--debug`                      | append `--verbose` to `pg_prove`                                                                                                                                                                                                           | no                                            |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                            |
 
 ## Exit Codes
 

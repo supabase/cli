@@ -423,6 +423,16 @@ export function statusValuesFromState(
   return { values, names, local };
 }
 
+/** The stderr warning for the deprecated `INBUCKET_URL` field, when {@link statusValuesFromState} emits it. */
+export function deprecatedStatusFieldWarning(
+  state: StatusState,
+  overrides: ReadonlyMap<string, string>,
+): string | undefined {
+  if (!state.inbucketEnabled) return undefined;
+  const nameFor = (field: StatusField) => overrides.get(field.fieldKey) ?? field.defaultName;
+  return `WARN: ${nameFor(INBUCKET_URL)} is deprecated and will be removed in v3, use ${nameFor(MAILPIT_URL)} instead.\n`;
+}
+
 /**
  * Convenience wrapper combining {@link resolveStatusLocalState}, {@link gateStatusState}, and
  * {@link statusValuesFromState} in one call — used by tests needing only a single override

@@ -2,7 +2,31 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 
 import {
@@ -20,6 +44,8 @@ import {
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
@@ -76,6 +102,8 @@ interface SetupOpts {
   exportFails?: boolean;
   staleLocalImage?: boolean;
   stackBackend?: boolean;
+  /** Runs the real resolver and linked-project cache; `workdir` must be a real directory. */
+  realLayers?: boolean;
 }
 
 /** What the handler handed the engine for one `exportDeclarativeSchema` call. */
@@ -312,14 +340,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.provide(child.layer),
     Layer.provide(processControl.layer),
   );
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     seam,
     engine,
     mockLocalDockerEngineUnavailableLayer,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: dbConn,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     proxy,
     dbConn,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
@@ -359,6 +399,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     engineExportCalls,
     resolverCalls,
     proxyCalls,
+    projectHttp,
     localPostgresImageChecks,
     get ensureStartedCalls() {
       return ensureStartedCalls;
@@ -1146,6 +1187,46 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "smart mode: warns once about SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION when the local reset reloads the config",
+    () => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        stdinIsTty: true,
+        yes: true,
+        promptSelectResponses: ["local"],
+      });
+      const consoleErrors: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        consoleErrors.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedMigration(tmp.current);
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", "config.toml"),
+          'project_id = "test"\n',
+        );
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", ".env"),
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n",
+        );
+        yield* dbSchemaDeclarativeGenerate(flags());
+        expect(localResetCreateArgs(s.child.spawned)).not.toBeUndefined();
+        const warning =
+          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+        const stderrLines = [
+          ...s.out.rawChunks
+            .filter((c) => c.stream === "stderr")
+            .flatMap((c) => c.text.split("\n")),
+          ...consoleErrors,
+        ];
+        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
+
   it.effect("smart mode: forwards --network-id to the local reset", () => {
     const s = setup(tmp.current, {
       experimental: true,
@@ -1222,4 +1303,160 @@ describe("db schema declarative generate integration", () => {
       });
     }).pipe(Effect.provide(s.layer));
   });
+});
+
+describe("db schema declarative generate permissions through the real resolver and cache", () => {
+  const tmp = useTempWorkdir();
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    calls.map(({ method, url }) => `${method} ${url}`);
+  const saveLinkedRef = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
+    yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
+  });
+
+  it.effect("mints a login role and fills the cache for --linked", () => {
+    const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* reachableDirectHost;
+      yield* saveLinkedRef;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.engineExportCalls).toHaveLength(1);
+      expect(asLines(requests)).toEqual([loginRoleRequest]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db schema declarative generate",
+        activeFlags: { linked: true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not mint a login role for --linked with --password", () => {
+    const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* saveLinkedRef;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbSchemaDeclarativeGenerate(
+        flags({ linked: Option.some(true), password: Option.some("secret") }),
+      ).pipe(Effect.provide(s.layer));
+      expect(requests).toEqual([]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      assertPermissionDrift({
+        command: "db schema declarative generate",
+        activeFlags: { linked: true, password: true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --local", () => {
+    const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* saveLinkedRef;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.engineExportCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db schema declarative generate",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --db-url", () => {
+    const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* saveLinkedRef;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbSchemaDeclarativeGenerate(
+        flags({ dbUrl: Option.some("postgres://alice:secret@example.com:6543/appdb") }),
+      ).pipe(Effect.provide(s.layer));
+      expect(s.engineExportCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db schema declarative generate",
+        activeFlags: { "db-url": true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "mints a login role and fills the cache when the prompt picks the linked project",
+    () => {
+      const s = setup(tmp.current, {
+        realLayers: true,
+        stdinIsTty: true,
+        projectId: Option.some(VALID_REF),
+        promptSelectResponses: ["linked"],
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* reachableDirectHost;
+        yield* saveLinkedRef;
+        yield* seedMigration(tmp.current);
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* dbSchemaDeclarativeGenerate(flags()).pipe(Effect.provide(s.layer));
+        expect(s.out.promptSelectCalls[0]?.options.map((o) => o.value)).toEqual([
+          "local",
+          "linked",
+          "custom",
+        ]);
+        // The prompt path's calls carry a prerequisite, so the exact check skips them: assert them
+        // directly.
+        expect(asLines(requests)).toEqual([loginRoleRequest]);
+        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+        assertPermissionDrift({
+          command: "db schema declarative generate",
+          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
 });

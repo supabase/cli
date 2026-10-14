@@ -26,7 +26,11 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import { checkDbToml, loadProjectEnv } from "../../command-internal/db-config.toml-read.ts";
+import {
+  checkDbToml,
+  loadProjectEnv,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
@@ -229,6 +233,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
     yield* linkServicesCore({
       ref: projectRef,

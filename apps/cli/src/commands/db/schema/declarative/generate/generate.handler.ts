@@ -15,10 +15,12 @@ import {
   loadProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
 } from "../../../../../command-internal/db-config.toml-read.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
+import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
 import {
   isPgDeltaDebugEnabled,
   resolvePgDeltaProjectId,
@@ -73,6 +75,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
+    yield* warnDeprecatedOrioleDBVersionEnv(baseToml.envLookup);
     // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
     // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
@@ -263,6 +266,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
     yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
   }).pipe(
+    // Starting or resetting the local database loads the project context, which would print the
+    // OrioleDB env WARN again.
+    withSingleOrioleDBVersionEnvWarning,
     // Writes the linked-project cache for any resolved ref, on success and failure. Only
     // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
     // token is missing, or the GET is non-200.

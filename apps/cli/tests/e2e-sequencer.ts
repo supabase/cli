@@ -4,6 +4,7 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 /** Bun `--timings` file of measured e2e file durations, refreshed from CI artifacts. */
 const TIMINGS_FILE = "tests/e2e-timings.json";
+const E2E_PROJECTS = new Set(["e2e", "e2e-exclusive"]);
 
 /** Duration assumed for every file while no timing has been measured yet. */
 export const DEFAULT_DURATION_MS = 30_000;
@@ -92,13 +93,13 @@ export function readTimings(root: string): Readonly<Record<string, number>> | un
 }
 
 /**
- * Shards the e2e project by measured duration. Other projects, and the e2e project while
+ * Shards the e2e projects by measured duration. Other projects, and the e2e projects while
  * the timings file is absent, keep Vitest's hash split.
  */
 export class E2eSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
     const { root, shard } = this.ctx.config;
-    const timings = files.every((spec) => spec.project.name === "e2e")
+    const timings = files.every((spec) => E2E_PROJECTS.has(spec.project.name))
       ? readTimings(root)
       : undefined;
     if (shard === undefined || timings === undefined) {

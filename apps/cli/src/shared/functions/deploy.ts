@@ -2212,7 +2212,7 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
 
     if (seenDeprecatedImportMap.size > 0) {
       yield* output.raw(
-        `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
+        `WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: ${[...seenDeprecatedImportMap].join(", ")}\n`,
         "stderr",
       );
     }
