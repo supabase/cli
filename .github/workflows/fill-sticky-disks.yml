@@ -87,3 +87,39 @@ jobs:
       - name: Stop Docker so its image disk can be saved
         if: always()
         run: sudo systemctl stop docker.socket docker.service
+
+  # macOS and Windows test jobs restore actions/cache entries, which pull
+  # requests and the merge queue can only read from their base branch.
+  warm-caches:
+    name: Warm caches (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [blacksmith-6vcpu-macos-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Inputs match the test jobs so the saved keys are the ones they restore.
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+          tools: node bun pnpm
+          pnpm-store-cache: ${{ matrix.os != 'windows-latest' }}
+
+      - name: Cache native stack artifacts
+        if: matrix.os == 'blacksmith-6vcpu-macos-latest'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/supabase-stack-artifacts
+          key: stack-artifacts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/stack/src/Artifacts.ts') }}
+
+      - name: Download native stack artifacts
+        if: matrix.os == 'blacksmith-6vcpu-macos-latest'
+        run: pnpm --filter @supabase/stack prepare:test-artifacts
