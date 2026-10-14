@@ -58,7 +58,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "gen bearer-jwt",
   "gen keys",
   "gen signing-key",
-  "gen types",
 
   "init",
 
