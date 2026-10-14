@@ -450,3 +450,60 @@ jobs:
             exit 1
           fi
           echo "All e2e jobs reported: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}, stack-native-scenarios=${{ needs.test-stack-native-scenarios.result }}, stack-podman-integration=${{ needs.test-stack-podman-integration.result }}"
+
+  flake-stress:
+    if: github.event_name == 'pull_request' && github.head_ref == '7ttp/few-flakes'
+    name: Flake stress (${{ matrix.suite }}, ${{ matrix.attempt }}/5)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5]
+        suite: [stack-linux, native-macos, stack-windows]
+        include:
+          - suite: stack-linux
+            os: blacksmith-8vcpu-ubuntu-2404
+          - suite: native-macos
+            os: blacksmith-6vcpu-macos-latest
+          - suite: stack-windows
+            os: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Run stack fixtures
+        if: matrix.suite == 'stack-linux'
+        working-directory: packages/stack
+        run: >-
+          pnpm test:integration:run
+          src/runtime/native-process.integration.test.ts
+          src/host/LogflareStorage.integration.test.ts
+          src/Owner.logs.integration.test.ts
+          src/Network.integration.test.ts
+          --passWithNoTests=false
+
+      - name: Run native lifecycle on macOS
+        if: matrix.suite == 'native-macos'
+        working-directory: packages/stack
+        run: >-
+          pnpm test:e2e:run
+          src/whole-stack.native.lifecycle.e2e.test.ts
+          --passWithNoTests=false
+
+      - name: Run host process and network fixtures on Windows
+        if: matrix.suite == 'stack-windows'
+        working-directory: packages/stack
+        run: >-
+          pnpm test:integration:run
+          src/HostProcess.integration.test.ts
+          src/Network.integration.test.ts
+          --passWithNoTests=false
