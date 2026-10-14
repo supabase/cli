@@ -1349,7 +1349,7 @@ describe("db dump permissions through the real resolver and cache", () => {
   const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
   const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
 
-  it.live("mints a login role and fills the cache for the default linked target", () => {
+  it.effect("mints a login role and fills the cache for the default linked target", () => {
     // No target flag: dump defaults to the linked project.
     const { layer, out, projectHttp } = setup({
       workdir: tmp.current,
@@ -1383,7 +1383,7 @@ describe("db dump permissions through the real resolver and cache", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.live("does not mint a login role when --password is given", () => {
+  it.effect("does not mint a login role when --password is given", () => {
     const { layer, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1416,7 +1416,7 @@ describe("db dump permissions through the real resolver and cache", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.live("makes no Management API request for --local and caches nothing", () => {
+  it.effect("makes no Management API request for --local and caches nothing", () => {
     const { layer, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1439,7 +1439,7 @@ describe("db dump permissions through the real resolver and cache", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.live("retries through the pooler after a container IPv6 failure", () => {
+  it.effect("retries through the pooler after a container IPv6 failure", () => {
     const { layer, docker, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
