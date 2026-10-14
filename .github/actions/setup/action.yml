@@ -68,7 +68,7 @@ runs:
     # and merge queue code could otherwise plant dependencies or images that
     # trusted runs later execute.
     # Committing runs prune what the current lockfile no longer uses; bump the
-    # -v2 key segment to reset a disk outright.
+    # -vN key segment to reset a disk outright.
     - name: Detect sticky disks
       id: sticky
       if: inputs.sticky-disks == 'true'
@@ -99,7 +99,7 @@ runs:
       if: inputs.docker-images == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-docker-images-v2-${{ runner.arch }}
+        key: ${{ github.repository }}-docker-images-v3-${{ runner.arch }}
         path: /var/lib/docker
         commit: ${{ steps.sticky.outputs.commit }}
 
@@ -121,7 +121,7 @@ runs:
       if: inputs.native-artifacts == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-stack-artifacts-v1-${{ runner.arch }}
+        key: ${{ github.repository }}-stack-artifacts-v2-${{ runner.arch }}
         path: ${{ steps.native-artifacts.outputs.path }}
         commit: ${{ steps.sticky.outputs.commit }}
 
@@ -145,7 +145,7 @@ runs:
       if: inputs.dependency-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-pnpm-store-v2-${{ runner.arch }}
+        key: ${{ github.repository }}-pnpm-store-v3-${{ runner.arch }}
         path: ${{ steps.pnpm-store.outputs.path }}
         commit: ${{ steps.sticky.outputs.commit }}
 
@@ -201,7 +201,7 @@ runs:
       if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-go-mod-v2-${{ runner.arch }}
+        key: ${{ github.repository }}-go-mod-v3-${{ runner.arch }}
         path: ${{ steps.go-cache.outputs.mod }}
         commit: ${{ steps.sticky.outputs.commit }}
 
@@ -209,7 +209,7 @@ runs:
       if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
       uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
       with:
-        key: ${{ github.repository }}-go-build-v2-${{ runner.arch }}
+        key: ${{ github.repository }}-go-build-v3-${{ runner.arch }}
         path: ${{ steps.go-cache.outputs.build }}
         commit: ${{ steps.sticky.outputs.commit }}
 
