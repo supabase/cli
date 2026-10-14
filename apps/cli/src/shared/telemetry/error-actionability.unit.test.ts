@@ -345,6 +345,12 @@ describe("classifyCliCauseActionability", () => {
         ),
         "error:Defect:PlatformError:Busy:FileSystem.readFile",
       ],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({ _tag: "WouldBlock", module: "Stdin", method: "read" }),
+        ),
+        "error:Defect:PlatformError:WouldBlock:Stdin.read",
+      ],
       [platformDefectWith("_tag", secret), "error:Defect:PlatformError"],
       [platformDefectWith("module", secret), "error:Defect:PlatformError"],
       [platformDefectWith("method", "a b"), "error:Defect:PlatformError"],

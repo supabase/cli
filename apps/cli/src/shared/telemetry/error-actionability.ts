@@ -1177,12 +1177,13 @@ const platformErrorReasons: ReadonlySet<string> = new Set<PlatformError.SystemEr
   "WriteZero",
 ]);
 
-// The Effect platform services that raise PlatformError for local I/O.
+// The Effect platform services, and the CLI's stdin reader, that raise PlatformError for local I/O.
 const platformErrorModules: ReadonlySet<string> = new Set([
   "ChildProcess",
   "Crypto",
   "FileSystem",
   "Path",
+  "Stdin",
   "Stdio",
   "Terminal",
 ]);
