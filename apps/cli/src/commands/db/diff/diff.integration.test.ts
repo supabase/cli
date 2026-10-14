@@ -1005,6 +1005,8 @@ describe("db diff", () => {
     return Effect.gen(function* () {
       yield* dbDiff(flags({ from: Option.some("linked"), to: Option.some("linked") }));
       expect(s.resolverCalls).toHaveLength(1);
+      expect(s.explicitDiffCalls).toHaveLength(1);
+      expect(s.explicitDiffCalls[0]?.source).toMatchObject({ kind: "database" });
       expect(s.explicitDiffCalls[0]?.source).toEqual(s.explicitDiffCalls[0]?.desired);
     }).pipe(Effect.provide(s.layer));
   });
