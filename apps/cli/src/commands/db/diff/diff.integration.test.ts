@@ -18,11 +18,31 @@ import {
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   FAKE_SHADOW_CONTAINER_ID,
   VALID_REF,
+  VALID_TOKEN,
   failWriteStringMatchingFsLayer,
   failWriteStringOnNthCallFsLayer,
   withConfigEnv,
@@ -141,6 +161,8 @@ interface SetupOpts {
   readonly statefulDocker?: boolean;
   readonly dirs?: ReadonlyArray<string>;
   readonly files?: Readonly<Record<string, string>>;
+  // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
+  readonly realLayers?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -440,6 +462,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -447,7 +470,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     pgDeltaEngine,
     edge,
     docker,
@@ -455,10 +483,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dockerDaemon?.layer ?? shadowSpawnerLayer,
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: shadowDbConnection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     projectRefResolver,
     proxy,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(
       NetworkIdFlag,
@@ -507,6 +545,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
     shadowConnectRefused: shadowDbConnection.shadowConnectRefused,
+    projectHttp,
   };
 }
 
@@ -2663,5 +2702,151 @@ describe("db diff", () => {
         expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
       }).pipe(Effect.provide(BunServices.layer));
     });
+  });
+});
+
+describe("db diff permissions through the real resolver and cache", () => {
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    calls.map(({ method, url }) => `${method} ${url}`);
+
+  it.effect("mints a login role and fills the cache for --linked", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "alter table x;\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(VALID_REF) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for the default local target", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "alter table x;\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDiff(flags()).pipe(Effect.provide(s.layer));
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db diff",
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  for (const side of ["from", "to"] as const) {
+    it.effect(`resolves the linked project for --${side} linked without --linked`, () => {
+      const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+      const requests: Array<StubbedRequest> = [];
+      const refs =
+        side === "from"
+          ? { from: "linked", to: "migrations" }
+          : { from: "migrations", to: "linked" };
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* dbDiff(
+          flags({
+            from: Option.some(refs.from),
+            to: Option.some(refs.to),
+            projectRef: Option.some(VALID_REF),
+          }),
+        ).pipe(Effect.provide(s.layer));
+        expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "db diff",
+          activeFlags: { from: refs.from, to: refs.to, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+  }
+
+  it.effect("makes no Management API request for --from local --to migrations", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("migrations") })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { from: "local", to: "migrations" },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("mints a login role for each side when both --from and --to are linked", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(
+        flags({
+          from: Option.some("linked"),
+          to: Option.some("linked"),
+          projectRef: Option.some(VALID_REF),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([
+        poolerRequest,
+        loginRoleRequest,
+        poolerRequest,
+        loginRoleRequest,
+      ]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { from: "linked", to: "linked", "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

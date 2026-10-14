@@ -82,6 +82,12 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
 ];
 
 /**
+ * The same calls as {@link dbConfig}, for a command that reaches the linked path without
+ * selecting the linked target (`db diff --from linked`, the declarative target prompt).
+ */
+export const dbConfigLinked = block("db-config", linkedEntries);
+
+/**
  * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
  * include it with `withDbTarget`. `db dump`'s container fallback is {@link dbConfigPoolerFallback};
  * `gen types --project-id` fetches the pooler config without `--project-ref`, so that command
