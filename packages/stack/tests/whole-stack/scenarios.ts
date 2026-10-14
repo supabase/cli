@@ -182,6 +182,18 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
     Effect.scoped(
       Effect.gen(function* () {
         yield* prepareSchema(fixture);
+        // Waking Mail and Realtime is the slowest step; start it while auth, REST and storage run.
+        yield* Effect.forEach(["mail", "realtime"] as const, (name) =>
+          service(fixture, name)
+            .credentials()
+            .pipe(
+              Effect.flatMap(({ url }) =>
+                url === undefined ? Effect.void : requestWithHeaders(url, {}),
+              ),
+              Effect.ignore,
+              Effect.forkScoped,
+            ),
+        );
         const authUrl = (yield* service(fixture, "auth").credentials()).url;
         const restUrl = (yield* service(fixture, "rest").credentials()).url;
         if (authUrl === undefined || restUrl === undefined)
