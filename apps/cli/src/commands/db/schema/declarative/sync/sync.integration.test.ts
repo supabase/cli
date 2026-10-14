@@ -12,8 +12,29 @@ import {
   Stream,
   Redacted,
 } from "effect";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import {
   alwaysReadyHttpClientLayer,
@@ -30,6 +51,8 @@ import {
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
@@ -97,6 +120,8 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
+  /** Runs the real resolver and linked-project cache; `workdir` must be a real directory. */
+  realLayers?: boolean;
 }
 
 const SYNC_STACK_ID = "e".repeat(64);
@@ -355,15 +380,27 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }).pipe(Effect.provide(BunServices.layer)),
     }),
   );
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     seam,
     engine,
     mockLocalDockerEngineUnavailableLayer,
     dbConn,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: dbConn,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
@@ -401,6 +438,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbConnectPorts,
     cache,
     telemetry,
+    projectHttp,
     localPostgresImageChecks,
     declarativeExportCalls,
     planDebug,
@@ -1541,5 +1579,105 @@ describe("db schema declarative sync integration", () => {
       });
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
+  });
+});
+
+describe("db schema declarative sync permissions through the real resolver and cache", () => {
+  const tmp = useTempWorkdir();
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    calls.map(({ method, url }) => `${method} ${url}`);
+  const saveLinkedRef = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
+    yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
+  });
+  const reachableDirectHost = Effect.acquireRelease(
+    Effect.sync(() => {
+      fixtureNet.directHostReachable = true;
+    }),
+    () =>
+      Effect.sync(() => {
+        fixtureNet.directHostReachable = false;
+      }),
+  );
+
+  it.effect(
+    "the bootstrap mints a login role and fills the cache when it picks the linked project",
+    () => {
+      const s = setup(tmp.current, {
+        realLayers: true,
+        experimental: true,
+        stdinIsTty: true,
+        diffSql: "",
+        projectId: Option.some(VALID_REF),
+        promptConfirmResponses: [true], // generate a new one? yes
+        promptSelectResponses: ["linked"],
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* reachableDirectHost;
+        yield* saveLinkedRef;
+        yield* seedMigration(tmp.current);
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* Effect.exit(
+          dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+        ).pipe(Effect.provide(s.layer));
+        expect(s.declarativeExportCalls).toHaveLength(1);
+        // The bootstrap's calls carry a prerequisite, so the exact check skips them: assert them
+        // directly.
+        expect(asLines(requests)).toEqual([loginRoleRequest]);
+        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "db schema declarative sync",
+          activeFlags: { "no-cache": true, "no-apply": true },
+          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("the bootstrap fills the cache but mints no login role when it picks local", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      projectId: Option.some(VALID_REF),
+      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
+      promptSelectResponses: ["local"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* saveLinkedRef;
+      yield* seedMigration(tmp.current);
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }))).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.declarativeExportCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      assertPermissionDrift({
+        command: "db schema declarative sync",
+        activeFlags: { "no-apply": true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });
