@@ -695,7 +695,7 @@ describe("buildReviewPayload", () => {
     const review = makeMergedReview({
       findings: [
         makeFinding({ id: "inline", file: "file.ts", line: 10 }),
-        makeFinding({ id: "outside", file: "file.ts", line: 99 }),
+        makeFinding({ id: "outside", file: "file.ts", line: 99, claim: "x".repeat(70_000) }),
         makeFinding({ id: "refuted", adjudication: { verdict: "refuted", reason: "No." } }),
         makeFinding({ id: "advisory", category: "next-impact" }),
       ],
@@ -704,9 +704,10 @@ describe("buildReviewPayload", () => {
 
     expect(payload.commit_id).toBe(footer.headSha);
     expect(payload.comments).toHaveLength(1);
-    const truncated = truncateReviewBody(`${payload.body}${"x".repeat(70_000)}`, footer.runUrl);
-    expect(truncated).toContain(AI_REVIEW_MARKER);
-    expect(parseAiReviewState(truncated)).toEqual({
+    expect(payload.body).toContain("truncated");
+    expect(payload.body).not.toContain(footer.modelsFooter);
+    expect(payload.body).toContain(AI_REVIEW_MARKER);
+    expect(parseAiReviewState(payload.body)).toEqual({
       head: "a".repeat(40),
       complete: false,
       findings: 3,
