@@ -247,7 +247,6 @@ supabase-db-pull:
       Diffing schemas...
       No schema changes found
       The remote database is already in sync with your local migrations — nothing to pull.
-      exit status 1
   - id: custom-schemas
     name: Custom schemas
     code: supabase db pull --schema public,extensions
@@ -259,7 +258,6 @@ supabase-db-pull:
       Diffing schemas: public,extensions
       No schema changes found
       The remote database is already in sync with your local migrations — nothing to pull.
-      exit status 1
 supabase-db-push:
   - id: basic-usage
     name: Basic usage

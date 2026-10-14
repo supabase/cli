@@ -10,7 +10,12 @@ Optionally, a new row can be inserted into the migration history table to reflec
 
 If no entries exist in the migration history table, the behavior depends on the diff engine. Under `pg-delta`, the CLI diffs the remote database against an empty shadow database. Under the legacy `migra` engine, the CLI uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise the command behaves like `db diff --linked` and only diffs schema changes against the remote database.
 
-Pass `--diff-engine pg-delta` to use pg-delta for a single run on a project that hasn't enabled it. The migration-file workflow is unchanged. On an initial pull, the full migration comes from the shadow diff alone. Pass `--declarative` to replace the declarative schema tree from the selected database instead of creating a migration. The tree lives in `supabase/schemas` by default. Change the location with `experimental.pgdelta.declarative_schema_path`. On a project without pg-delta enabled, the export also sets `[db.migrations].schema_paths` to that directory, and `db diff` then fails on the exported tree. Enable pg-delta before using it.
+Pass `--diff-engine pg-delta` to use pg-delta for a single run on a project that hasn't enabled it. The migration-file workflow is unchanged. On an initial pull, the full migration comes from the shadow diff alone. Pass `--declarative` to export the selected database into the declarative schema tree instead of creating a migration. The tree lives in `supabase/schemas` by default. Change the location with `experimental.pgdelta.declarative_schema_path`.
+
+On a project without pg-delta enabled, don't use `--declarative`. The export also points `[db.migrations].schema_paths` at the tree it writes. The next `db diff` applies those files in lexicographic order without resolving dependencies between them, and fails. If you've already run it, enable pg-delta, or undo both changes:
+
+1. Delete the generated tree under `supabase/schemas/`.
+2. Remove the `schema_paths` entry the command added to `config.toml`.
 
 pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_schema_changes.sql` and `<ts+1s>_remote_schema_after_enum_values.sql`), each recorded in the migration history. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.
 
