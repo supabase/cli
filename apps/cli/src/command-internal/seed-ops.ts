@@ -6,6 +6,7 @@ import type { DbExecError } from "./db-connection.errors.ts";
 import type { DbSession } from "./db-connection.service.ts";
 import { checkScannerBufferSize, revertsToLoginRole } from "./migration-apply.ts";
 import { createSeedTable } from "./migration-history.ts";
+import { MigrationSeedError } from "./seed.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
 import { splitAndTrim } from "./sql-split.ts";
 
@@ -117,7 +118,7 @@ export const seedData = <E>(
       const content = yield* fs.readFileString(
         path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
       );
-      yield* checkScannerBufferSize(content, (message) => new Error(message));
+      yield* checkScannerBufferSize(content, (message) => new MigrationSeedError({ message }));
       const lines = splitAndTrim(content);
       const statements = seed.dirty ? [] : lines;
       yield* session.exec("BEGIN");

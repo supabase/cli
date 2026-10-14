@@ -27,7 +27,7 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
         }
         calls.push("UPSERT");
       }
-      return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
+      return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
     },
     extensionExists: () => Effect.die("extensionExists unused"),
     copyToCsv: () => Effect.die("copyToCsv unused"),
@@ -39,13 +39,17 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
 const writeMigrations = Effect.fnUntraced(function* (dir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const migrations: ReadonlyArray<PulledMigration> = [
-    { path: path.join(dir, "20240101000000_a.sql"), version: "20240101000000" },
-    { path: path.join(dir, "20240101000001_b.sql"), version: "20240101000001" },
-  ];
-  yield* fs.writeFileString(migrations[0]!.path, "create table a ();");
-  yield* fs.writeFileString(migrations[1]!.path, "create table b ();");
-  return migrations;
+  const first: PulledMigration = {
+    path: path.join(dir, "20240101000000_a.sql"),
+    version: "20240101000000",
+  };
+  const second: PulledMigration = {
+    path: path.join(dir, "20240101000001_b.sql"),
+    version: "20240101000001",
+  };
+  yield* fs.writeFileString(first.path, "create table a ();");
+  yield* fs.writeFileString(second.path, "create table b ();");
+  return [first, second];
 });
 
 describe("updateMigrationHistory", () => {
@@ -53,7 +57,7 @@ describe("updateMigrationHistory", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectory({ prefix: "pull-sync-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pull-sync-" });
       const migrations = yield* writeMigrations(dir);
       const out = mockOutput();
       const { session, calls } = mockSession();
@@ -74,7 +78,7 @@ describe("updateMigrationHistory", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectory({ prefix: "pull-sync-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pull-sync-" });
       const migrations = yield* writeMigrations(dir);
       const out = mockOutput();
       const { session, calls } = mockSession({ failUpsertAt: 2 });
