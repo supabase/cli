@@ -44,9 +44,12 @@ export class PostgresConfigUpdateNetworkError extends Data.TaggedError(
   "PostgresConfigUpdateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -68,7 +71,7 @@ export class PostgresConfigUpdateUnmarshalError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Constructed only after a 200 status check when `parseJsonObject` fails —
+    // Constructed only after a 2xx status check when the body is not a JSON object --
     // an API response problem, not a raw status failure.
     return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
@@ -88,9 +91,12 @@ export class PostgresConfigDeleteNetworkError extends Data.TaggedError(
   "PostgresConfigDeleteNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -112,7 +118,7 @@ export class PostgresConfigDeleteUnmarshalError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Constructed only after a 200 status check when `parseJsonObject` fails —
+    // Constructed only after a 2xx status check when the body is not a JSON object --
     // an API response problem, not a raw status failure.
     return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }

@@ -38,8 +38,8 @@ export async function setup({
   provide("dockerHostUrl", dockerHostUrl);
 
   if (!isRecording) {
-    // Replay mode — no real API calls; any valid 20-char string works as the
-    // project ref because fixture paths normalize it to __PROJECT_REF__.
+    // Replay mode — no real API calls; PROJECT_REF and ORG_ID default to the ref
+    // recorded fixtures use.
     provide("projectRef", PROJECT_REF);
     provide("orgId", ORG_ID);
     provide("storageBucket", "cli-e2e-bucket");

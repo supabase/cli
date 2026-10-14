@@ -23,6 +23,8 @@
 
 The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwise the command fetches current overrides first, merges the new values locally, then sends the final merged object back via `PUT`.
 
+The keys passed with `--config` (and `restart_database`) are validated locally against the API's request schema before the `PUT`, which mirrors the platform's strict validation: unknown keys and wrongly typed values fail locally and no `PUT` is sent. Stored overrides are forwarded unvalidated, so a stored key this CLI version does not know is preserved. An unknown-key failure names the key and suggests upgrading the CLI; a number given for a size or duration parameter (`work_mem=4096`) suggests passing the value with its unit (`work_mem=4096kB`). The `PUT` is sent once and never retried, since a retried `restart_database` write could restart the database twice, and its response is read as a raw JSON object so every returned key is shown.
+
 ## Environment Variables
 
 | Variable                | Purpose                                                  | Required?                                                      |
@@ -44,9 +46,9 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                            |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                           |
 | `1`  | PUT non-2xx (`PostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                                 |
-| `1`  | PUT transport failure (`PostgresConfigUpdateNetworkError`)                                                                                                                                                                                                                                                                                |
-| `1`  | request serialization failure (`PostgresConfigUpdateSerializeError`)                                                                                                                                                                                                                                                                      |
-| `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError` / `PostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                                                                          |
+| `1`  | PUT transport failure (`PostgresConfigUpdateNetworkError`); the GET retries on 5xx and transport errors first, the PUT does not                                                                                                                                                                                                           |
+| `1`  | rejected before the PUT: unknown or wrongly typed config parameter (`PostgresConfigUpdateSerializeError`, e.g. `unknown Postgres config parameter: foo (...)`, `invalid Postgres config value for work_mem: ...`)                                                                                                                         |
+| `1`  | GET body is not a JSON object (`PostgresConfigGetUnmarshalError`); PUT 2xx body is not a JSON object (`PostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                               |
 
 ## Telemetry Events Fired
 

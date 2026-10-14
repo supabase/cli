@@ -1,6 +1,6 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -49,6 +49,8 @@ interface SetupOpts {
   response?: unknown;
 }
 
+const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-snippets-download-int-");
 
 function setup(opts: SetupOpts = {}) {
@@ -87,13 +89,37 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("prints only a newline in text mode when the snippet carries no SQL string", () => {
-    const { layer, out } = setup({
-      response: { ...SNIPPET_RESPONSE, content: { schema_version: "1.0.0" } },
-    });
+  it.effect("prints only a newline in text mode when the snippet has no content", () => {
+    const { layer, out } = setup({ response: { ...SNIPPET_RESPONSE, content: null } });
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
       expect(out.stdoutText).toBe("\n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits null owner, updated_by and content as the API returned them under json", () => {
+    const body = { ...SNIPPET_RESPONSE, owner: null, updated_by: null, content: null };
+    const { layer, out } = setup({ format: "json", response: body });
+    return Effect.gen(function* () {
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(toJson(success?.data)).toBe(toJson(body));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with a decode network error when the body does not match the contract", () => {
+    const { layer } = setup({ response: { id: VALID_ID } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "SnippetsDownloadNetworkError",
+          decode: true,
+        });
+      }
     }).pipe(Effect.provide(layer));
   });
 

@@ -69,10 +69,13 @@ describe("supabase config push", () => {
                     request.method === "GET" &&
                     url.pathname === `/v1/projects/${TEST_PROJECT_REF}`
                   ) {
-                    return new Response("unavailable", { status: 503 });
+                    return new Response("unavailable", {
+                      status: 503,
+                      headers: { "Retry-After": "0" },
+                    });
                   }
                   if (request.method === "GET" && url.pathname.endsWith("/billing/addons")) {
-                    return Response.json({ available_addons: [] });
+                    return Response.json({ available_addons: [], selected_addons: [] });
                   }
                   if (request.method === "PATCH" && url.pathname.endsWith("/postgrest")) {
                     return request.text().then((body) => {

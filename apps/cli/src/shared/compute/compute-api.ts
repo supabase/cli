@@ -48,6 +48,10 @@ import {
  * so the caller can read it as "not deployed".
  */
 
+type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
+  ? D
+  : never;
+
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
 export interface ComputeRecord {
   readonly name: string;
@@ -58,7 +62,7 @@ export interface ComputeRecord {
     readonly instances: number;
     readonly backend?: string;
   };
-  readonly buildState: "building" | "active" | "failed";
+  readonly buildState: ComputeResourceData["attributes"]["build_state"];
   readonly stateReason?: string;
   readonly imageVersion?: string;
   readonly deleting?: boolean;
@@ -87,10 +91,6 @@ export interface ComputeDeploySpec {
   readonly exposure: string;
   readonly instances: number;
 }
-
-type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
-  ? D
-  : never;
 
 function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   return {

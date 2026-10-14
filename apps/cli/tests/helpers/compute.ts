@@ -179,15 +179,19 @@ function mockComputeHttp(routes: ComputeHttpRoutes) {
 
   const apiLayer = Layer.effect(
     CommandPlatformApi,
-    makeApiClient({
-      baseUrl: "https://api.supabase.com",
-      accessToken: "test-token",
-      userAgent: "supabase",
-      headers: {
-        "X-Supabase-Command": "compute",
-        "X-Supabase-Command-Run-ID": "run-123",
+    // The commands' own retry schedules are under test; the client's backoff must not hide them.
+    makeApiClient(
+      {
+        baseUrl: "https://api.supabase.com",
+        accessToken: "test-token",
+        userAgent: "supabase",
+        headers: {
+          "X-Supabase-Command": "compute",
+          "X-Supabase-Command-Run-ID": "run-123",
+        },
       },
-    }),
+      { retry: { maxRetries: 0 } },
+    ),
   ).pipe(Layer.provide(httpClientLayer));
 
   return {
