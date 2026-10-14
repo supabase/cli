@@ -1,4 +1,9 @@
-import { StackError, type Stack } from "@supabase/stack/effect";
+import {
+  StackError,
+  type ServiceCreationInput,
+  type ServiceInstances,
+  type Stack,
+} from "@supabase/stack/effect";
 import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -19,7 +24,7 @@ import {
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 
-const defaultConfig = Schema.decodeUnknownSync(CliConfigSchema)({});
+const defaultConfig = Schema.decodeSync(CliConfigSchema)({});
 
 const recordingApi = (
   roots: string[],
@@ -38,52 +43,54 @@ const recordingApi = (
         create: Effect.fn("ShadowTest.create")((options) =>
           Effect.sync(() => roots.push(options.projectRoot)).pipe(
             Effect.andThen(api.create(options)),
-            Effect.map((stack) => ({
-              ...stack,
-              services: {
-                ...stack.services,
-                create: Effect.fn("ShadowTest.createService")((creation) =>
-                  stack.services.create(creation).pipe(
-                    Effect.flatMap((instance) => {
-                      if (instance.service !== "database") return Effect.succeed(instance);
-                      return Effect.gen(function* () {
-                        const restored = yield* Ref.make(false);
-                        return {
-                          ...instance,
-                          ready: Effect.gen(function* () {
-                            if (yield* Ref.get(restored)) {
-                              const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
-                                Math.max(0, value - 1),
-                              );
-                              if (remaining > 0)
-                                return yield* new StackError({
-                                  operation: "ready",
-                                  message: "injected ready failure",
-                                });
-                            }
-                            yield* instance.ready;
-                          }),
-                          restoreSnapshot: (key: string) =>
-                            Effect.gen(function* () {
-                              const remaining = yield* Ref.getAndUpdate(failures, (value) =>
-                                Math.max(0, value - 1),
-                              );
-                              if (remaining > 0)
-                                return yield* new StackError({
-                                  operation: "restoreSnapshot",
-                                  message: "injected restore failure",
-                                });
-                              const restoredSnapshot = yield* instance.restoreSnapshot(key);
-                              yield* Ref.set(restored, restoredSnapshot);
-                              return restoredSnapshot;
-                            }),
-                        };
-                      });
+            Effect.map((stack) => {
+              const createService = Effect.fn("ShadowTest.createService")(function* (
+                creation: ServiceCreationInput,
+              ) {
+                const instance = yield* stack.services.create(creation);
+                if (instance.service !== "database") return instance;
+                const restored = yield* Ref.make(false);
+                return {
+                  ...instance,
+                  ready: Effect.gen(function* () {
+                    if (yield* Ref.get(restored)) {
+                      const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
+                        Math.max(0, value - 1),
+                      );
+                      if (remaining > 0)
+                        return yield* new StackError({
+                          operation: "ready",
+                          message: "injected ready failure",
+                        });
+                    }
+                    yield* instance.ready;
+                  }),
+                  restoreSnapshot: (key: string) =>
+                    Effect.gen(function* () {
+                      const remaining = yield* Ref.getAndUpdate(failures, (value) =>
+                        Math.max(0, value - 1),
+                      );
+                      if (remaining > 0)
+                        return yield* new StackError({
+                          operation: "restoreSnapshot",
+                          message: "injected restore failure",
+                        });
+                      const restoredSnapshot = yield* instance.restoreSnapshot(key);
+                      yield* Ref.set(restored, restoredSnapshot);
+                      return restoredSnapshot;
                     }),
-                  ),
-                ),
-              },
-            })),
+                };
+              });
+              function create<Input extends ServiceCreationInput>(
+                creation: Input,
+              ): Effect.Effect<ServiceInstances[Input["service"]], StackError>;
+              function create(
+                creation: ServiceCreationInput,
+              ): Effect.Effect<ServiceInstances[ServiceCreationInput["service"]], StackError> {
+                return createService(creation);
+              }
+              return { ...stack, services: { ...stack.services, create } };
+            }),
             Effect.tap((stack) =>
               Effect.sync(() => {
                 handles.push(stack);
@@ -430,10 +437,7 @@ describe("stack shadow databases", () => {
         const handles: Stack[] = [];
         const result = yield* stackWithShadowDatabase(
           input(fs, path, root),
-          (_handle) =>
-            Effect.gen(function* () {
-              return yield* Effect.fail("consumer failed");
-            }),
+          (_handle) => Effect.fail("consumer failed"),
           { runtime: "native" },
         ).pipe(
           Effect.provide(

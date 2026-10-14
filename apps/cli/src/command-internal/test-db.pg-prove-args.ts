@@ -1,7 +1,10 @@
-import * as nodePath from "node:path";
-import { Option } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Option, Path } from "effect";
 import { postgresMajor } from "@supabase/stack/internal/artifacts";
 import { toDockerMountPath } from "./docker-path.ts";
+
+const nodePath = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
 
 interface PostgresClientMount {
   readonly source: string;
@@ -71,7 +74,7 @@ export function buildPgProveArgs(opts: {
     // `\ir ./sibling.sql` includes resolve relative to the test file's own
     // directory; a single-file bind would leave siblings absent in the
     // container. Directories are mounted as-is.
-    const isFile = nodePath.posix.extname(dockerPath) !== "";
+    const isFile = posixPath.extname(dockerPath) !== "";
     const hostMount = isFile ? nodePath.dirname(fp) : fp;
     const dockerMount = toDockerMountPath(hostMount);
 

@@ -168,12 +168,10 @@ export const resetDisconnectClients = Effect.fn("DbBootstrap.disconnectClients")
       isSqlState(failure.code) &&
       failure.code !== PG_INVALID_CATALOG_NAME
     ) {
-      return yield* Effect.fail(
-        new DbSetupError({
-          message: `failed to disconnect clients: ${failure.message}`,
-          reason: "database",
-        }),
-      );
+      return yield* new DbSetupError({
+        message: `failed to disconnect clients: ${failure.message}`,
+        reason: "database",
+      });
     }
   }
 

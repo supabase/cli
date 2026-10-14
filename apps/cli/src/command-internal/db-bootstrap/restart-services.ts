@@ -121,7 +121,7 @@ function restartSatelliteServices(
     );
     const failures = results.filter(Option.isSome).map((result) => result.value);
     if (failures.length > 0) {
-      return yield* Effect.fail(new RestartServicesError({ message: failures.join("\n") }));
+      return yield* new RestartServicesError({ message: failures.join("\n") });
     }
   }).pipe(Effect.withSpan("RestartServices.restartSatellites"));
 }
@@ -189,12 +189,10 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
     const inspected = yield* inspectContainerState(spawner, kongId).pipe(Effect.result);
     if (Result.isFailure(inspected)) {
       if (isContainerNotFoundMessage(inspected.failure.message)) return;
-      return yield* Effect.fail(
-        new KongReloadError({
-          message: `failed to inspect kong: ${inspected.failure.message}`,
-          suggestion: kongRecoverySuggestion(kongId),
-        }),
-      );
+      return yield* new KongReloadError({
+        message: `failed to inspect kong: ${inspected.failure.message}`,
+        suggestion: kongRecoverySuggestion(kongId),
+      });
     }
     if (!inspected.success.running) return;
     const result = yield* execCaptureCombined(spawner, kongId, [
@@ -207,15 +205,13 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
       const trimmed = result.output.trim();
       // The established message is always "error executing command", never "exit N" — kept
       // byte-identical for compatibility.
-      return yield* Effect.fail(
-        new KongReloadError({
-          message:
-            trimmed.length > 0
-              ? `failed to reload kong: error executing command:\n${trimmed}`
-              : "failed to reload kong: error executing command",
-          suggestion: kongRecoverySuggestion(kongId),
-        }),
-      );
+      return yield* new KongReloadError({
+        message:
+          trimmed.length > 0
+            ? `failed to reload kong: error executing command:\n${trimmed}`
+            : "failed to reload kong: error executing command",
+        suggestion: kongRecoverySuggestion(kongId),
+      });
     }
   }).pipe(Effect.withSpan("RestartServices.reloadKong"));
 }

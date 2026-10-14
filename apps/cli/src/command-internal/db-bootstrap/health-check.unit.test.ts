@@ -71,14 +71,12 @@ function mockHealthSpawner(
       // Mirrors a host where only one runtime is installed: `spawnContainerCli`
       // tries `docker` first and falls back to `podman` when the spawn fails.
       if (opts.runtime !== undefined && binary !== opts.runtime) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${binary}: command not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${binary}: command not found`,
+        });
       }
       spawned.push(args);
 
@@ -845,7 +843,7 @@ function mockShadowDbConnection(
         // A dial that hangs before answering — how a real attempt burns its own connect timeout.
         if (opts.connectMillis !== undefined) yield* Effect.sleep(opts.connectMillis);
         if (attempts.length <= failTimes) {
-          return yield* Effect.fail(new DbConnectError({ message: "connection refused" }));
+          return yield* new DbConnectError({ message: "connection refused" });
         }
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
