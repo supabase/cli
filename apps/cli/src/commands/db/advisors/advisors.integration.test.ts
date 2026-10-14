@@ -25,6 +25,7 @@ import {
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
+  projectResponse,
   provideEnv,
   realDbConfigResolver,
   realLinkedProjectCache,
@@ -263,14 +264,7 @@ function setup(opts: SetupOpts = {}) {
         return Effect.succeed(jsonResponse(request, 200, { lints: opts.performanceLints ?? [] }));
       }
       if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            ref: VALID_REF,
-            name: "alpha",
-            organization_id: "org-123",
-            organization_slug: "acme",
-          }),
-        );
+        return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
