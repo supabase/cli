@@ -154,8 +154,10 @@ export class E2eSequencer extends BaseSequencer {
       key,
       exclusive: spec.project.name === E2E_EXCLUSIVE_PROJECT,
     }));
-    const workers =
+    const maxWorkers =
       files.find((spec) => spec.project.name === E2E_PROJECT)?.project.config.maxWorkers ?? 1;
+    // Concurrent files share one Docker daemon and slow each other, so pack against half the slots.
+    const workers = Math.max(1, Math.floor(maxWorkers / 2));
     const assigned = packShards(shardFiles, timings, shard.count, workers)[shard.index - 1] ?? [];
     return assigned.flatMap((key) => {
       const spec = byKey.get(key);
