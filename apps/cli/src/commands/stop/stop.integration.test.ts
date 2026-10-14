@@ -635,7 +635,7 @@ describe("stop integration", () => {
   /** Each retry sleeps only after the previous attempt, so the clock steps until `stop` settles. */
   const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
     TestClock.adjust("100 millis").pipe(
-      Effect.repeat({ while: () => fiber.pollUnsafe() === undefined, times: 1_000 }),
+      Effect.repeat({ while: () => fiber.pollUnsafe() === undefined }),
       Effect.andThen(Fiber.join(fiber)),
     );
 
