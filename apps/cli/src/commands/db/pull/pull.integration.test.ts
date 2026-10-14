@@ -2500,7 +2500,6 @@ describe("db pull and db remote commit permissions through the real resolver and
   const savedRef = { "supabase/.temp/project-ref": VALID_REF };
 
   it.effect("mints a login role and fills the cache for the default linked target", () => {
-    // No target flag: pull defaults to the linked project.
     const s = setup(tmp.current, { realLayers: true });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -2620,7 +2619,6 @@ describe("db pull and db remote commit permissions through the real resolver and
       expect(error.message).toBe("No schema changes found");
       expect(s.dumpCalls).toHaveLength(2);
       expect(s.dumpCalls[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
-      // The direct login role, then the fallback's pooler config and its own login role.
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db pull",

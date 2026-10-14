@@ -72,7 +72,7 @@ const config = {
   ),
 } as const;
 
-// With no target flag, an interactive run asks where to generate from.
+// Without a target flag, a run whose workdir has migrations can ask where to generate from.
 const noTargetFlag = (fragment: PermissionFragment) =>
   (["db-url", "local", "linked"] as const).reduce(
     (current, flag) => withCondition(current, { flag, present: false }),

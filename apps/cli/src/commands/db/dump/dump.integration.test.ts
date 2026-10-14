@@ -1350,7 +1350,6 @@ describe("db dump permissions through the real resolver and cache", () => {
   const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
 
   it.effect("mints a login role and fills the cache for the default linked target", () => {
-    // No target flag: dump defaults to the linked project.
     const { layer, out, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1460,7 +1459,6 @@ describe("db dump permissions through the real resolver and cache", () => {
       yield* dbDump(flags()).pipe(Effect.provide(layer));
       expect(docker.allOpts).toHaveLength(2);
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
-      // The direct login role, then the fallback's pooler config and its own login role.
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db dump",
