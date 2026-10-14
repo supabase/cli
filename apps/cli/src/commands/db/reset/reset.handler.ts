@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -72,7 +72,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   const body = Effect.gen(function* () {
     const target = resolveDbTargetFlags(cliArgs.args);
@@ -143,7 +143,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       // so a deprecated first migration that `listLocalMigrations` excludes is still accepted.
       const entries = yield* fs
         .readDirectory(migrationsDir)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       const found = entries.some((name) => pathMatch(`${v}_*.sql`, path.basename(name)).matched);
       if (!found) {
         return yield* new DbResetMigrationFileError({
@@ -159,7 +159,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       });
       const total = versions.length;
       const last = flags.last.value;
-      resolvedVersion = last < total ? versions[total - last - 1]! : "-";
+      resolvedVersion = versions[total - last - 1] ?? "-";
     }
 
     const connType = target.connType ?? "local";
@@ -177,7 +177,8 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // even when `resolver.resolve` fails mid-way (merged config, temp-role mint, connection).
     if (connType === "linked") {
       const refResolver = yield* ProjectRefResolver;
-      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
+      const ref = yield* refResolver.loadProjectRef(flags.projectRef);
+      yield* Ref.set(linkedRefForCache, Option.some(ref));
     }
 
     const cfg = yield* resolver.resolve({
@@ -213,7 +214,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // Re-confirms `linkedRefForCache` from the now-resolved `cfg.ref`; a `db-url` target leaves
     // it as whatever the pre-load block set (nothing), since this only fires when linked.
     const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
-    if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
+    if (connType === "linked" && linkedRef !== undefined) {
+      yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
+    }
 
     // Decodes the whole config with env-expansion and weak-typed boolean parsing, applies
     // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
@@ -299,10 +302,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
 
   yield* body.pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined && linkedRefForCache !== ""
-          ? linkedProjectCache.cache(linkedRefForCache)
-          : Effect.void,
+      Ref.get(linkedRefForCache).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => (ref === "" ? Effect.void : linkedProjectCache.cache(ref)),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

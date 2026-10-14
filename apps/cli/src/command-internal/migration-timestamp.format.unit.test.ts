@@ -29,6 +29,11 @@ describe("formatTimestampVersion", () => {
   it("passes through versions that are not exactly 14 digits", () => {
     expect(formatTimestampVersion("202207270642460")).toBe("202207270642460"); // 15 digits
   });
+
+  it("passes through years below 100, unlike Go's time.Parse", () => {
+    expect(formatTimestampVersion("00991231000000")).toBe("00991231000000");
+    expect(formatTimestampVersion("01000101000000")).toBe("0100-01-01 00:00:00");
+  });
 });
 
 describe("parseMigrationVersion", () => {

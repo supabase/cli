@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -24,6 +24,8 @@ import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { MigrationDropError } from "../../../command-internal/drop-objects.ts";
 import { MigrationSeedError } from "../../../command-internal/seed.ts";
+import { MigrationTargetFlagsError, OperationCanceledError } from "../migration.errors.ts";
+import { MigrationLastTooLargeError, MigrationLastZeroError } from "./down.errors.ts";
 import { migrationDown } from "./down.handler.ts";
 import type { MigrationDownFlags } from "./down.command.ts";
 
@@ -175,43 +177,31 @@ const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: str
 const tmp = useTempWorkdir();
 
 describe("migration down", () => {
-  it.live("rejects --last 0", () => {
+  it.effect("rejects --last 0", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationLastZeroError");
-      }
+      const error = yield* migrationDown(flags({ last: 0 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationLastZeroError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves the DB target before rejecting --last 0", () => {
+  it.effect("resolves the DB target before rejecting --last 0", () => {
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
-      const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
-      }
+      const error = yield* migrationDown(flags({ last: 0 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --last >= total applied migrations", () => {
+  it.effect("rejects --last >= total applied migrations", () => {
     const { layer } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
-      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationLastTooLargeError");
-      }
+      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationLastTooLargeError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reverts to the target version on confirm (drop + migrate&seed)", () => {
+  it.effect("reverts to the target version on confirm (drop + migrate&seed)", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -231,7 +221,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "reverts on the project given via --project-ref --linked, overriding the linked ref",
     () => {
       // VALID_REF is the fake resolver's fallback, representing whatever the
@@ -254,64 +244,52 @@ describe("migration down", () => {
     },
   );
 
-  it.live("rejects --project-ref on the default local target", () => {
+  it.effect("rejects --project-ref on the default local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* migrationDown(flags({ last: 1, projectRef: Option.some(FLAG_REF) })).pipe(
-        Effect.exit,
+      const error = yield* migrationDown(
+        flags({ last: 1, projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+      expect(error.message).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
-        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
       expect(execs).toEqual([]);
       expect(queries).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels on a declined prompt", () => {
+  it.effect("cancels on a declined prompt", () => {
     const { layer, execs } = setup(tmp.current, {
       confirm: false,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
-      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
+      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(OperationCanceledError);
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("falls back to NO (cancels) without a TTY and no piped answer", () => {
+  it.effect("falls back to NO (cancels) without a TTY and no piped answer", () => {
     // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, {
       isTTY: false,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
+      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(OperationCanceledError);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in json with --yes", () => {
+  it.effect("emits a structured result in json with --yes", () => {
     const { layer, out } = setup(tmp.current, {
       format: "json",
       yes: true,
@@ -330,7 +308,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.effect("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
     // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     const { layer, out } = setup(tmp.current, {
       format: "json",
@@ -350,7 +328,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a drop-schema failure", () => {
+  it.effect("reports a drop-schema failure", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -358,16 +336,12 @@ describe("migration down", () => {
     });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
-      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value instanceof MigrationDropError).toBe(true);
-      }
+      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationDropError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("seeds data from a new seed file and records its hash", () => {
+  it.effect("seeds data from a new seed file and records its hash", () => {
     const { layer, out, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -383,7 +357,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a seed-apply failure", () => {
+  it.effect("reports a seed-apply failure", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -392,16 +366,12 @@ describe("migration down", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (1);\n");
-      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value instanceof MigrationSeedError).toBe(true);
-      }
+      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationSeedError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips an unchanged seed file", () => {
+  it.effect("skips an unchanged seed file", () => {
     const body = "insert into a values (1);\n";
     const hash = createHash("sha256").update(body).digest("hex");
     const { layer, out, queries } = setup(tmp.current, {
@@ -420,7 +390,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("updates the recorded hash (without re-running) for a changed seed file", () => {
+  it.effect("updates the recorded hash (without re-running) for a changed seed file", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
@@ -438,7 +408,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips migration apply when db.migrations.enabled = false", () => {
+  it.effect("skips migration apply when db.migrations.enabled = false", () => {
     const { layer, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],

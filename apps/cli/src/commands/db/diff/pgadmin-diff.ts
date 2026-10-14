@@ -212,10 +212,17 @@ function pgAdminDockerReason(
   reason: "spawn" | "config" | "inspect" | "pull",
   daemonDown: boolean,
 ): "docker_daemon" | "config" | "image_inspect" | "registry_pull" {
-  if (reason === "spawn" || daemonDown) return "docker_daemon";
-  if (reason === "pull") return "registry_pull";
-  if (reason === "config") return "config";
-  return "image_inspect";
+  if (daemonDown) return "docker_daemon";
+  switch (reason) {
+    case "spawn":
+      return "docker_daemon";
+    case "pull":
+      return "registry_pull";
+    case "config":
+      return "config";
+    case "inspect":
+      return "image_inspect";
+  }
 }
 
 export interface DiffSchemaPgAdminParams {
@@ -245,70 +252,69 @@ export interface DiffSchemaPgAdminParams {
  * run's container exits, not live. The image is passed unresolved so the registry
  * resolver can use the project's merged environment.
  */
-export const diffSchemaPgAdmin = (
+export const diffSchemaPgAdmin = Effect.fn("PgAdmin.diff")(function* (
   params: DiffSchemaPgAdminParams,
-): Effect.Effect<string, DbDiffPgAdminError, DockerRun> =>
-  Effect.gen(function* () {
-    const docker = yield* DockerRun;
-    const labels = {
-      [CLI_PROJECT_LABEL]: params.projectId,
-      [COMPOSE_PROJECT_LABEL]: params.projectId,
-    };
-    const network = { _tag: "named" as const, name: params.networkId };
-    const runs: ReadonlyArray<string | undefined> =
-      params.schema.length === 0 ? [undefined] : params.schema;
+) {
+  const docker = yield* DockerRun;
+  const labels = {
+    [CLI_PROJECT_LABEL]: params.projectId,
+    [COMPOSE_PROJECT_LABEL]: params.projectId,
+  };
+  const network = { _tag: "named" as const, name: params.networkId };
+  const runs: ReadonlyArray<string | undefined> =
+    params.schema.length === 0 ? [undefined] : params.schema;
 
-    const ddls: Array<string> = [];
-    for (const s of runs) {
-      if (s !== undefined) yield* params.emitStatus(`Diffing schema: ${s}`);
-      const cmd =
-        s === undefined
-          ? ["--json-diff", params.source, params.target]
-          : ["--schema", s, "--json-diff", params.source, params.target];
-      const result = yield* docker
-        .runCapture({
-          image: DIFFER_IMAGE,
-          cmd,
-          env: {},
-          binds: [],
-          workingDir: Option.none(),
-          securityOpt: [],
-          extraHosts: params.extraHosts,
-          network,
-          labels,
-          projectEnvValues: params.projectEnvValues,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new DbDiffPgAdminError({
-                message: cause.message,
-                reason: pgAdminDockerReason(cause.reason, cause.daemonDown),
-              }),
-          ),
-        );
-      // Emitted before the exit-code check so a failed run's status lines still print.
-      for (const line of processPgAdminDiffProgress(result.stderr)) {
-        yield* params.emitStatus(line);
-      }
-      if (result.exitCode !== 0) {
-        // Non-progress stderr lines are dropped silently, even under `--debug`.
-        return yield* new DbDiffPgAdminError({
-          message: `error running container: exit ${result.exitCode}`,
-          reason: "differ",
-        });
-      }
-      const stdout = new TextDecoder().decode(result.stdout);
-      // Parsed per run, not concatenated across runs.
-      const parsed = parsePgAdminDiffEntries(stdout);
-      if (Result.isFailure(parsed)) {
-        return yield* new DbDiffPgAdminError({
-          message: parsed.failure.message,
-          reason: "invalid_output",
-        });
-      }
-      ddls.push(...parsed.success);
+  const ddls: Array<string> = [];
+  for (const s of runs) {
+    if (s !== undefined) yield* params.emitStatus(`Diffing schema: ${s}`);
+    const cmd =
+      s === undefined
+        ? ["--json-diff", params.source, params.target]
+        : ["--schema", s, "--json-diff", params.source, params.target];
+    const result = yield* docker
+      .runCapture({
+        image: DIFFER_IMAGE,
+        cmd,
+        env: {},
+        binds: [],
+        workingDir: Option.none(),
+        securityOpt: [],
+        extraHosts: params.extraHosts,
+        network,
+        labels,
+        projectEnvValues: params.projectEnvValues,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new DbDiffPgAdminError({
+              message: cause.message,
+              reason: pgAdminDockerReason(cause.reason, cause.daemonDown),
+            }),
+        ),
+      );
+    // Emitted before the exit-code check so a failed run's status lines still print.
+    for (const line of processPgAdminDiffProgress(result.stderr)) {
+      yield* params.emitStatus(line);
     }
+    if (result.exitCode !== 0) {
+      // Non-progress stderr lines are dropped silently, even under `--debug`.
+      return yield* new DbDiffPgAdminError({
+        message: `error running container: exit ${result.exitCode}`,
+        reason: "differ",
+      });
+    }
+    const stdout = new TextDecoder().decode(result.stdout);
+    // Parsed per run, not concatenated across runs.
+    const parsed = parsePgAdminDiffEntries(stdout);
+    if (Result.isFailure(parsed)) {
+      return yield* new DbDiffPgAdminError({
+        message: parsed.failure.message,
+        reason: "invalid_output",
+      });
+    }
+    ddls.push(...parsed.success);
+  }
 
-    return renderPgAdminDiff(ddls);
-  });
+  return renderPgAdminDiff(ddls);
+});
