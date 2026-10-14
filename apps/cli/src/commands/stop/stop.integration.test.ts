@@ -616,6 +616,30 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("waits for another stack's prune instead of failing", () =>
+    Effect.gen(function* () {
+      const route = defaultRoute();
+      let busyPrunes = 2;
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: (args) => {
+          if (args[0] === "network" && args[1] === "prune" && busyPrunes > 0) {
+            busyPrunes -= 1;
+            return {
+              exitCode: 1,
+              stderr: ["Error response from daemon: a prune operation is already running"],
+            };
+          }
+          return route(args);
+        },
+      });
+      yield* stop(flags()).pipe(Effect.provide(layer));
+      expect(
+        child.spawned.filter((s) => s.args[0] === "network" && s.args[1] === "prune"),
+      ).toHaveLength(3);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("deletes data volumes with --no-backup", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({

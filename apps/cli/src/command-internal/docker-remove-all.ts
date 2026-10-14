@@ -1,4 +1,4 @@
-import { Data, Effect, Result } from "effect";
+import { Data, Effect, Result, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
@@ -91,6 +91,24 @@ const reportPruned = (debug: boolean, label: string, stdout: string) =>
     globalThis.process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
   });
 
+/**
+ * Docker runs one prune at a time per daemon and rejects concurrent ones, even with different
+ * label filters, so stacks stopping at the same moment wait for each other's prune.
+ */
+const pruneWaitingForConcurrentPrune = (
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  podmanArgs?: ReadonlyArray<string>,
+) =>
+  containerCliExitCodeAndStdout(spawner, args, podmanArgs).pipe(
+    Effect.repeat({
+      while: (result) =>
+        result.exitCode !== 0 && /a prune operation is already running/iu.test(result.stderr),
+      schedule: Schedule.spaced("250 millis").pipe(Schedule.jittered),
+      times: 40,
+    }),
+  );
+
 /** Every failure {@link dockerRemoveAll} can produce. */
 export type DockerRemoveAllError =
   | DockerRemoveAllListError
@@ -152,7 +170,7 @@ export const dockerRemoveAll = (
 
     // Collects stdout instead of ignoring it — reading the pipe avoids the same hang, and the
     // report backs the `--debug` output below.
-    const containerPrune = yield* containerCliExitCodeAndStdout(spawner, [
+    const containerPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
       "container",
       "prune",
       "--force",
@@ -182,7 +200,7 @@ export const dockerRemoveAll = (
       // Podman has no `--all` flag on `volume prune` at all, but already prunes every unused
       // volume by default, so omitting `--all` there is a lossless fallback.
       const dockerSupportsAll = yield* dockerSupportsVolumePruneAllFlag(spawner);
-      const volumePrune = yield* containerCliExitCodeAndStdout(
+      const volumePrune = yield* pruneWaitingForConcurrentPrune(
         spawner,
         [
           "volume",
@@ -207,7 +225,7 @@ export const dockerRemoveAll = (
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
-    const networkPrune = yield* containerCliExitCodeAndStdout(spawner, [
+    const networkPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
       "network",
       "prune",
       "--force",

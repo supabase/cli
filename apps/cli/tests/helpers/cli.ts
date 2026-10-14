@@ -173,7 +173,21 @@ export const withTempHome = <A, E, R>(
       }),
   );
 
-function pickFreePort(): Promise<number> {
+/**
+ * Concurrent e2e workers each keep only ports in their own residue class, so a port one worker
+ * picked and released before Docker binds it is never handed to another worker.
+ */
+const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS || "1");
+const e2eWorkerSlot = Number(process.env.VITEST_POOL_ID || "1") % e2eWorkers;
+
+async function pickFreePort(): Promise<number> {
+  for (;;) {
+    const port = await pickReleasedPort();
+    if (port % e2eWorkers === e2eWorkerSlot) return port;
+  }
+}
+
+function pickReleasedPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.listen(0, "127.0.0.1", () => {
