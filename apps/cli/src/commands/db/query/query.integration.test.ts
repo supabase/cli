@@ -1,4 +1,3 @@
-import type { NetConnectOpts } from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -14,29 +13,19 @@ import {
   Schema,
   Stream,
 } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { vi } from "vitest";
 
-// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
 vi.mock("node:net", (importOriginal) =>
-  importOriginal<typeof import("node:net")>().then((net) => ({
-    ...net,
-    connect: (options: NetConnectOpts) => {
-      const host = "host" in options ? options.host : undefined;
-      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
-        return net.connect(options);
-      }
-      const socket = new net.Socket();
-      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
-      return socket;
-    },
-  })),
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
 import {
   VALID_TOKEN,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -200,62 +189,6 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
   });
 }
 
-function mockHttpClient(opts: {
-  status?: number;
-  body?: string;
-  networkFail?: boolean;
-  route?: (request: {
-    method: string;
-    url: string;
-  }) => { status: number; body: string } | undefined;
-}) {
-  const requests: Array<string> = [];
-  const calls: Array<{ method: string; url: string }> = [];
-  const layer = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => {
-      requests.push(request.url);
-      calls.push({ method: request.method, url: request.url });
-      const routed = opts.route?.({ method: request.method, url: request.url });
-      if (routed !== undefined) {
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(routed.body, {
-              status: routed.status,
-              headers: { "content-type": "application/json" },
-            }),
-          ),
-        );
-      }
-      return opts.networkFail === true
-        ? Effect.fail(
-            new HttpClientError.HttpClientError({
-              reason: new HttpClientError.TransportError({ request, description: "ECONNREFUSED" }),
-            }),
-          )
-        : Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(opts.body ?? "[]", {
-                status: opts.status ?? 201,
-                headers: { "content-type": "application/json" },
-              }),
-            ),
-          );
-    }),
-  );
-  return {
-    layer,
-    get requests() {
-      return requests;
-    },
-    get calls() {
-      return calls;
-    },
-  };
-}
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   isLocal?: boolean;
@@ -288,31 +221,44 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
   const telemetryOutputFormat = mockTelemetryOutputFormat();
-  const httpClient = mockHttpClient({
-    status: opts.linkedStatus,
-    body: opts.linkedBody,
-    networkFail: opts.networkFail,
-    route: (request) =>
-      opts.realCache === true &&
-      request.method === "GET" &&
-      request.url.endsWith(`/v1/projects/${REF}`)
-        ? {
-            status: 200,
-            body: JSON.stringify({
-              ref: REF,
-              name: "alpha",
-              organization_id: "org-123",
-              organization_slug: "acme",
-            }),
-          }
-        : undefined,
+  const platformApi = mockCommandPlatformApi({
+    handler: (request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          opts.realCache === true &&
+            request.method === "GET" &&
+            request.url.endsWith(`/v1/projects/${REF}`)
+            ? new Response(
+                JSON.stringify({
+                  ref: REF,
+                  name: "alpha",
+                  organization_id: "org-123",
+                  organization_slug: "acme",
+                  id: REF,
+                  region: "us-east-1",
+                  created_at: "2026-01-01T00:00:00Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.example.com",
+                    version: "15",
+                    postgres_engine: "15",
+                    release_channel: "ga",
+                  },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              )
+            : new Response(opts.linkedBody ?? "[]", { status: opts.linkedStatus ?? 201 }),
+        ),
+      ),
+    network: opts.networkFail === true ? "fail" : undefined,
   });
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     opts.realCache === true
       ? realLinkedProjectCache({
-          httpClient: httpClient.layer,
+          httpClient: platformApi.httpClientLayer,
           cliSettings: mockCommandSettings({ workdir: opts.workdir ?? "/work/project" }),
         })
       : cache.layer,
@@ -352,10 +298,10 @@ function setup(opts: SetupOpts = {}) {
       deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
       deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
     }),
-    httpClient.layer,
+    platformApi.factoryLayer,
     BunServices.layer,
   );
-  return { layer, out, telemetry, cache, telemetryOutputFormat, httpClient };
+  return { layer, out, telemetry, cache, telemetryOutputFormat, platformApi };
 }
 
 const flags = (over: Partial<DbQueryFlags> = {}): DbQueryFlags => ({
@@ -744,25 +690,31 @@ describe("db query integration", () => {
   });
 
   it.effect("queries the linked project over HTTP and writes the linked-project cache", () => {
-    const { layer, out, cache, httpClient } = setup({
+    const { layer, out, cache, platformApi } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
+      expect(platformApi.requests).toHaveLength(1);
+      expect(platformApi.requests[0]).toMatchObject({
+        method: "POST",
+        url: `https://api.supabase.com/v1/projects/${REF}/database/query`,
+        body: { query: "select 1" },
+      });
       expect(cache.cached).toBe(true);
       assertPermissionDrift({
         command: "db query",
         activeFlags: { linked: true },
-        requests: httpClient.calls,
+        requests: platformApi.requests,
         exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fills the linked-project cache through the real cache layer", () => {
-    const { layer, httpClient } = setup({
+  it.effect("fills the linked-project cache through the real cache layer", () => {
+    const { layer, platformApi } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
       realCache: true,
@@ -774,21 +726,21 @@ describe("db query integration", () => {
       expect(yield* fs.exists(cachePath)).toBe(false);
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({ ref: REF });
-      expect(httpClient.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      expect(platformApi.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST https://api.supabase.com/v1/projects/${REF}/database/query`,
         `GET https://api.supabase.com/v1/projects/${REF}`,
       ]);
       assertPermissionDrift({
         command: "db query",
         activeFlags: { linked: true },
-        requests: httpClient.calls,
+        requests: platformApi.requests,
         exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("mints a login role and queries through the real DB config resolver and cache", () => {
-    const { layer, httpClient } = setup({
+  it.effect("mints a login role and queries through the real DB config resolver and cache", () => {
+    const { layer, platformApi } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
       realCache: true,
@@ -828,7 +780,7 @@ describe("db query integration", () => {
             method,
             url: `https://api.supabase.com${path}`,
           })),
-          ...httpClient.calls,
+          ...platformApi.requests,
         ],
         exact: true,
       });
@@ -847,7 +799,7 @@ describe("db query integration", () => {
 
   it.effect("queries the project given via --project-ref without a linked workdir", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, out, cache, httpClient } = setup({
+    const { layer, out, cache, platformApi } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
       unlinked: true,
@@ -862,14 +814,16 @@ describe("db query integration", () => {
       );
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(
-        httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
+        platformApi.requests.some((req) =>
+          req.url.includes(`/v1/projects/${FLAG_REF}/database/query`),
+        ),
       ).toBe(true);
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
       assertPermissionDrift({
         command: "db query",
         activeFlags: { linked: true, "project-ref": FLAG_REF },
-        requests: httpClient.calls,
+        requests: platformApi.requests,
         exact: true,
       });
     }).pipe(Effect.provide(layer));
@@ -877,7 +831,7 @@ describe("db query integration", () => {
 
   it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, cache, httpClient } = setup({
+    const { layer, cache, platformApi } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
@@ -890,7 +844,9 @@ describe("db query integration", () => {
         }),
       );
       expect(
-        httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
+        platformApi.requests.some((req) =>
+          req.url.includes(`/v1/projects/${FLAG_REF}/database/query`),
+        ),
       ).toBe(true);
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
@@ -900,7 +856,7 @@ describe("db query integration", () => {
 
   it.effect("rejects --project-ref without --linked (query defaults to the local target)", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, out, cache, httpClient } = setup({ result: SELECT_RESULT });
+    const { layer, out, cache, platformApi } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), projectRef: Option.some(FLAG_REF) }),
@@ -910,7 +866,7 @@ describe("db query integration", () => {
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
       expect(out.stdoutText).toBe("");
-      expect(httpClient.requests).toEqual([]);
+      expect(platformApi.requests).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -965,11 +921,21 @@ describe("db query integration", () => {
         const exit = yield* dbQuery(
           flags({ sql: Option.some("bad"), linked: Option.some(true) }),
         ).pipe(Effect.exit);
-        expect(failMessage(exit)).toContain("unexpected status 400");
+        expect(failMessage(exit)).toBe('unexpected status 400: {"message":"syntax error"}');
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("strips terminal control characters from a linked error body", () => {
+    const { layer } = setup({ linkedStatus: 400, linkedBody: "bad\u001b[31m query" });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(
+        flags({ sql: Option.some("bad"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failMessage(exit)).toBe("unexpected status 400: bad[31m query");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
@@ -1035,7 +1001,7 @@ describe("db query integration", () => {
       const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
-      expect(failMessage(exit)).toContain("failed to execute query");
+      expect(failMessage(exit)).toContain("failed to execute query: ");
     }).pipe(Effect.provide(layer));
   });
 

@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { dbConfigLayer } from "../../src/command-internal/db-config.layer.ts";
 import type { DbConfigResolver } from "../../src/command-internal/db-config.service.ts";
@@ -52,7 +53,7 @@ export function realLinkedProjectCache(opts: {
 
 /**
  * The real `DbConfigResolver` on the linked path: the direct host (`db.<ref>.invalid`) is
- * unreachable once the test file mocks `node:net` to refuse it, so the resolver falls back to
+ * unreachable once the test file mocks `node:net` with `refuseInvalidDbHosts`, so the resolver falls back to
  * the pooler and mints a login role through {@link stubManagementApi}. Provide the same `env`
  * to the running effect as a `ConfigProvider`, since the resolver reads it when it resolves.
  */
@@ -141,3 +142,83 @@ export const primaryPoolerConfigs = (ref: string) => [
     pool_mode: "transaction",
   },
 ];
+
+/** A Management API request as {@link stubManagementApi} records it. */
+export interface StubbedRequest {
+  readonly method: string;
+  readonly path: string;
+}
+
+/** The recorded requests in the shape the drift check takes. */
+export const asRecordedRequests = (requests: ReadonlyArray<StubbedRequest>) =>
+  requests.map(({ method, path }) => ({ method, url: `https://api.supabase.com${path}` }));
+
+/** Serves the pooler config and a login role for `ref`, which is what the resolver asks for on the linked path. */
+export const serveLinkedDatabase =
+  (ref: string) =>
+  (method: string, path: string): Response | undefined => {
+    if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+      return Response.json(primaryPoolerConfigs(ref));
+    }
+    if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+      return Response.json(
+        { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+        { status: 201 },
+      );
+    }
+    return undefined;
+  };
+
+/** Provides `env` to the effect as a `ConfigProvider`, the way {@link realDbConfigResolver} reads it. */
+export const provideEnv = (env: Record<string, string | undefined>) =>
+  Effect.provideService(
+    ConfigProvider.ConfigProvider,
+    ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
+  );
+
+/** A project as `GET /v1/projects/{ref}` returns it, with every field the typed client's decoder requires. */
+export const projectResponse = (ref: string) => ({
+  id: ref,
+  ref,
+  name: "alpha",
+  organization_id: "org-123",
+  organization_slug: "acme",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+});
+
+/**
+ * An `HttpClient` that records each request and answers the project lookup for `ref`, which is
+ * what the real linked-project cache fetches.
+ */
+export function recordingProjectHttpClient(ref: string) {
+  const calls: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls.push({ method: request.method, url: request.url });
+      const found = request.method === "GET" && request.url.endsWith(`/v1/projects/${ref}`);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          found
+            ? Response.json(projectResponse(ref))
+            : Response.json({ message: "unexpected request" }, { status: 404 }),
+        ),
+      );
+    }),
+  );
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
+}

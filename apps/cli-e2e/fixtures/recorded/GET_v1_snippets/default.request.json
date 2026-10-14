@@ -2,7 +2,7 @@
   "method": "GET",
   "path": "/v1/snippets",
   "query": {
-    "project_ref": "__PROJECT_REF__"
+    "project_ref": "replayfixtureprojref"
   },
   "headers": {
     "accept-encoding": "gzip",

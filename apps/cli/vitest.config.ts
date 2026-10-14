@@ -1,7 +1,31 @@
 import { readFileSync } from "node:fs";
 import { defaultClientConditions, defaultServerConditions } from "vite";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
+
+/** E2e files that run concurrently; each stack project picks free ports and its own project id. */
+const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS || "1");
+if (!Number.isSafeInteger(e2eWorkers) || e2eWorkers < 1) {
+  throw new Error(
+    `SUPABASE_E2E_WORKERS must be a positive integer, got "${process.env.SUPABASE_E2E_WORKERS}"`,
+  );
+}
+
+/**
+ * E2e files that run alone: `start.health` tags a broken image under the tag every stack's
+ * Mailpit resolves to, and the rest provision pg-delta shadow databases on host ports the CLI
+ * picks and releases before Docker binds them, which a concurrent stack could take.
+ */
+const E2E_EXCLUSIVE_FILES = [
+  "src/commands/start/start.health.e2e.test.ts",
+  "src/command-internal/db-bootstrap/shadow-cache.e2e.test.ts",
+  "src/commands/db/diff/diff.e2e.test.ts",
+  "src/commands/db/diff/diff.declarative.e2e.test.ts",
+  "src/commands/db/pull/pull.e2e.test.ts",
+  "src/commands/db/schema/declarative/sync/sync.e2e.test.ts",
+  "src/commands/db/schema/declarative/sync/sync.jobs.e2e.test.ts",
+  "src/commands/db/start/start.roles.e2e.test.ts",
+];
 
 function dockerfileTextPlugin() {
   return {
@@ -75,8 +99,23 @@ export default defineConfig({
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
+          exclude: [...configDefaults.exclude, ...E2E_EXCLUSIVE_FILES],
+          fileParallelism: e2eWorkers > 1,
+          maxWorkers: e2eWorkers,
+          setupFiles: ["tests/e2e-setup.ts"],
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
+        test: {
+          // Runs after the e2e project, one file at a time.
+          name: "e2e-exclusive",
+          include: E2E_EXCLUSIVE_FILES,
           fileParallelism: false,
           maxWorkers: 1,
+          sequence: { groupOrder: 2 },
           setupFiles: ["tests/e2e-setup.ts"],
           globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
           testTimeout: 120_000,

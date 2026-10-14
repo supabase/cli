@@ -40,6 +40,10 @@ jobs:
       pull-requests: read
       checks: read
       actions: read
+    outputs:
+      action: ${{ steps.collect.outputs.action }}
+      pr: ${{ steps.collect.outputs.pr }}
+      head: ${{ steps.collect.outputs.head }}
     env:
       OUTPUT_DIR: ${{ github.workspace }}/sync-agent
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -126,6 +130,11 @@ jobs:
               --force-with-lease="refs/heads/sync/develop-into-next:$HEAD_SHA" \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/develop-into-next
           fi
+          # The workflow suggestions hold the head before any reply counts a withheld fix as answered.
+          if [ "$CHANGED" != "" ]; then
+            (cd trusted && REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
+              bun .github/scripts/sync-agent.ts suggest)
+          fi
           if [ -f "$OUTPUT_DIR/replies.json" ]; then
             jq -c '.[]' "$OUTPUT_DIR/replies.json" | while read -r reply; do
               gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments/$(jq -r .commentId <<<"$reply")/replies" \
@@ -137,8 +146,38 @@ jobs:
               fi
             done
           fi
-          if [ "$CHANGED" != "" ]; then
-            cd trusted
-            REPO_DIR="$GITHUB_WORKSPACE/work" HEAD_SHA="$(git -C "$GITHUB_WORKSPACE/work" rev-parse HEAD)" \
-              bun .github/scripts/sync-agent.ts suggest
+
+  # A green head both AI review models saw, with every finding fixed or declined and no change request.
+  # The approval runs fast-forward.yml, which re-checks the head and its checks before moving `next`.
+  approve:
+    name: Approve the reviewed sync
+    needs: repair
+    if: needs.repair.outputs.action == 'approve'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
+    environment: auto-approve
+    steps:
+      - name: Approve
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
+          PR: ${{ needs.repair.outputs.pr }}
+          HEAD_SHA: ${{ needs.repair.outputs.head }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
+            echo "::notice::The sync branch moved since the checks settled; skipping."
+            exit 0
           fi
+          login="$(gh api user --jq .login)"
+          # A dismissed approval on this head means a maintainer took it back, so it is never posted again.
+          previous="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" \
+            --jq ".[] | select(.user.login == \"$login\" and .commit_id == \"$HEAD_SHA\" and (.state == \"APPROVED\" or .state == \"DISMISSED\")) | .state")"
+          if [ -n "$previous" ]; then
+            echo "::notice::${login} already approved ${HEAD_SHA} (${previous//$'\n'/, })."
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" -f commit_id="$HEAD_SHA" -f event=APPROVE \
+            -f body="CI is green and the AI review raised nothing the merge introduced, so this approves Claude's resolution of the sync (${RUN_URL})." > /dev/null

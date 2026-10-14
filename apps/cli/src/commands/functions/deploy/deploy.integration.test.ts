@@ -380,6 +380,61 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("warns on stderr that a per-function import_map.json is removed in v3", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(jsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          jsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/import_map.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+      yield* fs.remove(path.join(functionDir, "deno.json"));
+      yield* fs.writeFileString(path.join(functionDir, "import_map.json"), '{"imports":{}}');
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(out.stderrText).toContain(
+        "WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: hello-world\n",
+      );
+      expect(out.stdoutText).not.toContain("import_map.json");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.effect("loads project config from the resolved workdir", () => {
     const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
@@ -727,6 +782,41 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("retries a rate-limited deploy only through the command's own loop", () => {
+    let deployAttempts = 0;
+    const { layer, out, api } = apiDeployHarness((request) => {
+      if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+      deployAttempts += 1;
+      if (deployAttempts === 1) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+          ),
+        );
+      }
+      return Effect.succeed(
+        jsonResponse(request, 201, {
+          id: "function-id",
+          slug: "hello-world",
+          name: "hello-world",
+          status: "ACTIVE",
+          version: 1,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(
@@ -1013,6 +1103,7 @@ describe("functions deploy", () => {
     function setupBulkDeploy(opts: {
       readonly deployStatuses: ReadonlyArray<number>;
       readonly bulkStatuses?: ReadonlyArray<number>;
+      readonly functionStatuses?: Readonly<Record<string, string>>;
     }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
@@ -1036,7 +1127,7 @@ describe("functions deploy", () => {
                 id: `${slug}-id`,
                 slug,
                 name: slug,
-                status: "ACTIVE",
+                status: opts.functionStatuses?.[slug] ?? "ACTIVE",
                 version: 2,
                 created_at: 1_687_423_025_152,
                 updated_at: 1_687_423_025_152,
@@ -1124,6 +1215,30 @@ describe("functions deploy", () => {
         });
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("fails loudly instead of coercing a function status the API newly reports", () => {
+      const { api, layer } = setupBulkDeploy({
+        deployStatuses: [201, 201],
+        functionStatuses: { "bye-world": "SUSPENDED" },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          message: "failed to read function bye-world: unexpected status SUSPENDED",
+        });
+        const bulkUpdate = api.requests.find((request) => request.method === "PUT");
+        expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world", status: "ACTIVE" }]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 

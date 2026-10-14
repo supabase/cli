@@ -1,6 +1,14 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbReset } from "./reset.handler.ts";
@@ -53,6 +61,16 @@ export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets the local database to current migrations."),
   Command.withShortDescription("Resets the local database to current migrations"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
+        dbConfig,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbReset(flags).pipe(
       withCommandTelemetry({

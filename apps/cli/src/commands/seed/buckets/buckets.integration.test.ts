@@ -24,6 +24,7 @@ import {
   transportFailure,
   withEnvVar,
   mockCommandSettings,
+  mockCommandPlatformApi,
   mockCommandPlatformApiService,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -52,6 +53,11 @@ import {
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -104,6 +110,8 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     /** Selects the `stack` backend; omitted/false keeps the legacy default. */
     readonly stackBackend?: boolean;
     readonly stackApi?: SetupStorageStackApiOptions;
+    /** Records the Management API requests through the real factory and runs the real linked-project cache. */
+    readonly recordManagementApi?: boolean;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -219,6 +227,21 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     },
   });
 
+  const recorded =
+    opts.recordManagementApi === true
+      ? mockCommandPlatformApi({
+          handler: (request) =>
+            Effect.succeed(
+              request.method === "GET" && request.url.endsWith(`/v1/projects/${projectRefRef}`)
+                ? jsonResponse(request, 200, projectResponse(projectRefRef))
+                : request.method === "GET" &&
+                    request.url.endsWith(`/v1/projects/${projectRefRef}/api-keys`)
+                  ? jsonResponse(request, 200, opts.apiKeys ?? defaultApiKeys)
+                  : jsonResponse(request, 404, { message: "no mock route" }),
+            ),
+        })
+      : undefined;
+
   const stackApi = buildStorageStackApi(workdir, opts.stackApi);
 
   const layer = Layer.mergeAll(
@@ -235,15 +258,30 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     projectRefLayer,
-    Layer.succeed(CommandPlatformApiFactory, {
-      make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
-    }),
-    linkedCache.layer,
+    recorded === undefined
+      ? Layer.succeed(CommandPlatformApiFactory, {
+          make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
+        })
+      : recorded.factoryLayer,
+    recorded === undefined
+      ? linkedCache.layer
+      : realLinkedProjectCache({
+          httpClient: recorded.httpClientLayer,
+          cliSettings: mockCommandSettings({ workdir }),
+        }),
     unusedStackServices,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
   );
 
-  return { layer, out, requests, telemetry, linkedCache, stackCalls: stackApi.stackCalls };
+  return {
+    layer,
+    out,
+    requests,
+    telemetry,
+    linkedCache,
+    stackCalls: stackApi.stackCalls,
+    managementRequests: recorded?.requests ?? [],
+  };
 });
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
@@ -2082,6 +2120,94 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    Effect.gen(function* () {
+      const { layer, requests, managementRequests } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        projectRef: VALID_REF,
+        args: ["seed", "buckets", "--linked"],
+        recordManagementApi: true,
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      const fs = yield* FileSystem.FileSystem;
+      yield* seedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
+        Effect.provide(layer),
+      );
+      expect(
+        managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+      ).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "seed buckets",
+        activeFlags: { linked: true },
+        requests: managementRequests,
+        exact: true,
+      });
+    }).pipe(seedScenario),
+  );
+
+  it.effect("asks for no api keys when SUPABASE_AUTH_SERVICE_ROLE_KEY is set", () =>
+    seedScenario(
+      withEnvVar(
+        "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+        "env-service-role-key",
+        Effect.gen(function* () {
+          const { layer, managementRequests } = yield* setupSeedBuckets(tmp.current, {
+            toml: "[storage.buckets.test]\npublic = true\n",
+            projectRef: VALID_REF,
+            args: ["seed", "buckets", "--linked"],
+            recordManagementApi: true,
+            routes: [
+              { method: "GET", match: "/storage/v1/bucket", body: [] },
+              { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+            ],
+          });
+          yield* seedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
+            Effect.provide(layer),
+          );
+          expect(managementRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+            `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+          ]);
+          assertPermissionDrift({
+            command: "seed buckets",
+            activeFlags: { linked: true },
+            requests: managementRequests,
+          });
+        }),
+      ),
+    ),
+  );
+
+  it.effect("makes no Management API request for the local target", () =>
+    Effect.gen(function* () {
+      const { layer, requests, managementRequests } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        recordManagementApi: true,
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      const fs = yield* FileSystem.FileSystem;
+      yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(requests.length).toBeGreaterThan(0);
+      expect(managementRequests).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "seed buckets",
+        requests: managementRequests,
+        exact: true,
+      });
+    }).pipe(seedScenario),
+  );
+
   it.effect(
     "--project-ref --linked seeds the project given by the flag, overriding VALID_REF",
     () =>
@@ -2140,9 +2266,10 @@ describe("seed buckets", () => {
 
   it.effect("--linked=false still takes the linked path (Go flag.Changed, not value)", () =>
     Effect.gen(function* () {
-      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+      const { layer, requests, managementRequests } = yield* setupSeedBuckets(tmp.current, {
         toml: "[storage.buckets.test]\npublic = true\n",
         projectRef: VALID_REF,
+        recordManagementApi: true,
         args: ["seed", "buckets", "--linked=false"],
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -2158,6 +2285,18 @@ describe("seed buckets", () => {
       expect(requests.every((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
         true,
       );
+      expect(
+        managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+      ).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      assertPermissionDrift({
+        command: "seed buckets",
+        activeFlags: { linked: false },
+        requests: managementRequests,
+        exact: true,
+      });
     }).pipe(seedScenario),
   );
 

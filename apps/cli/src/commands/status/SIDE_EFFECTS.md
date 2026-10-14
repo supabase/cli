@@ -213,6 +213,12 @@ headers); colors are stripped on non-TTY/piped output.
 bracketed list, e.g. `[supabase_storage_test supabase_studio_test]`) whenever one of
 the 13 expected service containers isn't in the running set.
 
+Whenever a machine format (`-o env|json|toml|yaml`, or `--output-format json|stream-json`)
+emits the deprecated `INBUCKET_URL` field, stderr gets
+`WARN: INBUCKET_URL is deprecated and will be removed in v3, use MAILPIT_URL instead.` (both
+names follow `--override-name`). stdout stays payload-only, and the pretty table, which never
+shows `INBUCKET_URL`, prints no warning.
+
 ### `-o env`
 
 `KEY="VALUE"` lines (unquoted for integer-looking values), one per resolved field, sorted by

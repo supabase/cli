@@ -219,7 +219,7 @@ const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
 type ProjectApiKey = {
   readonly name: string;
-  readonly type?: "legacy" | "publishable" | "secret" | null;
+  readonly type?: string | null;
   readonly api_key?: string | null;
   readonly secret_jwt_template?: Record<string, unknown> | null;
 };

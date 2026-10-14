@@ -47,9 +47,12 @@ interface ValueCondition extends FlagConditionBase {
   readonly is?: never;
 }
 
-export type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
+type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
 
-/** The database a command talks to: `--local`, `--db-url`, or the linked project. */
+/**
+ * The target a command talks to: `--local`, `--db-url`, or the linked project. `seed buckets` uses
+ * it for its Storage target, which `--linked`/`--local` select the same way.
+ */
 export type DbTarget = "local" | "db-url" | "linked";
 
 /**
@@ -142,17 +145,35 @@ export function compose(...fragments: ReadonlyArray<PermissionFragment>): Permis
 
 /**
  * Adds `condition` to every operation entry in `fragment`, ahead of each entry's own `when`. It
- * keeps no block `source`, so it must name a flag of the command that declares it.
+ * keeps no block `source`, so a flag condition must name a flag of the command that declares it,
+ * and a target condition a target that command can select.
  */
 export function withCondition(
   fragment: PermissionFragment,
-  condition: FlagCondition,
+  condition: EntryCondition,
 ): PermissionFragment {
   return {
     ...fragment,
     operations: fragment.operations.map((entry) => ({
       ...entry,
       when: [condition, ...(entry.when ?? [])],
+    })),
+  };
+}
+
+/**
+ * Adds `prerequisite` to every entry's `context`, for a condition that isn't a flag, e.g. a choice
+ * the user makes at a prompt.
+ */
+export function withContext(
+  fragment: PermissionFragment,
+  prerequisite: string,
+): PermissionFragment {
+  return {
+    ...fragment,
+    operations: fragment.operations.map((entry) => ({
+      ...entry,
+      context: entry.context === undefined ? prerequisite : `${prerequisite}, and ${entry.context}`,
     })),
   };
 }

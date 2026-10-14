@@ -80,7 +80,7 @@ const decodeSpec = (bytes: Buffer): LaunchSpec | undefined => {
 const pinArtifactGeneration = (lockPath: string): (() => void) | undefined => {
   try {
     const connection = new DatabaseSync(lockPath);
-    takeSharedLockSync(connection);
+    takeSharedLockSync(connection, 2_000);
     // oxlint-disable-next-line effecttsgo/global-date -- this standalone process has no Effect Clock service to source "now" from.
     const now = new Date();
     utimesSync(lockPath, now, now);

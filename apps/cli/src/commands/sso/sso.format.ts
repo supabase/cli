@@ -8,10 +8,8 @@ export const quoteSsoString = Schema.encodeSync(Schema.fromJsonString(Schema.Str
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Permissive shape that covers both the typed-client output
- * (`V1GetASsoProviderOutput` / list items) and arbitrary JSON returned by the
- * raw POST/PUT path. `attribute_mapping` is left as `unknown` so we can render
- * provider responses that carry user-defined keys.
+ * Provider shape rendered by list/show/add/update/remove, structurally
+ * compatible with the typed-client provider outputs.
  */
 export interface SsoProviderView {
   readonly id: string;
@@ -29,61 +27,6 @@ export interface SsoProviderView {
   }>;
   readonly created_at?: string;
   readonly updated_at?: string;
-}
-
-/**
- * Defensive extraction for the raw-HTTP add/update path. The response is
- * untyped (we bypass the generated schema to preserve `attribute_mapping.keys.<x>.default`),
- * so the formatter coerces an arbitrary object into the provider view shape
- * without throwing on missing fields.
- */
-export function toSsoProviderView(value: unknown): SsoProviderView {
-  const root = fieldsOf(value);
-  if (root === undefined) {
-    return { id: "" };
-  }
-  const saml = fieldsOf(root["saml"]);
-
-  const domainsRaw = root["domains"];
-  const domains = Array.isArray(domainsRaw)
-    ? domainsRaw.flatMap((item) => {
-        const d = fieldsOf(item);
-        return d === undefined
-          ? []
-          : [
-              {
-                domain: typeof d["domain"] === "string" ? d["domain"] : undefined,
-                created_at: typeof d["created_at"] === "string" ? d["created_at"] : undefined,
-                updated_at: typeof d["updated_at"] === "string" ? d["updated_at"] : undefined,
-              },
-            ];
-      })
-    : undefined;
-
-  return {
-    id: typeof root["id"] === "string" ? root["id"] : "",
-    saml:
-      saml === undefined
-        ? undefined
-        : {
-            entity_id: typeof saml["entity_id"] === "string" ? saml["entity_id"] : undefined,
-            metadata_url:
-              typeof saml["metadata_url"] === "string" ? saml["metadata_url"] : undefined,
-            metadata_xml:
-              typeof saml["metadata_xml"] === "string" ? saml["metadata_xml"] : undefined,
-            name_id_format:
-              typeof saml["name_id_format"] === "string" ? saml["name_id_format"] : undefined,
-            attribute_mapping: saml["attribute_mapping"],
-          },
-    domains,
-    created_at: typeof root["created_at"] === "string" ? root["created_at"] : undefined,
-    updated_at: typeof root["updated_at"] === "string" ? root["updated_at"] : undefined,
-  };
-}
-
-function fieldsOf(value: unknown): { readonly [key: string]: unknown } | undefined {
-  if (!Predicate.isObjectOrArray(value)) return undefined;
-  return Array.isArray(value) ? {} : value;
 }
 
 /**

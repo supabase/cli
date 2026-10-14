@@ -33,6 +33,18 @@ export const initializationCommand = {
   containerEntrypoint: "/app/bin/prepare",
 } satisfies StartupCommand & { readonly containerEntrypoint: string };
 
+const nativeReadinessOutput: NonNullable<ProcessRecipeSpec<Creation>["nativeReadinessOutput"]> = (
+  line,
+  endpoints,
+) => {
+  const http = endpoints.get("http");
+  if (http === undefined || /\bfailed\b/i.test(line)) return false;
+  return (
+    line.includes("Running RealtimeWeb.Endpoint") &&
+    new RegExp(`:${http.port}\\s+\\(http\\)(?:\\s|$)`).test(line)
+  );
+};
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "realtime",
   executable: "bin/server",
@@ -88,5 +100,6 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : []),
   mounts: () => Effect.succeed([]),
   startupCommands: [initializationCommand],
+  nativeReadinessOutput,
   containerEntrypoint: () => "/usr/bin/tini",
 });

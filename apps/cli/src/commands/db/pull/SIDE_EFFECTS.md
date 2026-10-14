@@ -115,13 +115,15 @@ at all, so nothing is cached for it.
 
 ## API Routes / DB
 
-| Method | Path / SQL                                          | Auth   | Purpose                          |
-| ------ | --------------------------------------------------- | ------ | -------------------------------- |
-| POST   | `/v1/projects/{ref}/roles`                          | Bearer | Temp login role when no password |
-| GET    | `/v1/projects/{ref}/pooler/config`                  | Bearer | IPv4 pooler fallback             |
-| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)  |
-| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)  |
-| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation) |
+| Method | Path / SQL                                          | Auth   | Purpose                             |
+| ------ | --------------------------------------------------- | ------ | ----------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`                 | Bearer | Temp login role when no password    |
+| GET    | `/v1/projects/{ref}/config/database/pooler`         | Bearer | IPv4 pooler fallback                |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve`          | Bearer | List bans during pooler login retry |
+| DELETE | `/v1/projects/{ref}/network-bans`                   | Bearer | Unban during pooler login retry     |
+| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)     |
+| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)     |
+| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation)    |
 
 ## Environment Variables
 
@@ -131,6 +133,8 @@ at all, so nothing is cached for it.
 | `SUPABASE_DB_PASSWORD`                                                                | remote DB password (overridden by `-p`)                                                                                                                                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                                                                                                                                                                                                                                        | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                                                                                                                                                                                                                              | no        |
+| `SUPABASE_DB_ORIOLEDB_VERSION`                                                        | overrides `db.orioledb_version`, selecting the OrioleDB shadow and initial-migra `pg_dump` images                                                                                                                                                                                                                                                                                                                             | no        |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                              | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                                                                                                                                                    | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                                                                                                           | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow and initial-migra `pg_dump` containers onto an existing Docker network                                                                                                                                                                                                                                                                                                                                      | no        |
 | `SUPABASE_USE_SLIM_IMAGES`                                                            | resolves the current-pin shadow Postgres, `pg_dump`, PG15+ realtime/storage/auth migrate-job images (migration-style cold shadow), and (for migra) the edge-runtime image from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, flag-off `15.8.1.085`, and `deno_version = 1` stay on docker.io | no        |

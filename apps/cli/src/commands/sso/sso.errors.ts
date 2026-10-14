@@ -93,9 +93,12 @@ export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexp
 
 export class SsoAddNetworkError extends Data.TaggedError("SsoAddNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

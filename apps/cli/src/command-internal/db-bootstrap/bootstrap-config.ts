@@ -19,6 +19,7 @@ import {
   envOverride,
   envOverrideBool,
   envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
   envOverrideRealtimeIpVersion,
   envOverrideRealtimeMaxHeaderLength,
   InvalidRealtimeIpVersionEnvOverrideError,
@@ -115,7 +116,7 @@ export const resolveDbBootstrapConfig = <E>(
     // precedence as `majorVersion` applies to each.
     const orioledbVersion = remoteWins("db.orioledb_version")
       ? config.db.orioledb_version
-      : envOverride("SUPABASE_DB_ORIOLEDB_VERSION", config.db.orioledb_version, projectEnvValues);
+      : envOverrideOrioleDBVersion(config.db.orioledb_version, projectEnvValues);
     const s3Host = remoteWins("experimental.s3_host")
       ? config.experimental.s3_host
       : envOverride("SUPABASE_EXPERIMENTAL_S3_HOST", config.experimental.s3_host, projectEnvValues);
