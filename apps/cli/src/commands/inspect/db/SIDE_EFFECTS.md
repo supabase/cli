@@ -27,12 +27,12 @@ no new config reads.
 
 ## API Routes (MAY fire on `--linked`, inside the resolver)
 
-| Method   | Path                                      | Auth         | When                                    |
-| -------- | ----------------------------------------- | ------------ | --------------------------------------- |
-| `POST`   | `/v1/projects/{ref}/login-role`           | Bearer token | `--linked`, to create a temp login role |
-| `GET`    | pooler config endpoint                    | Bearer token | `--linked`, pooler fallback             |
-| `GET`    | `/v1/projects/{ref}/network-bans`         | Bearer token | `--linked`, on pooler retry             |
-| `DELETE` | `/v1/projects/{ref}/network-bans` (unban) | Bearer token | `--linked`, when a self-ban is detected |
+| Method   | Path                                       | Auth         | When                                    |
+| -------- | ------------------------------------------ | ------------ | --------------------------------------- |
+| `POST`   | `/v1/projects/{ref}/login-role`            | Bearer token | `--linked`, to create a temp login role |
+| `GET`    | pooler config endpoint                     | Bearer token | `--linked`, pooler fallback             |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer token | `--linked`, on pooler retry             |
+| `DELETE` | `/v1/projects/{ref}/network-bans` (unban)  | Bearer token | `--linked`, when a self-ban is detected |
 
 ## Environment Variables
 

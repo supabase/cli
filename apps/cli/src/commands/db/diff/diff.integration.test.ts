@@ -996,6 +996,19 @@ describe("db diff", () => {
     },
   );
 
+  it.effect("explicit --from linked --to linked resolves the linked connection once", () => {
+    const s = setup(tmp.current, {
+      linkedRef: "abcdefghijklmnopqrst",
+      isLocal: false,
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ from: Option.some("linked"), to: Option.some("linked") }));
+      expect(s.resolverCalls).toHaveLength(1);
+      expect(s.explicitDiffCalls[0]?.source).toEqual(s.explicitDiffCalls[0]?.desired);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
     "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
     () => {

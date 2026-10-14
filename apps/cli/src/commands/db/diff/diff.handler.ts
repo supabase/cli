@@ -266,6 +266,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         mergedLinkedRef !== undefined
           ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
           : yield* readDbToml(fs, path, cliSettings.workdir);
+      // Each linked resolution mints a temporary login role that invalidates the previous one,
+      // so `--from linked --to linked` shares a single connection.
+      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
@@ -315,6 +318,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               } satisfies PgDeltaDatabaseEndpoint;
             }
             case "linked": {
+              if (linkedEndpoint !== undefined) return linkedEndpoint;
               const resolved = yield* resolver.resolve({
                 dbUrl: Option.none(),
                 connType: "linked",
@@ -328,12 +332,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 mergedLinkedRef = ref2;
                 cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
-              return {
+              linkedEndpoint = {
                 kind: "database",
                 ref: toPostgresURL(resolved.conn),
                 connection: resolved.conn,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              } satisfies PgDeltaDatabaseEndpoint;
+              };
+              return linkedEndpoint;
             }
             case "migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect
