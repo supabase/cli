@@ -639,7 +639,8 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("omits --all from docker's volume prune on a pre-1.42 API host", () =>    Effect.gen(function* () {
+  it.effect("omits --all from docker's volume prune on a pre-1.42 API host", () =>
+    Effect.gen(function* () {
       // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
       // nothing) on an older daemon.
       const { layer, child } = yield* setup({

@@ -700,22 +700,19 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "fails on a 200 with a non-JSON content type (a JSON content type is required)",
-    () => {
-      // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
-      // status-200 error.
-      const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("unexpected security advisors status 200");
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("fails on a 200 with a non-JSON content type (a JSON content type is required)", () => {
+    // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
+    // status-200 error.
+    const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("unexpected security advisors status 200");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("fails with the JSON parse error when a JSON advisors body is malformed", () => {
     const { layer } = setup({ securityJsonBody: "{ not json", args: ["--linked"] });
