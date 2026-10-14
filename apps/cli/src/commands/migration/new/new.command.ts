@@ -1,6 +1,7 @@
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationNewRuntimeLayer } from "../migration.layers.ts";
@@ -17,6 +18,7 @@ export type MigrationNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const migrationNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create an empty migration script."),
   Command.withShortDescription("Create an empty migration script"),
+  withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     migrationNew(flags).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
