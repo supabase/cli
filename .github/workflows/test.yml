@@ -61,6 +61,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +98,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run unit tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,6 +123,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run integration tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -174,6 +177,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Detect platform-sensitive changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.detect.outputs.run }}
     steps:
@@ -221,6 +225,7 @@ jobs:
     needs: platform-changes
     name: Run stack port tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -286,7 +291,7 @@ jobs:
     needs: platform-changes
     name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -339,6 +344,7 @@ jobs:
     name: Run unit and integration tests
     needs: [platform-changes, test-unit, test-integration, test-stack-ports]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
@@ -365,6 +371,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run CLI end-to-end tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -445,6 +452,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -499,6 +507,7 @@ jobs:
         github.event.pull_request.draft == false)
     name: Run stack Podman integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
     env:
       SUPABASE_STACK_TEST_ENGINE: podman
     steps:
@@ -558,6 +567,7 @@ jobs:
         test-stack-podman-integration,
       ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify all shards succeeded
         run: |

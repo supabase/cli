@@ -174,17 +174,19 @@ export const withTempHome = <A, E, R>(
   );
 
 /**
- * Concurrent e2e workers each keep only ports in their own residue class, so a port one worker
- * picked and released before Docker binds it is never handed to another worker.
+ * Concurrent e2e workers each keep only ports in their own slot, so a port one worker picked and
+ * released before Docker binds it is never handed to another worker. Slots skip the low bit
+ * because Linux hands out mostly odd ports for `listen(0)`.
  */
 const e2eWorkers = Number(process.env.SUPABASE_E2E_WORKERS || "1");
 const e2eWorkerSlot = Number(process.env.VITEST_POOL_ID || "1") % e2eWorkers;
 
 async function pickFreePort(): Promise<number> {
-  for (;;) {
+  for (let attempt = 0; attempt < 1000; attempt++) {
     const port = await pickReleasedPort();
-    if (port % e2eWorkers === e2eWorkerSlot) return port;
+    if (Math.floor(port / 2) % e2eWorkers === e2eWorkerSlot) return port;
   }
+  throw new Error(`No free port for e2e worker slot ${e2eWorkerSlot} of ${e2eWorkers}`);
 }
 
 function pickReleasedPort(): Promise<number> {
