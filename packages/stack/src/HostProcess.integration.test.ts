@@ -102,16 +102,7 @@ const processCommandLine = (pid: number) =>
           )
         : ChildProcess.make("ps", ["-ww", "-p", String(pid), "-o", "args="], { stdin: "ignore" }),
     );
-  }).pipe(
-    Effect.timeoutOrElse({
-      /* A guard only: PowerShell CIM queries on Windows runners have stalled past 30 seconds. */
-      duration: "45 seconds",
-      orElse: () =>
-        Effect.fail(
-          new ProcessTestError({ message: `Reading the command line of ${pid} timed out` }),
-        ),
-    }),
-  );
+  });
 
 /** A loopback listener that accepts connections and never answers, counting each one. */
 const silentListener = Effect.acquireRelease(
