@@ -714,7 +714,7 @@ describe("hasTransactionControl", () => {
 });
 
 layer(BunServices.layer)("migration failure rendering (Go ExecBatch parity)", (it) => {
-  // Error message layout: `<pg error>\n[Detail]\n[42704 hint]\n` then
+  // Error message layout: `<pg error>\n[Detail]\n[42704 or 25P01 hint]\n` then
   // `At statement: <i>\n<caret-marked statement>`.
   const failing = (
     sql: string,
@@ -778,6 +778,24 @@ layer(BunServices.layer)("migration failure rendering (Go ExecBatch parity)", (i
         'ERROR: type "ltree" does not exist (SQLSTATE 42P01)\n' +
           "At statement: 0\n" +
           "CREATE TABLE test (path ltree NOT NULL)",
+      );
+    }),
+  );
+
+  it.effect("recommends an authored BEGIN/COMMIT when LOCK TABLE needs a transaction block", () =>
+    Effect.gen(function* () {
+      const stat = "LOCK TABLE public.t IN ACCESS EXCLUSIVE MODE";
+      const message = yield* failing(stat, {
+        message: "ERROR: LOCK TABLE can only be used in transaction blocks (SQLSTATE 25P01)",
+        code: "25P01",
+      });
+      expect(message).toBe(
+        "ERROR: LOCK TABLE can only be used in transaction blocks (SQLSTATE 25P01)\n" +
+          "\n" +
+          "Hint: This statement needs a transaction block, which the CLI does not add.\n" +
+          "      Wrap the whole file in BEGIN; ... COMMIT; so it applies as one unit.\n" +
+          "At statement: 0\n" +
+          stat,
       );
     }),
   );

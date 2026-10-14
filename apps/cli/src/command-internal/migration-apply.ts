@@ -342,9 +342,9 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
 
 /**
  * Renders a failed statement's error context: the `^` caret under the server-reported error
- * position, the `Detail` line when present, the SQLSTATE-42704 extension hint, then
- * `At statement: <index>` and the caret-marked statement text. The structured `detail`/`position`
- * fields are only set by the driver for real server error responses.
+ * position, the `Detail` line when present, the SQLSTATE-42704 extension hint or the 25P01
+ * transaction-block hint, then `At statement: <index>` and the caret-marked statement text. The
+ * structured `detail`/`position` fields are only set by the driver for real server error responses.
  *
  * Exported so any caller that runs a raw batch-equivalent statement set outside a migration file
  * (e.g. `resetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE` statements) gets the same rich
@@ -364,6 +364,12 @@ export const formatExecBatchError = (e: DbExecError, index: number, stat: string
     msg.push("      Use schema-qualified type references to avoid this error:");
     msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
     msg.push("      Learn more: supabase migration new --help");
+  }
+  /* 25P01, e.g. LOCK TABLE: the CLI never adds BEGIN/COMMIT, so the file has to author it. */
+  if (e.code === "25P01") {
+    msg.push("");
+    msg.push("Hint: This statement needs a transaction block, which the CLI does not add.");
+    msg.push("      Wrap the whole file in BEGIN; ... COMMIT; so it applies as one unit.");
   }
   msg.push(`At statement: ${index}`, marked);
   return formattedExecBatchFailure(`${errorMessage(e)}\n${msg.join("\n")}`, e);
