@@ -124,13 +124,19 @@ export function aggregate(
       (a, b) => a - b,
     );
     for (const iteration of iterations) {
-      // Tests sharing a title in one file stay distinct by their order of appearance.
+      // Tests sharing a title in one file stay distinct by their order of appearance, and
+      // scenarios that run one file under different report names stay distinct by report.
       const occurrences = new Map<string, number>();
       const cases = reports
         .filter((report) => report.iteration === iteration)
-        .flatMap((report) => report.cases);
-      for (const testCase of cases) {
-        const id = `${testCase.file}\0${testCase.titles.join("\0")}`;
+        .flatMap((report) =>
+          report.cases.map((testCase) => ({
+            source: report.name.replace(/\.\d+\.json$/, ""),
+            testCase,
+          })),
+        );
+      for (const { source, testCase } of cases) {
+        const id = `${source}\0${testCase.file}\0${testCase.titles.join("\0")}`;
         const occurrence = (occurrences.get(id) ?? 0) + 1;
         occurrences.set(id, occurrence);
         if (testCase.skipped) {
@@ -178,7 +184,7 @@ export function aggregate(
         name: meta.name,
         problem: `exited ${meta.exitCode} without a failing test (unhandled error or crash)`,
       });
-    } else if (ranTests === 0 && !allowEmpty.includes(meta.suite)) {
+    } else if (ranTests === 0 && !sawFailure && !allowEmpty.includes(meta.suite)) {
       runProblems.push({ name: meta.name, problem: "ran no tests; check the filter" });
     }
   }

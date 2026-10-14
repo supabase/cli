@@ -116,6 +116,34 @@ describe("aggregate", () => {
     expect(runs).toEqual(expected);
   });
 
+  test("scenarios sharing a file stay separate, and a failing setup is not an empty run", () => {
+    const hook = (results: JsonTestResults): JsonTestResults => ({
+      ...results,
+      testResults: results.testResults.filter((file) => file.name.endsWith("hook.unit.test.ts")),
+    });
+    const lifecycle = "packages__stack--whole-stack.docker.lifecycle.1.json";
+    const confinement = "packages__stack--whole-stack.docker.confinement.1.json";
+    const results = [1, 2].flatMap((n) => [
+      run(
+        "stack-e2e",
+        n,
+        { [lifecycle]: hook(iteration2) },
+        { name: `lifecycle${n}`, exitCode: 1 },
+      ),
+      run("stack-e2e", n, { [confinement]: hook(iteration1) }, { name: `confinement${n}` }),
+    ]);
+
+    const report = summary(results, ["lifecycle1", "confinement1", "lifecycle2", "confinement2"]);
+
+    expect(report).toEqual({
+      flaky: [],
+      failing: [
+        ["hook.unit.test.ts", "(file setup)", "2/2", "failed outside any test (hook or setup)"],
+      ],
+      runProblems: [],
+    });
+  });
+
   test("reports runs that lost an expected report, crashed, ran nothing, or never uploaded", () => {
     const report = aggregate(
       [

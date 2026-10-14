@@ -150,6 +150,8 @@ describe("commandsFor", () => {
       [
         { dir: "packages/stack", report: "whole-stack.native.lifecycle.1" },
         { dir: "packages/stack", report: "public.1" },
+        { dir: "packages/stack", report: "namespace.1" },
+        { dir: "packages/stack", report: "port-reservation.1" },
       ],
       "src/whole-stack.native.lifecycle.e2e.test.ts",
     ],

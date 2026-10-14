@@ -93,7 +93,8 @@ function entriesFor(suite: Suite, run: number, repeats: number): Entry[] {
           suite,
           name: `flaky-focused-run${run}`,
           executions: repeats + 1,
-          timeout: 60,
+          // GitHub caps a job at 360 minutes.
+          timeout: Math.min(360, 30 + 6 * (repeats + 1)),
           fetchDepth: 0,
         },
       ];
@@ -278,9 +279,14 @@ export function commandsFor(entry: Entry, iteration: number, extra: string[]): I
         `whole-stack.${entry.runtime}.${entry.scenario}.1`,
         [`--testNamePattern=${pattern}`, "--sequence.concurrent"],
       );
-      // test.yml runs the public API suite only in this combination.
+      // test.yml runs these runtime-independent suites once, so one job here does too.
       return entry.runtime === "native" && entry.scenario === "lifecycle"
-        ? [scenario, stack("public", "public.1", [])]
+        ? [
+            scenario,
+            stack("public", "public.1", []),
+            stack("namespace/Namespace", "namespace.1", []),
+            stack("port-reservation", "port-reservation.1", []),
+          ]
         : [scenario];
     }
   }
