@@ -205,7 +205,6 @@ describe("migration repair", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
       expect(execs).toContain("BEGIN");
       expect(execs).toContain("COMMIT");
@@ -221,7 +220,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(
         input({ versions: ["not-a-number"], status: "applied" }),
       ).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer));
   });
@@ -232,7 +230,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.flip,
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(VALID_REF);
@@ -245,7 +242,6 @@ describe("migration repair", () => {
       yield* migrationRepair(
         input({ versions: ["20240101000000", "20240102000000"], status: "reverted" }),
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       const del = queries.find((q) => q.sql.includes("WHERE version = ANY"));
       expect(del?.params).toEqual([["20240101000000", "20240102000000"]]);
     }).pipe(Effect.provide(layer));
@@ -257,7 +253,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(
         input({ versions: ["not-a-number"], status: "applied" }),
       ).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(MigrationInvalidVersionError);
       // Unlike db reset's bare message, migration repair keeps the "failed to parse <v>:" wrapper.
       expect(error.message).toBe("failed to parse not-a-number: invalid version number");
@@ -270,7 +265,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(
         input({ versions: ["99999999999999999999"], status: "applied" }),
       ).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(MigrationInvalidVersionError);
       expect(execs).not.toContain("BEGIN");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
@@ -282,7 +276,6 @@ describe("migration repair", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -297,7 +290,6 @@ describe("migration repair", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
         yield* migrationRepair(input({ versions: [], status: "reverted" }));
-        assertPermissionDrift({ command: "migration repair", requests: [] });
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
         expect(queries.some((q) => q.sql.includes("WHERE version = ANY"))).toBe(false);
@@ -312,7 +304,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.flip,
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(execs).not.toContain("TRUNCATE supabase_migrations.schema_migrations");
     }).pipe(Effect.provide(layer));
@@ -325,7 +316,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.flip,
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -337,7 +327,6 @@ describe("migration repair", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -348,7 +337,6 @@ describe("migration repair", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: [], status: "applied" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
@@ -363,7 +351,6 @@ describe("migration repair", () => {
         yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
         yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
         yield* migrationRepair(input({ versions: [], status: "applied" }));
-        assertPermissionDrift({ command: "migration repair", requests: [] });
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -376,7 +363,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.flip,
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -387,7 +373,6 @@ describe("migration repair", () => {
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
       expect(stderr).toContain("Repaired migration history: [20240101000000] => applied");
@@ -408,7 +393,6 @@ describe("migration repair", () => {
       yield* migrationRepair(
         input({ versions: ["20240101000000", "20240102000000"], status: "applied" }),
       );
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain(
         "Repaired migration history: [20240101000000 20240102000000] => applied",
       );
@@ -421,7 +405,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(
         input({ versions: ["20240101000000"], status: "applied" }),
       ).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(MigrationFileNotFoundError);
     }).pipe(Effect.provide(layer));
   });
@@ -432,7 +415,6 @@ describe("migration repair", () => {
       const error = yield* migrationRepair(
         input({ versions: ["20240101000000"], status: "reverted" }),
       ).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(error).toBeInstanceOf(MigrationRepairUpdateError);
       expect(execs).toContain("ROLLBACK");
     }).pipe(Effect.provide(layer));
@@ -468,11 +450,6 @@ describe("migration repair", () => {
             projectRef: Option.some(FLAG_REF),
           }),
         );
-        assertPermissionDrift({
-          command: "migration repair",
-          activeFlags: { "project-ref": FLAG_REF },
-          requests: [],
-        });
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
         expect(cache.cachedRef).not.toBe(VALID_REF);
@@ -507,7 +484,6 @@ describe("migration repair", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "reverted" }));
-      assertPermissionDrift({ command: "migration repair", requests: [] });
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",

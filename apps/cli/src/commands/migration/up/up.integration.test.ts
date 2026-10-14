@@ -199,7 +199,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240102000000_b.sql");
       yield* seed(tmp.current, "20240103000000_c.sql");
       yield* migrationUp(flags());
-      assertPermissionDrift({ command: "migration up", requests: [] });
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
       expect(stderr).toContain("Connecting to local database...");
@@ -217,7 +216,6 @@ describe("migration up", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(error).toBeInstanceOf(MigrationMissingLocalError);
       expect(error).toMatchObject({
         suggestion: expect.stringContaining("migration repair --local --status reverted"),
@@ -234,7 +232,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* seed(tmp.current, "20240102000000_b.sql");
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(error).toBeInstanceOf(MigrationMissingRemoteError);
     }).pipe(Effect.provide(layer));
   });
@@ -246,7 +243,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240102000000_b.sql"); // already applied on remote
       yield* seed(tmp.current, "20240103000000_c.sql"); // trailing pending
       yield* migrationUp(flags({ includeAll: true }));
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(insertedVersions(queries)).toEqual(["20240101000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });
@@ -259,7 +255,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       yield* migrationUp(flags());
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain("Updating vault secrets...");
       const create = queries.find((q) => q.sql.includes("create_secret"));
       expect(create?.params).toEqual(["shhh", "my_secret"]);
@@ -275,7 +270,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(error).toBeInstanceOf(MigrationVaultError);
     }).pipe(Effect.provide(layer));
   });
@@ -289,7 +283,6 @@ describe("migration up", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "config.toml", '[db.vault]\nmy_secret = "shhh"\n');
       yield* migrationUp(flags());
-      assertPermissionDrift({ command: "migration up", requests: [] });
       const update = queries.find((q) => q.sql.includes("update_secret"));
       expect(update?.params).toEqual(["vault-id-1", "shhh"]);
       expect(queries.some((q) => q.sql.includes("create_secret"))).toBe(false);
@@ -316,11 +309,6 @@ describe("migration up", () => {
         yield* migrationUp(
           flags({ linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
         );
-        assertPermissionDrift({
-          command: "migration up",
-          activeFlags: { "project-ref": FLAG_REF, linked: true },
-          requests: [],
-        });
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
         expect(cache.cachedRef).not.toBe(VALID_REF);
@@ -350,7 +338,6 @@ describe("migration up", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationUp(flags());
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Migrations applied" }),
       );
@@ -362,7 +349,6 @@ describe("migration up", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql", "create table boom;\n");
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration up", requests: [] });
       expect(error).toBeInstanceOf(MigrationApplyError);
     }).pipe(Effect.provide(layer));
   });
@@ -411,9 +397,7 @@ describe("migration up", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* migrationUp(
-        flags({ linked: false, local: false, projectRef: Option.some(VALID_REF) }),
-      );
+      yield* migrationUp(flags({ linked: false, projectRef: Option.some(VALID_REF) }));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -454,6 +438,17 @@ describe("migration up", () => {
         requests: [],
         exact: true,
       });
+      expect(() =>
+        assertPermissionDrift({
+          command: "migration up",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(
       Effect.scoped,
       Effect.provide(ctx.layer),

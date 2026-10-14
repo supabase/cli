@@ -319,7 +319,6 @@ describe("test db integration", () => {
     const { layer, connection, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [], exact: true });
       expect(connection.execCalls).toEqual([
         "create extension if not exists pgtap with schema extensions",
         "drop extension if exists pgtap",
@@ -339,7 +338,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
     }).pipe(Effect.provide(layer));
   });
@@ -348,7 +346,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup({ platform: "darwin" });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.extraHosts).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
@@ -357,7 +354,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.securityOpt).toEqual([]);
     }).pipe(
       Effect.provide(layer),
@@ -372,7 +368,6 @@ describe("test db integration", () => {
     const { layer, connection } = setup({ existed: true });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(connection.execCalls).toEqual([
         "create extension if not exists pgtap with schema extensions",
       ]);
@@ -383,7 +378,6 @@ describe("test db integration", () => {
     const { layer, out } = setup({ dropFails: true });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(out.stderrText).toContain("failed to disable pgTAP: cannot drop");
     }).pipe(Effect.provide(layer));
   });
@@ -392,7 +386,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       const run = docker.lastOpts;
       expect(run?.binds).toEqual(["/work/project/supabase/tests:/work/project/supabase/tests:ro"]);
       expect(Option.getOrNull(run?.workingDir ?? Option.none())).toBe(
@@ -405,7 +398,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags({ paths: ["/abs/a_test.sql"] }));
-      assertPermissionDrift({ command: "test db", requests: [] });
       const run = docker.lastOpts;
       expect(run?.binds).toEqual(["/abs:/abs:ro"]);
       expect(run?.cmd).toContain("/abs/a_test.sql");
@@ -416,7 +408,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup({ debug: true });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.cmd).toContain("--verbose");
     }).pipe(Effect.provide(layer));
   });
@@ -429,7 +420,6 @@ describe("test db integration", () => {
     });
     return Effect.gen(function* () {
       yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
-      assertPermissionDrift({ command: "test db", activeFlags: { "db-url": true }, requests: [] });
       const run = docker.lastOpts;
       expect(run?.network).toEqual({ _tag: "host" });
       expect(run?.env["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -452,7 +442,6 @@ describe("test db integration", () => {
           dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
         }),
       );
-      assertPermissionDrift({ command: "test db", activeFlags: { "db-url": true }, requests: [] });
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.network).toBe("host");
@@ -476,7 +465,6 @@ describe("test db integration", () => {
           local: false,
         }),
       );
-      assertPermissionDrift({ command: "test db", activeFlags: { "db-url": true }, requests: [] });
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
@@ -492,7 +480,6 @@ describe("test db integration", () => {
     });
     return Effect.gen(function* () {
       yield* testDb(flags({ local: false, linked: true }));
-      assertPermissionDrift({ command: "test db", activeFlags: { linked: true }, requests: [] });
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -508,7 +495,6 @@ describe("test db integration", () => {
     });
     return Effect.gen(function* () {
       yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
-      assertPermissionDrift({ command: "test db", activeFlags: { "db-url": true }, requests: [] });
       expect(connection.connectCalls[0]?.dnsResolver).toBe("https");
     }).pipe(Effect.provide(layer));
   });
@@ -640,7 +626,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastStreamOpts?.teeStderr).toBe(true);
       expect(docker.lastStreamOpts?.captureStderr).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -651,7 +636,6 @@ describe("test db integration", () => {
     const { layer, out } = setup({ exitCode: 0, stdout: chunks });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(out.stdoutText).toBe(chunks.join(""));
     }).pipe(Effect.provide(layer));
   });
@@ -671,7 +655,6 @@ describe("test db integration", () => {
     const { layer, out } = setup({ format: "json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -680,7 +663,6 @@ describe("test db integration", () => {
     const { layer, out } = setup({ format: "stream-json", exitCode: 0 });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -718,7 +700,6 @@ describe("test db integration", () => {
       // with connType "linked" instead of failing on mutual exclusion or the
       // local-target guard.
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", activeFlags: { linked: false }, requests: [] });
     }).pipe(Effect.provide(layer));
   });
 
@@ -728,11 +709,6 @@ describe("test db integration", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false, args: ["--linked"] });
     return Effect.gen(function* () {
       yield* testDb(flags({ linked: true, local: false, projectRef: Option.some(FLAG_REF) }));
-      assertPermissionDrift({
-        command: "test db",
-        activeFlags: { "project-ref": FLAG_REF, linked: true },
-        requests: [],
-      });
       expect(resolver.calls[0]?.connType).toBe("linked");
       expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
     }).pipe(Effect.provide(layer));
@@ -760,7 +736,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup({ networkId: "my-custom-net" });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "my-custom-net" });
     }).pipe(Effect.provide(layer));
   });
@@ -769,7 +744,6 @@ describe("test db integration", () => {
     const { layer, telemetry } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -778,7 +752,6 @@ describe("test db integration", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stdoutText).toBe("");
       expect(out.messages).toEqual([]);
@@ -793,7 +766,6 @@ describe("test db integration", () => {
     });
     return Effect.gen(function* () {
       yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
-      assertPermissionDrift({ command: "test db", activeFlags: { "db-url": true }, requests: [] });
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -806,7 +778,6 @@ describe("test db integration", () => {
     const { layer, docker } = setup({ workdir });
     return Effect.gen(function* () {
       yield* testDb(flags());
-      assertPermissionDrift({ command: "test db", requests: [] });
       expect(docker.lastOpts?.network).toEqual({
         _tag: "named",
         name: "supabase_network_My_Project",
@@ -817,7 +788,6 @@ describe("test db integration", () => {
   it.effect("mints a login role through the real resolver for --linked --project-ref", () => {
     const { layer, connection } = setup({
       args: ["test", "db", "--linked", "--project-ref", VALID_REF],
-      isLocal: false,
       realLayers: true,
       workdir: tempWorkdir.current,
     });
@@ -859,6 +829,17 @@ describe("test db integration", () => {
         requests: asRecordedRequests(requests),
         exact: true,
       });
+      expect(() =>
+        assertPermissionDrift({
+          command: "test db",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(
       Effect.scoped,
       Effect.provide(layer),

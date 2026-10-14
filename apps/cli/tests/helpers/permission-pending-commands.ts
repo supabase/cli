@@ -99,7 +99,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "logout",
 
-
   "network-bans get",
   "network-bans remove",
 
@@ -163,7 +162,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
 
   "unlink",
 

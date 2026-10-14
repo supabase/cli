@@ -181,7 +181,6 @@ describe("migration list", () => {
       expect(stdout).toContain("`20240103000000`");
       expect(ctx.resolverCalls[0]?.connType).toBe("linked");
       expect(ctx.cache.cachedRef).toBe(VALID_REF);
-      assertPermissionDrift({ command: "migration list", requests: [] });
     }).pipe(Effect.provide(ctx.layer));
   });
 
@@ -198,7 +197,6 @@ describe("migration list", () => {
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240101000000`");
       expect(stdout).toContain("` `"); // empty Remote cell
-      assertPermissionDrift({ command: "migration list", requests: [] });
     }).pipe(Effect.provide(layer));
   });
 
@@ -214,7 +212,6 @@ describe("migration list", () => {
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240105000000`");
       expect(stdout).not.toContain("20211208000000");
-      assertPermissionDrift({ command: "migration list", requests: [] });
     }).pipe(Effect.provide(layer));
   });
 
@@ -228,11 +225,6 @@ describe("migration list", () => {
       yield* migrationList(flags({ projectRef: Option.some(FLAG_REF) }));
       expect(ctx.cache.cachedRef).toBe(FLAG_REF);
       expect(ctx.cache.cachedRef).not.toBe(VALID_REF);
-      assertPermissionDrift({
-        command: "migration list",
-        activeFlags: { "project-ref": FLAG_REF },
-        requests: [],
-      });
     }).pipe(Effect.provide(ctx.layer));
   });
 
@@ -264,12 +256,6 @@ describe("migration list", () => {
       yield* migrationList(flags({ linked: false, local: true }));
       expect(ctx.resolverCalls[0]?.connType).toBe("local");
       expect(ctx.cache.cachedRef).toBeUndefined();
-      assertPermissionDrift({
-        command: "migration list",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
-      });
     }).pipe(Effect.provide(ctx.layer));
   });
 

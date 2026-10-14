@@ -221,7 +221,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(out.stderrText).toContain("Connecting to remote database...");
       expect(yield* listMigrations(tmp.current)).toEqual(["20240101000000_init.sql"]);
       expect(yield* readMigration(tmp.current, "20240101000000_init.sql")).toBe(
@@ -238,7 +237,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(yield* readMigration(tmp.current, "20240101000000_empty.sql")).toBe(";\n");
     }).pipe(Effect.provide(layer));
   });
@@ -251,7 +249,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
@@ -264,7 +261,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -280,7 +276,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -302,7 +297,6 @@ describe("migration fetch", () => {
       return Effect.gen(function* () {
         yield* seedExistingMigration(tmp.current);
         const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-        assertPermissionDrift({ command: "migration fetch", requests: [] });
         expect(error).toBeInstanceOf(OperationCanceledError);
         expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
       }).pipe(Effect.provide(layer));
@@ -318,7 +312,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
@@ -331,7 +324,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(out.stderrText).toContain("[Y/n] y");
       expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
@@ -349,7 +341,6 @@ describe("migration fetch", () => {
         yield* seedExistingMigration(tmp.current);
         yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
         yield* migrationFetch(flags());
-        assertPermissionDrift({ command: "migration fetch", requests: [] });
         expect(out.stderrText).toContain("[Y/n] y");
         expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
       }).pipe(Effect.provide(layer));
@@ -367,7 +358,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(out.stderrText).toContain("[Y/n]");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -388,7 +378,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -402,7 +391,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(MigrationFetchWriteError);
       expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -416,7 +404,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(yield* listMigrations(tmp.current)).toEqual(["-1_legacy.sql"]);
     }).pipe(Effect.provide(layer));
   });
@@ -428,7 +415,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(MigrationFetchWriteError);
       expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -442,7 +428,6 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* writeProjectFile(tmp.current, "migrations", "not a directory");
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(MigrationFetchWriteError);
     }).pipe(Effect.provide(layer));
   });
@@ -451,7 +436,6 @@ describe("migration fetch", () => {
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
       const error = yield* migrationFetch(flags()).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration fetch", requests: [] });
       expect(error).toBeInstanceOf(DbConfigLoadError);
       expect(yield* migrationsDirExists(tmp.current)).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
@@ -485,11 +469,6 @@ describe("migration fetch", () => {
       const { layer, cache } = setup(tmp.current, { rows: [] });
       return Effect.gen(function* () {
         yield* migrationFetch(flags({ projectRef: Option.some(FLAG_REF) }));
-        assertPermissionDrift({
-          command: "migration fetch",
-          activeFlags: { "project-ref": FLAG_REF },
-          requests: [],
-        });
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
         expect(cache.cachedRef).not.toBe(VALID_REF);

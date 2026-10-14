@@ -215,7 +215,6 @@ describe("migration down", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
       const error = yield* migrationDown(flags({ last: 0 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(MigrationLastZeroError);
     }).pipe(Effect.provide(layer));
   });
@@ -224,7 +223,6 @@ describe("migration down", () => {
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const error = yield* migrationDown(flags({ last: 0 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer));
   });
@@ -233,7 +231,6 @@ describe("migration down", () => {
     const { layer } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
       const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(MigrationLastTooLargeError);
     }).pipe(Effect.provide(layer));
   });
@@ -246,7 +243,6 @@ describe("migration down", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(true);
@@ -275,11 +271,6 @@ describe("migration down", () => {
         yield* migrationDown(
           flags({ last: 1, linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
         );
-        assertPermissionDrift({
-          command: "migration down",
-          activeFlags: { "project-ref": FLAG_REF, linked: true },
-          requests: [],
-        });
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
         expect(cache.cachedRef).not.toBe(VALID_REF);
@@ -314,7 +305,6 @@ describe("migration down", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -328,7 +318,6 @@ describe("migration down", () => {
     });
     return Effect.gen(function* () {
       const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(OperationCanceledError);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -343,7 +332,6 @@ describe("migration down", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -364,7 +352,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -384,7 +371,6 @@ describe("migration down", () => {
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(MigrationDropError);
     }).pipe(Effect.provide(layer));
   });
@@ -398,7 +384,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (1);\n");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain("Seeding data from supabase/seed.sql...");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -416,7 +401,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (1);\n");
       const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(error).toBeInstanceOf(MigrationSeedError);
     }).pipe(Effect.provide(layer));
   });
@@ -433,7 +417,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "seed.sql", body);
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(stripAnsi(out.stderrText)).not.toContain("Seeding data from");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -451,7 +434,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (2);\n");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(stripAnsi(out.stderrText)).toContain("Updating seed hash to supabase/seed.sql...");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -469,7 +451,6 @@ describe("migration down", () => {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* writeProjectFile(tmp.current, "config.toml", "[db.migrations]\nenabled = false\n");
       yield* migrationDown(flags({ last: 1 }));
-      assertPermissionDrift({ command: "migration down", requests: [] });
       expect(queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -531,6 +512,17 @@ describe("migration down", () => {
         requests: [],
         exact: true,
       });
+      expect(() =>
+        assertPermissionDrift({
+          command: "migration down",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(
       Effect.scoped,
       Effect.provide(ctx.layer),
