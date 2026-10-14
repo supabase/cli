@@ -7,7 +7,7 @@
  */
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import {
@@ -51,7 +51,10 @@ import { BundledPostgresClient } from "../../../command-internal/bundled-postgre
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
-import { runTestDbCommand } from "../../../command-internal/test-db.command-handler.ts";
+import {
+  runTestDbCommand,
+  type TestDbFlags,
+} from "../../../command-internal/test-db.command-handler.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { dbCommand } from "../db.command.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
@@ -190,16 +193,16 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, analytics, processControl, connection, docker };
 }
 
-const flags = () => ({
-  paths: [] as ReadonlyArray<string>,
-  dbUrl: Option.none<string>(),
+const flags = (): TestDbFlags => ({
+  paths: [],
+  dbUrl: Option.none(),
   linked: false,
   local: true,
-  projectRef: Option.none<string>(),
+  projectRef: Option.none(),
 });
 
 describe("db test (alias) integration", () => {
-  it.live("runs pgTAP through the alias exactly like `test db`", () => {
+  it.effect("runs pgTAP through the alias exactly like `test db`", () => {
     const { layer, connection, docker } = setup();
     return Effect.gen(function* () {
       yield* runTestDbCommand(flags());
@@ -211,7 +214,7 @@ describe("db test (alias) integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "dispatches through the real `dbTestCommand` and records `db test`, not `test db`, as the telemetry command",
     () => {
       // `--local --linked` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
@@ -268,18 +271,18 @@ describe("db test (alias) integration", () => {
     },
   );
 
-  it.live("fails in text mode when pg_prove exits non-zero", () => {
+  it.effect("fails in text mode when pg_prove exits non-zero", () => {
     const { layer, processControl } = setup({ exitCode: 1 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(runTestDbCommand(flags()));
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
       // Text mode lets the failed Effect itself drive the process exit code, unlike the
       // json-mode branch below, which hand-writes exit 1.
       expect(processControl.exitCode).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing (Go's stdout-safety)",
     () => {
       const { layer, out, processControl } = setup({ format: "json", exitCode: 1 });
@@ -293,20 +296,20 @@ describe("db test (alias) integration", () => {
     },
   );
 
-  it.live("fails in text mode when the run found no tests", () => {
+  it.effect("fails in text mode when the run found no tests", () => {
     const { layer, processControl } = setup({
       exitCode: 0,
       stdout: ["Files=0, Tests=0,  0 wallclock secs\nResult: NOTESTS\n"],
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(runTestDbCommand(flags()));
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
       // Text mode lets the failed Effect drive the exit code, as for a run failure.
       expect(processControl.exitCode).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("in json mode, a run that found no tests takes the same stderr + exit 1 path", () => {
+  it.effect("in json mode, a run that found no tests takes the same stderr + exit 1 path", () => {
     const { layer, out, processControl } = setup({
       format: "json",
       exitCode: 0,

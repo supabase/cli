@@ -58,7 +58,7 @@ const workspace = Effect.gen(function* () {
 });
 
 describe("stack target resolver", () => {
-  it.live("resolves an explicit id without reading the current project identity", () =>
+  it.effect("resolves an explicit id without reading the current project identity", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -82,7 +82,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an id prefix that several readable or unreadable saved stacks share", () =>
+  it.effect("rejects an id prefix that several readable or unreadable saved stacks share", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -113,7 +113,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a stack id shorter than four characters", () =>
+  it.effect("rejects a stack id shorter than four characters", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
       const id = yield* register({ projectRoot: root });
@@ -129,7 +129,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an explicit id when its saved runtime differs", () =>
+  it.effect("rejects an explicit id when its saved runtime differs", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
       const id = yield* register({ projectRoot: root, runtime: "docker" });
@@ -147,7 +147,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("selects the saved stack whose identity the project and stack name derive", () =>
+  it.effect("selects the saved stack whose identity the project and stack name derive", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
       yield* register({ projectRoot: root });
@@ -160,7 +160,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("records the saved stack's runtime on the command event", () =>
+  it.effect("records the saved stack's runtime on the command event", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
       yield* register({ projectRoot: root, runtime: "docker" });
@@ -176,7 +176,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports no id when the project has no saved stack", () =>
+  it.effect("reports no id when the project has no saved stack", () =>
     Effect.gen(function* () {
       const { root, resolve } = yield* workspace;
 
@@ -186,7 +186,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("carries an explicit Podman runtime onto a new stack target and records it", () =>
+  it.effect("carries an explicit Podman runtime onto a new stack target and records it", () =>
     Effect.gen(function* () {
       const { root, resolve } = yield* workspace;
       const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
@@ -202,7 +202,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns the canonical project root for a new stack reached through a symlink", () =>
+  it.effect("returns the canonical project root for a new stack reached through a symlink", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -217,7 +217,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("surfaces an unreadable saved stack instead of reporting it missing", () =>
+  it.effect("surfaces an unreadable saved stack instead of reporting it missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -233,7 +233,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "tells the user to remove the directory of a saved stack with an unknown service kind",
     () =>
       Effect.gen(function* () {
@@ -265,7 +265,7 @@ describe("stack target resolver", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("surfaces an unreadable saved stack that an id prefix selects", () =>
+  it.effect("surfaces an unreadable saved stack that an id prefix selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -286,7 +286,7 @@ describe("stack target resolver", () => {
 });
 
 describe("stack API layer", () => {
-  it.live("creates, discovers, and opens state without starting an owner", () =>
+  it.effect("creates, discovers, and opens state without starting an owner", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

@@ -245,7 +245,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
 const databaseOnlyConfig = `project_id = "prepare-test"\n\n[api]\nenabled = false\n`;
 
 describe("stack prepare", () => {
-  it.live("prepares a temporary Database without changing the composition", () =>
+  it.effect("prepares a temporary Database without changing the composition", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -265,7 +265,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("prepares Studio together with its configured Pgmeta companion", () =>
+  it.effect("prepares Studio together with its configured Pgmeta companion", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -289,7 +289,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("removes its temporary instance after a preparation failure", () =>
+  it.effect("removes its temporary instance after a preparation failure", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root, { failPreparation: true });
@@ -310,7 +310,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("rejects a disabled requested service before preparing an instance", () =>
+  it.effect("rejects a disabled requested service before preparing an instance", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -330,7 +330,7 @@ describe("stack prepare", () => {
     ),
   );
 
-  it.live("rejects malformed config before creating a stack", () =>
+  it.effect("rejects malformed config before creating a stack", () =>
     makeProject("project_id = [\n").pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root);
@@ -365,7 +365,7 @@ describe("stack prepare automatic runtime selection", () => {
       Effect.provide(BunServices.layer),
     );
 
-  it.live("creates a Docker stack when the Docker engine answers", () =>
+  it.effect("creates a Docker stack when the Docker engine answers", () =>
     selectRuntime({ engines: { docker: "running", podman: "running" } }).pipe(
       Effect.tap((fixture) =>
         Effect.sync(() => {
@@ -377,7 +377,7 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live("creates a Podman stack when Docker is not installed and Podman answers", () =>
+  it.effect("creates a Podman stack when Docker is not installed and Podman answers", () =>
     selectRuntime({
       engines: { docker: "missing", podman: "running" },
       runtimeInfo: mockRuntimeInfo({ platform: "linux", arch: "x64" }),
@@ -394,7 +394,7 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live(
+  it.effect(
     "creates a native stack on Linux when the Docker daemon is down and Podman is absent",
     () =>
       selectRuntime({
@@ -416,7 +416,7 @@ describe("stack prepare automatic runtime selection", () => {
     ["win32", "x64"],
     ["darwin", "x64"],
   ] as const) {
-    it.live(`fails without creating a stack when no engine answers on ${platform}/${arch}`, () =>
+    it.effect(`fails without creating a stack when no engine answers on ${platform}/${arch}`, () =>
       makeProject(databaseOnlyConfig).pipe(
         Effect.flatMap((root) => {
           const fixture = makeFixture(root, {
@@ -443,7 +443,7 @@ describe("stack prepare automatic runtime selection", () => {
     );
   }
 
-  it.live("reuses a saved runtime without probing any engine", () =>
+  it.effect("reuses a saved runtime without probing any engine", () =>
     selectRuntime({
       savedRuntime: "podman",
       engines: { docker: "running", podman: "running" },
@@ -459,23 +459,25 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live("honors an explicit runtime without probing any engine and records it on telemetry", () =>
-    makeProject(databaseOnlyConfig).pipe(
-      Effect.flatMap((root) => {
-        const fixture = makeFixture(root, { engines: { docker: "running", podman: "running" } });
-        return stackPrepare(flags({ runtime: "podman" })).pipe(
-          Effect.provide(fixture.layer),
-          Effect.tap(() =>
-            Effect.sync(() => {
-              expect(fixture.createdRuntimes).toEqual(["podman"]);
-              expect(fixture.recordedRuntimes).toEqual(["podman"]);
-              expect(fixture.probes).toEqual([]);
-              expect(fixture.runtimeNotices).toEqual([]);
-            }),
-          ),
-        );
-      }),
-      Effect.provide(BunServices.layer),
-    ),
+  it.effect(
+    "honors an explicit runtime without probing any engine and records it on telemetry",
+    () =>
+      makeProject(databaseOnlyConfig).pipe(
+        Effect.flatMap((root) => {
+          const fixture = makeFixture(root, { engines: { docker: "running", podman: "running" } });
+          return stackPrepare(flags({ runtime: "podman" })).pipe(
+            Effect.provide(fixture.layer),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                expect(fixture.createdRuntimes).toEqual(["podman"]);
+                expect(fixture.recordedRuntimes).toEqual(["podman"]);
+                expect(fixture.probes).toEqual([]);
+                expect(fixture.runtimeNotices).toEqual([]);
+              }),
+            ),
+          );
+        }),
+        Effect.provide(BunServices.layer),
+      ),
   );
 });

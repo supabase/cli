@@ -17,7 +17,7 @@ const readGoFixture = Effect.fnUntraced(function* (name: string) {
 });
 
 describe("squashLineByLineDiff", () => {
-  it.live("diffs real pg_dump output into Go's exact diff.sql bytes", () =>
+  it.effect("diffs real pg_dump output into Go's exact diff.sql bytes", () =>
     Effect.gen(function* () {
       const before = yield* readGoFixture("before.sql");
       const after = yield* readGoFixture("after.sql");

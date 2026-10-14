@@ -128,7 +128,7 @@ as $$ select 1; $$;`,
               f.endsWith("_revoke_public_execute.sql"),
             );
           expect(written, `no migration written; stderr:\n${diff.stderr}`).toBeTruthy();
-          const sql = yield* fs.readFileString(path.join(migrationsDir, written as string));
+          const sql = yield* fs.readFileString(path.join(migrationsDir, written || ""));
 
           // Anchored to the function's own REVOKE statement, up to its terminating `;`, so this
           // cannot pass on an unrelated PUBLIC mention elsewhere in the file.

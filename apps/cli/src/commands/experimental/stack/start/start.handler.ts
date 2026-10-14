@@ -24,7 +24,7 @@ import {
   type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
+import { Effect, FileSystem, Fiber, Match, Option, Path, Redacted, Ref } from "effect";
 import {
   apiRoute,
   resolveNativePostgresUser,
@@ -198,22 +198,22 @@ const stackAcquireError = (
   });
 };
 
-const loadStartConfig = (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) =>
-  Effect.gen(function* () {
+const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
+  function* (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) {
     const config = yield* loadStackConfig(projectRoot);
     const keys = yield* config.keys;
     const toml = yield* readDbToml(fs, path, projectRoot);
     return { config, keys, toml };
-  }).pipe(
-    Effect.mapError(
-      (error) =>
-        new StackCommandStartError({
-          reason: "invalid-config",
-          message: error.message,
-          cause: error,
-        }),
-    ),
-  );
+  },
+  Effect.mapError(
+    (error) =>
+      new StackCommandStartError({
+        reason: "invalid-config",
+        message: error.message,
+        cause: error,
+      }),
+  ),
+);
 
 const sameKinds = (
   left: ReadonlyArray<{ readonly service: string }>,
@@ -487,28 +487,27 @@ const endpointKeys = (change: EndpointPortChange, reported: ReadonlyArray<string
 const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
   status.lifecycle === "running" && status.health === "healthy";
 
-const startReport = (
+const startReport = Effect.fn("experimental.stack.start.report")(function* (
   stack: Pick<Stack, "composition">,
   instances: ReadonlyArray<{
     readonly id: string;
     readonly service: ServiceCreation["service"];
     readonly status: Effect.Effect<Observation, StackError>;
   }>,
-) =>
-  Effect.gen(function* () {
-    const { members } = yield* stack.composition.describe;
-    const activation = new Map(members.map((member) => [member.id, member.activation]));
-    const views = yield* Effect.forEach(instances, (instance) =>
-      instance.status.pipe(
-        Effect.map((observation): StackServiceView => ({
-          service: instance.service,
-          observation,
-          activation: activation.get(instance.id),
-        })),
-      ),
-    );
-    return { views, endpoints: stackEndpoints(views) };
-  }).pipe(Effect.mapError(stackError));
+) {
+  const { members } = yield* stack.composition.describe;
+  const activation = new Map(members.map((member) => [member.id, member.activation]));
+  const views = yield* Effect.forEach(instances, (instance) =>
+    instance.status.pipe(
+      Effect.map((observation): StackServiceView => ({
+        service: instance.service,
+        observation,
+        activation: activation.get(instance.id),
+      })),
+    ),
+  );
+  return { views, endpoints: stackEndpoints(views) };
+}, Effect.mapError(stackError));
 
 /** Starts the selected managed stack and applies the local database overlays. */
 export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
@@ -550,16 +549,16 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ),
     );
     const postgresUser = yield* resolveNativePostgresUser(selectedRuntime);
-    const ensurePostgresUser =
-      postgresUser._tag === "Unavailable"
-        ? new StackCommandStartError({
-            reason: "lifecycle",
-            message: postgresUser.message,
-            suggestion: postgresUser.suggestion,
-          })
-        : postgresUser._tag === "StepDown"
-          ? output.info(postgresUser.message)
-          : Effect.void;
+    const ensurePostgresUser = Match.valueTags(postgresUser, {
+      Unavailable: (unavailable) =>
+        new StackCommandStartError({
+          reason: "lifecycle",
+          message: unavailable.message,
+          suggestion: unavailable.suggestion,
+        }),
+      StepDown: (stepDown) => output.info(stepDown.message),
+      NotNeeded: () => Effect.void,
+    });
     const configBeforeCreate =
       target.id === undefined || !target.hostRunning
         ? yield* loadStartConfig(target.projectRoot, fs, path)

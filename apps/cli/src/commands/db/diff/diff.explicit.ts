@@ -3,15 +3,13 @@ import { isPostgresURL } from "../../../command-internal/pgdelta.ts";
 /** The kinds an explicit `--from`/`--to` ref resolves to. */
 export type ExplicitRefKind = "local" | "linked" | "migrations" | "url" | "unknown";
 
-const VALID_TARGETS = new Set(["local", "linked", "migrations"]);
-
 /**
  * Classifies an explicit `--from`/`--to` ref: `local`/`linked`/`migrations` are
  * the named targets; anything else must be a `postgres://` / `postgresql://`
  * URL, otherwise it is unknown.
  */
 export function classifyExplicitRef(ref: string): ExplicitRefKind {
-  if (VALID_TARGETS.has(ref)) return ref as "local" | "linked" | "migrations";
+  if (ref === "local" || ref === "linked" || ref === "migrations") return ref;
   if (isPostgresURL(ref)) return "url";
   return "unknown";
 }

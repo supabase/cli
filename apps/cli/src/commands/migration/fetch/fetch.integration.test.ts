@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import {
   VALID_REF,
@@ -18,6 +18,8 @@ import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { MigrationTargetFlagsError, OperationCanceledError } from "../migration.errors.ts";
+import { MigrationFetchWriteError } from "./fetch.errors.ts";
 import { migrationFetch } from "./fetch.handler.ts";
 import type { MigrationFetchFlags } from "./fetch.command.ts";
 
@@ -173,7 +175,7 @@ const migrationsDirExists = Effect.fnUntraced(function* (workdir: string) {
 const tmp = useTempWorkdir();
 
 describe("migration fetch", () => {
-  it.live("writes migration files joined with the Go separator when the dir is empty", () => {
+  it.effect("writes migration files joined with the Go separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
       rows: [
         {
@@ -186,15 +188,14 @@ describe("migration fetch", () => {
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
       expect(out.stderrText).toContain("Connecting to remote database...");
-      const files = yield* listMigrations(tmp.current);
-      expect(files).toEqual(["20240101000000_init.sql"]);
-      expect(yield* readMigration(tmp.current, files[0]!)).toBe(
+      expect(yield* listMigrations(tmp.current)).toEqual(["20240101000000_init.sql"]);
+      expect(yield* readMigration(tmp.current, "20240101000000_init.sql")).toBe(
         "create table a;\ncreate index b;\n",
       );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a lone separator for a row with no statements (Go parity)", () => {
+  it.effect("writes a lone separator for a row with no statements (Go parity)", () => {
     // A schema_migrations row can have a NULL/empty statements array; joining still
     // yields exactly ";\n", not an empty file. This locks that byte behavior.
     const { layer } = setup(tmp.current, {
@@ -206,7 +207,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts before overwriting a non-empty directory and proceeds on yes", () => {
+  it.effect("prompts before overwriting a non-empty directory and proceeds on yes", () => {
     const { layer } = setup(tmp.current, {
       confirm: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
@@ -218,24 +219,20 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("cancels with context canceled when the overwrite prompt is declined", () => {
+  it.effect("cancels with context canceled when the overwrite prompt is declined", () => {
     const { layer } = setup(tmp.current, {
       confirm: false,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
+  it.effect("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
     // The overwrite prompt defaults to YES; piped stdin still overrides it without a TTY.
     const { layer } = setup(tmp.current, {
       isTTY: false,
@@ -244,17 +241,13 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each(
+  it.effect.each(
     ["u", "yess", "nope", "   "].flatMap((answer) => [
       { answer, isTTY: false },
       { answer, isTTY: true },
@@ -269,18 +262,14 @@ describe("migration fetch", () => {
       });
       return Effect.gen(function* () {
         yield* seedExistingMigration(tmp.current);
-        const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-        }
+        const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(OperationCanceledError);
         expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live.each(["\n", "", " YES \n"])("overwrites on the piped answer %j", (pipedInput) => {
+  it.effect.each(["\n", "", " YES \n"])("overwrites on the piped answer %j", (pipedInput) => {
     const { layer } = setup(tmp.current, {
       isTTY: false,
       pipedInput,
@@ -293,7 +282,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("bypasses the overwrite prompt with --yes (echoes the auto-answer)", () => {
+  it.effect("bypasses the overwrite prompt with --yes (echoes the auto-answer)", () => {
     const { layer, out } = setup(tmp.current, {
       yes: true,
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
@@ -306,7 +295,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
       // SUPABASE_YES lives only in supabase/.env; the project env loads before the
@@ -324,7 +313,7 @@ describe("migration fetch", () => {
     },
   );
 
-  it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
+  it.effect("still prompts on stderr in json mode and proceeds on a piped yes", () => {
     // The overwrite prompt still writes to stderr and reads stdin in json mode; it must
     // not silently auto-accept.
     const { layer, out } = setup(tmp.current, {
@@ -346,7 +335,7 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
+  it.effect("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
     const { layer } = setup(tmp.current, {
       format: "json",
       pipedInput: "n\n",
@@ -354,34 +343,26 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* seedExistingMigration(tmp.current);
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(OperationCanceledError);
       expect(yield* listMigrations(tmp.current)).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a hostile version/name from the history table (path traversal guard)", () => {
+  it.effect("rejects a hostile version/name from the history table (path traversal guard)", () => {
     // A tampered remote `schema_migrations` row could use `..`/separators to
     // escape the migrations dir (CWE-22). The guard rejects it before writing.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "20240101000000", name: "../../../etc/passwd", statements: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationFetchWriteError);
       expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
+  it.effect("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
     // The raw version column writes verbatim into <version>_<name>.sql with no digit
     // check, so a value like "-1" still fetches instead of aborting the run.
     const { layer } = setup(tmp.current, {
@@ -393,53 +374,41 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a hostile version from the history table (traversal guard on version)", () => {
+  it.effect("rejects a hostile version from the history table (traversal guard on version)", () => {
     // Traversal hardening covers the version field too, not just name.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "../../etc", name: "x", statements: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationFetchWriteError);
       expect(yield* listMigrations(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a write failure", () => {
+  it.effect("reports a write failure", () => {
     // A file at .../migrations makes makeDirectory fail; supabase itself must stay a
     // real directory, since the handler's project-env load reads supabase/.env* before
     // this mkdir and would hit ENOTDIR first otherwise.
     const { layer } = setup(tmp.current, { rows: [] });
     return Effect.gen(function* () {
       yield* writeProjectFile(tmp.current, "migrations", "not a directory");
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationFetchWriteError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves DB config before creating the migrations dir or prompting", () => {
+  it.effect("resolves DB config before creating the migrations dir or prompting", () => {
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("DbConfigLoadError");
-      }
+      const error = yield* migrationFetch(flags()).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLoadError);
       expect(yield* migrationsDirExists(tmp.current)).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "rejects --db-url combined with --linked before reading the project .env (CLI-1878)",
     () => {
       // A flag conflict must surface even when supabase/.env is malformed, which would
@@ -449,19 +418,15 @@ describe("migration fetch", () => {
       });
       return Effect.gen(function* () {
         yield* writeProjectFile(tmp.current, ".env", "!=broken\n");
-        const exit = yield* migrationFetch(flags({ dbUrl: Option.some("postgresql://x") })).pipe(
-          Effect.exit,
+        const error = yield* migrationFetch(flags({ dbUrl: Option.some("postgresql://x") })).pipe(
+          Effect.flip,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
-        }
+        expect(error).toBeInstanceOf(MigrationTargetFlagsError);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "fetches from the project given via --project-ref, overriding the default linked ref",
     () => {
       // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
@@ -477,21 +442,17 @@ describe("migration fetch", () => {
     },
   );
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache } = setup(tmp.current, { cliArgs: ["--local"] });
     return Effect.gen(function* () {
-      const exit = yield* migrationFetch(
+      const error = yield* migrationFetch(
         flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
-        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+      expect(error.message).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
       expect(yield* migrationsDirExists(tmp.current)).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
       expect(cache.cached).toBe(false);
