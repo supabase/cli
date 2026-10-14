@@ -6,11 +6,13 @@ import {
 } from "../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/project-ref.service.ts";
 import { currentStackBackend } from "../../../../command-internal/stack-backend.ts";
 import { DbConfigResolver } from "../../../../command-internal/db-config.service.ts";
-import { loadProjectEnv } from "../../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../../command-internal/db-config.toml-read.ts";
 import {
   layeredParseEnv,
   parseConnectionString,
@@ -48,8 +50,13 @@ export interface SmartTargetFlags {
 
 const localConnection = Effect.fnUntraced(function* (local: LocalConn) {
   // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1.
+  const { workdir } = yield* CommandSettings;
+  const resolvedConfig = yield* (yield* CliConfigValues).load({
+    workdir,
+    projectRef: Option.none(),
+  });
   return {
-    host: yield* getHostname(),
+    host: yield* getHostname(resolvedConfig),
     port: local.port,
     user: "postgres",
     password: local.password,
@@ -135,7 +142,7 @@ export const resolveSmartTargetEndpoint = Effect.fn("DeclarativeSchema.smartTarg
   const output = yield* Output;
   // `SUPABASE_YES` — from the shell env or the project `.env` — must auto-confirm the prompts
   // below too, not just the `--yes` flag.
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   // Inserts "Linked project" between local and custom when the workdir is linked with a valid
   // ref; an invalid on-disk ref hides the choice rather than showing it and failing later.

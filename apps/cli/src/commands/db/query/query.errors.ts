@@ -86,7 +86,7 @@ export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
 
 /**
  * The linked Management API returned a non-201 status; message text
- * (`"unexpected status %d: %s"`) is an established output contract.
+ * (`"unexpected status <status>: <body>"`) is an established output contract.
  */
 export class DbQueryUnexpectedStatusError extends Data.TaggedError("DbQueryUnexpectedStatusError")<{
   readonly status: number;

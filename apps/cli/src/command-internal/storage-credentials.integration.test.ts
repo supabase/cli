@@ -7,6 +7,7 @@ import {
   mockCommandPlatformApi,
   mockCommandSettings,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
@@ -16,18 +17,18 @@ const apiKeys = [
   { name: "anon", api_key: "anon-key", type: "legacy" },
   { name: "service_role", api_key: "service-role-key", type: "legacy" },
 ];
-const config = { api: { enabled: true, port: 54321, tls: { enabled: false } }, auth: {} };
 
 describe("resolveStorageCredentials for a remote project", () => {
   const resolve = (
     api: ReturnType<typeof mockCommandPlatformApi>,
     env: Record<string, string> = {},
   ) =>
-    resolveStorageCredentials({ projectRef: VALID_REF, config }).pipe(
+    resolveStorageCredentials({ projectRef: VALID_REF }).pipe(
       Effect.provide(
         Layer.mergeAll(
           ConfigProvider.layer(ConfigProvider.fromEnvRecord(env)),
           api.factoryLayer,
+          cliConfigValuesTestLayer,
           mockCommandSettings({ workdir: "/unused" }),
           mockRuntimeInfo(),
           unusedStackServices,

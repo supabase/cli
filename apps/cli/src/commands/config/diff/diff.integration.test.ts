@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -21,7 +22,9 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { configDiffHandler } from "./diff.command.ts";
@@ -53,6 +56,11 @@ const v2Response = v2ProjectConfigResponse;
 const jsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const asJsonRecord = Schema.decodeUnknownSync(jsonRecord);
 const decodeJsonRecord = Schema.decodeUnknownEffect(jsonRecord);
+const decodeChanges = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.StructWithRest(Schema.Struct({ path: Schema.Array(Schema.String) }), [jsonRecord]),
+  ),
+);
 
 /** V1GetABranch body for the branch-name `--project-ref` lookup. */
 const BRANCH_BY_NAME = {
@@ -83,7 +91,7 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly v2?: { status: number; body: unknown } | "fail";
   readonly branchByName?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
@@ -149,10 +157,11 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     projectFiles,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl };
 }
@@ -338,6 +347,81 @@ describe("config diff integration", () => {
       yield* configDiff(noFlags);
       expect(out.stdoutText).toContain("api.max_rows [update]");
       expect(out.stdoutText).toContain("local:  500 (from env PGRST_MAX_ROWS)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("marks a value a project .env file overrides with the variable and file", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("marks a value the shell environment overrides with the variable alone", () => {
+    const { layer, out } = setup({ toml: 'project_id = "test"\n[api]\nmax_rows = 500\n' });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "700",
+      Effect.gen(function* () {
+        yield* configDiff(noFlags);
+        expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS)");
+        expect(out.stdoutText).not.toContain("SUPABASE_API_MAX_ROWS in");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries an origin on an env-sourced change in the machine payload only", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n[auth]\nsite_url = "https://local.example.com"\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      expect(changes.find((change) => change.path[0] === "api")).toEqual({
+        path: ["api", "max_rows"],
+        class: "update",
+        declared: true,
+        local: 700,
+        remote: 1000,
+        origin: {
+          source: "project_env",
+          env_variable: "SUPABASE_API_MAX_ROWS",
+          file: "supabase/.env",
+        },
+      });
+      expect(changes.find((change) => change.path[0] === "auth")).not.toHaveProperty("origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an env override beats the matched [remotes.*] value as the local operand", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        "[api]",
+        "max_rows = 500",
+        "[remotes.staging]",
+        `project_id = "${VALID_REF}"`,
+        "[remotes.staging.api]",
+        "max_rows = 1000",
+        "",
+      ].join("\n"),
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stderrText).toContain(
+        `Comparing against project ${VALID_REF} using [remotes.staging]`,
+      );
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+      expect(out.stdoutText).toContain("remote: 1000");
     }).pipe(Effect.provide(layer));
   });
 
@@ -593,7 +677,7 @@ describe("config diff integration", () => {
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("ConfigDiffLoadConfigError");
-        // loadCliConfig probes both config.toml and config.json, so the message names both.
+        // The config load probes both config.toml and config.json, so the message names both.
         expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
         expect(causeText).toContain("supabase init");
       }
@@ -681,7 +765,11 @@ describe("config diff integration", () => {
         yield* writeProjectFile("config.json", yield* jsonText({ project_id: "test" }));
         const sub = path.join(tempRoot.current, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
-        const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
+        const { layer, api } = setup({
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
+        });
         yield* configDiff(noFlags).pipe(Effect.provide(layer));
         expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
         expect(api.requests).not.toHaveLength(0);
@@ -925,10 +1013,10 @@ describe("config diff integration", () => {
     // Iterates every value the global `-o`/`--output` flag can carry, so a value added there
     // automatically extends this coverage.
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -1269,7 +1357,7 @@ describe("config diff -o/--output wrapper wiring", () => {
   // without it, `-o table` would hit the wrapper's own generic rejection before reaching this
   // command's specific one. Uses the real configDiffHandler wiring so this exercises that override.
   it.effect("-o table reaches this command's own message, not the wrapper's generic one", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
+    const { layer, api } = setup({ toml: 'project_id = "test"\n', outputFlag: "table" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(configDiffHandler(noFlags));
       expect(Exit.isFailure(exit)).toBe(true);

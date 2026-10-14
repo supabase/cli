@@ -720,17 +720,14 @@ describe("volumeExists", () => {
     );
   });
 
-  it.live(
-    "resolves true (protected, not fresh) on an ambiguous inspect failure, matching Go's IsNotFound gate",
-    () => {
-      const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-      return volumeExists(mock.spawner, "supabase_db_proj").pipe(
-        Effect.map((exists) => {
-          expect(exists).toBe(true);
-        }),
-      );
-    },
-  );
+  it.live("resolves true (protected, not fresh) on an ambiguous inspect failure", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return volumeExists(mock.spawner, "supabase_db_proj").pipe(
+      Effect.map((exists) => {
+        expect(exists).toBe(true);
+      }),
+    );
+  });
 
   it.live("fails with VolumeInspectError when no runtime can be spawned", () => {
     const spawner = ChildProcessSpawner.make(() =>

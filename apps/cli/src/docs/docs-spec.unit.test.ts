@@ -149,7 +149,7 @@ describe("buildDocsSpec", () => {
     }
   });
 
-  it("excludes Go-deprecated commands from the spec and from subcommand lists", () => {
+  it("excludes deprecated commands from the spec and from subcommand lists", () => {
     const { byId } = builtSpec();
     for (const excluded of DOCS_EXCLUDED) {
       expect(byId.has(excluded)).toBe(false);
@@ -181,10 +181,7 @@ describe("buildDocsSpec", () => {
     expect(link).toBeDefined();
     expect(link?.tags).toEqual(["local-dev"]);
     expect(link?.usage).toBe("supabase link [ref-or-branch] [flags]");
-    expect(link?.flags.map((flag) => flag.id)).toEqual(["password", "project-ref", "skip-pooler"]);
-    expect(link?.flags.find((flag) => flag.id === "password")?.name).toBe(
-      "-p, --password <string>",
-    );
+    expect(link?.flags.map((flag) => flag.id)).toEqual(["project-ref", "skip-pooler"]);
     expect(link?.description).toBe(
       docsStripOverlayHeading(content.overlays.get("supabase/link.md") ?? ""),
     );

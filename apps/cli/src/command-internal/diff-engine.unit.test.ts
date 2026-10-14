@@ -5,31 +5,12 @@ import {
   resolveDeclarativeFromArgs,
   resolveDiffEngine,
   resolvePullDiffEngine,
-  shouldUsePgDelta,
 } from "./diff-engine.ts";
-
-describe("shouldUsePgDelta", () => {
-  it("is the OR of config, flag, and env", () => {
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(false);
-    expect(
-      shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: true }),
-    ).toBe(true);
-  });
-});
 
 describe("resolveDiffEngine", () => {
   const base = {
-    useMigraChanged: false,
+    useMigra: false,
     usePgAdmin: false,
-    usePgSchema: false,
     pgDeltaDefault: true,
   };
 
@@ -39,15 +20,11 @@ describe("resolveDiffEngine", () => {
   });
 
   it("an explicit --use-migra clears pg-delta mode", () => {
-    expect(resolveDiffEngine({ ...base, useMigraChanged: true })).toBe(false);
+    expect(resolveDiffEngine({ ...base, useMigra: true })).toBe(false);
   });
 
   it("--use-pgadmin clears pg-delta mode", () => {
     expect(resolveDiffEngine({ ...base, usePgAdmin: true })).toBe(false);
-  });
-
-  it("--use-pg-schema clears pg-delta mode", () => {
-    expect(resolveDiffEngine({ ...base, usePgSchema: true })).toBe(false);
   });
 });
 
@@ -88,7 +65,7 @@ describe("resolvePullDiffEngine", () => {
 });
 
 describe("parseBoolEnv", () => {
-  it("accepts only strconv.ParseBool truthy strings", () => {
+  it("accepts only the boolean truthy strings", () => {
     for (const v of ["1", "t", "T", "TRUE", "true", "True"]) {
       expect(parseBoolEnv(v)).toBe(true);
     }
@@ -113,14 +90,14 @@ describe("resolveDeclarativeFromArgs", () => {
     expect(resolveDeclarativeFromArgs(["db", "pull", "--use-pg-delta"])).toBe(true);
   });
 
-  it("parses an =value with strconv.ParseBool semantics", () => {
+  it("parses an =value with boolean semantics", () => {
     expect(resolveDeclarativeFromArgs(["--declarative=false"])).toBe(false);
     expect(resolveDeclarativeFromArgs(["--declarative=true"])).toBe(true);
     expect(resolveDeclarativeFromArgs(["--use-pg-delta=0"])).toBe(false);
     expect(resolveDeclarativeFromArgs(["--use-pg-delta=1"])).toBe(true);
   });
 
-  it("lets the last occurrence win across both flag names (pflag single-variable bind)", () => {
+  it("lets the last occurrence win across both flag names", () => {
     expect(resolveDeclarativeFromArgs(["--declarative", "--use-pg-delta=false"])).toBe(false);
     expect(resolveDeclarativeFromArgs(["--use-pg-delta", "--declarative=false"])).toBe(false);
     expect(resolveDeclarativeFromArgs(["--declarative=false", "--use-pg-delta"])).toBe(true);

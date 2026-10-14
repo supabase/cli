@@ -10,7 +10,7 @@
 | keyring `"Supabase CLI"` / `access-token`               | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                   |
 | `<SUPABASE_HOME or ~/.supabase>/access-token`           | plain text (token string) | last-resort fallback after environment and keyring lookup                                  |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json`         | JSON                      | when present, before post-run telemetry state is refreshed                                 |
-| `<ancestor>/supabase/config.toml`                       | existence probe           | while resolving the default workdir; skipped when `--workdir` or `SUPABASE_WORKDIR` is set |
+| `<ancestor>/supabase/config.toml` or `config.json`      | existence probe           | while resolving the default workdir; skipped when `--workdir` or `SUPABASE_WORKDIR` is set |
 | `/proc/sys/kernel/osrelease`                            | existence probe and text  | during credential initialization to detect WSL; read only when the path exists             |
 
 ## Files Written

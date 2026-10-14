@@ -8,7 +8,7 @@ interface PrintableStatus {
   readonly applied: boolean;
 }
 
-function formatGoSlice(value: readonly string[] | undefined): string {
+function formatStringSlice(value: readonly string[] | undefined): string {
   if (value === undefined) return "<nil>";
   return `&[${value.join(" ")}]`;
 }
@@ -16,8 +16,8 @@ function formatGoSlice(value: readonly string[] | undefined): string {
 /** Renders the established three-line status block byte-for-byte. */
 export function printNetworkRestrictionsStatus(input: PrintableStatus): string {
   return (
-    `DB Allowed IPv4 CIDRs: ${formatGoSlice(input.v4)}\n` +
-    `DB Allowed IPv6 CIDRs: ${formatGoSlice(input.v6)}\n` +
+    `DB Allowed IPv4 CIDRs: ${formatStringSlice(input.v4)}\n` +
+    `DB Allowed IPv6 CIDRs: ${formatStringSlice(input.v6)}\n` +
     `Restrictions applied successfully: ${input.applied ? "true" : "false"}\n`
   );
 }

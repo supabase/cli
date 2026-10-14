@@ -23,6 +23,7 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
   statusCodeFailure,
@@ -61,7 +62,7 @@ const tempRoot = useTempWorkdir("supabase-status-int-");
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-const goOutputFields = Schema.decodeEffect(
+const outputFields = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
 );
 const machineEnvelope = Schema.decodeEffect(
@@ -298,7 +299,7 @@ function defaultRoute(
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+  readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
   readonly dockerMissing?: boolean;
   readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
@@ -350,13 +351,14 @@ function setup(opts: SetupOpts = {}) {
       : mockCommandPlatformApiFactoryDirect(opts.apiFactory);
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     out.layer,
     cliSettings,
     telemetry.layer,
     child.layer,
-    Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
+    Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
     ...(apiMock === undefined ? [] : [apiMock.layer]),
     ...(apiFactoryMock === undefined ? [] : [apiFactoryMock.layer]),
   );
@@ -428,6 +430,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   const outputLayer = opts.format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     BunServices.layer,
     runtimeInfoLayer,
     outputLayer.pipe(Layer.provide(stdio.layer)),
@@ -495,29 +498,26 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "succeeds against an unhealthy db when --ignore-health-check is set (status.go:104-108)",
-    () => {
-      // Pairs with "fails when the db container is unhealthy" below to cover both sides of
-      // the ignore-health-check gate.
-      const { layer, child } = setup({
-        route: defaultRoute({
-          dbInspectStdout: JSON.stringify({
-            Status: "running",
-            Running: true,
-            Health: { Status: "starting" },
-          }),
+  it.effect("succeeds against an unhealthy db when --ignore-health-check is set", () => {
+    // Pairs with "fails when the db container is unhealthy" below to cover both sides of
+    // the ignore-health-check gate.
+    const { layer, child } = setup({
+      route: defaultRoute({
+        dbInspectStdout: JSON.stringify({
+          Status: "running",
+          Running: true,
+          Health: { Status: "starting" },
         }),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* status(flags({ ignoreHealthCheck: true }));
-        expect(
-          child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
-        ).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags({ ignoreHealthCheck: true }));
+      expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect")).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("reports stopped services on stderr", () => {
     const { layer, out } = setup({
@@ -539,6 +539,23 @@ describe("status integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StatusConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails naming the source when a config value is invalid", () => {
+    const { layer, child } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
+      const exit = yield* Effect.exit(status(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("CliConfigValueError");
+        expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        expect(causeText).not.toContain("StatusConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -604,7 +621,7 @@ project_id = "short"
 
   it.effect("warns on stderr for a deprecated auth.external provider", () => {
     // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-    // `Console.error` only when `goViperCompat` is set.
+    // `Console.error` only under the CLI's config-loading semantics.
     const { layer } = setup();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     return Effect.gen(function* () {
@@ -698,7 +715,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
-    const { layer, out } = setup({ goOutput: Option.some("env") });
+    const { layer, out } = setup({ outputFlag: Option.some("env") });
     return withEnvVar(
       "SUPABASE_AUTH_JWT_SECRET",
       "b".repeat(32),
@@ -713,14 +730,14 @@ content_path = "./supabase/templates/password_changed_notification.html"
 
   it.effect("signs anon/service_role keys asymmetrically when signing_keys_path is set", () => {
     // Uses the first key in `auth.signing_keys_path` (RS256/ES256) instead of HMAC.
-    const { layer, out, workdir } = setup({ goOutput: Option.some("json") });
+    const { layer, out, workdir } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig('project_id = "demo"\n[auth]\nsigning_keys_path = "signing_keys.json"\n');
       const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
       const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
       yield* writeSupabaseFile(workdir, "signing_keys.json", yield* jsonText([jwk]));
       yield* status(flags());
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       const [headerSegment] = parsed.ANON_KEY?.split(".") ?? [];
       const header = yield* jsonValue(Buffer.from(headerSegment ?? "", "base64url").toString());
       expect(header).toEqual({ alg: "RS256", kid: "test-kid", typ: "JWT" });
@@ -859,7 +876,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   it.effect(
     "honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell",
     () => {
-      const { layer, out } = setup({ goOutput: Option.some("env") });
+      const { layer, out } = setup({ outputFlag: Option.some("env") });
       return withEnvVar(
         "SUPABASE_AUTH_JWT_SECRET",
         undefined,
@@ -941,22 +958,19 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "succeeds against a paused-but-healthy db, matching Go's boolean-based running gate",
-    () => {
-      // Gates on the boolean `Running`, not the status string — `Running: true` can coexist
-      // with `Status: "paused"`, and the handler continues past the not-running branch.
-      const { layer } = setup({
-        route: defaultRoute({
-          dbInspectStdout: '{"Status":"paused","Running":true,"Health":{"Status":"healthy"}}',
-        }),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* status(flags());
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("succeeds against a paused-but-healthy db", () => {
+    // Gates on the boolean `Running`, not the status string — `Running: true` can coexist
+    // with `Status: "paused"`, and the handler continues past the not-running branch.
+    const { layer } = setup({
+      route: defaultRoute({
+        dbInspectStdout: '{"Status":"paused","Running":true,"Health":{"Status":"healthy"}}',
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* status(flags());
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("fails when the db container is absent, preserving the real Docker stderr text", () => {
     const { layer } = setup({
@@ -1010,7 +1024,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("outputs env vars with -o env", () => {
-    const { layer, out } = setup({ goOutput: Option.some("env") });
+    const { layer, out } = setup({ outputFlag: Option.some("env") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
@@ -1021,7 +1035,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
 
   it.effect("prints API_URL but no REST_URL with -o env when [api] enabled = false", () => {
     const { layer, out } = setup({
-      goOutput: Option.some("env"),
+      outputFlag: Option.some("env"),
       route: defaultRoute({
         runningNames: ALL_RUNNING_NAMES.filter((name) => !name.includes("_rest_")),
       }),
@@ -1034,65 +1048,81 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("omits REST_URL with -o env when SUPABASE_API_ENABLED turns the api section off", () => {
+    const { layer, out } = setup({
+      outputFlag: Option.some("env"),
+      route: defaultRoute({
+        runningNames: ALL_RUNNING_NAMES.filter((name) => !name.includes("_rest_")),
+      }),
+    });
+    return withEnvVar(
+      "SUPABASE_API_ENABLED",
+      "false",
+      Effect.gen(function* () {
+        yield* writeConfig('project_id = "demo"\n[api]\nenabled = true\n');
+        yield* status(flags());
+        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+        expect(out.stdoutText).not.toContain("REST_URL=");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   it.effect("outputs a json object with -o json", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.DB_URL).toContain("postgresql://postgres:postgres@");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("omits excluded services from -o json", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       const storageId = serviceContainerIds("demo")[5] ?? "";
       yield* status(flags({ exclude: [storageId] }));
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.STORAGE_S3_URL).toBeUndefined();
       expect(parsed.API_URL).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("omits every service named across multiple --exclude entries", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       const authId = serviceContainerIds("demo")[1] ?? "";
       const storageId = serviceContainerIds("demo")[5] ?? "";
       yield* status(flags({ exclude: [authId, storageId] }));
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.PUBLISHABLE_KEY).toBeUndefined();
       expect(parsed.STORAGE_S3_URL).toBeUndefined();
       expect(parsed.API_URL).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "merges an auto-detected stopped service with a --exclude entry (status.go:116)",
-    () => {
-      const { layer, out } = setup({
-        goOutput: Option.some("json"),
-        // kong (index 0) is absent from the running set, so it's auto-detected as stopped.
-        route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        const authId = serviceContainerIds("demo")[1] ?? "";
-        yield* status(flags({ exclude: [authId] }));
-        const parsed = yield* goOutputFields(out.stdoutText);
-        expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
-        expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
-        expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("merges an auto-detected stopped service with a --exclude entry", () => {
+    const { layer, out } = setup({
+      outputFlag: Option.some("json"),
+      // kong (index 0) is absent from the running set, so it's auto-detected as stopped.
+      route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      const authId = serviceContainerIds("demo")[1] ?? "";
+      yield* status(flags({ exclude: [authId] }));
+      const parsed = yield* outputFields(out.stdoutText);
+      expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
+      expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
+      expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("outputs yaml with -o yaml", () => {
-    const { layer, out } = setup({ goOutput: Option.some("yaml") });
+    const { layer, out } = setup({ outputFlag: Option.some("yaml") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
@@ -1101,7 +1131,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("outputs toml with -o toml", () => {
-    const { layer, out } = setup({ goOutput: Option.some("toml") });
+    const { layer, out } = setup({ outputFlag: Option.some("toml") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
@@ -1110,11 +1140,11 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("remaps an output key with --override-name api.url=NEXT_PUBLIC_SUPABASE_URL", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags({ overrideName: ["api.url=NEXT_PUBLIC_SUPABASE_URL"] }));
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.API_URL).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1133,24 +1163,24 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("silently ignores an --override-name entry with an unknown field key", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags({ overrideName: ["not.a.real.field=NAME"] }));
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.NAME).toBeUndefined();
       expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("applies a valid --override-name entry alongside an unknown one", () => {
-    const { layer, out } = setup({ goOutput: Option.some("json") });
+    const { layer, out } = setup({ outputFlag: Option.some("json") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(
         flags({ overrideName: ["not.a.real.field=NAME", "api.url=NEXT_PUBLIC_SUPABASE_URL"] }),
       );
-      const parsed = yield* goOutputFields(out.stdoutText);
+      const parsed = yield* outputFields(out.stdoutText);
       expect(parsed.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.NAME).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1168,7 +1198,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.effect("-o takes priority over --output-format when both are passed", () => {
-    const { layer, out } = setup({ format: "json", goOutput: Option.some("env") });
+    const { layer, out } = setup({ format: "json", outputFlag: Option.some("env") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
@@ -1181,7 +1211,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   it.effect("lets --output pretty win over --output-format json", () => {
     // `-o pretty` is a complete format choice and must render the table, not defer to
     // --output-format.
-    const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
+    const { layer, out } = setup({ format: "json", outputFlag: Option.some("pretty") });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* status(flags());
@@ -1410,7 +1440,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "no-false-claim rule, -o env: no matching branch found emits only LINKED_PROJECT_REF, no LINKED_BRANCH or LINKED_PARENT_PROJECT_REF",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("env"),
+          outputFlag: Option.some("env"),
           branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
         });
         return Effect.gen(function* () {
@@ -1445,7 +1475,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         // A malicious worktree can symlink `supabase/.temp/project-ref` at a real token file;
         // the pattern gate must keep non-ref-shaped content (e.g. a token) out of every
         // output channel.
-        const { layer, out, workdir } = setup({ goOutput: Option.some("json") });
+        const { layer, out, workdir } = setup({ outputFlag: Option.some("json") });
         return Effect.gen(function* () {
           yield* writeConfig();
           yield* writeProjectRefFile(workdir, "sbp_0102030405060708090a0b0c0d0e0f10111213");
@@ -1575,7 +1605,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o env, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only LINKED_BRANCH absent",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("env"),
+          outputFlag: Option.some("env"),
           branches: { fail: statusCodeFailure(500) },
         });
         return Effect.gen(function* () {
@@ -1599,7 +1629,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o json, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only linked_branch absent",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("json"),
+          outputFlag: Option.some("json"),
           branches: { fail: statusCodeFailure(500) },
         });
         return Effect.gen(function* () {
@@ -1609,7 +1639,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
             name: "Parent Project",
           });
           yield* status(flags());
-          const parsed = yield* goOutputFields(out.stdoutText);
+          const parsed = yield* outputFields(out.stdoutText);
           expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
           expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
           expect(parsed.linked_project_name).toBe("Parent Project");
@@ -1792,7 +1822,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o json, --override-name collides with the linked_project_ref field name: the overridden base value wins, the linked field never clobbers it (PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("json"),
+          outputFlag: Option.some("json"),
           branches: { ok: [LINKED_BRANCH] },
         });
         return Effect.gen(function* () {
@@ -1802,8 +1832,8 @@ content_path = "./supabase/templates/password_changed_notification.html"
             name: "Parent Project",
           });
           yield* status(flags({ overrideName: ["api.url=linked_project_ref"] }));
-          const parsed = yield* goOutputFields(out.stdoutText);
-          // `values` spreads last over `linkedStateGoFields`, so the API URL, not the branch
+          const parsed = yield* outputFields(out.stdoutText);
+          // `values` spreads last over `linkedStateFields`, so the API URL, not the branch
           // ref, ends up under this key.
           expect(parsed.linked_project_ref).toBe("http://127.0.0.1:54321");
           expect(parsed.API_URL).toBeUndefined();
@@ -1834,7 +1864,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         "slug === id: renders the bare value once (Colum's real staging state), machine formats still carry both keys",
         () => {
           const { layer, out, workdir } = setup({
-            goOutput: Option.some("env"),
+            outputFlag: Option.some("env"),
           });
           return Effect.gen(function* () {
             yield* writeConfig();
@@ -1870,7 +1900,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       it.effect(
         "neither slug nor id known: the Org line is omitted entirely, and no org machine keys appear",
         () => {
-          const { layer, out, workdir } = setup({ goOutput: Option.some("env") });
+          const { layer, out, workdir } = setup({ outputFlag: Option.some("env") });
           return Effect.gen(function* () {
             yield* writeConfig();
             yield* writeProjectRefFile(workdir, LINKED_PLAIN_REF);
@@ -1965,7 +1995,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o env, branch-linked: emits the six LINKED_ keys alongside the existing keys",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("env"),
+          outputFlag: Option.some("env"),
           branches: { ok: [LINKED_BRANCH] },
         });
         return Effect.gen(function* () {
@@ -1987,7 +2017,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
 
     it.effect("-o env, not linked: emits no LINKED_ key at all", () => {
-      const { layer, out } = setup({ goOutput: Option.some("env") });
+      const { layer, out } = setup({ outputFlag: Option.some("env") });
       return Effect.gen(function* () {
         yield* writeConfig();
         yield* status(flags());
@@ -2000,7 +2030,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o json, branch-linked: includes the six linked_ keys alongside the existing keys",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("json"),
+          outputFlag: Option.some("json"),
           branches: { ok: [LINKED_BRANCH] },
         });
         return Effect.gen(function* () {
@@ -2010,7 +2040,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
             name: "Parent Project",
           });
           yield* status(flags());
-          const parsed = yield* goOutputFields(out.stdoutText);
+          const parsed = yield* outputFields(out.stdoutText);
           expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
           expect(parsed.linked_branch).toBe("feature-x");
           expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
@@ -2023,11 +2053,11 @@ content_path = "./supabase/templates/password_changed_notification.html"
     );
 
     it.effect("-o json, not linked: omits every linked_ key", () => {
-      const { layer, out } = setup({ goOutput: Option.some("json") });
+      const { layer, out } = setup({ outputFlag: Option.some("json") });
       return Effect.gen(function* () {
         yield* writeConfig();
         yield* status(flags());
-        const parsed = yield* goOutputFields(out.stdoutText);
+        const parsed = yield* outputFields(out.stdoutText);
         expect(parsed.linked_project_ref).toBeUndefined();
         expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
       }).pipe(Effect.provide(layer));
@@ -2037,7 +2067,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o yaml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("yaml"),
+          outputFlag: Option.some("yaml"),
           branches: { ok: [LINKED_BRANCH] },
         });
         return Effect.gen(function* () {
@@ -2057,7 +2087,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "-o toml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
       () => {
         const { layer, out, workdir } = setup({
-          goOutput: Option.some("toml"),
+          outputFlag: Option.some("toml"),
           branches: { ok: [LINKED_BRANCH] },
         });
         return Effect.gen(function* () {

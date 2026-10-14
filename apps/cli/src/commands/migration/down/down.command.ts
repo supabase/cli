@@ -5,6 +5,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationDown } from "./down.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   // `--last` is conceptually a uint (default 1); Effect has no uint type, so negatives are
@@ -63,4 +65,6 @@ export const migrationDownCommand = Command.make("down", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "down"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

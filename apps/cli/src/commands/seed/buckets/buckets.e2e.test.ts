@@ -60,7 +60,7 @@ describe("supabase seed buckets", () => {
   // --linked/--local are accepted before the subcommand token too; these two
   // cases exercise the real parser boundary, which the in-process suites bypass.
   it.live(
-    "accepts --local before the subcommand (Go PersistentFlags)",
+    "accepts --local before the subcommand",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-prelocal-");

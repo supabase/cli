@@ -18,6 +18,7 @@ import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbPasswordFlagsError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -225,7 +226,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects a version outside Go's int range before any DB mutation", () => {
+  it.effect("rejects a version outside the int range before any DB mutation", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
       const error = yield* migrationRepair(
@@ -308,20 +309,17 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_YES: "1" }, body));
   });
 
-  it.effect(
-    "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
-    () => {
-      // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
-      const { layer, execs, queries } = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-        yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
-        yield* migrationRepair(input({ versions: [], status: "applied" }));
-        expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
-        expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("auto-confirms repair-all via SUPABASE_YES in the project .env", () => {
+    // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
+    const { layer, execs, queries } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
+      yield* migrationRepair(input({ versions: [], status: "applied" }));
+      expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
@@ -349,7 +347,7 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("prints multiple repaired versions using Go's %v slice format", () => {
+  it.effect("prints multiple repaired versions using the `[a b]` slice format", () => {
     // The established format is space-separated and bracketed, with no commas; a
     // `.join(", ")` cleanup would silently change established output.
     const { layer, out } = setup(tmp.current);
@@ -397,6 +395,22 @@ describe("migration repair", () => {
         }),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(MigrationTargetFlagsError);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --password combined with --local", () => {
+    const { layer } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const error = yield* migrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          local: true,
+          linked: false,
+          password: Option.some("pw"),
+        }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbPasswordFlagsError);
     }).pipe(Effect.provide(layer));
   });
 

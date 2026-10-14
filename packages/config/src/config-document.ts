@@ -84,7 +84,7 @@ export const cliConfigValueSourceAt = (
  * When `projectRef` is set, the matching `[remotes.<name>]` block is merged over the base
  * config before decode; omitting it loads the base config verbatim. Duplicate-`project_id` and
  * project-ref-format checks across every `[remotes.*]` block only run when
- * {@link InternalLoadCliConfigOptions.goViperCompat} is `true`, so callers that never opt into
+ * {@link InternalLoadCliConfigOptions.cliCompat} is `true`, so callers that never opt into
  * that mode aren't broken by an unrelated malformed remote block.
  */
 export interface LoadCliConfigOptions {
@@ -107,13 +107,13 @@ export interface LoadCliConfigOptions {
  */
 export interface InternalLoadCliConfigOptions extends LoadCliConfigOptions {
   /**
-   * Opts into Go/viper-parity decode and validation semantics: duplicate-`project_id` and
+   * Opts into the Supabase CLI's decode and validation semantics: duplicate-`project_id` and
    * project-ref-format checks run across every `[remotes.*]` block even without a `projectRef`,
    * deprecated `auth.external.{linkedin,slack}` blocks warn on stderr, `env(...)` matching is
-   * case-agnostic, and comma-separated strings coerce into `[]string`-typed fields regardless of
-   * origin. Defaults to `false`, which `packages/stack` and the functions manifest rely on.
+   * case-agnostic, and comma-separated strings coerce into array-typed fields regardless of
+   * origin. Defaults to `false`, the strict behaviour of the public `@supabase/config` API.
    */
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
 }
 
 export interface SaveCliConfigOptions {

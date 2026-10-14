@@ -69,6 +69,29 @@ describe("cliProjectContextLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("exposes project .env values except names the shell sets", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectRoot = yield* makeTempDir;
+
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "config.toml"), "");
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", ".env"),
+        "FROM_FILE=file\nSHADOWED=file\n",
+      );
+
+      const cliProjectContext = yield* CliProjectContext.pipe(
+        Effect.provide(buildLayer(path, { cwd: projectRoot, env: { SHADOWED: "shell" } })),
+      );
+
+      expect(
+        Option.map(cliProjectContext.projectEnv, (projectEnv) => ({ ...projectEnv.values })),
+      ).toEqual(Option.some({ FROM_FILE: "file" }));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("returns empty context when no supabase project is found", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
