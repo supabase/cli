@@ -392,12 +392,11 @@ export const textOutputLayer = Layer.effect(
         opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
       ) =>
         Effect.gen(function* () {
+          const validate = opts?.validate;
           const value = yield* Effect.promise(() =>
             text({
               message,
-              validate: opts?.validate
-                ? (v: string | undefined) => opts.validate!(v ?? "")
-                : undefined,
+              validate: validate ? (v: string | undefined) => validate(v ?? "") : undefined,
               defaultValue: opts?.defaultValue,
             }),
           );

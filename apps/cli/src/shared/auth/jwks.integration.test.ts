@@ -8,7 +8,7 @@ import { resolveRemoteJwks } from "./jwks.ts";
 const issuer = "https://issuer.example";
 
 describe("remote signing keys", () => {
-  it.live("discovers the key URL and preserves the provider's key payload", () =>
+  it.effect("discovers the key URL and preserves the provider's key payload", () =>
     Effect.gen(function* () {
       const requested: string[] = [];
       const keys = [{ kty: "RSA", kid: "key-1", custom: true }];
@@ -31,7 +31,7 @@ describe("remote signing keys", () => {
     { name: "missing discovery key URL", status: 200, body: {} },
     { name: "empty key document", status: 200, body: { keys: [] } },
   ]) {
-    it.live(`rejects ${response.name}`, () =>
+    it.effect(`rejects ${response.name}`, () =>
       Effect.gen(function* () {
         const client = HttpClient.make((request) =>
           Effect.succeed(
@@ -73,7 +73,7 @@ describe("remote signing keys", () => {
     }),
   );
 
-  it.live("caller interruption aborts the owned request without becoming a remote error", () =>
+  it.effect("caller interruption aborts the owned request without becoming a remote error", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<AbortSignal>();
       const client = HttpClient.make((_request, _url, signal) =>

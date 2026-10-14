@@ -33,7 +33,7 @@ const respondingClient = (
   );
 
 describe("makePosthogFetch", () => {
-  it.live("sends the SDK request as given and passes successful responses through", () => {
+  it.effect("sends the SDK request as given and passes successful responses through", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
     return Effect.gen(function* () {
       const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
@@ -53,7 +53,7 @@ describe("makePosthogFetch", () => {
     );
   });
 
-  it.live("sends nothing when the signal is already aborted", () => {
+  it.effect("sends nothing when the signal is already aborted", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
     return Effect.gen(function* () {
       const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
@@ -108,7 +108,7 @@ describe("makePosthogFetch", () => {
     );
   });
 
-  it.live("reads a null body the way native fetch does", () =>
+  it.effect("reads a null body the way native fetch does", () =>
     Effect.gen(function* () {
       const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
       const send = () => Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
@@ -127,7 +127,7 @@ describe("makePosthogFetch", () => {
     }).pipe(Effect.provide(respondingClient(() => new Response(null, { status: 204 })))),
   );
 
-  it.live("reports success when the network is unreachable", () =>
+  it.effect("reports success when the network is unreachable", () =>
     Effect.gen(function* () {
       const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
       const response = yield* Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
@@ -154,7 +154,7 @@ describe("makePosthogFetch", () => {
     ),
   );
 
-  it.live("reports success on error responses so the SDK never retries or logs", () =>
+  it.effect("reports success on error responses so the SDK never retries or logs", () =>
     Effect.gen(function* () {
       const posthogFetch = makePosthogFetch(yield* Effect.context<HttpClient.HttpClient>());
       const response = yield* Effect.promise(() => posthogFetch(BATCH_URL, BATCH_OPTIONS));
