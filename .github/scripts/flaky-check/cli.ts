@@ -114,6 +114,8 @@ async function runCommand(): Promise<number> {
       : filters;
   if (entry.suite === "e2e") {
     process.env.SUPABASE_GO_BINARY = join(process.cwd(), "apps/cli-go/supabase-go");
+  }
+  if (entry.suite === "e2e" && entry.target === "cli") {
     // Matches test.yml, so concurrency-sensitive flakes show up here too.
     process.env.SUPABASE_E2E_WORKERS = "4";
   }

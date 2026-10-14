@@ -143,6 +143,8 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
           go-cache: ${{ matrix.goCache }}
+          docker-images: ${{ matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker') }}
+          native-artifacts: ${{ matrix.runtime == 'native' }}
 
       - name: Setup Podman
         if: matrix.runtime == 'podman'
@@ -192,6 +194,11 @@ jobs:
           retention-days: 14
           if-no-files-found: error
           overwrite: true
+
+      # Releases /var/lib/docker so the image disk unmounts cleanly.
+      - name: Stop Docker
+        if: always() && matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker')
+        run: sudo systemctl stop docker.socket docker.service
 
   report:
     needs: [plan, run]

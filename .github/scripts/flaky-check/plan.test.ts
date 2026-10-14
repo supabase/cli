@@ -65,7 +65,12 @@ describe("plan", () => {
 
   test("a dispatch normalizes its inputs and stays within GitHub's matrix limit", () => {
     const { entries, filter } = plan(
-      input({ suites: " focused , unit ", runs: " 2", repeats: "9", filter: " src/a.ts " }),
+      input({
+        suites: " focused , unit ",
+        runs: " 2",
+        repeats: "9",
+        filter: " src/a.ts\nsrc/b.ts ",
+      }),
     );
 
     expect(entries.map((e) => [e.name, e.executions])).toEqual([
@@ -74,7 +79,7 @@ describe("plan", () => {
       ["flaky-focused-run1", 10],
       ["flaky-focused-run2", 10],
     ]);
-    expect(filter).toBe("src/a.ts");
+    expect(filter).toBe("src/a.ts src/b.ts");
     expect(() =>
       plan(input({ suites: "unit,integration,focused,e2e,stack-e2e", runs: "30" })),
     ).toThrow("540 jobs exceed GitHub's 256-job matrix limit");

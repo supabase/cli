@@ -134,7 +134,7 @@ export function plan(input: PlanInput): { entries: Entry[]; base: string; filter
     suites = parseSuites(input.suites);
     runs = count(input.runs, "runs", 30, 1);
     repeats = count(input.repeats, "repeats", 100);
-    filter = input.filter.trim();
+    filter = input.filter.trim().replace(/\s+/g, " ");
   } else if (input.event === "pull_request") {
     suites = ["unit", "integration", "focused"];
     base = input.baseRef;

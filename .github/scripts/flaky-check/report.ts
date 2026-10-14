@@ -186,7 +186,10 @@ export function aggregate(
   const seen = new Set(results.map(({ meta }) => meta.name));
   for (const name of expected) {
     if (!seen.has(name)) {
-      runProblems.push({ name, problem: "no results uploaded" });
+      runProblems.push({
+        name,
+        problem: "no results uploaded (the job failed before collecting, such as in setup)",
+      });
     }
   }
 

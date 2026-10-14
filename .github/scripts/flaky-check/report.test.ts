@@ -145,7 +145,10 @@ describe("aggregate", () => {
         name: "flaky-unit-run4",
         problem: "test step did not run or finish (setup failure, timeout, or cancel)",
       },
-      { name: "flaky-unit-run5", problem: "no results uploaded" },
+      {
+        name: "flaky-unit-run5",
+        problem: "no results uploaded (the job failed before collecting, such as in setup)",
+      },
     ]);
     expect([report.flaky, report.failing]).toEqual([[], []]);
   });
