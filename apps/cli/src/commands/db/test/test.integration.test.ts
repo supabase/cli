@@ -9,6 +9,14 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import {
   mockOutput,
@@ -18,10 +26,21 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_TOKEN,
   mockCommandSettings,
   mockTelemetryStateTracked,
   sequentialExecBatch,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
@@ -154,10 +173,17 @@ const runtimeInfoLayer = Layer.succeed(RuntimeInfo, {
   pid: 1234,
 });
 
+const REF = "abcdefghijklmnopqrst";
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   exitCode?: number;
   stdout?: ReadonlyArray<string>;
+  /** The command-line arguments the handler reads its database target from. */
+  args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
+  realDbConfig?: boolean;
+  workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -168,24 +194,31 @@ function setup(opts: SetupOpts = {}) {
   const connection = mockDbConnection();
   const docker = mockDockerRun({ exitCode: opts.exitCode, stdout: opts.stdout });
   const args = ["db", "test"];
+  const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
     unusedStackServices,
     out.layer,
     processControl.layer,
     analytics.layer,
     telemetry.layer,
-    mockResolver(),
+    opts.realDbConfig === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : mockResolver(),
     connection.layer,
     docker.layer,
     Layer.succeed(BundledPostgresClient, {
       run: () => Effect.die("bundled postgres client unused"),
     }),
-    mockCommandSettings({ workdir: "/work/project", projectId: Option.none() }),
+    mockCommandSettings({ workdir, projectId: Option.none() }),
     runtimeInfoLayer,
     Layer.succeed(DebugFlag, false),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     Stdio.layerTest({ args: Effect.succeed(args) }),
     commandRuntimeLayer(["db", "test"]).pipe(Layer.provide(BunServices.layer)),
     BunServices.layer,
@@ -202,6 +235,8 @@ const flags = (): TestDbFlags => ({
 });
 
 describe("db test (alias) integration", () => {
+  const tempRoot = useTempWorkdir("supabase-db-test-int-");
+
   it.effect("runs pgTAP through the alias exactly like `test db`", () => {
     const { layer, connection, docker } = setup();
     return Effect.gen(function* () {
@@ -212,6 +247,80 @@ describe("db test (alias) integration", () => {
       ]);
       expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("mints a login role through the real DB config resolver for --linked", () => {
+    const { layer, docker } = setup({
+      args: ["db", "test", "--linked", "--project-ref", REF],
+      realDbConfig: true,
+      workdir: tempRoot.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(REF));
+      yield* runTestDbCommand({
+        ...flags(),
+        linked: true,
+        local: false,
+        projectRef: Option.some(REF),
+      });
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${REF}/config/database/pooler`,
+        `POST /v1/projects/${REF}/cli/login-role`,
+      ]);
+      expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
+      assertPermissionDrift({
+        command: "db test",
+        activeFlags: { linked: true, "project-ref": REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("defaults to the local target and makes no Management API request", () => {
+    const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* runTestDbCommand(flags());
+      expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
+      expect(requests).toEqual([]);
+      assertPermissionDrift({ command: "db test", requests: [], exact: true });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --local through the real resolver", () => {
+    const { layer, docker } = setup({
+      args: ["db", "test", "--local"],
+      realDbConfig: true,
+      workdir: tempRoot.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* runTestDbCommand(flags());
+      expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "db test",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 
   it.effect(

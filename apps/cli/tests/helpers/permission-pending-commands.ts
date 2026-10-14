@@ -30,23 +30,17 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "config pull",
   "config push",
 
-  "db advisors",
   "db branch create",
   "db branch delete",
   "db branch list",
   "db branch switch",
   "db diff",
   "db dump",
-  "db lint",
   "db pull",
-  "db push",
   "db remote changes",
   "db remote commit",
-  "db reset",
   "db schema declarative generate",
   "db schema declarative sync",
-  "db start",
-  "db test",
 
   "domains activate",
   "domains create",
@@ -144,8 +138,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "secrets set",
   "secrets unset",
-
-  "seed buckets",
 
   "services",
 
