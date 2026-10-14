@@ -25,6 +25,8 @@
     "!apps/cli/src/command-internal/branch-ref.*",
     "!apps/cli/src/command-internal/branch-target.*",
     "!apps/cli/src/command-internal/bundled-postgres-client.*",
+    "!apps/cli/src/command-internal/config-pull-run.*",
+    "!apps/cli/src/command-internal/config-validate.*",
     "!apps/cli/src/command-internal/connect-errors.*",
     "!apps/cli/src/command-internal/container-cli.*",
     "!apps/cli/src/command-internal/db-*.ts",
@@ -40,6 +42,7 @@
     "!apps/cli/src/command-internal/experimental-gate.*",
     "!apps/cli/src/command-internal/get-api-keys.*",
     "!apps/cli/src/command-internal/get-tenant-api-keys.*",
+    "!apps/cli/src/command-internal/go-jwt.*",
     "!apps/cli/src/command-internal/hostname.*",
     "!apps/cli/src/command-internal/http-*",
     "!apps/cli/src/command-internal/identity-stitch.*",
@@ -83,6 +86,9 @@
     "!apps/cli/src/command-internal/tenant-*",
     "!apps/cli/src/command-internal/vault-decrypt.*",
     "!apps/cli/src/command-internal/vault.*",
-    "!apps/cli/src/command-internal/viper-env.*"
+    "!apps/cli/src/command-internal/viper-env.*",
+    "apps/cli/src/command-internal/config-validate.parity.unit.test.ts",
+    "apps/cli/src/command-internal/config-validate.ts",
+    "apps/cli/src/command-internal/config-validate.unit.test.ts"
   ]
 }
