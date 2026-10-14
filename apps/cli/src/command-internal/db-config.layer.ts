@@ -314,12 +314,14 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
 };
 
 /**
- * An explicitly empty `--password` asks for a temporary login role even when
- * `SUPABASE_DB_PASSWORD` or the project `.env` holds one. The flag binding drops empty strings, so
- * pass it to {@link resolveLinkedPassword} as the caller's password instead.
+ * A `--password` the caller bound on {@link DbConfigFlags} is passed to
+ * {@link resolveLinkedPassword} as the caller's password, so it wins over `SUPABASE_DB_PASSWORD` and
+ * the project `.env` just like the flag tier does, and no login role is minted for it. An
+ * explicitly empty `--password` asks for a temporary login role even when the env holds one; the
+ * flag binding drops empty strings, so this is the only way that request reaches the resolver.
  */
-const emptyPasswordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
-  Option.filter(password ?? Option.none(), (value) => value.length === 0);
+const passwordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
+  password ?? Option.none();
 
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
@@ -738,7 +740,7 @@ export const dbConfigResolverLayer = Layer.effect(
               cliSettings.projectHost,
               cliSettings.poolerHost,
               flags.dnsResolver,
-              emptyPasswordFlag(flags.password),
+              passwordFlag(flags.password),
               {
                 adHocProjectRef: flags.adHocProjectRef ?? false,
                 resolveVaultSecrets,
@@ -807,7 +809,7 @@ export const dbConfigResolverLayer = Layer.effect(
           const password = yield* resolveLinkedPassword(
             ref,
             cliSettings.workdir,
-            emptyPasswordFlag(flags.password),
+            passwordFlag(flags.password),
             flags.password !== undefined,
           );
           // Container-fallback: fetch the primary pooler config from the Management API when

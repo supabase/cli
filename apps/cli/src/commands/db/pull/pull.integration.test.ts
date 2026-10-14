@@ -2581,7 +2581,11 @@ describe("db pull permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       yield* reachableDirectHost;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      const error = yield* dbPull(flags()).pipe(Effect.provide(s.layer), Effect.flip);
+      // The initial pg_dump seed only runs on the migra engine; pg-delta is the default.
+      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(
+        Effect.provide(s.layer),
+        Effect.flip,
+      );
       expect(error.message).toBe("No schema changes found");
       expect(s.dumpCalls).toHaveLength(2);
       expect(s.dumpCalls[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
