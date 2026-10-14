@@ -3,7 +3,7 @@ export const WEEKLY_CRON = "47 3 * * 0";
 export const RESULTS_DIR = ".flaky-results";
 const SUITES = ["unit", "integration", "focused", "e2e", "stack-e2e"] as const;
 type Suite = (typeof SUITES)[number];
-const CLI_E2E_SHARDS = 4;
+const CLI_E2E_SHARDS = 5;
 // GitHub rejects a matrix with more jobs than this.
 const MAX_JOBS = 256;
 
@@ -23,7 +23,7 @@ export type Entry = {
   | {
       suite: "stack-e2e";
       runtime: "native" | "docker" | "podman";
-      scenario: "lifecycle" | "idle-parallel";
+      scenario: "lifecycle" | "confinement" | "idle-parallel";
     }
 );
 
@@ -111,7 +111,7 @@ function entriesFor(suite: Suite, run: number, repeats: number): Entry[] {
     }
     case "stack-e2e":
       return (["native", "docker", "podman"] as const).flatMap((runtime) =>
-        (["lifecycle", "idle-parallel"] as const).map((scenario) => ({
+        (["lifecycle", "confinement", "idle-parallel"] as const).map((scenario) => ({
           ...job,
           suite,
           runtime,
@@ -231,6 +231,23 @@ function integration(iteration: number, extra: string[]): Invocation[] {
   ];
 }
 
+function stack(file: string, report: string, args: string[]): Invocation {
+  return {
+    argv: [
+      "pnpm",
+      "--dir",
+      "packages/stack",
+      "run",
+      "test:e2e:run",
+      `src/${file}.e2e.test.ts`,
+      ...args,
+      "--passWithNoTests=false",
+      ...reporter(report),
+    ],
+    reports: { dir: "packages/stack", report },
+  };
+}
+
 /** The invocations of one execution of a job, in order; each runs even when an earlier one fails. */
 export function commandsFor(entry: Entry, iteration: number, extra: string[]): Invocation[] {
   switch (entry.suite) {
@@ -249,24 +266,22 @@ export function commandsFor(entry: Entry, iteration: number, extra: string[]): I
           ]
         : [turbo(["test:e2e:run", "--only", "--filter=@supabase/cli-e2e"], "e2e.1", [])];
     case "stack-e2e": {
-      const files = [`whole-stack.${entry.runtime}.${entry.scenario}`];
+      // Mirrors test.yml, which gives the confinement scenario of the lifecycle file its own job.
+      const file = entry.scenario === "idle-parallel" ? "idle-parallel" : "lifecycle";
+      const pattern = {
+        lifecycle: "^(?!.*writes stay confined)",
+        confinement: "writes stay confined",
+        "idle-parallel": ".",
+      }[entry.scenario];
+      const scenario = stack(
+        `whole-stack.${entry.runtime}.${file}`,
+        `whole-stack.${entry.runtime}.${entry.scenario}.1`,
+        [`--testNamePattern=${pattern}`, "--sequence.concurrent"],
+      );
       // test.yml runs the public API suite only in this combination.
-      if (entry.runtime === "native" && entry.scenario === "lifecycle") {
-        files.push("public");
-      }
-      return files.map((file) => ({
-        argv: [
-          "pnpm",
-          "--dir",
-          "packages/stack",
-          "run",
-          "test:e2e:run",
-          `src/${file}.e2e.test.ts`,
-          "--passWithNoTests=false",
-          ...reporter(`${file}.1`),
-        ],
-        reports: { dir: "packages/stack", report: `${file}.1` },
-      }));
+      return entry.runtime === "native" && entry.scenario === "lifecycle"
+        ? [scenario, stack("public", "public.1", [])]
+        : [scenario];
     }
   }
 }

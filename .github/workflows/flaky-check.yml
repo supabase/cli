@@ -141,6 +141,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
           go-cache: ${{ matrix.goCache }}
 
       - name: Setup Podman

@@ -41,10 +41,10 @@ describe("plan", () => {
       "flaky-e2e-cli2-run1",
       "flaky-e2e-cli3-run1",
       "flaky-e2e-cli4-run1",
+      "flaky-e2e-cli5-run1",
       "flaky-e2e-cli-e2e-run1",
-      "flaky-e2e-cli1-run2",
     ]);
-    expect(weekly).toHaveLength(33);
+    expect(weekly).toHaveLength(45);
     expect(nightly.map((e) => [e.suite, e.runner, e.timeout]).slice(9, 11)).toEqual([
       ["unit", "blacksmith-4vcpu-ubuntu-2404", 30],
       ["integration", "blacksmith-8vcpu-ubuntu-2404", 30],
@@ -77,7 +77,7 @@ describe("plan", () => {
     expect(filter).toBe("src/a.ts");
     expect(() =>
       plan(input({ suites: "unit,integration,focused,e2e,stack-e2e", runs: "30" })),
-    ).toThrow("420 jobs exceed GitHub's 256-job matrix limit");
+    ).toThrow("540 jobs exceed GitHub's 256-job matrix limit");
   });
 
   test.each([
@@ -133,7 +133,7 @@ describe("commandsFor", () => {
     [
       "flaky-e2e-cli2-run1",
       [{ turbo: ["test:e2e:run", "--only", "--filter=supabase"], report: "e2e.1" }],
-      "--shard=2/4",
+      "--shard=2/5",
     ],
     [
       "flaky-e2e-cli-e2e-run1",
@@ -147,6 +147,11 @@ describe("commandsFor", () => {
         { dir: "packages/stack", report: "public.1" },
       ],
       "src/whole-stack.native.lifecycle.e2e.test.ts",
+    ],
+    [
+      "flaky-stack-e2e-docker-confinement-run1",
+      [{ dir: "packages/stack", report: "whole-stack.docker.confinement.1" }],
+      "--testNamePattern=writes stay confined",
     ],
     [
       "flaky-stack-e2e-podman-idle-parallel-run1",
