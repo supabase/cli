@@ -213,17 +213,23 @@ export interface PullRequestReview {
  * and reviews from people outside the repository never hold automation.
  */
 export function hasChangesRequested(reviews: PullRequestReview[]): boolean {
+  return [
+    ...latestVerdicts(
+      reviews.filter((review) =>
+        ["OWNER", "MEMBER", "COLLABORATOR"].includes(review.author_association),
+      ),
+    ).values(),
+  ].includes("CHANGES_REQUESTED");
+}
+
+function latestVerdicts(reviews: PullRequestReview[]): Map<string, string> {
   const verdicts = new Map<string, string>();
   for (const review of reviews) {
-    if (
-      review.user &&
-      ["OWNER", "MEMBER", "COLLABORATOR"].includes(review.author_association) &&
-      ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)
-    ) {
+    if (review.user && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) {
       verdicts.set(review.user.login, review.state);
     }
   }
-  return [...verdicts.values()].includes("CHANGES_REQUESTED");
+  return verdicts;
 }
 
 export interface FastForwardIo {
@@ -478,14 +484,20 @@ export async function runFastForward(
   if (pullRequest.draft) {
     return refuse(io, input, "pull request is a draft");
   }
-  // Sync repair decides to approve before posting, so a change request can land in between.
-  if (input.approver === AUTO_APPROVER_LOGIN && hasChangesRequested(await io.listReviews())) {
-    return refuse(
-      io,
-      input,
-      "a reviewer requested changes",
-      `Not fast-forwarding \`${promotion.target}\`: a reviewer requested changes after \`${AUTO_APPROVER_LOGIN}\` decided to approve. A maintainer approves once they are addressed.`,
-    );
+  // A change request or a dismissal can land between Sync repair's decision and this run.
+  if (input.approver === AUTO_APPROVER_LOGIN) {
+    const reviews = await io.listReviews();
+    if (
+      hasChangesRequested(reviews) ||
+      latestVerdicts(reviews).get(AUTO_APPROVER_LOGIN) !== "APPROVED"
+    ) {
+      return refuse(
+        io,
+        input,
+        "a reviewer requested changes or the approval was dismissed",
+        `Not fast-forwarding \`${promotion.target}\`: a reviewer requested changes or dismissed \`${AUTO_APPROVER_LOGIN}\`'s approval. A maintainer approves once that is addressed.`,
+      );
+    }
   }
   if (approvedSha !== headSha) {
     return refuse(

@@ -735,28 +735,35 @@ describe("runFastForward sync", () => {
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
   });
 
-  test("refuses the sync bot's approval while a collaborator requests changes, not an outsider", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
-    const before = repo.remoteTip("develop");
-    const review = (author_association: string) => ({
-      user: { login: author_association.toLowerCase() },
-      state: "CHANGES_REQUESTED",
+  test("lands the sync bot's approval only while it is active and no collaborator requests changes", async () => {
+    const review = (login: string, state: string, author_association = "COLLABORATOR") => ({
+      user: { login },
+      state,
       author_association,
     });
+    const approved = review(AUTO_APPROVER_LOGIN, "APPROVED");
+    const attempt = async (reviews: ReturnType<typeof review>[]) => {
+      const { repo, head, io } = resolvedSyncScenario();
+      const before = repo.remoteTip("develop");
+      const outcome = await runFastForward(
+        { ...io, listReviews: async () => reviews },
+        { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+      );
+      return { status: outcome.status, moved: repo.remoteTip("develop") !== before };
+    };
 
-    const held = await runFastForward(
-      { ...io, listReviews: async () => [review("COLLABORATOR")] },
-      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
-    );
-    expect(held.status).toBe("refused");
-    expect(comments[0]).toContain("requested changes");
-    expect(repo.remoteTip("develop")).toBe(before);
-
-    const landed = await runFastForward(
-      { ...io, listReviews: async () => [review("NONE")] },
-      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
-    );
-    expect(landed.status).toBe("fast-forwarded");
+    expect(await attempt([approved, review("maintainer", "CHANGES_REQUESTED")])).toEqual({
+      status: "refused",
+      moved: false,
+    });
+    expect(await attempt([approved, review(AUTO_APPROVER_LOGIN, "DISMISSED")])).toEqual({
+      status: "refused",
+      moved: false,
+    });
+    expect(await attempt([approved, review("outsider", "CHANGES_REQUESTED", "NONE")])).toEqual({
+      status: "fast-forwarded",
+      moved: true,
+    });
   });
 
   test("lands the approved head merged with a target move without pulling in the moved source", async () => {
