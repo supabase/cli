@@ -5,12 +5,16 @@ import {
   type CliConfig,
 } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Config, Console, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
-import { envOverride, envOverrideMajorVersion } from "./local-config-values.ts";
+import {
+  deprecatedOrioleDBVersionEnvWarning,
+  envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
+} from "./local-config-values.ts";
 import { resolveProjectEnvironmentValues } from "./project-environment.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
@@ -84,6 +88,14 @@ export const loadLocalProjectContext = <E>(
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
+    // Printed beside the loader's deprecated-config WARNs, on the same real console, so it shares
+    // their once-per-context-load cadence.
+    const orioleDBEnvWarning = deprecatedOrioleDBVersionEnvWarning(projectEnvValues);
+    if (orioleDBEnvWarning !== undefined) {
+      yield* Console.error(orioleDBEnvWarning).pipe(
+        Effect.provideService(Console.Console, globalThis.console),
+      );
+    }
     const config =
       loaded?.config ??
       (yield* Schema.decodeEffect(CliConfigSchema)({}).pipe(
@@ -129,8 +141,7 @@ export const loadLocalProjectContext = <E>(
 /** Records OrioleDB selection for commands whose only local config read is this context. */
 export const recordLocalProjectOrioleDbTelemetry = (context: LocalProjectContext) =>
   Effect.try(() => ({
-    version: envOverride(
-      "SUPABASE_DB_ORIOLEDB_VERSION",
+    version: envOverrideOrioleDBVersion(
       context.config.db.orioledb_version,
       context.projectEnvValues,
     ),

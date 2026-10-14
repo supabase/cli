@@ -25,7 +25,7 @@ import {
 import { DbConfigLoadError } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { parseDotEnv } from "./dotenv.ts";
-import { strToArr } from "./local-config-values.ts";
+import { readOrioleDBVersionEnvOverride, strToArr } from "./local-config-values.ts";
 import { ramInBytes } from "./size-units.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 
@@ -1046,6 +1046,7 @@ const ENV_OVERRIDE_NAMES = [
   "SUPABASE_DB_SHADOW_PORT",
   "SUPABASE_DB_MAJOR_VERSION",
   "SUPABASE_DB_ORIOLEDB_VERSION",
+  "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
   "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
   "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED",
   "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
@@ -1314,7 +1315,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(expandEnv(value, lookup)) : Option.none();
   const orioledbVersionRaw =
-    (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
+    (remoteWins("db.orioledb_version") ? undefined : readOrioleDBVersionEnvOverride(envOverride)) ??
     db?.["orioledb_version"];
   const orioledbVersion = expandString(orioledbVersionRaw);
   // The defaults-only fallback says nothing about the project's engine.

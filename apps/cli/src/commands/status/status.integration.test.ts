@@ -457,6 +457,7 @@ describe("status integration", () => {
       expect(out.stdoutText).toContain("📦 Storage (S3)");
       expect(out.stdoutText).toContain("postgresql://postgres:postgres@");
       expect(out.stderrText).not.toContain("Stopped services:");
+      expect(out.stderrText).not.toContain("INBUCKET_URL");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1009,15 +1010,23 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("outputs env vars with -o env", () => {
-    const { layer, out } = setup({ goOutput: Option.some("env") });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      yield* status(flags());
-      expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
-      expect(out.stdoutText).toContain("DB_URL=");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "outputs env vars with -o env, warning on stderr that INBUCKET_URL is removed in v3",
+    () => {
+      const { layer, out } = setup({ goOutput: Option.some("env") });
+      return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* status(flags());
+        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+        expect(out.stdoutText).toContain("DB_URL=");
+        expect(out.stdoutText).toContain("INBUCKET_URL=");
+        expect(out.stdoutText).not.toContain("deprecated");
+        expect(out.stderrText).toContain(
+          "WARN: INBUCKET_URL is deprecated and will be removed in v3, use MAILPIT_URL instead.\n",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("prints API_URL but no REST_URL with -o env when [api] enabled = false", () => {
     const { layer, out } = setup({
