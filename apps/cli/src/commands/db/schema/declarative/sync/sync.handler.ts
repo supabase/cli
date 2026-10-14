@@ -1,5 +1,6 @@
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Ref, Result } from "effect";
 
+import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
 import {
   DnsResolverFlag,
   resolveExperimentalWithProjectEnv,
@@ -85,7 +86,7 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 const formatTimestamp = (millis: number): string =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/g, "").slice(0, 14);
 
-export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
+const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
 ) {
   const output = yield* Output;
@@ -694,6 +695,11 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 });
 
 /** Connects once and applies the ordered migration files. */
+// Starting or resetting the local database loads the project context, which would print the
+// OrioleDB env WARN again.
+export const dbSchemaDeclarativeSync = (flags: DbSchemaDeclarativeSyncFlags) =>
+  withSingleOrioleDBVersionEnvWarning(runDbSchemaDeclarativeSync(flags));
+
 const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(function* (
   local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
