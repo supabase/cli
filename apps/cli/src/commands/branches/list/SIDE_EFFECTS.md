@@ -29,16 +29,18 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                         |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------ |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
-| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command              |
+| Path                                           | Format | When                                                                                                                                                                                     |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | after the command runs (in `Effect.ensuring`), unless the file already exists, `.temp/project-ref` names a different project, no access token resolves, or the project lookup is not 200 |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                                                                                                          |
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                                               |
-| ------ | ----------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}/branches` | Bearer token | none         | `[{id, name, project_ref, parent_project_ref, is_default, git_branch?, persistent, status, created_at, updated_at, with_data, ...}]` |
+| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                                                                                                                     |
+| ------ | ----------------------------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/branches` | Bearer token | none         | `[{id, name, project_ref, parent_project_ref, is_default, git_branch?, persistent, status, created_at, updated_at, with_data, ...}]`                                                                       |
+| `GET`  | `/v1/projects`                | Bearer token | none         | `[{id, name, organization_slug, region, …}]` — no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) |
+| `GET`  | `/v1/projects/{ref}`          | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                                        |
 
 ## Environment Variables
 
