@@ -11,8 +11,21 @@ if (!Number.isSafeInteger(e2eWorkers) || e2eWorkers < 1) {
   );
 }
 
-/** Tags a broken image under the tag every stack's Mailpit resolves to. */
-const E2E_EXCLUSIVE_FILES = ["src/commands/start/start.health.e2e.test.ts"];
+/**
+ * E2e files that run alone: `start.health` tags a broken image under the tag every stack's
+ * Mailpit resolves to, and the rest provision pg-delta shadow databases on host ports the CLI
+ * picks and releases before Docker binds them, which a concurrent stack could take.
+ */
+const E2E_EXCLUSIVE_FILES = [
+  "src/commands/start/start.health.e2e.test.ts",
+  "src/command-internal/db-bootstrap/shadow-cache.e2e.test.ts",
+  "src/commands/db/diff/diff.e2e.test.ts",
+  "src/commands/db/diff/diff.declarative.e2e.test.ts",
+  "src/commands/db/pull/pull.e2e.test.ts",
+  "src/commands/db/schema/declarative/sync/sync.e2e.test.ts",
+  "src/commands/db/schema/declarative/sync/sync.jobs.e2e.test.ts",
+  "src/commands/db/start/start.roles.e2e.test.ts",
+];
 
 function dockerfileTextPlugin() {
   return {
@@ -97,7 +110,7 @@ export default defineConfig({
       },
       {
         test: {
-          // Files that change Docker state other stacks share run alone, after the e2e project.
+          // Runs after the e2e project, one file at a time.
           name: "e2e-exclusive",
           include: E2E_EXCLUSIVE_FILES,
           fileParallelism: false,
