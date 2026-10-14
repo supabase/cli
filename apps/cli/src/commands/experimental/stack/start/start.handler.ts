@@ -261,9 +261,9 @@ const settingKeyLabel = (
   setting: StackEndpointSetting,
   projectEnvValues: Readonly<Record<string, string>>,
 ): string =>
-  envOverride(setting.envVar, undefined, projectEnvValues) !== undefined
-    ? setting.envVar
-    : formatConfigPath(setting.configPath);
+  [setting.envVar, setting.deprecatedEnvVar].find(
+    (name) => name !== undefined && envOverride(name, undefined, projectEnvValues) !== undefined,
+  ) ?? formatConfigPath(setting.configPath);
 
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's

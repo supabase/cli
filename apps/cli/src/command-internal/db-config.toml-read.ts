@@ -25,9 +25,14 @@ import {
 import { DbConfigLoadError } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { parseDotEnv } from "./dotenv.ts";
-import { readOrioleDBVersionEnvOverride, strToArr } from "./local-config-values.ts";
+import {
+  deprecatedOrioleDBVersionEnvWarning,
+  readOrioleDBVersionEnvOverride,
+  strToArr,
+} from "./local-config-values.ts";
 import { ramInBytes } from "./size-units.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
+import { Output } from "../shared/output/output.service.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
 type EnvLookup = (name: string) => string | undefined;
@@ -1070,6 +1075,34 @@ const ENV_OVERRIDE_NAMES = [
 type EnvOverrideName = (typeof ENV_OVERRIDE_NAMES)[number];
 
 /**
+ * The `SUPABASE_*` override lookup `readDbToml` exposes as `envLookup`: a non-empty shell value
+ * wins, then a non-empty value from the project `.env` files.
+ */
+export const envOverrideLookup = Effect.fnUntraced(function* (
+  projectEnv: Readonly<Record<string, string>>,
+) {
+  const shellOverrideEnv = yield* resolveShellEnv(ENV_OVERRIDE_NAMES);
+  return (name: EnvOverrideName): string | undefined => {
+    const fromShell = shellOverrideEnv.get(name);
+    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
+    const fromFile = projectEnv[name];
+    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
+  };
+});
+
+/**
+ * Prints the `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` deprecation WARN on stderr when `envLookup`
+ * finds it set. Commands call it once after their main config read; a command that loads the
+ * local project context gets the WARN from that load instead.
+ */
+export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
+  envLookup: DbTomlValues["envLookup"],
+) {
+  const warning = deprecatedOrioleDBVersionEnvWarning(envLookup);
+  if (warning !== undefined) yield* (yield* Output).raw(`${warning}\n`, "stderr");
+});
+
+/**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
  * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
  * can capture them once and keep its own `R` at `never`.
@@ -1134,16 +1167,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // the deprecation warning.
     doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
   }
-  const shellOverrideEnv = yield* resolveShellEnv(ENV_OVERRIDE_NAMES);
   // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
-  // value/default. An empty env value is ignored, and the project `.env` files are
-  // loaded into the environment first, so consult both.
-  const envOverride = (name: EnvOverrideName): string | undefined => {
-    const fromShell = shellOverrideEnv.get(name);
-    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
-    const fromFile = projectEnv[name];
-    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
-  };
+  // value/default.
+  const envOverride = yield* envOverrideLookup(projectEnv);
   const shellRefEnv = yield* resolveShellEnv([
     ...envRefNames(doc),
     ...Object.keys(asRecord(doc?.["remotes"]) ?? {}).map(remoteProjectIdEnvName),

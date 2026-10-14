@@ -2117,6 +2117,7 @@ describe("experimental stack start", () => {
       before: "[db]\nmajor_version = 15\n",
       after: `[db]\norioledb_version = "${orioledb}"\n`,
       env: undefined,
+      envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
       changes: `[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested ${orioledb}`,
       revert: "Revert the settings listed to their saved values",
     },
@@ -2125,8 +2126,18 @@ describe("experimental stack start", () => {
       before: "",
       after: "",
       env: orioledb,
+      envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
       changes: `SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
       revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
+    },
+    {
+      name: "the deprecated SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION when it alone switches a saved stock stack to OrioleDB",
+      before: "",
+      after: "",
+      env: orioledb,
+      envVar: "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+      changes: `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
+      revert: "Revert SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION to its saved value",
     },
   ])
     it.effect(`names ${target.name}`, () =>
@@ -2147,7 +2158,7 @@ describe("experimental stack start", () => {
         );
         const error = yield* target.env === undefined
           ? restart
-          : withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", target.env, restart);
+          : withEnvVar(target.envVar, target.env, restart);
 
         expect(error).toMatchObject({
           reason: "invalid-config",

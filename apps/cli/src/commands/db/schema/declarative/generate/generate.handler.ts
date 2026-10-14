@@ -15,6 +15,7 @@ import {
   loadProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
 } from "../../../../../command-internal/db-config.toml-read.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
@@ -73,6 +74,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
+    yield* warnDeprecatedOrioleDBVersionEnv(baseToml.envLookup);
     // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
     // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.

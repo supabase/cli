@@ -16,6 +16,7 @@ import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
   readDbToml,
   resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -357,6 +358,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
+      // A `migrations` ref provisions a shadow whose project-context load prints this itself.
+      if (migrationsToml === undefined) yield* warnDeprecatedOrioleDBVersionEnv(cfg.envLookup);
       const explicitCtx: PgDeltaContext = {
         projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,

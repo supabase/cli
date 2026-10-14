@@ -133,6 +133,8 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
 export interface StackEndpointSetting {
   readonly configPath: string;
   readonly envVar: string;
+  /** A deprecated alias of `envVar`, honored only while `envVar` is unset. */
+  readonly deprecatedEnvVar?: string;
 }
 
 // Shared by `createCreations` and `stackEndpointSetting`; a new endpoint also needs an entry in
@@ -234,6 +236,7 @@ export const stackMajorVersionSetting: StackEndpointSetting = {
 export const stackOrioledbVersionSetting: StackEndpointSetting = {
   configPath: "db.orioledb_version",
   envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
+  deprecatedEnvVar: "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
 };
 
 const authProviderNames = [

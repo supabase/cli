@@ -18,9 +18,13 @@ import { promptYesNo } from "./prompt-yes-no.ts";
 import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
-import { deprecatedOrioleDBVersionEnvWarning } from "./local-config-values.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
+import {
+  loadProjectEnv,
+  readDbToml,
+  resolveDeclarativeDir,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -266,12 +270,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
     // Without the deprecated export, the shadow inputs' project-context load below prints it.
-    const orioleDBEnvWarning = useExperimentalExport
-      ? deprecatedOrioleDBVersionEnvWarning(toml.envLookup)
-      : undefined;
-    if (orioleDBEnvWarning !== undefined) {
-      yield* output.raw(`${orioleDBEnvWarning}\n`, "stderr");
-    }
+    if (useExperimentalExport) yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
