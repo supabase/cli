@@ -1,4 +1,5 @@
 import { Cause, Option, Predicate } from "effect";
+import type { PlatformError } from "effect";
 import type { CliError as EffectCliError } from "effect/cli";
 import type { StackError, StackFailureKind } from "@supabase/stack/effect";
 
@@ -1162,27 +1163,50 @@ const defectSystemErrorCodes = new Set([
 const ownValue = (record: object, key: string): unknown =>
   Object.getOwnPropertyDescriptor(record, key)?.value;
 
-/** Names a PlatformError's closed reason and the Effect module and method that raised it. */
+const platformErrorReasons: ReadonlySet<string> = new Set<PlatformError.SystemErrorTag>([
+  "AlreadyExists",
+  "BadResource",
+  "Busy",
+  "InvalidData",
+  "NotFound",
+  "PermissionDenied",
+  "TimedOut",
+  "UnexpectedEof",
+  "Unknown",
+  "WouldBlock",
+  "WriteZero",
+]);
+
+// The Effect platform services that raise PlatformError for local I/O.
+const platformErrorModules: ReadonlySet<string> = new Set([
+  "ChildProcess",
+  "Crypto",
+  "FileSystem",
+  "Path",
+  "Stdio",
+  "Terminal",
+]);
+
+/**
+ * Names a PlatformError's closed reason and the platform module and method that raised it. The
+ * method is an identifier those modules pass as a literal, never a caller value.
+ */
 function platformErrorOperation(error: Error): string | undefined {
   const reason = ownValue(error, "reason");
   if (!isErrorRecord(reason)) return undefined;
   const tag = ownValue(reason, "_tag");
   const module = ownValue(reason, "module");
   const method = ownValue(reason, "method");
-  const parts = [
-    typeof tag === "string" ? safeIdentifier(tag) : undefined,
-    typeof module === "string" ? safeIdentifier(module) : undefined,
-    typeof method === "string" ? safeIdentifier(method) : undefined,
-  ];
-  return parts.every((part) => part !== undefined)
-    ? `${parts[0]}:${parts[1]}.${parts[2]}`
-    : undefined;
+  if (typeof tag !== "string" || !platformErrorReasons.has(tag)) return undefined;
+  if (typeof module !== "string" || !platformErrorModules.has(module)) return undefined;
+  const name = typeof method === "string" ? safeIdentifier(method) : undefined;
+  return name === undefined ? undefined : `${tag}:${module}.${name}`;
 }
 
 /**
  * Names an unclassified defect by its class's prototype tag and a known system error code, or by its type
- * for a non-error value. A PlatformError adds its reason tag and raising operation. No other
- * instance field is read, so only source-owned identifiers reach telemetry.
+ * for a non-error value. A PlatformError adds its closed reason and known raising operation. No
+ * other instance field is read, so only source-owned identifiers reach telemetry.
  */
 function defectIdentity(defect: unknown): string {
   try {

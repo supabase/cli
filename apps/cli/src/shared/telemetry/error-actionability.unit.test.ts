@@ -297,6 +297,16 @@ describe("classifyCliCauseActionability", () => {
     });
   });
 
+  const platformDefectWith = (field: "_tag" | "module" | "method", value: string) => {
+    const reason = new PlatformError.SystemError({
+      _tag: "Busy",
+      module: "FileSystem",
+      method: "readFile",
+    });
+    Object.defineProperty(reason, field, { value });
+    return new PlatformError.PlatformError(reason);
+  };
+
   it("names an unclassified defect by its source-owned tag, errno code, or platform operation, never instance data", () => {
     const secret = "privateToken";
     class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
@@ -335,12 +345,9 @@ describe("classifyCliCauseActionability", () => {
         ),
         "error:Defect:PlatformError:Busy:FileSystem.readFile",
       ],
-      [
-        new PlatformError.PlatformError(
-          new PlatformError.SystemError({ _tag: "Unknown", module: secret, method: "a b" }),
-        ),
-        "error:Defect:PlatformError",
-      ],
+      [platformDefectWith("_tag", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("module", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("method", "a b"), "error:Defect:PlatformError"],
     ];
 
     for (const [defect, fingerprint] of cases) {
