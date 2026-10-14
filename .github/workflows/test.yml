@@ -317,7 +317,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
-          tools: node bun pnpm
 
       # Keyed per suite so each job saves the artifacts it actually prepared.
       - name: Cache native stack artifacts
