@@ -41,49 +41,90 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
-import { block } from "./command-permissions/model.ts";
+import { block, type OperationEntry } from "./command-permissions/model.ts";
 
-/**
- * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
- * include it with `withDbTarget`. `gen types --project-id` and `db dump`'s container fallback
- * fetch the pooler config without `--project-ref`, so those commands declare that entry
- * themselves.
- */
-export const dbConfig = block("db-config", [
+const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   {
     operationId: "v1-create-login-role",
     kind: "required",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context:
       "no database password from --password (an empty value counts as none), SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
   },
   {
     operationId: "v1-get-pooler-config",
     kind: "required",
-    when: [{ dbTarget: ["linked"] }, { flag: "project-ref" }],
+    when: [{ flag: "project-ref" }],
     context:
       "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-get-pooler-config",
     kind: "required",
-    when: [{ dbTarget: ["linked"] }, { flag: "project-ref", oneOf: [""] }],
+    when: [{ flag: "project-ref", oneOf: [""] }],
     context:
       "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-list-all-network-bans",
     kind: "best-effort",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context:
       "after three failed attempts to connect through the pooler as the temporary login role",
   },
   {
     operationId: "v1-delete-network-bans",
     kind: "best-effort",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context:
       "after three failed attempts to connect through the pooler as the temporary login role",
+  },
+];
+
+/**
+ * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
+ * include it with `withDbTarget`. `db dump`'s container fallback is {@link dbConfigPoolerFallback};
+ * `gen types --project-id` fetches the pooler config without `--project-ref`, so that command
+ * declares its own entry.
+ */
+export const dbConfig = block(
+  "db-config",
+  linkedEntries.map((entry) => ({
+    ...entry,
+    when: [{ dbTarget: ["linked" as const] }, ...(entry.when ?? [])],
+  })),
+);
+
+/**
+ * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a dump or diff container fails
+ * with an IPv6 connectivity error against the direct database host.
+ */
+export const dbConfigPoolerFallback = block("db-config-pooler-fallback", [
+  {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }],
+    context:
+      "the dump or diff container fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
+    operationId: "v1-create-login-role",
+    kind: "required",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context:
+      "the same retry, and no database password from --password, SUPABASE_DB_PASSWORD or the project .env",
+  },
+  {
+    operationId: "v1-list-all-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context: "the same retry, after three failed attempts to connect as the temporary login role",
+  },
+  {
+    operationId: "v1-delete-network-bans",
+    kind: "best-effort",
+    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    context: "the same retry, after three failed attempts to connect as the temporary login role",
   },
 ]);
 
