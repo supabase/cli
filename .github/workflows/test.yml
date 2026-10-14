@@ -471,7 +471,7 @@ jobs:
       - name: Run stack end-to-end tests
         run: >-
           pnpm --filter @supabase/stack test:e2e:run
-          src/whole-stack.${{ (matrix.suite == 'idle' || matrix.suite == 'isolation') && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
+          src/whole-stack.${{ matrix.runtime }}.${{ (matrix.suite == 'idle' || matrix.suite == 'isolation') && 'idle-parallel' || 'lifecycle' }}.e2e.test.ts
           --testNamePattern='${{ matrix.suite == 'confinement' && 'writes stay confined' || matrix.suite == 'lifecycle' && '^(?!.*writes stay confined)' || matrix.suite == 'isolation' && 'parallel stack isolation' || '^(?!.*parallel stack isolation)' }}'
           --sequence.concurrent
           --passWithNoTests=false
