@@ -160,10 +160,10 @@ function collectCommand(): void {
 }
 
 /** A missing, truncated, or foreign report reads as absent, which the aggregation flags. */
-function readReport(path: string): JsonTestResults | undefined {
+function readCases(path: string, root: string): ReturnType<typeof parseVitestJson> | undefined {
   try {
     const results: JsonTestResults = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(results?.testResults) ? results : undefined;
+    return parseVitestJson(results, root);
   } catch {
     return undefined;
   }
@@ -181,11 +181,9 @@ function readResults(dir: string): RunResult[] {
       const reports = readdirSync(runDir)
         .filter((file) => file.endsWith(".json") && file !== "meta.json")
         .flatMap((file) => {
-          const results = readReport(join(runDir, file));
+          const cases = readCases(join(runDir, file), meta.root);
           const iteration = Number(/\.(\d+)\.json$/.exec(file)?.[1] ?? "1");
-          return results === undefined
-            ? []
-            : [{ name: file, iteration, cases: parseVitestJson(results, meta.root) }];
+          return cases === undefined ? [] : [{ name: file, iteration, cases }];
         });
       return { meta, reports };
     });

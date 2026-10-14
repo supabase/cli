@@ -119,7 +119,8 @@ export function aggregate(
     suites.set(meta.suite, suite);
 
     let sawFailure = false;
-    let ranTests = 0;
+    /** Iterations that neither ran a test nor failed, such as a repetition that selected nothing. */
+    const emptyIterations: number[] = [];
     const iterations = [...new Set(reports.map((report) => report.iteration))].sort(
       (a, b) => a - b,
     );
@@ -127,6 +128,8 @@ export function aggregate(
       // Tests sharing a title in one file stay distinct by their order of appearance, and
       // scenarios that run one file under different report names stay distinct by report.
       const occurrences = new Map<string, number>();
+      let ranTests = 0;
+      let iterationFailed = false;
       const cases = reports
         .filter((report) => report.iteration === iteration)
         .flatMap((report) =>
@@ -158,10 +161,14 @@ export function aggregate(
         verdict.executions += 1;
         if (testCase.failed) {
           sawFailure = true;
+          iterationFailed = true;
           verdict.failedIn.push({ run: meta.run, iteration });
           verdict.message ??= testCase.message;
         }
         verdicts.set(key, verdict);
+      }
+      if (ranTests === 0 && !iterationFailed) {
+        emptyIterations.push(iteration);
       }
     }
 
@@ -184,8 +191,15 @@ export function aggregate(
         name: meta.name,
         problem: `exited ${meta.exitCode} without a failing test (unhandled error or crash)`,
       });
-    } else if (ranTests === 0 && !sawFailure && !allowEmpty.includes(meta.suite)) {
-      runProblems.push({ name: meta.name, problem: "ran no tests; check the filter" });
+    } else if (emptyIterations.length === iterations.length) {
+      if (!allowEmpty.includes(meta.suite)) {
+        runProblems.push({ name: meta.name, problem: "ran no tests; check the filter" });
+      }
+    } else if (emptyIterations.length > 0) {
+      runProblems.push({
+        name: meta.name,
+        problem: `ran no tests in iteration ${emptyIterations.join(", ")}`,
+      });
     }
   }
 

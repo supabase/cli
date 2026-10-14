@@ -170,6 +170,7 @@ export function collectedName(dir: string, report: string): string {
 
 function reporter(report: string): string[] {
   return [
+    "--retry=0",
     "--reporter=default",
     "--reporter=json",
     `--outputFile.json=${RESULTS_DIR}/${report}.json`,

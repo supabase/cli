@@ -144,7 +144,7 @@ describe("aggregate", () => {
     });
   });
 
-  test("reports runs that lost an expected report, crashed, ran nothing, or never uploaded", () => {
+  test("reports runs that lost an expected report, crashed, ran nothing in some execution, or never uploaded", () => {
     const report = aggregate(
       [
         run(
@@ -157,12 +157,21 @@ describe("aggregate", () => {
         run("unit", 3, { [`${API}.1.json`]: empty }),
         run("unit", 4, {}, { exitCode: null }),
         run("focused", 1, { [`${API}.1.json`]: empty }),
+        run(
+          "focused",
+          2,
+          { [`${API}.1.json`]: clean, [`${API}.2.json`]: empty },
+          { executions: 2 },
+        ),
       ],
-      ["1", "2", "3", "4", "5"].map((n) => `flaky-unit-run${n}`).concat("flaky-focused-run1"),
+      ["1", "2", "3", "4", "5"]
+        .map((n) => `flaky-unit-run${n}`)
+        .concat("flaky-focused-run1", "flaky-focused-run2"),
       ["focused"],
     );
 
     expect(report.runProblems).toEqual([
+      { name: "flaky-focused-run2", problem: "ran no tests in iteration 2" },
       { name: "flaky-unit-run1", problem: "no report for apps__cli--unit.1.json" },
       {
         name: "flaky-unit-run2",
