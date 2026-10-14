@@ -11,13 +11,13 @@ export const branchRef = block("branch-ref", [
   {
     operationId: "v1-get-a-branch-config",
     kind: "required",
-    context: "the branch given (argument, typed answer or --project-ref) is a UUID",
+    context: "the branch given (argument or typed answer) is a UUID",
   },
   {
     operationId: "v1-get-a-branch",
     kind: "required",
     context:
-      "the branch given (argument, typed answer or --project-ref) is a name, not a UUID or a 20-letter project ref",
+      "the branch given (argument or typed answer) is a name, not a UUID or a 20-letter project ref",
   },
 ]);
 
