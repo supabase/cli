@@ -47,11 +47,11 @@ export const postgresConfigDelete = Effect.fn("postgres-config.delete")(function
         serializeError: (args) => new PostgresConfigDeleteSerializeError(args),
         networkError: (args) => new PostgresConfigDeleteNetworkError(args),
         statusError: (args) => new PostgresConfigDeleteUnexpectedStatusError(args),
-        unmarshalError: (args) => new PostgresConfigDeleteUnmarshalError(args),
+        parseError: (args) => new PostgresConfigDeleteUnmarshalError(args),
         networkMessage: (description) => `failed to delete config overrides: ${description}`,
         statusMessage: (status, body) =>
           `unexpected delete config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
+        parseMessage: (description) => `failed to parse delete response: ${description}`,
       }).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
 
       yield* deleting?.clear ?? Effect.void;

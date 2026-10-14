@@ -27,7 +27,7 @@ const issueBugConfig = {
   reproduce: issueOptionalTextFlag("reproduce", "Steps to reproduce."),
   crashReportId: issueOptionalTextFlag(
     "crash-report-id",
-    "Crash report ID printed by --create-ticket.",
+    "Crash report or support ticket ID, if you have one.",
   ),
   dockerServices: issueOptionalTextFlag(
     "docker-services",

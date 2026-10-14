@@ -71,7 +71,7 @@ describe("resolveDbImage", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("rewrites to the OrioleDB image on a 15/17 project (Go config.Validate)", () =>
+  it.effect("rewrites to the OrioleDB image on a 15/17 project", () =>
     Effect.gen(function* () {
       const dir = yield* withTemp;
       // > 15.1.1.13 → `<ver>-orioledb`

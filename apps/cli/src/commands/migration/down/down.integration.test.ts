@@ -12,6 +12,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
@@ -125,6 +126,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -308,7 +310,7 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+  it.effect("auto-confirms from SUPABASE_YES in the project .env", () => {
     // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     const { layer, out } = setup(tmp.current, {
       format: "json",

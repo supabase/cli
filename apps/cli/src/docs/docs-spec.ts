@@ -489,7 +489,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
 /**
  * Serializes the spec for publication. Uses YAML 1.1 quoting so scalars like `yes`/`no` stay
- * strings for downstream YAML 1.1 parsers (PyYAML, Psych, go-yaml v2); the output remains
+ * strings for downstream YAML 1.1 parsers (PyYAML, Psych); the output remains
  * valid YAML 1.2. Anchors/aliases are disabled since the injected `--experimental` doc is the
  * same object on every experimental leaf, and the serializer would otherwise emit `&a1`/`*a1`
  * references the published file never carried.

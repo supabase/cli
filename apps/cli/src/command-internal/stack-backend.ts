@@ -63,7 +63,6 @@ export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend },
 export const resolveStackBackend = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<StackBackend | undefined, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // Completion passes the final token as the cursor word, so it is not part of
@@ -92,7 +91,6 @@ export const resolveStackBackend = (input: {
     const enabled = yield* resolveExperimentalFeature({
       feature: "stack",
       configValue: readExperimentalFeatureConfig({ feature: "stack", ...input, args: routingArgs }),
-      env: input.env,
     }).pipe(
       Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),
     );

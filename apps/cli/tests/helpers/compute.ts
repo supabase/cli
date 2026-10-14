@@ -13,6 +13,7 @@ import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts"
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
+import { configValuesLayer } from "./config-values-layer.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
@@ -356,7 +357,6 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         profile: "supabase",
         profileEnvValue: Option.none(),
         supabaseHome: path.join(workdir, ".supabase"),
-        dbPassword: Option.none(),
         githubToken: Option.none(),
         apiUrl: "https://api.supabase.com",
         projectHost: "supabase.co",
@@ -421,7 +421,7 @@ export interface ComputeSetupOptions {
    * including `table` and `csv`, which these commands are meant to ignore and
    * render text for.
    */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   /** The root `--yes`, read by `delete` through `resolveYes`. */
   readonly yes?: boolean;
   /** Raw argv, which `resolveYes` scans for an explicit `--yes=false`. */
@@ -487,13 +487,14 @@ export function setupCompute(options: ComputeSetupOptions) {
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
       mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
       testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false),
+      configValuesLayer(),
       testProjectRefLayer(options.linked !== false),
       telemetry.layer,
       mockLinkedProjectCacheLayer,
       randomLayer,
       Layer.succeed(
         OutputFlag,
-        options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
+        options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       Layer.succeed(YesFlag, options.yes ?? false),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),

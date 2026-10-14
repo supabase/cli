@@ -234,7 +234,7 @@ describe("splitAndTrim", () => {
   it.each(["\u00A0", "\uFEFF", "\u0085"])(
     "does not treat BEGIN %s ATOMIC as the keyword pair",
     (gap) => {
-      // Only PostgreSQL's own whitespace separates the keywords; these are identifier runes.
+      // Only PostgreSQL's own whitespace separates the keywords; these are identifier characters.
       const sql = `BEGIN ${gap} ATOMIC; SELECT 1; end; SELECT 2;`;
       expect(splitAndTrim(sql)).toEqual([`BEGIN ${gap} ATOMIC`, "SELECT 1", "end", "SELECT 2"]);
     },

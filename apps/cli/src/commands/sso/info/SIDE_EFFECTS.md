@@ -48,7 +48,7 @@ the project ref: `https://<ref>.supabase.co/auth/v1/sso/saml/{acs,metadata}` and
 
 ### `--output-format text` / `--output pretty`
 
-Glamour-styled 3-row property/value markdown table.
+Styled 3-row property/value markdown table.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
@@ -65,4 +65,4 @@ Single `success` event with the payload as data.
 ## Notes
 
 - All three URLs are deterministic functions of the project ref.
-- The old Go CLI's markdown source included a trailing space in the `Single sign-on URL (ACS URL) ` label, but Glamour collapses it when computing column widths. Our flat ASCII renderer would double it up against the cell padding, so the label is emitted without the trailing space to match that rendered output (which the cli-e2e parity harness compares against).
+- The `Single sign-on URL (ACS URL)` label is emitted without a trailing space, so the flat ASCII renderer does not double it up against the cell padding.

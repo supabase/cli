@@ -7,7 +7,7 @@ import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { PROJECT_NOT_LINKED_MESSAGE } from "../../config/project-ref.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { tempPaths } from "../../shared/config/temp-paths.ts";
 import { UnlinkRefReadError, UnlinkTempRemovalError } from "./unlink.errors.ts";
 
 export const unlink = Effect.fn("unlink")(function* () {
