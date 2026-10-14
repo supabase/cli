@@ -1035,21 +1035,6 @@ describe("db diff", () => {
     },
   );
 
-  it.effect("explicit --from linked --to linked resolves the linked connection once", () => {
-    const s = setup(tmp.current, {
-      linkedRef: "abcdefghijklmnopqrst",
-      isLocal: false,
-      diffSql: "",
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ from: Option.some("linked"), to: Option.some("linked") }));
-      expect(s.resolverCalls).toHaveLength(1);
-      expect(s.explicitDiffCalls).toHaveLength(1);
-      expect(s.explicitDiffCalls[0]?.source).toMatchObject({ kind: "database" });
-      expect(s.explicitDiffCalls[0]?.source).toEqual(s.explicitDiffCalls[0]?.desired);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect(
     "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
     () => {
@@ -2857,7 +2842,7 @@ describe("db diff permissions through the real resolver and cache", () => {
     );
   });
 
-  it.effect("mints a login role for each side when both --from and --to are linked", () => {
+  it.effect("mints one login role shared by both sides when --from and --to are linked", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -2869,12 +2854,7 @@ describe("db diff permissions through the real resolver and cache", () => {
           projectRef: Option.some(VALID_REF),
         }),
       ).pipe(Effect.provide(s.layer));
-      expect(asLines(requests)).toEqual([
-        poolerRequest,
-        loginRoleRequest,
-        poolerRequest,
-        loginRoleRequest,
-      ]);
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db diff",
         activeFlags: { from: "linked", to: "linked", "project-ref": VALID_REF },
