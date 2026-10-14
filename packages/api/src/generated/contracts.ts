@@ -14042,10 +14042,9 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      response_headers: Schema.Union([
-        Schema.Record(Schema.String, Schema.String),
-        Schema.Null,
-      ]).annotate({ description: "HTTP headers of the response, `{}` if unavailable." }),
+      response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+        description: "HTTP headers of the response, `{}` if unavailable.",
+      }),
       response_body: Schema.Union([
         Schema.Union([
           Schema.Record(Schema.String, Schema.String).annotate({
@@ -14058,6 +14057,8 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
         ]),
         Schema.Null,
       ]),
+      error_code: Schema.Union([Schema.String, Schema.Null]),
+      error_message: Schema.Union([Schema.String, Schema.Null]),
       attempt_timestamp: Schema.String.annotate({
         description: "Timestamp of the attempt.",
         format: "date-time",
@@ -14085,27 +14086,6 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
-            "project.v1.paused",
-            "project.v1.created",
-            "project.v1.restored",
-            "project.v1.transferred",
-            "project.v1.removed",
-            "project.v1.restarted",
-            "project.v1.status.changed",
-            "project.v1.backup.started",
-            "project.v1.branch.created",
-            "project.v1.branch.updated",
-            "project.v1.branch.removed",
-            "organization.v1.member.invitation.created",
-            "organization.v1.member.invitation.canceled",
-            "organization.v1.member.added",
-            "organization.v1.member.removed",
-            "organization.v1.member.role.assigned",
-            "organization.v1.member.role.removed",
-            "organization.v1.member.role.updated",
-            "organization.v1.billing.plan.upgraded",
-            "organization.v1.billing.plan.downgraded",
-            "project.v1.branch.deleted",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -14261,7 +14241,7 @@ export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
         custom_headers: Schema.optionalKey(
-          Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+          Schema.Record(Schema.String, Schema.String).annotate({
             description:
               "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
           }),
@@ -14396,7 +14376,7 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
         custom_headers: Schema.optionalKey(
-          Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+          Schema.Record(Schema.String, Schema.String).annotate({
             description:
               "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
           }),
@@ -14543,7 +14523,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct(
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -14687,10 +14667,9 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        response_headers: Schema.Union([
-          Schema.Record(Schema.String, Schema.String),
-          Schema.Null,
-        ]).annotate({ description: "HTTP headers of the response, `{}` if unavailable." }),
+        response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+          description: "HTTP headers of the response, `{}` if unavailable.",
+        }),
         response_body: Schema.Union([
           Schema.Union([
             Schema.Record(Schema.String, Schema.String).annotate({
@@ -14703,9 +14682,68 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
           ]),
           Schema.Null,
         ]),
+        error_code: Schema.Union([Schema.String, Schema.Null]),
+        error_message: Schema.Union([Schema.String, Schema.Null]),
         attempt_timestamp: Schema.String.annotate({
           description: "Timestamp of the attempt.",
           format: "date-time",
+        }),
+        event: Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+          payload: Schema.Struct({
+            organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+              Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+                expected: "a string matching the RegExp ^[\\w-]+$",
+              }),
+            ),
+            project_ref: Schema.Union([
+              Schema.String.annotate({ description: "Project ref" })
+                .check(
+                  Schema.isMinCodePoints(20).annotate({
+                    expected: "a string with at least 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isMaxCodePoints(20).annotate({
+                    expected: "a string with at most 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                    expected: "a string matching the RegExp ^[a-z]+$",
+                  }),
+                ),
+              Schema.Null,
+            ]),
+          }).annotate({ description: "Final data sent to the consumer." }),
+          timestamp: Schema.String.annotate({
+            description: "Timestamp of event publication.",
+            format: "date-time",
+          }),
         }),
       }),
     }),
@@ -14831,7 +14869,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -14936,7 +14974,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
           ),
       ),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -15044,7 +15082,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -15112,27 +15150,6 @@ export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
-          "project.v1.paused",
-          "project.v1.created",
-          "project.v1.restored",
-          "project.v1.transferred",
-          "project.v1.removed",
-          "project.v1.restarted",
-          "project.v1.status.changed",
-          "project.v1.backup.started",
-          "project.v1.branch.created",
-          "project.v1.branch.updated",
-          "project.v1.branch.removed",
-          "organization.v1.member.invitation.created",
-          "organization.v1.member.invitation.canceled",
-          "organization.v1.member.added",
-          "organization.v1.member.removed",
-          "organization.v1.member.role.assigned",
-          "organization.v1.member.role.removed",
-          "organization.v1.member.role.updated",
-          "organization.v1.billing.plan.upgraded",
-          "organization.v1.billing.plan.downgraded",
-          "project.v1.branch.deleted",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -15206,7 +15223,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -15308,7 +15325,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -15452,10 +15469,9 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      response_headers: Schema.Union([
-        Schema.Record(Schema.String, Schema.String),
-        Schema.Null,
-      ]).annotate({ description: "HTTP headers of the response, `{}` if unavailable." }),
+      response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+        description: "HTTP headers of the response, `{}` if unavailable.",
+      }),
       response_body: Schema.Union([
         Schema.Union([
           Schema.Record(Schema.String, Schema.String).annotate({
@@ -15468,6 +15484,8 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
         ]),
         Schema.Null,
       ]),
+      error_code: Schema.Union([Schema.String, Schema.Null]),
+      error_message: Schema.Union([Schema.String, Schema.Null]),
       attempt_timestamp: Schema.String.annotate({
         description: "Timestamp of the attempt.",
         format: "date-time",
@@ -15495,27 +15513,6 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
-            "project.v1.paused",
-            "project.v1.created",
-            "project.v1.restored",
-            "project.v1.transferred",
-            "project.v1.removed",
-            "project.v1.restarted",
-            "project.v1.status.changed",
-            "project.v1.backup.started",
-            "project.v1.branch.created",
-            "project.v1.branch.updated",
-            "project.v1.branch.removed",
-            "organization.v1.member.invitation.created",
-            "organization.v1.member.invitation.canceled",
-            "organization.v1.member.added",
-            "organization.v1.member.removed",
-            "organization.v1.member.role.assigned",
-            "organization.v1.member.role.removed",
-            "organization.v1.member.role.updated",
-            "organization.v1.billing.plan.upgraded",
-            "organization.v1.billing.plan.downgraded",
-            "project.v1.branch.deleted",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -15683,7 +15680,7 @@ export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
         custom_headers: Schema.optionalKey(
-          Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+          Schema.Record(Schema.String, Schema.String).annotate({
             description:
               "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
           }),
@@ -15824,7 +15821,7 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
         custom_headers: Schema.optionalKey(
-          Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+          Schema.Record(Schema.String, Schema.String).annotate({
             description:
               "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
           }),
@@ -15977,7 +15974,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -16127,10 +16124,9 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        response_headers: Schema.Union([
-          Schema.Record(Schema.String, Schema.String),
-          Schema.Null,
-        ]).annotate({ description: "HTTP headers of the response, `{}` if unavailable." }),
+        response_headers: Schema.Record(Schema.String, Schema.String).annotate({
+          description: "HTTP headers of the response, `{}` if unavailable.",
+        }),
         response_body: Schema.Union([
           Schema.Union([
             Schema.Record(Schema.String, Schema.String).annotate({
@@ -16143,9 +16139,68 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
           ]),
           Schema.Null,
         ]),
+        error_code: Schema.Union([Schema.String, Schema.Null]),
+        error_message: Schema.Union([Schema.String, Schema.Null]),
         attempt_timestamp: Schema.String.annotate({
           description: "Timestamp of the attempt.",
           format: "date-time",
+        }),
+        event: Schema.Struct({
+          type: Schema.Union([
+            Schema.Literals([
+              "v1.project.paused",
+              "v1.project.created",
+              "v1.project.restored",
+              "v1.project.transferred",
+              "v1.project.removed",
+              "v1.project.restarted",
+              "v1.project.status.changed",
+              "v1.project.backup.started",
+              "v1.project.branch.created",
+              "v1.project.branch.updated",
+              "v1.project.branch.removed",
+              "v1.organization.member.invitation.created",
+              "v1.organization.member.invitation.canceled",
+              "v1.organization.member.added",
+              "v1.organization.member.removed",
+              "v1.organization.member.role.assigned",
+              "v1.organization.member.role.removed",
+              "v1.organization.member.role.updated",
+              "v1.organization.billing.plan.upgraded",
+              "v1.organization.billing.plan.downgraded",
+            ]).annotate({ description: "Webhook event type." }),
+            OpenString,
+          ]),
+          payload: Schema.Struct({
+            organization_slug: Schema.String.annotate({ description: "Organization slug" }).check(
+              Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+                expected: "a string matching the RegExp ^[\\w-]+$",
+              }),
+            ),
+            project_ref: Schema.Union([
+              Schema.String.annotate({ description: "Project ref" })
+                .check(
+                  Schema.isMinCodePoints(20).annotate({
+                    expected: "a string with at least 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isMaxCodePoints(20).annotate({
+                    expected: "a string with at most 20 code points",
+                  }),
+                )
+                .check(
+                  Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+                    expected: "a string matching the RegExp ^[a-z]+$",
+                  }),
+                ),
+              Schema.Null,
+            ]),
+          }).annotate({ description: "Final data sent to the consumer." }),
+          timestamp: Schema.String.annotate({
+            description: "Timestamp of event publication.",
+            format: "date-time",
+          }),
         }),
       }),
     }),
@@ -16277,7 +16332,7 @@ export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -16388,7 +16443,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
           ),
       ),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -16496,7 +16551,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -16570,27 +16625,6 @@ export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
-          "project.v1.paused",
-          "project.v1.created",
-          "project.v1.restored",
-          "project.v1.transferred",
-          "project.v1.removed",
-          "project.v1.restarted",
-          "project.v1.status.changed",
-          "project.v1.backup.started",
-          "project.v1.branch.created",
-          "project.v1.branch.updated",
-          "project.v1.branch.removed",
-          "organization.v1.member.invitation.created",
-          "organization.v1.member.invitation.canceled",
-          "organization.v1.member.added",
-          "organization.v1.member.removed",
-          "organization.v1.member.role.assigned",
-          "organization.v1.member.role.removed",
-          "organization.v1.member.role.updated",
-          "organization.v1.billing.plan.upgraded",
-          "organization.v1.billing.plan.downgraded",
-          "project.v1.branch.deleted",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -16670,7 +16704,7 @@ export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
@@ -16772,7 +16806,7 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
         })
         .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       custom_headers: Schema.optionalKey(
-        Schema.Union([Schema.Record(Schema.String, Schema.String), Schema.Null]).annotate({
+        Schema.Record(Schema.String, Schema.String).annotate({
           description:
             "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
         }),
