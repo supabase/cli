@@ -2,7 +2,8 @@ name: run-ci
 
 # Opt-in full CI, Windows and macOS included, for drafts, stacked PRs, and
 # ready PRs into develop or next. Ready PRs into main or v*.x already run
-# everything through Test.yml.
+# everything through Test.yml. On ready PRs the Linux jobs run a second time
+# alongside Test.yml's own run.
 #
 # Add the `run-ci` label to start the suite; remove it to cancel in-progress
 # runs via this workflow's concurrency group. Other labels do not retrigger.

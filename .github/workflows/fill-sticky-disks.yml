@@ -26,7 +26,7 @@ jobs:
   fill:
     name: Fill sticky disks
     # Manual dispatches from other branches would commit unreviewed caches.
-    if: contains(fromJSON('["develop", "next", "main"]'), github.ref_name)
+    if: contains(fromJSON('["refs/heads/develop", "refs/heads/next", "refs/heads/main"]'), github.ref)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:

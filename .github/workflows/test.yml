@@ -190,9 +190,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PATTERN: >-
-            ^(pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|mise\.toml|turbo\.json|\.github/workflows/test\.yml|\.github/actions/
-            |packages/stack/(package\.json|vitest[^/]*|src/(host|namespace|identity|storage|internal)/
-            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy|StackNamespace)[.]|src/whole-stack\.native)
+            ^(pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|mise\.(toml|lock)|\.node-version|\.bun-version|turbo\.json|\.github/workflows/test\.yml|\.github/actions/
+            |packages/stack/(package\.json|vitest[^/]*|tests/|src/(host|namespace|identity|storage|internal)/
+            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy|StackNamespace|effect)[.]|src/whole-stack\.native)
             |apps/cli/src/commands/(db/reset|experimental/stack/start)/)
         run: |
           if [ "$EVENT" != "pull_request" ] || [ "$FULL" = "true" ] || [ "$BASE_REF" = "main" ] || [[ "$BASE_REF" == v*.x ]]; then
