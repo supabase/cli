@@ -114,7 +114,7 @@ const poolerFallbackEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     kind: "required",
     when: [{ flag: "password", present: false }],
     context:
-      "the same retry, and no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env",
+      "the same retry, and no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
   },
   {
     operationId: "v1-list-all-network-bans",

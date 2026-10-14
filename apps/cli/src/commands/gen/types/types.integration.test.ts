@@ -2946,7 +2946,7 @@ const projectBody = (ref: string) => ({
  * Runs `gen types` through the real database config resolver and linked-project cache, with the
  * Management API recorded at the HTTP level: the typed client's requests in `api.requests`, the
  * resolver's in the stubbed fetch, and the cache's in `http.calls`. The handler's own settings
- * name an unreachable project host so the pooler fallback's eligibility check can see it.
+ * use `projectHost: "invalid"`, so the pooler fallback treats `db.<ref>.invalid` as the direct host.
  */
 const setupRecorded = Effect.fnUntraced(function* (opts: {
   readonly args: ReadonlyArray<string>;
@@ -3091,6 +3091,13 @@ describe("gen types permissions through the real layers", () => {
       ]);
       expect(ctx.stubbed).toEqual([]);
       expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+      // The cache fill also calls the project lookup; without it, no TypeScript entry may require one.
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, "project-id": true, lang: "typescript" },
+        requests: ctx.api.requests,
+        exact: true,
+      });
       expect(yield* fs.exists(`${ctx.workdir}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "gen types",
@@ -3144,6 +3151,7 @@ describe("gen types permissions through the real layers", () => {
         );
 
         expect(ctx.out.stdoutText).toBe("type Public struct {}");
+        expect(methodPaths(ctx.api.requests)).toEqual([`GET /v1/projects/${VALID_REF}`]);
         expect(ctx.stubbed.map(({ method, path }) => `${method} ${path}`)).toEqual([
           `POST /v1/projects/${VALID_REF}/cli/login-role`,
           `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -3181,6 +3189,11 @@ describe("gen types permissions through the real layers", () => {
         `GET /v1/projects/${BRANCH_REF}/config/database/pooler`,
       ]);
       expect(ctx.stubbed).toEqual([]);
+      expect(ctx.generator.calls.map((call) => call.conn.host)).toEqual([
+        `db.${BRANCH_REF}.invalid`,
+        "aws-0-us-east-1.pooler.supabase.com",
+      ]);
+      expect(ctx.generator.calls[1]?.conn.password).toBe("branch-password");
       expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${BRANCH_REF}`]);
       assertPermissionDrift({
         command: "gen types",
@@ -3213,20 +3226,38 @@ describe("gen types permissions through the real layers", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("--local=false still generates from the linked project", () =>
-    Effect.gen(function* () {
-      const ctx = yield* setupRecorded({
-        args: ["gen", "types", "--local=false"],
-        projectRefFile: VALID_REF,
-      });
-      yield* ctx.run(genTypes(defaultFlags()));
+  it.effect(
+    "the implicit linked fallback generates from the saved ref when --local=false is named",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* setupRecorded({
+          args: ["gen", "types", "--local=false"],
+          projectRefFile: VALID_REF,
+        });
+        yield* ctx.run(genTypes(defaultFlags()));
 
-      expect(methodPaths(ctx.api.requests)).toEqual([
-        `GET /v1/projects/${VALID_REF}/types/typescript`,
-      ]);
+        expect(methodPaths(ctx.api.requests)).toEqual([
+          `GET /v1/projects/${VALID_REF}/types/typescript`,
+        ]);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: { ...DEFAULT_SWITCHES, local: false, lang: "typescript" },
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("makes no Management API request for --local", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setupRecorded({ args: ["gen", "types", "--local"] });
+      yield* ctx.run(genTypes(defaultFlags({ local: true })));
+
+      expect(ctx.generator.calls).toHaveLength(1);
+      expect(ctx.recordedRequests()).toEqual([]);
       assertPermissionDrift({
         command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, local: false, lang: "typescript" },
+        activeFlags: { ...DEFAULT_SWITCHES, local: true, lang: "typescript" },
         requests: ctx.recordedRequests(),
         exact: true,
       });

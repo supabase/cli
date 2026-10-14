@@ -108,7 +108,7 @@ export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> 
 const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
 const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
 const notBranch = "the ref names a project, not a preview branch";
-// Flags that send the command to a local or `--db-url` database, where it calls no API.
+// With any of these the run uses a local or `--db-url` database, or fails before calling the API.
 const remoteTarget: ReadonlyArray<EntryCondition> = [
   { flag: "local", is: false },
   { flag: "db-url", present: false },
@@ -158,7 +158,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
               operationId: "v1-get-pooler-config",
               kind: "required",
               when: [nonTypescript],
-              context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url`,
+              context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--project-id ignores the saved file)`,
             },
             {
               operationId: "v1-get-pooler-config",
