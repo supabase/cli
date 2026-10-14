@@ -21,9 +21,9 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   returns a resolved config, memoised per workdir, project ref and flag set within a runtime. The resolved config
   decodes the whole config eagerly, so an invalid value fails every command that loads config
   unless the caller passes `tolerateInvalid`. Load-time warnings (an env value
-  overriding a remote, the `[inbucket]` deprecation, a set deprecated env alias) print once per
-  runtime, however many resolved configs it loads. Code that writes config or `.temp` goes through
-  `writeThrough`, which drops the memo.
+  overriding a remote, the `[inbucket]` deprecation) print once per runtime, however many
+  resolved configs it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
+  the memo.
 - The resolved config surface is:
   - `get(key)`: the value and the origin tier that supplied it.
   - `loaded`: what the project declares, with every flag, env and secret winner written in and no
@@ -40,11 +40,8 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
 - The key registry is generated from `CliConfigSchema`. Each leaf gets a path, the env name
   `SUPABASE_` plus the upper-snake path, and a codec derived from its type. Hand-written
   annotations cover what the schema cannot express: codec overrides, secret
-  and section-gated keys, context defaults, exclusions, key families and deprecated env aliases.
-  Document-only keys such as `db.password` have no env tier.
-- A deprecated env alias (`CLI_CONFIG_ENV_ALIASES`, e.g. `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`
-  for `db.orioledb_version`) follows the canonical name within each env tier, so the canonical
-  name wins when both are set. The loader warns once when an alias is set.
+  and section-gated keys, context defaults, exclusions and key families. Document-only keys such as
+  `db.password` have no env tier.
 - A flag binds to a key with `key.flag(...)`, declared in the annotations. The flag supplies the
   highest tier. `withCliConfigFlags` collects a command's bindings, and two flags assigning the
   same key fail with an error.
@@ -160,8 +157,8 @@ order stays the same for every key.
 ### Adding a key or a flag
 
 - A new `CliConfigSchema` leaf joins the registry automatically. Add an annotation only for a
-  non-default codec, a secret, a section gate, an exclusion or a deprecated env alias; a leaf with
-  no codec must be listed in `CLI_CONFIG_SCHEMA_EXCLUDED` or registry construction throws.
+  non-default codec, a secret, a section gate or an exclusion; a leaf with no codec must
+  be listed in `CLI_CONFIG_SCHEMA_EXCLUDED` or registry construction throws.
 - To bind a flag, add it to `CLI_CONFIG_FLAGS`, declare it with `key.flag` in the command, and
   pipe the command config through `withCliConfigFlags`.
 - Read the value with `resolvedConfig.get(CliConfigKeys.<path>)`. Never read the env name directly.

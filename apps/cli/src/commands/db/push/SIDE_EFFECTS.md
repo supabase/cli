@@ -107,7 +107,7 @@ stdout is payload-only. A single `result` object is emitted:
   target is a hard error rather than a silently discarded flag (deliberately
   stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
   non-linked target).
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The whole config is decoded up
   front, so an invalid value fails the command before any connection.

@@ -90,7 +90,7 @@ The `--output`/`-o` flag does not change deploy output.
 
 ## Notes
 
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value, including an unparsable `SUPABASE_*` override, fails the command.
 - If no function name is provided, deploys all functions found in `supabase/functions/`.

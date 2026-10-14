@@ -176,7 +176,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 
 ## Notes
 
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from

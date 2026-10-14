@@ -273,7 +273,7 @@ to those defaults (the usual outcome for an interactive terminal).
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671).
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The linked-database password env is
   withheld when the target differs from `.temp/project-ref`: stderr gets
