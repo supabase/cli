@@ -10,6 +10,7 @@ import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
+import { deprecatedOrioleDBVersionEnvWarning } from "../../../command-internal/local-config-values.ts";
 import {
   ipv6Suggestion,
   isIPv6ConnectivityError,
@@ -187,6 +188,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const orioleDBEnvWarning = deprecatedOrioleDBVersionEnvWarning(tomlValues.envLookup);
+    if (orioleDBEnvWarning !== undefined) {
+      yield* output.raw(`${orioleDBEnvWarning}\n`, "stderr");
+    }
 
     const backend = yield* currentStackBackend;
     const managedProject =

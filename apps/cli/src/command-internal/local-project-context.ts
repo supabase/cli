@@ -12,6 +12,7 @@ import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
 import {
   deprecatedOrioleDBVersionEnvWarning,
+  envOverride,
   envOverrideMajorVersion,
   envOverrideOrioleDBVersion,
 } from "./local-config-values.ts";
@@ -90,7 +91,9 @@ export const loadLocalProjectContext = <E>(
     );
     // Printed beside the loader's deprecated-config WARNs, on the same real console, so it shares
     // their once-per-context-load cadence.
-    const orioleDBEnvWarning = deprecatedOrioleDBVersionEnvWarning(projectEnvValues);
+    const orioleDBEnvWarning = deprecatedOrioleDBVersionEnvWarning((name) =>
+      envOverride(name, undefined, projectEnvValues),
+    );
     if (orioleDBEnvWarning !== undefined) {
       yield* Console.error(orioleDBEnvWarning).pipe(
         Effect.provideService(Console.Console, globalThis.console),

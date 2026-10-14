@@ -1044,14 +1044,13 @@ export function envOverrideOrioleDBVersion(
   );
 }
 
-/** The deprecation warning for a set `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`, if any. */
-export function deprecatedOrioleDBVersionEnvWarning(
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined {
-  return envOverride(DEPRECATED_ORIOLEDB_VERSION_ENV, undefined, projectEnvValues) === undefined
+/** The deprecation warning when `read` finds `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set, if any. */
+export const deprecatedOrioleDBVersionEnvWarning = (
+  read: (name: typeof DEPRECATED_ORIOLEDB_VERSION_ENV) => string | undefined,
+): string | undefined =>
+  read(DEPRECATED_ORIOLEDB_VERSION_ENV) === undefined
     ? undefined
     : `WARN: ${DEPRECATED_ORIOLEDB_VERSION_ENV} is deprecated and will be removed in v3, use ${ORIOLEDB_VERSION_ENV} instead.`;
-}
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
 export function envOverrideDenoVersion(
