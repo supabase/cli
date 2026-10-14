@@ -22,6 +22,16 @@ const flagged = {
   "http-client-request.ts":
     'export const req = HttpClientRequest.get("https://api.supabase.com/v1/projects");',
   "fetch-call.ts": 'export const res = fetch("/v2/projects");',
+  "client-method-literal.ts": 'export const res = client.get("/v1/profile");',
+  "http-client-request-relative.ts": 'export const req = HttpClientRequest.get("/v1/projects");',
+  "constant-path-concatenation.ts": [
+    'const PROFILE_PATH = "/v1/profile";',
+    "export const url = apiUrl + PROFILE_PATH;",
+  ].join("\n"),
+  "constant-path-template.ts": [
+    'const PROFILE_PATH = "/v1/profile";',
+    "export const url = `${apiUrl}${PROFILE_PATH}`;",
+  ].join("\n"),
 };
 
 const allowed = {
@@ -30,8 +40,9 @@ const allowed = {
   "service-storage.ts": 'export const req = HttpClientRequest.get("/storage/v1/bucket");',
   "service-functions.ts": "export const url = `http://127.0.0.1:${port}/functions/v1/${name}`;",
   "studio-platform.ts": "export const url = `${studioUrl}/api/platform/profile`;",
-  "bare-path-constant.ts": 'export const OTLP_TRACES_PATH = "/v1/traces";',
-  "literal-concatenation.ts": 'export const path = "/v1/" + "projects";',
+  "otlp-traces-path.ts": 'export const OTLP_TRACES_PATH = "/v1/traces";',
+  "unrelated-literal.ts": 'export const res = client.get("/health");',
+  "version-lookalike.ts": 'export const label = "/v10/projects";',
   "documented-exception.ts": [
     `// oxlint-disable-next-line ${RULE} -- not in the OpenAPI spec`,
     "export const url = `${apiUrl}/platform/cli/login/${id}`;",

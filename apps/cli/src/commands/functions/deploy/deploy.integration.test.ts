@@ -727,6 +727,41 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("retries a rate-limited deploy only through the command's own loop", () => {
+    let deployAttempts = 0;
+    const { layer, out, api } = apiDeployHarness((request) => {
+      if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+      deployAttempts += 1;
+      if (deployAttempts === 1) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+          ),
+        );
+      }
+      return Effect.succeed(
+        jsonResponse(request, 201, {
+          id: "function-id",
+          slug: "hello-world",
+          name: "hello-world",
+          status: "ACTIVE",
+          version: 1,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(

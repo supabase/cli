@@ -870,6 +870,17 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
+    const { layer, out } = setup({
+      goOutput: "json",
+      body: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(out.stdoutText).toMatch(/"resource_id":\s*"res-123"/);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {

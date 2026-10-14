@@ -160,32 +160,43 @@ interface ConfigProblems {
 function collectConfigProblems(
   issue: SchemaIssue.Issue,
   path: ReadonlyArray<PropertyKey>,
+  config: PostgresConfigMap,
   problems: ConfigProblems,
 ): void {
   switch (issue._tag) {
     case "Composite":
-      for (const nested of issue.issues) collectConfigProblems(nested, path, problems);
+      for (const nested of issue.issues) collectConfigProblems(nested, path, config, problems);
       return;
     case "Pointer":
-      collectConfigProblems(issue.issue, [...path, ...issue.path], problems);
+      collectConfigProblems(issue.issue, [...path, ...issue.path], config, problems);
       return;
     case "UnexpectedKey":
       problems.unknownKeys.push(path.map(String).join("."));
       return;
-    default:
-      problems.invalidValues.push(
-        `${path.map(String).join(".")}: ${SchemaIssue.makeFormatterDefault()(issue)}`,
-      );
+    default: {
+      const key = path.map(String).join(".");
+      const given = config[key];
+      const hint =
+        issue._tag === "InvalidType" && typeof given === "number"
+          ? ` (pass the value with its unit, such as ${given}kB or ${given}ms)`
+          : "";
+      problems.invalidValues.push(`${key}: ${SchemaIssue.makeFormatterDefault()(issue)}${hint}`);
+    }
   }
 }
 
-function describeConfigProblems(issue: SchemaIssue.Issue) {
+function describeConfigProblems(issue: SchemaIssue.Issue, config: PostgresConfigMap) {
   const problems: ConfigProblems = { unknownKeys: [], invalidValues: [] };
-  collectConfigProblems(issue, [], problems);
+  collectConfigProblems(issue, [], config, problems);
   const messages: Array<string> = [];
-  if (problems.unknownKeys.length > 0) {
-    const noun = problems.unknownKeys.length === 1 ? "parameter" : "parameters";
-    messages.push(`unknown Postgres config ${noun}: ${problems.unknownKeys.join(", ")}`);
+  const { unknownKeys } = problems;
+  if (unknownKeys.length > 0) {
+    const plural = unknownKeys.length > 1;
+    messages.push(
+      `unknown Postgres config ${plural ? "parameters" : "parameter"}: ${unknownKeys.join(", ")} ` +
+        `(for a stored override this CLI version does not know, upgrade the CLI or remove ` +
+        `${plural ? "them" : "it"} with \`supabase postgres-config delete --config ${unknownKeys.join(",")}\`)`,
+    );
   }
   for (const invalid of problems.invalidValues) {
     messages.push(`invalid Postgres config value for ${invalid}`);
@@ -197,27 +208,30 @@ function describeConfigProblems(issue: SchemaIssue.Issue) {
  * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and `delete` issue
  * the same PUT but tag failures with their own error types and message verbs.
  */
-export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr> {
+export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly serializeError: (args: { readonly message: string }) => SerErr;
   readonly networkError: NetworkErrorFactory<NetErr>;
   readonly statusError: StatusErrorFactory<StatErr>;
+  readonly unmarshalError: (args: { readonly message: string }) => UnmErr;
   readonly networkMessage: (description: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
+  readonly unmarshalMessage: (description: string) => string;
 }
 
 /**
- * PUTs the full overrides map. The request is validated against the typed input first so a
- * mistyped parameter or an unsupported stored key fails here, naming the key, instead of as an
- * opaque 400.
+ * PUTs the full overrides map after validating it against the platform's strict request schema,
+ * so a bad key or value fails naming the key instead of as an opaque 400. The PUT is never
+ * retried: with `restart_database` a resent write restarts the database twice.
  */
 export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   SerErr,
   NetErr,
   StatErr,
+  UnmErr,
 >(
   ref: string,
   config: PostgresConfigMap,
-  errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr>,
+  errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
 ) {
   const api = yield* CommandPlatformApi;
 
@@ -226,11 +240,32 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
     { onExcessProperty: "error", errors: "all" },
   ).pipe(
     Effect.mapError((error) =>
-      errors.serializeError({ message: describeConfigProblems(error.issue) }),
+      errors.serializeError({ message: describeConfigProblems(error.issue, config) }),
     ),
   );
 
-  return yield* api.v1.updatePostgresConfig(input).pipe(Effect.catch(mapHttpError(errors)));
+  const response = yield* api
+    .executeRaw(updateOperation, input, { retry: { maxRetries: 0 } })
+    .pipe(Effect.catch(mapHttpError(errors)));
+
+  const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+  if (response.status < 200 || response.status >= 300) {
+    const body = sanitizeErrorBody(rawBody);
+    return yield* Effect.fail(
+      new errors.statusError({
+        status: response.status,
+        body,
+        message: errors.statusMessage(response.status, body),
+      }),
+    );
+  }
+
+  const stored = yield* decodeJsonObject(rawBody).pipe(
+    Effect.mapError((error) =>
+      errors.unmarshalError({ message: errors.unmarshalMessage(error.message) }),
+    ),
+  );
+  return { ...stored } satisfies PostgresConfigMap;
 });
 
 export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output")(function* (

@@ -170,7 +170,11 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       // `v1RunAQuery` declares no response body, so `executeRaw` keeps the row JSON text intact
       // (column order, number formatting) for rendering.
       const response = yield* api
-        .executeRaw(operationDefinitions.v1RunAQuery, { ref, query: sql })
+        .executeRaw(
+          operationDefinitions.v1RunAQuery,
+          { ref, query: sql },
+          { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+        )
         .pipe(
           Effect.mapError(
             (cause) =>

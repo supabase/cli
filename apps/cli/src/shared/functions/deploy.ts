@@ -1778,6 +1778,9 @@ function rateLimitDelayText(milliseconds: number) {
   return `${Math.round(milliseconds / 1_000)}s`;
 }
 
+// The command's own 429 loop is the only retry layer.
+const NO_CLIENT_RETRY = { retry: { maxRetries: 0 } } as const;
+
 const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   action: string,
   request: () => Effect.Effect<
@@ -1827,15 +1830,19 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   );
   const response = yield* rateLimitedRequest(`deploying function ${config.slug}`, () =>
     api
-      .executeRaw(operationDefinitions.v1DeployAFunction, {
-        ref: projectRef,
-        slug: config.slug,
-        ...(bundleOnly ? { bundleOnly: true } : {}),
-        body: {
-          metadata,
-          file: files,
+      .executeRaw(
+        operationDefinitions.v1DeployAFunction,
+        {
+          ref: projectRef,
+          slug: config.slug,
+          ...(bundleOnly ? { bundleOnly: true } : {}),
+          body: {
+            metadata,
+            file: files,
+          },
         },
-      })
+        NO_CLIENT_RETRY,
+      )
       .pipe(
         // Read the body as text (never failing) so the status check below wins:
         // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
@@ -1919,10 +1926,14 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* rateLimitedRequest("bulk updating functions", () =>
       api
-        .executeRaw(operationDefinitions.v1BulkUpdateFunctions, {
-          ref: projectRef,
-          body: functions,
-        })
+        .executeRaw(
+          operationDefinitions.v1BulkUpdateFunctions,
+          {
+            ref: projectRef,
+            body: functions,
+          },
+          NO_CLIENT_RETRY,
+        )
         .pipe(
           // Read the body as text (never failing) so the status check wins even
           // if the body cannot be read.

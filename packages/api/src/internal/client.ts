@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Option, Context, Random, Schedule } from "effect";
+import { Clock, Data, Duration, Effect, Option, Context, Random, Schedule } from "effect";
 import * as Cause from "effect/Cause";
 import * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
@@ -32,11 +32,12 @@ interface ResolvedSupabaseApiConfig {
   readonly headers?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
-/** Per-request overrides of the construction-time base URL, bearer token, and headers. */
+/** Per-request overrides of the construction-time base URL, bearer token, headers, and retry policy. */
 export interface SupabaseApiRequestOptions {
   readonly baseUrl?: string | undefined;
   readonly accessToken?: string | Redacted.Redacted<string> | undefined;
   readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly retry?: SupabaseApiRetryOptions | undefined;
 }
 
 /**
@@ -46,7 +47,7 @@ export interface SupabaseApiRequestOptions {
 export interface SupabaseApiRetryOptions {
   /** Retries after the first attempt; defaults to 5. */
   readonly maxRetries?: number | undefined;
-  /** Timeout of each attempt in milliseconds; defaults to 60 seconds. */
+  /** Timeout of each attempt in milliseconds; defaults to 60 seconds, `Infinity` disables it. */
   readonly requestTimeoutMs?: number | undefined;
 }
 
@@ -202,7 +203,7 @@ const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const RETRY_BASE_DELAY = Duration.millis(250);
 const RETRY_MAX_DELAY = Duration.seconds(4);
-/** Above the backoff cap so a server-provided wait is honoured, yet a hung CLI never waits longer. */
+/** Longest `Retry-After` honoured; a longer wait returns the response to the caller instead of retrying. */
 const RETRY_AFTER_MAX_DELAY = Duration.seconds(10);
 
 function isIdempotentMethod(method: string): boolean {
@@ -259,12 +260,22 @@ function retryAfterOf(
   return parseRetryAfter(failure.response.headers["retry-after"], nowMillis);
 }
 
+function exceedsRetryAfterCap(
+  response: HttpClientResponse.HttpClientResponse,
+  nowMillis: number,
+): boolean {
+  return Option.exists(
+    parseRetryAfter(response.headers["retry-after"], nowMillis),
+    Duration.isGreaterThan(RETRY_AFTER_MAX_DELAY),
+  );
+}
+
 function makeRetrySchedule(maxRetries: number) {
   return Schedule.exponential(RETRY_BASE_DELAY).pipe(
     Schedule.setInputType<RetryableFailure>(),
     Schedule.modifyDelay(({ input, duration, now }) =>
       Option.match(retryAfterOf(input, now), {
-        onSome: (retryAfter) => Effect.succeed(Duration.min(retryAfter, RETRY_AFTER_MAX_DELAY)),
+        onSome: Effect.succeed,
         onNone: () =>
           Effect.map(Random.next, (random) =>
             Duration.times(Duration.min(duration, RETRY_MAX_DELAY), random),
@@ -280,39 +291,49 @@ function applySupabaseRetryPolicy(
   client: HttpClient.HttpClient,
   options?: SupabaseApiRetryOptions,
 ): HttpClient.HttpClient {
-  const timeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const schedule = makeRetrySchedule(options?.maxRetries ?? DEFAULT_MAX_RETRIES);
+  return HttpClient.transform(client, (requestEffect, request) =>
+    Effect.flatMap(Effect.service(RequestOverrides), (overrides) => {
+      const timeoutMs =
+        overrides?.retry?.requestTimeoutMs ??
+        options?.requestTimeoutMs ??
+        DEFAULT_REQUEST_TIMEOUT_MS;
+      const maxRetries = overrides?.retry?.maxRetries ?? options?.maxRetries ?? DEFAULT_MAX_RETRIES;
+      const retriesTransportErrors = isIdempotentMethod(request.method);
+      const attempt: Effect.Effect<
+        HttpClientResponse.HttpClientResponse,
+        HttpClientError.HttpClientError | Cause.TimeoutError,
+        never
+      > = Number.isFinite(timeoutMs) ? Effect.timeout(requestEffect, timeoutMs) : requestEffect;
 
-  return HttpClient.transform(client, (requestEffect, request) => {
-    const retriesTransportErrors = isIdempotentMethod(request.method);
-
-    return requestEffect.pipe(
-      Effect.timeout(timeoutMs),
-      Effect.catchIf(Cause.isTimeoutError, (error) =>
-        Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              request,
-              cause: error,
-              description: "request timed out",
+      return attempt.pipe(
+        Effect.catchIf(Cause.isTimeoutError, (error) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause: error,
+                description: "request timed out",
+              }),
             }),
-          }),
+          ),
         ),
-      ),
-      Effect.flatMap((response) =>
-        isRetryableResponse(response)
-          ? Effect.fail(new RetryableResponse({ response }))
-          : Effect.succeed(response),
-      ),
-      Effect.retry({
-        schedule,
-        while: (failure) =>
-          failure._tag === "RetryableResponse" ||
-          (retriesTransportErrors && isRetryableTransportError(failure)),
-      }),
-      Effect.catchTag("RetryableResponse", (failure) => Effect.succeed(failure.response)),
-    );
-  });
+        Effect.flatMap((response) =>
+          Effect.flatMap(Clock.currentTimeMillis, (nowMillis) =>
+            isRetryableResponse(response) && !exceedsRetryAfterCap(response, nowMillis)
+              ? Effect.fail(new RetryableResponse({ response }))
+              : Effect.succeed(response),
+          ),
+        ),
+        Effect.retry({
+          schedule: makeRetrySchedule(maxRetries),
+          while: (failure) =>
+            failure._tag === "RetryableResponse" ||
+            (retriesTransportErrors && isRetryableTransportError(failure)),
+        }),
+        Effect.catchTag("RetryableResponse", (failure) => Effect.succeed(failure.response)),
+      );
+    }),
+  );
 }
 
 /**

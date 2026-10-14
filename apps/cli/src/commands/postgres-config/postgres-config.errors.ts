@@ -65,6 +65,18 @@ export class PostgresConfigUpdateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
+export class PostgresConfigUpdateUnmarshalError extends Data.TaggedError(
+  "PostgresConfigUpdateUnmarshalError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // Constructed only after a 2xx status check when the body is not a JSON object --
+    // an API response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 export class PostgresConfigUpdateSerializeError extends Data.TaggedError(
   "PostgresConfigUpdateSerializeError",
 )<{
@@ -97,6 +109,18 @@ export class PostgresConfigDeleteUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
+
+export class PostgresConfigDeleteUnmarshalError extends Data.TaggedError(
+  "PostgresConfigDeleteUnmarshalError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // Constructed only after a 2xx status check when the body is not a JSON object --
+    // an API response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

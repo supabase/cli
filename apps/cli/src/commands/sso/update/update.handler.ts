@@ -1,5 +1,6 @@
 import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, type Redacted, type Schema, Stdio, type Types } from "effect";
+import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -68,6 +69,10 @@ type SsoUpdateBody = Types.Mutable<
     "ref" | "provider_id"
   >
 >;
+
+const decodeProvider = Schema.decodeUnknownEffect(
+  operationDefinitions.v1UpdateASsoProvider.outputSchema,
+);
 
 const mapGetStatusOrNetwork = mapHttpError({
   networkError: SsoUpdateNetworkError,
@@ -376,28 +381,38 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         if (format !== undefined) body.name_id_format = format;
       }
 
-      const provider = yield* api.v1
-        .updateASsoProvider({ ref, provider_id: providerId, ...body }, requestOptions)
-        .pipe(
-          Effect.catch((cause) => handlePutError(gate, cause)),
-          Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        );
+      // `executeRaw` keeps the response body intact so structured output emits it as the API
+      // returned it; the typed schema decodes a copy for the table view.
+      const { rawBody, provider } = yield* Effect.gen(function* () {
+        const response = yield* api
+          .executeRaw(
+            operationDefinitions.v1UpdateASsoProvider,
+            { ref, provider_id: providerId, ...body },
+            requestOptions,
+          )
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        const rawBody: unknown = yield* response.json;
+        return { rawBody, provider: yield* decodeProvider(rawBody) };
+      }).pipe(
+        Effect.catch((cause) => handlePutError(gate, cause)),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      );
       yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(provider));
+        yield* output.raw(encodeGoJson(rawBody));
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(provider, GO_SSO_PROVIDER_RESPONSE));
+        yield* output.raw(encodeGoYaml(rawBody, GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(provider, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeGoToml(rawBody, GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -411,7 +426,10 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       }
 
       if (output.format === "json" || output.format === "stream-json") {
-        yield* output.success("", { ...provider });
+        yield* output.success(
+          "",
+          Predicate.isObjectOrArray(rawBody) ? { ...rawBody } : { value: rawBody },
+        );
         return;
       }
 

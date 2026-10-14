@@ -9,6 +9,7 @@ import {
   PostgresConfigUpdateNetworkError,
   PostgresConfigUpdateSerializeError,
   PostgresConfigUpdateUnexpectedStatusError,
+  PostgresConfigUpdateUnmarshalError,
 } from "../postgres-config.errors.ts";
 import {
   fetchCurrentPostgresConfig,
@@ -63,9 +64,11 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
         serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
         networkError: PostgresConfigUpdateNetworkError,
         statusError: PostgresConfigUpdateUnexpectedStatusError,
+        unmarshalError: (args) => new PostgresConfigUpdateUnmarshalError(args),
         networkMessage: (description) => `failed to update config overrides: ${description}`,
         statusMessage: (status, body) =>
           `unexpected update config overrides status ${status}: ${body}`,
+        unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
       }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
       yield* updating?.clear ?? Effect.void;

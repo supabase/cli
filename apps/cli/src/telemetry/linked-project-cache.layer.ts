@@ -102,7 +102,7 @@ export const linkedProjectCacheLayer = Layer.effect(
                 ),
             },
           ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-          const project = yield* api.v1.getProject({ ref });
+          const project = yield* api.v1.getProject({ ref }, { retry: { maxRetries: 0 } });
 
           const linked = {
             ref: project.ref,

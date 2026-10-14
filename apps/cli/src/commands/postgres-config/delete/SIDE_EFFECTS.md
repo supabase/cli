@@ -23,7 +23,7 @@
 
 This command does not call a delete endpoint: it fetches the current config, removes the specified keys locally, then sends the remaining object back via `PUT`.
 
-The `PUT` goes through the typed client, so the remaining object is validated against the API's request schema before sending; a stored unknown key that is not being deleted fails locally and no `PUT` is sent.
+The remaining object is validated locally against the API's request schema before the `PUT`; a stored unknown key that is not being deleted fails locally with a hint to delete it too, and no `PUT` is sent. The `PUT` is sent once and never retried, since a retried `restart_database` write could restart the database twice, and its response is read as a raw JSON object so every returned key is shown.
 
 ## Environment Variables
 
@@ -45,9 +45,9 @@ The `PUT` goes through the typed client, so the remaining object is validated ag
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                       |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                                                      |
 | `1`  | PUT non-2xx (`PostgresConfigDeleteUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                            |
-| `1`  | PUT transport failure (`PostgresConfigDeleteNetworkError`); GET and PUT retry on 5xx and transport errors first                                                                                                                                                                                                                                                      |
-| `1`  | rejected before the PUT: unknown or out-of-range config parameter (`PostgresConfigDeleteSerializeError`, e.g. `unknown Postgres config parameter: foo`, `invalid Postgres config value for max_connections: ...`)                                                                                                                                                    |
-| `1`  | GET body is not a JSON object (`PostgresConfigGetUnmarshalError`); PUT 2xx body fails the response schema (`PostgresConfigDeleteNetworkError`, API-response classification)                                                                                                                                                                                          |
+| `1`  | PUT transport failure (`PostgresConfigDeleteNetworkError`); the GET retries on 5xx and transport errors first, the PUT does not                                                                                                                                                                                                                                      |
+| `1`  | rejected before the PUT: unknown or wrongly typed config parameter (`PostgresConfigDeleteSerializeError`, e.g. `unknown Postgres config parameter: foo (...)`)                                                                                                                                                                                                       |
+| `1`  | GET body is not a JSON object (`PostgresConfigGetUnmarshalError`); PUT 2xx body is not a JSON object (`PostgresConfigDeleteUnmarshalError`)                                                                                                                                                                                                                          |
 
 ## Telemetry Events Fired
 

@@ -26,6 +26,7 @@ import {
   markSupabaseApiInputErrorAsUserInput,
   type SupabaseApiClientOptions,
   type SupabaseApiClientShape,
+  type SupabaseApiRetryOptions,
   SupabaseApiInputError,
 } from "./client.ts";
 
@@ -1521,14 +1522,36 @@ describe("retry policy", () => {
     },
   );
 
-  test("caps an oversized Retry-After", async () => {
+  test("returns a 429 whose Retry-After exceeds the cap without retrying", async () => {
+    const { requestTimes, exit } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request) =>
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "30" } }),
+          ),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+      }),
+    );
+
+    expect(requestTimes).toHaveLength(1);
+    const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+    if (!HttpClientError.isHttpClientError(error) || error.reason._tag !== "StatusCodeError") {
+      throw new Error("expected StatusCodeError");
+    }
+    expect(error.reason.response.status).toBe(429);
+  });
+
+  test("honours a Retry-After exactly at the cap", async () => {
     const requestTimes = await onVirtualClock(
       Effect.gen(function* () {
         const call = yield* startVirtualCall(listProjects, (request, attempt) =>
           attempt === 1
             ? HttpClientResponse.fromWeb(
                 request,
-                new Response("{}", { status: 429, headers: { "retry-after": "86400" } }),
+                new Response("{}", { status: 429, headers: { "retry-after": "10" } }),
               )
             : jsonResponse(request, 200, []),
         );
@@ -1539,6 +1562,100 @@ describe("retry policy", () => {
     );
 
     expect(gaps(requestTimes)).toEqual([10_000]);
+  });
+
+  describe("per-request retry options", () => {
+    const listProjectsWith = (retry: SupabaseApiRetryOptions) => (client: SupabaseApiClientShape) =>
+      client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}, { retry });
+
+    const failedStatus = (exit: Exit.Exit<unknown, unknown>) => {
+      const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      if (!HttpClientError.isHttpClientError(error) || error.reason._tag !== "StatusCodeError") {
+        throw new Error("expected StatusCodeError");
+      }
+      return error.reason.response.status;
+    };
+
+    test("maxRetries 0 makes a single attempt and returns the 503", async () => {
+      const { requestTimes, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(listProjectsWith({ maxRetries: 0 }), (request) =>
+            jsonResponse(request, 503, {}),
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(1);
+      expect(failedStatus(exit)).toBe(503);
+    });
+
+    test("wins over the client-level retry options, field by field", async () => {
+      const { requestTimes, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(
+            listProjectsWith({ maxRetries: 1 }),
+            (request) => jsonResponse(request, 503, {}),
+            { retry: { maxRetries: 4, requestTimeoutMs: 1000 } },
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(2);
+      expect(failedStatus(exit)).toBe(503);
+    });
+
+    test("still applies when transformClient wraps the client", async () => {
+      const { requestTimes } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(
+            listProjectsWith({ maxRetries: 0 }),
+            (request) => jsonResponse(request, 503, {}),
+            {
+              transformClient: (client) => Effect.succeed(HttpClient.mapRequest(client, (r) => r)),
+            },
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Fiber.join(call.fiber);
+          return { requestTimes: call.requestTimes };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(1);
+    });
+
+    test("requestTimeoutMs Infinity lets an attempt outlast the default timeout", async () => {
+      const { attempts, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          let attempts = 0;
+          const fiber = yield* makeSupabaseApiClient(config).pipe(
+            Effect.flatMap(listProjectsWith({ requestTimeoutMs: Number.POSITIVE_INFINITY })),
+            Effect.exit,
+            Effect.provide(
+              httpClientLayer((request) =>
+                Effect.suspend(() => {
+                  attempts += 1;
+                  return Effect.as(
+                    Effect.sleep(Duration.minutes(5)),
+                    jsonResponse(request, 200, []),
+                  );
+                }),
+              ),
+            ),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.minutes(5));
+          return { attempts, exit: yield* Fiber.join(fiber) };
+        }),
+      );
+
+      expect(attempts).toBe(1);
+      expect(exit).toEqual(Exit.succeed([]));
+    });
   });
 
   test("does not retry a POST after a 500 however long it waits", async () => {

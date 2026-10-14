@@ -202,8 +202,10 @@ describe("snippets list integration", () => {
       });
       return Effect.gen(function* () {
         yield* snippetsList({ projectRef: Option.none() });
-        expect(out.stdoutText).toContain(SNIPPET_ID);
-        expect(out.stdoutText).toContain("Create table");
+        const row = out.stdoutText.split("\n").find((line) => line.includes(SNIPPET_ID));
+        const cells = row?.split("|").map((cell) => cell.trim());
+        expect(cells?.[1]).toBe("Create table");
+        expect(cells?.[3]).toBe("");
       }).pipe(Effect.provide(layer));
     },
   );
