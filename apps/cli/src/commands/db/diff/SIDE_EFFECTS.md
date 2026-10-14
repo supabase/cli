@@ -90,32 +90,35 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## API Routes (linked path, via the db-config resolver)
 
-| Method     | Path                               | Auth   | Purpose                          |
-| ---------- | ---------------------------------- | ------ | -------------------------------- |
-| POST       | `/v1/projects/{ref}/roles`         | Bearer | Temp login role when no password |
-| GET        | `/v1/projects/{ref}/pooler/config` | Bearer | IPv4 pooler fallback             |
-| GET/DELETE | `/v1/projects/{ref}/network-bans`  | Bearer | Unban during pooler login retry  |
-| GET        | `/v1/projects/{ref}`               | Bearer | Linked-project cache (post-run)  |
+| Method | Path                                        | Auth   | Purpose                             |
+| ------ | ------------------------------------------- | ------ | ----------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`         | Bearer | Temp login role when no password    |
+| GET    | `/v1/projects/{ref}/config/database/pooler` | Bearer | IPv4 pooler fallback                |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer | List bans during pooler login retry |
+| DELETE | `/v1/projects/{ref}/network-bans`           | Bearer | Unban during pooler login retry     |
+| GET    | `/v1/projects/{ref}`                        | Bearer | Linked-project cache (post-run)     |
 
 `--use-pgadmin --linked` performs every one of these calls natively (CLI-1968), as part
 of this command's own target resolve, ahead of the differ container.
 
 ## Environment Variables
 
-| Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                 | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                                                                         | no        |
-| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                              | no        |
-| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
-| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
-| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
-| `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
-| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)               | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
-| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
-| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                      | no        |
+| Variable                                                                              | Purpose                                                                                                                                                                                                                                    | Required? |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                                        | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                                                                                                | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                                                     | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                                           | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                        | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                                        | no        |
+| `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                  | no        |
+| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                      | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                                                      | no        |
+| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                                                     | no        |
+| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                                                    | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                                             | no        |
+| `SUPABASE_DB_ORIOLEDB_VERSION`                                                        | overrides `db.orioledb_version`, selecting the OrioleDB shadow image                                                                                                                                                                       | no        |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                              | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no        |
 
 `SUPABASE_DB_SHADOW_PORT`/`SUPABASE_NETWORK_ID`/`--network-id`/`SUPABASE_PROJECT_ID`/
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
@@ -226,7 +229,9 @@ transaction metadata.
   dropped.
 - `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
   effects are Go's); the Go child's telemetry is disabled so the single
-  `cli_command_executed` event comes from this TS command.
+  `cli_command_executed` event comes from this TS command. When only the deprecated
+  `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` alias is set (shell or project `.env`), its value
+  is passed to the child as `SUPABASE_DB_ORIOLEDB_VERSION` and the deprecation WARN prints once.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.

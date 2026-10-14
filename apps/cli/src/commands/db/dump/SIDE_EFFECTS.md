@@ -24,10 +24,11 @@ image), to stdout or `--file`.
 
 ## API Routes
 
-| Method | Path                                         | Auth   | When                                                         |
-| ------ | -------------------------------------------- | ------ | ------------------------------------------------------------ |
-| POST   | `/v1/projects/{ref}/cli/login-role`          | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
-| GET    | `/v1/projects/{ref}/network-bans` (+ DELETE) | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
+| Method | Path                                       | Auth   | When                                                         |
+| ------ | ------------------------------------------ | ------ | ------------------------------------------------------------ |
+| POST   | `/v1/projects/{ref}/cli/login-role`        | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | `--linked` pooler temp-role retry (list bans)                |
+| DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
 
 (All via the shared `DbConfigResolver` `--linked` path.)
 
@@ -37,6 +38,8 @@ image), to stdout or `--file`.
 | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                                               |
 | `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                                                  |
+| `SUPABASE_DB_ORIOLEDB_VERSION`                                                | overrides `db.orioledb_version`, selecting the OrioleDB `pg_dump` image                                                                                                                                                                                          |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                      | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                       |
 | `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                                                    |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                                                 |
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |

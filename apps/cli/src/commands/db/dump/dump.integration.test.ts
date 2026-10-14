@@ -14,11 +14,38 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -37,9 +64,14 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
-import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  DbConnection,
+  type DbSession,
+  type PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
@@ -183,6 +215,15 @@ const unusedStackApi = Layer.succeed(StackApi, {
   find: () => Effect.die("unused"),
   findDeleted: () => Effect.die("unused"),
 });
+
+const connectedSession: DbSession = {
+  exec: () => Effect.void,
+  execBatch: () => Effect.void,
+  query: () => Effect.succeed([]),
+  extensionExists: () => Effect.succeed(false),
+  copyToCsv: () => Effect.succeed(new Uint8Array()),
+  queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+};
 
 function mockResolver(opts: {
   conn?: PgConnInput;
@@ -408,6 +449,8 @@ interface SetupOpts {
   stdoutIsPipe?: boolean;
   env?: Readonly<Record<string, string>>;
   dockerInstalled?: boolean;
+  /** Runs the real resolver and linked-project cache, with `workdir` a real directory. */
+  realLayers?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -429,22 +472,42 @@ function setup(opts: SetupOpts = {}) {
   });
   const docker = mockDockerRun(opts);
   const bundled = mockBundledPostgresClient(opts);
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: Layer.succeed(DbConnection, {
+            connect: () => Effect.succeed(connectedSession),
+          }),
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     projectRef.layer,
     docker.layer,
     bundled.layer,
     unusedStackApi,
     mockCommandSettings({
-      workdir: opts.workdir ?? "/work/project",
+      workdir,
       projectId: opts.projectId ?? Option.none(),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
-    processEnvLayer(opts.env ?? {}),
+    processEnvLayer(
+      opts.realLayers === true
+        ? { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, ...opts.env }
+        : (opts.env ?? {}),
+    ),
     Layer.succeed(
       NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
@@ -452,7 +515,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker, bundled, cache };
+  return { layer, out, telemetry, resolver, docker, bundled, cache, projectHttp };
 }
 
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
@@ -684,6 +747,29 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.env["EXCLUDED_SCHEMAS"]).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3, keeping stdout clean",
+    () => {
+      const { layer, out } = setup({
+        isLocal: true,
+        stdout: "CREATE SCHEMA public;\n",
+        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
+      });
+      const consoleErrors: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        consoleErrors.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ local: Option.some(true) }));
+        const warning =
+          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+        const stderrLines = [...out.stderrText.split("\n"), ...consoleErrors];
+        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
+        expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
 
   it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
@@ -1274,5 +1360,134 @@ describe("db dump integration", () => {
         );
       });
     }
+  });
+});
+
+describe("db dump permissions through the real resolver and cache", () => {
+  const tmp = useTempWorkdir("supabase-db-dump-");
+  const IPV6_STDERR =
+    'could not translate host name "db.abcdefghijklmnopqrst.invalid" to address: No address associated with hostname';
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+
+  it.effect("mints a login role and fills the cache for the default linked target", () => {
+    const { layer, out, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(flags({ projectRef: Option.some(VALID_REF) })).pipe(Effect.provide(layer));
+      expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const { layer, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(
+        flags({
+          linked: Option.some(true),
+          projectRef: Option.some(VALID_REF),
+          password: Option.some("secret"),
+        }),
+      ).pipe(Effect.provide(layer));
+      expect(asLines(requests)).toEqual([poolerRequest]);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("makes no Management API request for --local and caches nothing", () => {
+    const { layer, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      stdout: "CREATE SCHEMA x;\n",
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.provide(layer));
+      expect(requests).toEqual([]);
+      expect(projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db dump",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("retries through the pooler after a container IPv6 failure", () => {
+    const { layer, docker, projectHttp } = setup({
+      workdir: tmp.current,
+      realLayers: true,
+      results: [
+        { exitCode: 1, stderr: IPV6_STDERR },
+        { exitCode: 0, stdout: "CREATE SCHEMA x;\n" },
+      ],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      const fs = yield* FileSystem.FileSystem;
+      // No --project-ref: the linked ref comes from the saved file, so only the fallback block
+      // accounts for the pooler config request.
+      yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDump(flags()).pipe(Effect.provide(layer));
+      expect(docker.allOpts).toHaveLength(2);
+      expect(docker.allOpts[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
+      expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "db dump",
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 });

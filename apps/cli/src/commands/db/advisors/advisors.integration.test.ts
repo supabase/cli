@@ -1,5 +1,14 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -11,7 +20,18 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   sequentialExecBatch,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -201,6 +221,8 @@ interface SetupOpts {
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
+  realLayers?: { readonly workdir: string };
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -240,12 +262,22 @@ function setup(opts: SetupOpts = {}) {
       if (url.includes("/advisors/performance")) {
         return Effect.succeed(jsonResponse(request, 200, { lints: opts.performanceLints ?? [] }));
       }
+      if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}`)) {
+        return Effect.succeed(
+          jsonResponse(request, 200, {
+            ref: VALID_REF,
+            name: "alpha",
+            organization_id: "org-123",
+            organization_slug: "acme",
+          }),
+        );
+      }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
   });
 
   const cliSettings = mockCommandSettings({
-    workdir: "/tmp/advisors-int",
+    workdir: opts.realLayers?.workdir ?? "/tmp/advisors-int",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
   const credentials = mockCredentials({
@@ -254,12 +286,20 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === undefined
+      ? resolver.layer
+      : realDbConfigResolver({
+          workdir: opts.realLayers.workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }),
     connection.layer,
     telemetry.layer,
     processControl.layer,
     projectRef.layer,
-    cache.layer,
+    opts.realLayers === undefined
+      ? cache.layer
+      : realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
     cliSettings,
     credentials.layer,
     api.factoryLayer,
@@ -291,9 +331,14 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
 
 describe("db advisors — local", () => {
   it.effect("queries the local database and prints the Go pretty JSON array", () => {
-    const { layer, out, connection } = setup({ rows: [lintRow()] });
+    const { layer, out, connection, api } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
+      assertPermissionDrift({
+        command: "db advisors",
+        requests: api.requests,
+        exact: true,
+      });
       const expected = encodeAdvisorLints([scanAdvisorLintRow(lintRow())]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
@@ -476,6 +521,7 @@ describe("db advisors — local", () => {
 });
 
 describe("db advisors — linked", () => {
+  const tempRoot = useTempWorkdir("supabase-db-advisors-int-");
   const securityLint = {
     name: "rls_disabled_in_public",
     title: "RLS disabled",
@@ -499,6 +545,97 @@ describe("db advisors — linked", () => {
     cache_key: "perf",
   };
 
+  it.effect(
+    "mints a login role, fetches both advisors and fills the cache through the real layers",
+    () => {
+      const { layer, api } = setup({
+        securityLints: [securityLint],
+        performanceLints: [performanceLint],
+        args: ["db", "advisors", "--linked", "--project-ref", VALID_REF],
+        realLayers: { workdir: tempRoot.current },
+      });
+      const resolverRequests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(resolverRequests, serveLinkedDatabase(VALID_REF));
+        yield* dbAdvisors(flags({ linked: true, projectRef: Option.some(VALID_REF) }));
+        expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/performance`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          true,
+        );
+        assertPermissionDrift({
+          command: "db advisors",
+          activeFlags: { linked: true, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(resolverRequests), ...api.requests],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("makes no Management API request for --local through the real layers", () => {
+    const { layer, api } = setup({
+      rows: [],
+      args: ["db", "advisors", "--local"],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const resolverRequests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(resolverRequests, () => undefined);
+      yield* dbAdvisors(flags({ local: true }));
+      expect(resolverRequests).toEqual([]);
+      expect(api.requests).toEqual([]);
+      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+        false,
+      );
+      assertPermissionDrift({
+        command: "db advisors",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "fails on a 403 from the security advisors without asking for the performance ones",
+    () => {
+      const { layer, api } = setup({ securityStatus: 403, args: ["--linked"] });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("all") })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("unexpected security advisors status 403");
+        }
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
+        ]);
+        assertPermissionDrift({
+          command: "db advisors",
+          activeFlags: { linked: true, type: "all" },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("fetches both security and performance advisors for --type all", () => {
     const { layer, out, api, cache } = setup({
       securityLints: [securityLint],
@@ -506,10 +643,16 @@ describe("db advisors — linked", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ level: Option.some("info") }));
+      yield* dbAdvisors(flags({ type: Option.some("all"), level: Option.some("info") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
+      assertPermissionDrift({
+        command: "db advisors",
+        activeFlags: { linked: true, type: "all", level: true },
+        requests: api.requests,
+        exact: true,
+      });
       expect(out.stdoutText).toContain("rls_disabled_in_public");
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
       expect(cache.cached).toBe(true);
@@ -612,6 +755,12 @@ describe("db advisors — linked", () => {
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
+      assertPermissionDrift({
+        command: "db advisors",
+        activeFlags: { linked: true, type: "security" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -622,6 +771,12 @@ describe("db advisors — linked", () => {
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
+      assertPermissionDrift({
+        command: "db advisors",
+        activeFlags: { linked: true, type: "performance" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

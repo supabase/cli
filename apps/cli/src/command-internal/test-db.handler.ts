@@ -7,7 +7,12 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import {
+  envOverrideLookup,
+  loadProjectEnv,
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "./db-config.toml-read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
@@ -159,6 +164,9 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       dnsResolver,
       linkedProjectRef: flags.projectRef,
     });
+    yield* warnDeprecatedOrioleDBVersionEnv(
+      yield* envOverrideLookup(yield* loadProjectEnv(fs, path, cliSettings.workdir)),
+    );
 
     const args = buildPgProveArgs({
       paths: flags.paths,

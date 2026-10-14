@@ -1,8 +1,32 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
+import { commandTreeFor } from "../../../../tests/helpers/command-flags.ts";
+import {
+  VALID_REF,
+  VALID_TOKEN,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
@@ -141,6 +165,8 @@ interface SetupOpts {
   dnsResolver?: "native" | "https";
   /** Raw CLI args slice; drives explicitly-passed flag detection. */
   cliArgs?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` against the temp `workdir`. */
+  realLayers?: { readonly workdir: string };
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -158,7 +184,13 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === undefined
+      ? resolver.layer
+      : realDbConfigResolver({
+          workdir: opts.realLayers.workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }),
     connection.layer,
     telemetry.layer,
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
@@ -438,5 +470,154 @@ describe("inspect db query runner", () => {
       yield* Effect.exit(inspectDbDbStats(flags()));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("inspect db through the real database-config resolver", () => {
+  const tempRoot = useTempWorkdir("supabase-inspect-db-int-");
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+
+  const INSPECT_DB_LEAVES = [...commandTreeFor(undefined)]
+    .filter(([path, node]) => node.isLeaf && path.startsWith("inspect db "))
+    .map(([path]) => path);
+
+  it.effect(
+    "every inspect db subcommand declares the calls the shared runner makes on the linked project",
+    () => {
+      const { layer, out, connection } = setup({
+        rows: [DB_STATS_ROW],
+        cliArgs: ["inspect", "db", "db-stats", "--project-ref", VALID_REF],
+        realLayers: { workdir: tempRoot.current },
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* inspectDbDbStats(flags({ projectRef: Option.some(VALID_REF) }));
+        expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+        expect(connection.connectCalls[0]?.cfg.host).toBe("aws-0-us-east-1.pooler.supabase.com");
+        expect(out.stdoutText).toContain("8192 kB");
+        expect(INSPECT_DB_LEAVES).toHaveLength(25);
+        for (const command of INSPECT_DB_LEAVES) {
+          assertPermissionDrift({
+            command,
+            activeFlags: { "project-ref": VALID_REF },
+            requests: asRecordedRequests(requests),
+            exact: true,
+          });
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("--linked=false still reaches the linked project through the real resolver", () => {
+    const { layer } = setup({
+      rows: [DB_STATS_ROW],
+      cliArgs: ["inspect", "db", "db-stats", "--linked=false", "--project-ref", VALID_REF],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* inspectDbDbStats(flags({ projectRef: Option.some(VALID_REF) }));
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "inspect db db-stats",
+        activeFlags: { linked: false, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "an empty --project-ref falls back to the saved ref and still fetches the pooler",
+    () => {
+      const { layer } = setup({
+        rows: [DB_STATS_ROW],
+        cliArgs: ["inspect", "db", "db-stats", "--project-ref", ""],
+        realLayers: { workdir: tempRoot.current },
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+        yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* inspectDbDbStats(flags({ projectRef: Option.some("") }));
+        expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+        assertPermissionDrift({
+          command: "inspect db db-stats",
+          activeFlags: { "project-ref": "" },
+          requests: asRecordedRequests(requests),
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("makes no Management API request for --local", () => {
+    const { layer, connection } = setup({
+      rows: [DB_STATS_ROW],
+      cliArgs: ["inspect", "db", "db-stats", "--local"],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* inspectDbDbStats(flags({ local: true }));
+      expect(connection.connectCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "inspect db db-stats",
+        activeFlags: { local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --db-url", () => {
+    const DB_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, connection } = setup({
+      rows: [DB_STATS_ROW],
+      cliArgs: ["inspect", "db", "db-stats", "--db-url", DB_URL],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* inspectDbDbStats(flags({ dbUrl: Option.some(DB_URL) }));
+      expect(connection.connectCalls).toHaveLength(1);
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "inspect db db-stats",
+        activeFlags: { "db-url": true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

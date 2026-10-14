@@ -23,6 +23,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
@@ -245,12 +246,19 @@ function runningCheckFailsRoute(
   };
 }
 
-const alwaysReadyHttpClientLayer = Layer.succeed(
-  HttpClient.HttpClient,
-  HttpClient.make((request) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
-  ),
-);
+function alwaysReadyHttpClient() {
+  const calls: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls.push({ method: request.method, url: request.url });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+      );
+    }),
+  );
+  return { layer, calls };
+}
 
 /** PG15+ (this suite's default) never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
 function fakeDbSession() {
@@ -329,6 +337,7 @@ function setup(opts: SetupOpts = {}) {
     }),
   ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
+  const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
   const cliSettings = mockCommandSettings({ workdir });
   const baseRoute = opts.route ?? defaultRoute();
@@ -375,7 +384,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,
-    alwaysReadyHttpClientLayer,
+    http.layer,
     dbConnection,
     unusedStackApi,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
@@ -404,6 +413,7 @@ function setup(opts: SetupOpts = {}) {
     child,
     dbSession,
     catalogApplied,
+    httpCalls: http.calls,
     get connectAttempts() {
       return connectAttempts;
     },
@@ -470,7 +480,7 @@ describe("db start", () => {
   it.effect(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",
     () => {
-      const { layer, out, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      const { layer, out, child, httpCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Starting database...\n");
@@ -481,6 +491,7 @@ describe("db start", () => {
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
         expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
         expect(out.stderrText).not.toContain("Finished");
+        assertPermissionDrift({ command: "db start", requests: httpCalls, exact: true });
       });
     },
   );
@@ -671,7 +682,7 @@ describe("db start", () => {
   );
 
   it.effect("resolves a relative --from-backup against the caller cwd, not the workdir", () => {
-    const { layer, child } = setup({
+    const { layer, child, httpCalls } = setup({
       route: freshVolumeRoute(defaultRoute()),
       cwd: "/caller/here",
     });
@@ -679,6 +690,12 @@ describe("db start", () => {
       yield* dbStart(flags("dump.sql")).pipe(Effect.provide(layer));
       const args = createArgs(child.spawned);
       expect(bindsFromCreateArgs(args ?? [])).toContain("/caller/here/dump.sql:/etc/backup.sql:ro");
+      assertPermissionDrift({
+        command: "db start",
+        activeFlags: { "from-backup": true },
+        requests: httpCalls,
+        exact: true,
+      });
     });
   });
 
@@ -1451,10 +1468,48 @@ describe("db start", () => {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const inbucketWarnings = warnings.filter((m) =>
           m.includes(
-            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+            "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
           ),
         );
         expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
+
+  it.effect.each([
+    {
+      with: "alone",
+      env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
+      expectedTag: "17.11.0.002-orioledb",
+    },
+    {
+      with: "and SUPABASE_DB_ORIOLEDB_VERSION (wins)",
+      env: {
+        SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002",
+        SUPABASE_DB_ORIOLEDB_VERSION: "17.11.0.003",
+      },
+      expectedTag: "17.11.0.003-orioledb",
+    },
+  ])(
+    "selects the OrioleDB image with SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION $with, warning once that it is removed in v3",
+    ({ env, expectedTag }) => {
+      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      const warnings: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const image = createArgs(child.spawned)?.find((arg) => arg.includes("supabase/postgres:"));
+        expect(image).toContain(expectedTag);
+        expect(
+          warnings.filter(
+            (m) =>
+              m ===
+              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.",
+          ),
+        ).toHaveLength(1);
       }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
     },
   );

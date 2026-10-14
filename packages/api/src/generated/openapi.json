@@ -13997,7 +13997,7 @@
             }
           },
           "402": {
-            "description": "This feature requires the Enterprise organization plan.",
+            "description": "This feature requires the Team, or Enterprise organization plan.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14044,10 +14044,10 @@
         ],
         "summary": "Assign or change an organization member role",
         "tags": ["Organizations"],
-        "x-allowed-plans": ["Enterprise"],
+        "x-allowed-plans": ["Team", "Enterprise"],
         "x-badges": [
           {
-            "name": "Only available on Enterprise",
+            "name": "Only available on Team, Enterprise",
             "position": "before"
           }
         ],
@@ -14181,7 +14181,7 @@
             }
           },
           "402": {
-            "description": "This feature requires the Enterprise organization plan.",
+            "description": "This feature requires the Team, or Enterprise organization plan.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14218,14 +14218,14 @@
         ],
         "summary": "Creates organization invitations",
         "tags": ["Organizations Members Invitations"],
-        "x-allowed-plans": ["Enterprise"],
+        "x-allowed-plans": ["Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: organizations:write",
             "position": "after"
           },
           {
-            "name": "Only available on Enterprise",
+            "name": "Only available on Team, Enterprise",
             "position": "before"
           }
         ],
@@ -14281,7 +14281,7 @@
             }
           },
           "402": {
-            "description": "This feature requires the Enterprise organization plan.",
+            "description": "This feature requires the Team, or Enterprise organization plan.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14318,14 +14318,14 @@
         ],
         "summary": "Deletes organization invitations by email",
         "tags": ["Organizations Members Invitations"],
-        "x-allowed-plans": ["Enterprise"],
+        "x-allowed-plans": ["Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: organizations:write",
             "position": "after"
           },
           {
-            "name": "Only available on Enterprise",
+            "name": "Only available on Team, Enterprise",
             "position": "before"
           }
         ],

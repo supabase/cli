@@ -6,26 +6,25 @@ validating those CSVs.
 
 ## Files Read
 
-| Path                                           | Format     | When                                                                        |
-| ---------------------------------------------- | ---------- | --------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`               | TOML       | always — `[experimental.inspect.rules]` (custom rules) + `[db]` subtree     |
-| `<workdir>/supabase/.env*` (nested)            | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields             |
-| `<workdir>/supabase/.temp/pooler-url`          | plain text | `--linked` path (pooler connection string)                                  |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON       | `--linked` path (resolve linked project ref)                                |
-| `~/.supabase/access-token`                     | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                     |
+| Path                                       | Format     | When                                                                                   |
+| ------------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`           | TOML       | always — `[experimental.inspect.rules]` (custom rules) + `[db]` subtree                |
+| `<workdir>/supabase/.env*` (nested)        | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                        |
+| `<workdir>/supabase/.temp/pooler-url`      | plain text | `--linked` path (pooler connection string)                                             |
+| `<workdir>/supabase/.temp/project-ref`     | plain text | `--linked` path, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref) |
+| `~/.supabase/access-token`                 | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable            |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | CSV        | read back in-memory for rule evaluation                                                |
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file aborts the command.
 
 ## Files Written
 
-| Path                                             | Mode | When                                                            |
-| ------------------------------------------------ | ---- | --------------------------------------------------------------- |
-| `<output-dir>/<YYYY-MM-DD>/` (directory)         | 0755 | always — created recursively                                    |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14       | 0644 | always — one CSV per inspect query (server-side `COPY ... CSV`) |
-| `~/.supabase/telemetry.json`                     | —    | always (telemetry flush)                                        |
-| `~/.supabase/<workdir-hash>/linked-project.json` | —    | `--linked` path (linked-project cache)                          |
+| Path                                       | Mode | When                                                            |
+| ------------------------------------------ | ---- | --------------------------------------------------------------- |
+| `<output-dir>/<YYYY-MM-DD>/` (directory)   | 0755 | always — created recursively                                    |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | 0644 | always — one CSV per inspect query (server-side `COPY ... CSV`) |
+| `~/.supabase/telemetry.json`               | —    | always (telemetry flush)                                        |
 
 The 14 CSV basenames (underscored, matching the SQL filenames — **not** the
 `inspect db` command names): `bloat`, `blocking`, `calls`, `db_stats`,

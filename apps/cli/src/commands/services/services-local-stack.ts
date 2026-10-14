@@ -6,8 +6,8 @@ import {
 import { Effect, Result } from "effect";
 import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
 import {
-  envOverride,
   envOverrideMajorVersion,
+  envOverrideOrioleDBVersion,
 } from "../../command-internal/local-config-values.ts";
 import { stackDatabaseVersion } from "../../command-internal/stack-database-version.ts";
 import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
@@ -40,8 +40,7 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
           throw new Error(`unsupported PostgreSQL major version: ${value}`);
         return stackDatabaseVersion({
           major_version: value,
-          orioledb_version: envOverride(
-            "SUPABASE_DB_ORIOLEDB_VERSION",
+          orioledb_version: envOverrideOrioleDBVersion(
             context.success.config.db.orioledb_version,
             context.success.projectEnvValues,
           ),

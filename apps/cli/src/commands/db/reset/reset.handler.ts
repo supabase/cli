@@ -15,7 +15,11 @@ import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  checkDbToml,
+  loadProjectEnv,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { applyMigrations, applySchemaFiles } from "../../../command-internal/migration-apply.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
@@ -226,6 +230,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
     const vaultSecrets = toml.vault;
 
     // Prompt (default false) → cancel, then reset everything.

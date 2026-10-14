@@ -1,6 +1,14 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig, dbConfigLinked } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -98,11 +106,39 @@ const config = {
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+// An explicit `--from`/`--to linked` side resolves the linked project without `--linked`.
+const explicitLinkedSide = (flag: "from" | "to") =>
+  withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked"] });
+
 export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
   Command.withShortDescription("Diffs the local database for schema changes"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [],
+          noApiEffectFlags: [
+            "use-migra",
+            "use-pgadmin",
+            "use-pg-schema",
+            "use-pg-delta",
+            "strict-coverage",
+            "output",
+            "file",
+            "schema",
+          ],
+        },
+        dbConfig,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        explicitLinkedSide("from"),
+        explicitLinkedSide("to"),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbDiff(flags).pipe(
       withCommandTelemetry({

@@ -66,6 +66,8 @@ jobs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
+      # Every job reviews this commit, so a push during the run is never reported as reviewed.
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
       trigger: ${{ steps.resolve.outputs.trigger }}
       # Read once here so every job in the run uses the same models, even if the file changes mid-run.
       claude_model: ${{ steps.models.outputs.claude_model }}
@@ -116,7 +118,7 @@ jobs:
       - name: Checkout PR head (untrusted; review subject matter only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           fetch-depth: 1
           persist-credentials: false
@@ -143,13 +145,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
           base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
           if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
             bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
           fi
@@ -287,10 +290,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
           if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
             bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
           fi
@@ -381,7 +385,7 @@ jobs:
       - name: Checkout PR head (untrusted; read-only, for verify-by-reading)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           fetch-depth: 1
           persist-credentials: false
@@ -442,10 +446,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
           if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
             bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
           fi
@@ -522,6 +527,8 @@ jobs:
     name: Post review
     needs:
       - resolve
+      - claude-review
+      - codex-review
       - adjudicate
     # Runs only when adjudication succeeded (it produced the merged review this job posts).
     # `!cancelled()` is required since an explicit `if` replaces the default "all needed jobs
@@ -571,6 +578,8 @@ jobs:
           MERGED_REVIEW_PATH: /tmp/ai-review/merged-review.json
           PR_DIFF_PATH: /tmp/ai-review/pr.diff
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          REVIEWS_COMPLETE: ${{ needs.claude-review.result == 'success' && needs.codex-review.result == 'success' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # CLAUDE_MODEL / CODEX_MODEL are the job-level values from `resolve`, the same ones the
           # review jobs ran with, so the footer never drifts from what actually ran.

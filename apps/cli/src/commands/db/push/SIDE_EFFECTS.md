@@ -42,13 +42,14 @@ before migrations unless `--skip-vault` is set.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                       | Required?                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path                                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection                                                                     | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`          | auto-confirm prompts                                                                                          | no (also `--yes`)                                       |
-| `SUPABASE_PROJECT_ID`   | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes | no                                                      |
-| `DOTENV_PRIVATE_KEY*`   | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`               | no                                                      |
+| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`                  | auth token for the `--linked` resolver path                                                                                                                                                                                                | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`                   | password for the linked/remote connection                                                                                                                                                                                                  | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                           | auto-confirm prompts                                                                                                                                                                                                                       | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`                    | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes                                                                                                                              | no                                                      |
+| `DOTENV_PRIVATE_KEY*`                    | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                            | no                                                      |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                      |
 
 ## Exit Codes
 

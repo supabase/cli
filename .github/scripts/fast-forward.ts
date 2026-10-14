@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { analyzeCommits } from "../../apps/cli/scripts/analyze-commits-title.js";
 import {
   type GitRunner,
@@ -199,9 +201,36 @@ export type CheckEvaluation =
       failing: { name: string; conclusion: string }[];
     };
 
+/** Account `Sync repair` approves eligible sync pull requests as. */
+export const AUTO_APPROVER_LOGIN = "supabase-oss";
+
+export interface PullRequestReview {
+  user: { login: string } | null;
+  state: string;
+}
+
+/**
+ * Whether anyone's latest approving or blocking review requests changes; comments do not change a verdict. Every
+ * reviewer counts because `author_association` hides private org membership; a maintainer dismisses a stray one.
+ */
+export function hasChangesRequested(reviews: PullRequestReview[]): boolean {
+  return [...latestVerdicts(reviews).values()].includes("CHANGES_REQUESTED");
+}
+
+function latestVerdicts(reviews: PullRequestReview[]): Map<string, string> {
+  const verdicts = new Map<string, string>();
+  for (const review of reviews) {
+    if (review.user && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) {
+      verdicts.set(review.user.login, review.state);
+    }
+  }
+  return verdicts;
+}
+
 export interface FastForwardIo {
   git: GitRunner;
   getPullRequest(): Promise<PullRequest>;
+  listReviews(): Promise<PullRequestReview[]>;
   listCheckRuns(sha: string): Promise<CheckRun[]>;
   findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
   comment(body: string): Promise<void>;
@@ -210,6 +239,8 @@ export interface FastForwardIo {
 export interface FastForwardInput {
   /** The commit the approving review was submitted against; a local dry run defaults to the live head. */
   reviewCommitId?: string;
+  /** Login of the approving reviewer. */
+  approver?: string;
   dryRun?: boolean;
 }
 
@@ -448,6 +479,21 @@ export async function runFastForward(
   if (pullRequest.draft) {
     return refuse(io, input, "pull request is a draft");
   }
+  // A change request or a dismissal can land between Sync repair's decision and this run.
+  if (input.approver === AUTO_APPROVER_LOGIN) {
+    const reviews = await io.listReviews();
+    if (
+      hasChangesRequested(reviews) ||
+      latestVerdicts(reviews).get(AUTO_APPROVER_LOGIN) !== "APPROVED"
+    ) {
+      return refuse(
+        io,
+        input,
+        "a reviewer requested changes or the approval was dismissed",
+        `Not fast-forwarding \`${promotion.target}\`: a reviewer requested changes or dismissed \`${AUTO_APPROVER_LOGIN}\`'s approval. A maintainer approves once that is addressed.`,
+      );
+    }
+  }
   if (approvedSha !== headSha) {
     return refuse(
       io,
@@ -567,6 +613,19 @@ function makeIo(token: string, repository: string, prNumber: number): FastForwar
     git: makeGit(process.cwd()),
     getPullRequest: () =>
       githubRequest<PullRequest>(token, `/repos/${repository}/pulls/${prNumber}`),
+    async listReviews() {
+      const reviews: PullRequestReview[] = [];
+      for (let page = 1; ; page += 1) {
+        const batch = await githubRequest<PullRequestReview[]>(
+          token,
+          `/repos/${repository}/pulls/${prNumber}/reviews?per_page=100&page=${page}`,
+        );
+        reviews.push(...batch);
+        if (batch.length < 100) {
+          return reviews;
+        }
+      }
+    },
     listCheckRuns: (sha) =>
       fetchPullRequestCheckRuns(
         (query, variables) => githubGraphql(token, query, variables),
@@ -600,6 +659,15 @@ function parseArguments(args: string[]): { prNumber: number; dryRun: boolean } {
   return { prNumber, dryRun };
 }
 
+function reviewerLogin(event: unknown): string | undefined {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+  const review = isRecord(event) ? event.review : undefined;
+  const user = isRecord(review) ? review.user : undefined;
+  const login = isRecord(user) ? user.login : undefined;
+  return typeof login === "string" ? login : undefined;
+}
+
 async function main(): Promise<void> {
   const { prNumber, dryRun } = parseArguments(process.argv.slice(2));
   const repository = process.env.REPOSITORY ?? requireEnv("GITHUB_REPOSITORY");
@@ -608,7 +676,12 @@ async function main(): Promise<void> {
   if (!reviewCommitId && !dryRun) {
     throw new Error("REVIEW_COMMIT_ID is required");
   }
-  const outcome = await runFastForward(io, { reviewCommitId, dryRun });
+  // Read from the event so a sync PR running an older copy of the workflow still identifies the approver.
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  const approver = eventPath
+    ? reviewerLogin(JSON.parse(readFileSync(eventPath, "utf8")))
+    : undefined;
+  const outcome = await runFastForward(io, { reviewCommitId, approver, dryRun });
   console.log(JSON.stringify(outcome));
   if (outcome.status === "refused") {
     console.error(`::error::${outcome.reason}`);

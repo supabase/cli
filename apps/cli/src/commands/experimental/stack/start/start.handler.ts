@@ -52,14 +52,11 @@ import {
   projectCatalogOverlay,
 } from "../../../../command-internal/stack-bootstrap.ts";
 import { stackStorageCredentialsFor } from "../../../../command-internal/stack-storage.ts";
-import {
-  hasConfiguredBuckets,
-  SeedConfigLoadError,
-  seedBucketsRun,
-} from "../../../../command-internal/seed-buckets.ts";
+import { hasConfiguredBuckets, seedBucketsRun } from "../../../../command-internal/seed-buckets.ts";
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import {
   loadStackConfig,
+  StackConfigError,
   stackEndpointSetting,
   stackMajorVersionSetting,
   stackOrioledbVersionSetting,
@@ -200,10 +197,14 @@ const stackAcquireError = (
 
 const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
   function* (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) {
-    const config = yield* loadStackConfig(projectRoot);
+    const context = yield* loadLocalProjectContext(
+      projectRoot,
+      (message) => new StackConfigError({ message }),
+    );
+    const config = yield* loadStackConfig(projectRoot, { context });
     const keys = yield* config.keys;
     const toml = yield* readDbToml(fs, path, projectRoot);
-    return { config, keys, toml };
+    return { context, config, keys, toml };
   },
   Effect.mapError(
     (error) =>
@@ -261,9 +262,9 @@ const settingKeyLabel = (
   setting: StackEndpointSetting,
   projectEnvValues: Readonly<Record<string, string>>,
 ): string =>
-  envOverride(setting.envVar, undefined, projectEnvValues) !== undefined
-    ? setting.envVar
-    : formatConfigPath(setting.configPath);
+  [setting.envVar, setting.deprecatedEnvVar].find(
+    (name) => name !== undefined && envOverride(name, undefined, projectEnvValues) !== undefined,
+  ) ?? formatConfigPath(setting.configPath);
 
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
@@ -559,10 +560,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       StepDown: (stepDown) => output.info(stepDown.message),
       NotNeeded: () => Effect.void,
     });
-    const configBeforeCreate =
-      target.id === undefined || !target.hostRunning
-        ? yield* loadStartConfig(target.projectRoot, fs, path)
-        : undefined;
+    // Every project-context load prints the config deprecation WARNs, so it happens at most once.
+    const startConfig = yield* Effect.cached(loadStartConfig(target.projectRoot, fs, path));
+    if (target.id === undefined || !target.hostRunning) yield* startConfig;
     if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
@@ -603,7 +603,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     // configuration that cannot resolve only fails a start whose owner was not running.
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
-        const loaded = configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
+        const loaded = yield* startConfig;
         return yield* resolveRequested(stackId, loaded.config);
       });
     const requestedForReplan =
@@ -801,8 +801,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const { config, keys, toml } =
-      configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
+    const { context, config, keys, toml } = yield* startConfig;
     // Reuses the creations already resolved for the re-plan above instead of reading the
     // Functions dotenv a second time; only a new or already-running stack has none yet.
     const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
@@ -1031,10 +1030,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (initialComposition) {
       const storage = members.find((instance) => instance.service === "storage");
       if (storage !== undefined) {
-        const context = yield* loadLocalProjectContext(
-          target.projectRoot,
-          (message) => new SeedConfigLoadError({ message }),
-        );
         if (hasConfiguredBuckets(context.config)) {
           yield* Effect.annotateCurrentSpan({ "stack.storage_seeded": true });
           yield* storage.start.pipe(

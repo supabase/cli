@@ -1,0 +1,89 @@
+name: Fill sticky disks
+
+# Test jobs mount the pnpm, Go and Docker image caches from Blacksmith sticky
+# disks but pull request runs never commit them. This workflow is the trusted
+# writer: it runs on protected branches, which are the only refs Blacksmith's
+# sticky-disk branch protection lets commit.
+on:
+  push:
+    branches:
+      - develop
+      - next
+      - main
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Every ref writes the same repository-wide disks, so fills run one at a time.
+  group: fill-sticky-disks
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    name: Fill sticky disks
+    # Manual dispatches from other branches would commit unreviewed caches.
+    if: contains(fromJSON('["refs/heads/develop", "refs/heads/next", "refs/heads/main"]'), github.ref)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          sticky-disks: "true"
+          commit-sticky-disks: "true"
+          docker-images: "true"
+          native-artifacts: "true"
+
+      # The nightly fill clears artifacts of older service versions.
+      - name: Download native stack artifacts
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/supabase-stack-artifacts/"*
+          fi
+          pnpm --filter @supabase/stack prepare:test-artifacts
+
+      - name: Build CLI
+        run: pnpm exec turbo run supabase#build
+
+      # Starting a default project pulls every image `supabase start` uses.
+      - name: Pull CLI images
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+          SUPABASE_CLI_BINARY_OVERRIDE: ${{ github.workspace }}/apps/cli/dist/supabase
+        run: |
+          project="$(mktemp -d)"
+          cli="$GITHUB_WORKSPACE/apps/cli/dist/supabase.js"
+          cd "$project"
+          node "$cli" init
+          node "$cli" start
+          # The nightly fill drops images of older versions; the next step pulls the catalog back.
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            docker image prune --all --force
+          fi
+          node "$cli" stop --no-backup
+
+      - name: Pull stack package images
+        run: |
+          pnpm --silent --filter @supabase/stack prepare:test-artifacts --images |
+            xargs --max-procs 4 --max-args 1 docker pull --quiet
+
+      # Also runs after a failed step so leftover stack containers and volumes never persist.
+      - name: Prune Docker before saving its image disk
+        if: always()
+        run: |
+          docker ps --all --quiet | xargs --no-run-if-empty docker rm --force
+          docker system prune --force
+          docker volume prune --all --force
+
+      # The image disk only commits once nothing holds /var/lib/docker open.
+      - name: Stop Docker so its image disk can be saved
+        if: always()
+        run: sudo systemctl stop docker.socket docker.service
