@@ -90,7 +90,7 @@ export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
 const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+  "Flag --use-pg-delta is deprecated and will be removed in v3, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
@@ -107,7 +107,7 @@ const MIGRATION_FILE_MODE = 0o644;
 // export covers the same per-object-files outcome. Printed only when the experimental gate
 // selected this branch, not when `--declarative` already did.
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
-  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
+  "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in v3. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
   /** Skip printing `Finished supabase db pull.` for callers that must not emit it. */
@@ -392,6 +392,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
+          const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
           const exportSchema = (target: PgDeltaDatabaseEndpoint) =>
             pgDeltaEngine.exportDeclarativeSchema({
               context: ctx,
@@ -401,7 +402,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: isPgDeltaDebugEnabled(),
+              debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
@@ -657,7 +658,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     },
                     schema: diffSchema,
                     formatOptions,
-                    debug: isPgDeltaDebugEnabled(),
+                    debug: yield* isPgDeltaDebugEnabled,
                     strictCoverage: flags.strictCoverage,
                   });
                 }

@@ -13,13 +13,10 @@ import {
   mockCommandCredentialsLayer,
   mockCommandPlatformApi,
 } from "../../tests/helpers/command-mocks.ts";
-import { assertDriftAgainst } from "../../tests/helpers/permission-drift.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
-import { mapped } from "../command-internal/command-permissions/model.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
-
-const declared = { _tag: "Declared", permissions: mapped(linkedProjectCache) } as const;
 
 describe("linkedProjectCacheLayer", () => {
   it.live(
@@ -88,8 +85,7 @@ describe("linkedProjectCacheLayer", () => {
         const cache = yield* LinkedProjectCache;
         yield* cache.cache(VALID_REF, workdir);
         expect(api.requests).toHaveLength(1);
-        assertDriftAgainst(declared, {
-          command: "linked-project-cache block",
+        assertBlockDrift(linkedProjectCache, {
           activeFlags: {},
           requests: api.requests,
         });

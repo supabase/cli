@@ -1,24 +1,46 @@
-import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
+import { type V1ListAllProjectsOutput, type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { secretsList } from "./list.handler.ts";
 
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SAMPLE_SECRETS: SecretsResponse = [
   { name: "FOO", value: "digest-foo" },
   { name: "BAR", value: "digest-bar" },
 ];
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -197,6 +219,7 @@ describe("secrets list integration", () => {
       yield* secretsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/secrets`);
+      assertPermissionDrift({ command: "secrets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -206,6 +229,71 @@ describe("secrets list integration", () => {
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
+      assertPermissionDrift({
+        command: "secrets list",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker when no project is configured", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === "https://api.supabase.com/v1/projects"
+            ? jsonResponse(request, 200, [PROJECT])
+            : jsonResponse(request, 200, SAMPLE_SECRETS),
+        ),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+      tty: mockTty({ stdinIsTty: true }),
+    });
+    return Effect.gen(function* () {
+      yield* secretsList({ projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/secrets`,
+      ]);
+      expect(out.stdoutText).toContain("digest-foo");
+      assertPermissionDrift({ command: "secrets list", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fills the linked-project cache through the real cache layer", () => {
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`
+            ? jsonResponse(request, 200, PROJECT)
+            : jsonResponse(request, 200, SAMPLE_SECRETS),
+        ),
+    });
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const layer = buildTestRuntime({
+      out: mockOutput(),
+      api,
+      cliSettings,
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* secretsList({ projectRef: Option.none() });
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/secrets`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      assertPermissionDrift({ command: "secrets list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

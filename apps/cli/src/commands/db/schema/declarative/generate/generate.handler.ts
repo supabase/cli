@@ -154,7 +154,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       declarativeDirDisplay: declarativeDirRel,
       schema: flags.schema,
       noCache: flags.noCache,
-      debug: isPgDeltaDebugEnabled(),
+      debug: yield* isPgDeltaDebugEnabled,
       strictCoverage: flags.strictCoverage,
       dnsResolver,
       ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),

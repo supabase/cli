@@ -1,7 +1,9 @@
+import type { NetConnectOpts } from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Effect,
   Exit,
   FileSystem,
@@ -13,6 +15,23 @@ import {
   Stream,
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", (importOriginal) =>
+  importOriginal<typeof import("node:net")>().then((net) => ({
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  })),
+);
 
 import {
   VALID_TOKEN,
@@ -20,6 +39,7 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -43,6 +63,13 @@ import {
   type PgConnInput,
   type QueryResult,
 } from "../../../command-internal/db-connection.service.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  primaryPoolerConfigs,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  stubManagementApi,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { dbQuery } from "./query.handler.ts";
@@ -193,6 +220,10 @@ interface SetupOpts {
   unlinked?: boolean;
   refReadFails?: boolean;
   resolveFails?: boolean;
+  /** Runs the real linked-project cache layer against the temp `workdir`, answering its project lookup. */
+  realCache?: boolean;
+  /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
+  realDbConfig?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -205,7 +236,29 @@ function setup(opts: SetupOpts = {}) {
       Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(opts.linkedBody ?? "[]", { status: opts.linkedStatus ?? 201 }),
+          opts.realCache === true &&
+            request.method === "GET" &&
+            request.url.endsWith(`/v1/projects/${REF}`)
+            ? new Response(
+                JSON.stringify({
+                  ref: REF,
+                  name: "alpha",
+                  organization_id: "org-123",
+                  organization_slug: "acme",
+                  id: REF,
+                  region: "us-east-1",
+                  created_at: "2026-01-01T00:00:00Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.example.com",
+                    version: "15",
+                    postgres_engine: "15",
+                    release_channel: "ga",
+                  },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              )
+            : new Response(opts.linkedBody ?? "[]", { status: opts.linkedStatus ?? 201 }),
         ),
       ),
     network: opts.networkFail === true ? "fail" : undefined,
@@ -213,9 +266,20 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realCache === true
+      ? realLinkedProjectCache({
+          httpClient: platformApi.httpClientLayer,
+          cliSettings: mockCommandSettings({ workdir: opts.workdir ?? "/work/project" }),
+        })
+      : cache.layer,
     telemetryOutputFormat.layer,
-    mockResolver(opts.isLocal, opts.resolveFails),
+    opts.realDbConfig === true
+      ? realDbConfigResolver({
+          workdir: opts.workdir ?? "/work/project",
+          dbConnection: mockDbConnection(opts),
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : mockResolver(opts.isLocal, opts.resolveFails),
     mockDbConnection(opts),
     mockProjectRef(opts.unlinked, opts.refReadFails),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
@@ -269,6 +333,8 @@ const SELECT_RESULT: QueryResult = {
 };
 
 describe("db query integration", () => {
+  const tempRoot = useTempWorkdir("supabase-db-query-int-");
+
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
@@ -648,7 +714,97 @@ describe("db query integration", () => {
         body: { query: "select 1" },
       });
       expect(cache.cached).toBe(true);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true },
+        requests: platformApi.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fills the linked-project cache through the real cache layer", () => {
+    const { layer, platformApi } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+      realCache: true,
+      workdir: tempRoot.current,
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({ ref: REF });
+      expect(platformApi.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${REF}/database/query`,
+        `GET https://api.supabase.com/v1/projects/${REF}`,
+      ]);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true },
+        requests: platformApi.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("mints a login role and queries through the real DB config resolver and cache", () => {
+    const { layer, platformApi } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+      realCache: true,
+      realDbConfig: true,
+      workdir: tempRoot.current,
+    });
+    const resolverRequests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(resolverRequests, (method, path) => {
+        if (method === "GET" && path === `/v1/projects/${REF}/config/database/pooler`) {
+          return Response.json(primaryPoolerConfigs(REF));
+        }
+        if (method === "POST" && path === `/v1/projects/${REF}/cli/login-role`) {
+          return Response.json(
+            { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+            { status: 201 },
+          );
+        }
+        return undefined;
+      });
+      yield* dbQuery(
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(true),
+          projectRef: Option.some(REF),
+        }),
+      );
+      expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${REF}/config/database/pooler`,
+        `POST /v1/projects/${REF}/cli/login-role`,
+      ]);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true, "project-ref": REF },
+        requests: [
+          ...resolverRequests.map(({ method, path }) => ({
+            method,
+            url: `https://api.supabase.com${path}`,
+          })),
+          ...platformApi.requests,
+        ],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord(
+          { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          { preserveEmptyStrings: true },
+        ),
+      ),
+    );
   });
 
   it.live("queries the project given via --project-ref without a linked workdir", () => {
@@ -674,6 +830,12 @@ describe("db query integration", () => {
       ).toBe(true);
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
+      assertPermissionDrift({
+        command: "db query",
+        activeFlags: { linked: true, "project-ref": FLAG_REF },
+        requests: platformApi.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
