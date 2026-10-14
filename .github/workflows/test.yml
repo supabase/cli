@@ -5,7 +5,9 @@ name: Test
 #
 # Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
 # `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
-# `run-ci.yml` calls this workflow for drafts and stacked PRs.
+# `run-ci.yml` calls this workflow for drafts and stacked PRs. Windows and macOS
+# jobs run on PRs into develop or next only for platform-sensitive paths, and
+# always in the merge queue, on PRs into main or v*.x, and under `run-ci`.
 on:
   pull_request:
     types:
@@ -29,6 +31,10 @@ on:
     inputs:
       force:
         description: Run the suite even when the PR is a draft (used by run-ci.yml)
+        type: boolean
+        default: false
+      full:
+        description: Run the Windows and macOS jobs regardless of the changed paths (used by run-ci.yml)
         type: boolean
         default: false
     secrets:
@@ -160,12 +166,59 @@ jobs:
         if: always()
         run: sudo systemctl stop docker.socket docker.service
 
-  test-stack-ports:
+  platform-changes:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
+    name: Detect platform-sensitive changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      # The merge queue and PRs into main or v*.x run every platform; only PRs
+      # into develop or next defer Windows and macOS to the merge queue.
+      - name: Detect
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          FULL: ${{ inputs.full }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PATTERN: >-
+            ^(pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|mise\.toml|turbo\.json|\.github/workflows/test\.yml|\.github/actions/
+            |packages/stack/(package\.json|vitest[^/]*|src/(host|namespace|identity|storage)/
+            |src/(Artifacts|HostProcess|Ports|Network|Sweep|Owner|Proxy|HttpProxy)[.]|src/whole-stack\.native)
+            |apps/cli/src/commands/(db/reset|experimental/stack/start)/)
+        run: |
+          if [ "$EVENT" != "pull_request" ] || [ "$FULL" = "true" ] || [ "$BASE_REF" = "main" ] || [[ "$BASE_REF" == v*.x ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pattern=$(tr -d ' \n' <<<"$PATTERN")
+          # The compare API lists at most 300 files; a larger diff runs every platform.
+          files=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq 'if (.files | length) >= 300 then "package.json" else .files[].filename end')
+          matches=$(grep -E "$pattern" <<<"$files" || true)
+          if [ -n "$matches" ]; then
+            printf 'Platform-sensitive changes:\n%s\n' "$matches"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No platform-sensitive changes; Windows and macOS run in the merge queue. Add the run-ci label to run them here."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-stack-ports:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false) &&
+      needs.platform-changes.outputs.run == 'true'
+    needs: platform-changes
     name: Run stack port tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -228,7 +281,9 @@ jobs:
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
-        github.event.pull_request.draft == false)
+        github.event.pull_request.draft == false) &&
+      needs.platform-changes.outputs.run == 'true'
+    needs: platform-changes
     name: Run stack native scenarios (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -282,11 +337,15 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [test-unit, test-integration, test-stack-ports]
+    needs: [platform-changes, test-unit, test-integration, test-stack-ports]
     runs-on: ubuntu-latest
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
+          if [ "${{ needs.platform-changes.result }}" != "success" ]; then
+            echo "::error ::Platform change detection did not succeed: ${{ needs.platform-changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
             [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
             echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
@@ -490,11 +549,22 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: [test-e2e, test-stack-e2e, test-stack-native-scenarios, test-stack-podman-integration]
+    needs:
+      [
+        platform-changes,
+        test-e2e,
+        test-stack-e2e,
+        test-stack-native-scenarios,
+        test-stack-podman-integration,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all shards succeeded
         run: |
+          if [ "${{ needs.platform-changes.result }}" != "success" ]; then
+            echo "::error ::Platform change detection did not succeed: ${{ needs.platform-changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || \
             [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ] || \
             [ "${{ needs.test-stack-native-scenarios.result }}" = "failure" ] || [ "${{ needs.test-stack-native-scenarios.result }}" = "cancelled" ] || \
