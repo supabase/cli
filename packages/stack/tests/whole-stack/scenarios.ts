@@ -401,8 +401,9 @@ export const allEager = (runtime: Runtime) =>
 export const parallel = (runtime: Runtime) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const left = yield* wholeStack(runtime);
-      const right = yield* wholeStack(runtime);
+      const [left, right] = yield* Effect.all([wholeStack(runtime), wholeStack(runtime)], {
+        concurrency: "unbounded",
+      });
       yield* Effect.all([assertDefaultPolicy(left), assertDefaultPolicy(right)], {
         concurrency: "unbounded",
       });
