@@ -24,10 +24,11 @@ image), to stdout or `--file`.
 
 ## API Routes
 
-| Method | Path                                         | Auth   | When                                                         |
-| ------ | -------------------------------------------- | ------ | ------------------------------------------------------------ |
-| POST   | `/v1/projects/{ref}/cli/login-role`          | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
-| GET    | `/v1/projects/{ref}/network-bans` (+ DELETE) | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
+| Method | Path                                       | Auth   | When                                                         |
+| ------ | ------------------------------------------ | ------ | ------------------------------------------------------------ |
+| POST   | `/v1/projects/{ref}/cli/login-role`        | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | `--linked` pooler temp-role retry (list bans)                |
+| DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
 
 (All via the shared `DbConfigResolver` `--linked` path.)
 

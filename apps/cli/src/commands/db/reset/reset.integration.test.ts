@@ -18,6 +18,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import {
   mockOutput,
@@ -28,6 +36,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   jsonResponse,
   withConfigEnv,
   withEmptyConfigEnv,
@@ -41,6 +50,17 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -908,6 +928,8 @@ function setup(
     stackUnavailableAfterReset?: boolean;
     stackStatusFailure?: StackError;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
+    /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+    realLayers?: boolean;
   },
 ) {
   const workdirLayer = Layer.effectDiscard(
@@ -988,10 +1010,17 @@ function setup(
               : Effect.succeed(jsonResponse(request, matched.status ?? 200, matched.body ?? {}));
           }),
         );
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: conn.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     mockCommandSettings({ workdir }),
     BunServices.layer,
     child.layer,
@@ -1029,7 +1058,12 @@ function setup(
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
-    linkedCache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : linkedCache.layer,
     ...(opts.stackBackend === true && catalog !== undefined
       ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
       : []),
@@ -1045,6 +1079,7 @@ function setup(
     stackApi,
     catalogApplied: catalog?.applied ?? [],
     requests,
+    projectHttp,
   };
 }
 
@@ -2576,6 +2611,105 @@ describe("db reset", () => {
         expect(linkedCache.cached).toBe(true);
       });
     });
+
+    it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+      const { layer, conn, projectHttp } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        args: ["db", "reset", "--linked", "--project-ref", VALID_REF],
+        confirm: [true],
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* dbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          projectRef: Option.some(VALID_REF),
+        }).pipe(Effect.provide(layer));
+        expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(conn.execs.some((sql) => sql.includes("drop schema if exists"))).toBe(true);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "db reset",
+          activeFlags: { linked: true, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+
+    it.effect("defaults to the local target and makes no Management API request", () => {
+      const { layer, projectHttp } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return withEnvVar(
+        "GITHUB_HEAD_REF",
+        undefined,
+        Effect.gen(function* () {
+          yield* stubManagementApi(requests, () => undefined);
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(requests).toEqual([]);
+          expect(projectHttp.calls).toEqual([]);
+          assertPermissionDrift({ command: "db reset", requests: [], exact: true });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(BunServices.layer),
+          provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+        ),
+      );
+    });
+
+    it.effect(
+      "makes no Management API request for --local through the real resolver and cache",
+      () => {
+        const { layer, projectHttp } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          realLayers: true,
+        });
+        const requests: Array<StubbedRequest> = [];
+        return withEnvVar(
+          "GITHUB_HEAD_REF",
+          undefined,
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* stubManagementApi(requests, () => undefined);
+            yield* dbReset({ ...DEFAULT_FLAGS, local: true }).pipe(Effect.provide(layer));
+            expect(requests).toEqual([]);
+            expect(projectHttp.calls).toEqual([]);
+            expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(
+              false,
+            );
+            assertPermissionDrift({
+              command: "db reset",
+              activeFlags: { local: true },
+              requests: [],
+              exact: true,
+            });
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(BunServices.layer),
+            provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+          ),
+        );
+      },
+    );
 
     it.effect("fails a remote reset before dropping schemas on an undecryptable secret", () => {
       // Every secret is decrypted while loading config, before the reset runs, so an

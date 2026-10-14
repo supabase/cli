@@ -14,10 +14,38 @@ import {
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   withConfigEnv,
   withEmptyConfigEnv,
   withEnvVar,
@@ -50,6 +78,7 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -160,6 +189,8 @@ interface SetupOpts {
   // issues after the migration file is already on disk); the shadow's own internal
   // migration replay is unaffected. Exercises `DbPullWriteError`'s `writtenSoFar`.
   readonly historyUpdateFailWith?: string;
+  // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
+  readonly realLayers?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -454,6 +485,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
@@ -461,7 +493,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
     pgDeltaEngine,
     edge,
     docker,
@@ -471,10 +508,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbConnection,
     dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
-    resolver,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     projectRefResolver,
     proxy,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
+    }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? false,
@@ -515,6 +562,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edgeCalls,
     spawnedBeforeEdgeRun,
     cache,
+    projectHttp,
   };
 }
 
@@ -2440,5 +2488,235 @@ describe("db remote commit", () => {
       );
       expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
     }).pipe(Effect.provide(s.layer));
+  });
+});
+
+describe("db pull and db remote commit permissions through the real resolver and cache", () => {
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const savedRef = { "supabase/.temp/project-ref": VALID_REF };
+
+  it.effect("mints a login role and fills the cache for the default linked target", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPull(
+        flags({ declarative: Option.some(true), projectRef: Option.some(VALID_REF) }),
+      ).pipe(Effect.provide(s.layer));
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["export"]);
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(s.projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        cacheRequest,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: { declarative: true, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPull(
+        flags({
+          declarative: Option.some(true),
+          linked: Option.some(true),
+          projectRef: Option.some(VALID_REF),
+          password: Option.some("secret"),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([poolerRequest]);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: {
+          declarative: true,
+          linked: true,
+          "project-ref": VALID_REF,
+          password: true,
+        },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for --local and caches nothing", () => {
+    const s = setup(tmp.current, { realLayers: true });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbPull(flags({ declarative: Option.some(true), local: Option.some(true) })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["export"]);
+      expect(requests).toEqual([]);
+      expect(s.projectHttp.calls).toEqual([]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+      assertPermissionDrift({
+        command: "db pull",
+        activeFlags: { declarative: true, local: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("retries the initial dump through the pooler after a container IPv6 failure", () => {
+    // No --project-ref: the ref comes from the saved file, so only the fallback block accounts
+    // for the pooler config request.
+    const s = setup(tmp.current, {
+      realLayers: true,
+      files: savedRef,
+      remoteVersions: [],
+      dumpFailFirstWith: "could not translate host name: network is unreachable",
+      dumpStdout: "",
+      edgeStdout: "",
+      yes: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      const error = yield* dbPull(flags()).pipe(Effect.provide(s.layer), Effect.flip);
+      expect(error.message).toBe("No schema changes found");
+      expect(s.dumpCalls).toHaveLength(2);
+      expect(s.dumpCalls[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
+      expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "db pull",
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("db remote commit mints a login role and fills the cache for the linked target", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      migrations: ["20240101000000"],
+      files: {
+        ...savedRef,
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+      },
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        {
+          name: "schema_changes",
+          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+        },
+      ]),
+      yes: true,
+      args: ["db", "remote", "commit"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbRemoteCommit(commitFlags()).pipe(Effect.provide(s.layer));
+      expect(s.engineCalls.map((call) => call.operation)).toEqual(["diff"]);
+      expect(asLines(requests)).toEqual([loginRoleRequest]);
+      expect(s.projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        cacheRequest,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db remote commit",
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+      // The resolve-phase calls belong to the database config block itself, not to the
+      // fallback block, which declares the same operations.
+      assertBlockDrift(dbConfig, {
+        activeFlags: { linked: true },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("db remote commit does not mint a login role when --password is given", () => {
+    const s = setup(tmp.current, {
+      realLayers: true,
+      migrations: ["20240101000000"],
+      files: {
+        ...savedRef,
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = true\n",
+      },
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        {
+          name: "schema_changes",
+          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+        },
+      ]),
+      yes: true,
+      args: ["db", "remote", "commit", "--linked", "--password", "secret"],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbRemoteCommit(commitFlags({ linked: true, password: Option.some("secret") })).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "db remote commit",
+        activeFlags: { linked: true, password: true },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

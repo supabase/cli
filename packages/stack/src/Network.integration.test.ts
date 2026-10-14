@@ -598,12 +598,18 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+/** Ports Windows runners listen on: RDP, WinRM, Delivery Optimization and Windows services. */
+const windowsHeldPorts = new Set([3389, 5040, 5357, 5985, 5986, 7680]);
+
 /**
  * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
  * neither another test's auto allocation nor an outbound socket can already hold it. It stays
- * under 3000, below runner services such as RDP on 3389 and other files' fixed ports.
+ * under 9000, where other files pin fixed ports.
  */
-const pinnedPort = () => 1024 + (Math.abs(Hash.string(randomUUID())) % (3_000 - 1024));
+const pinnedPort = (): number => {
+  const port = 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
+  return windowsHeldPorts.has(port) ? pinnedPort() : port;
+};
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
   Effect.scoped(

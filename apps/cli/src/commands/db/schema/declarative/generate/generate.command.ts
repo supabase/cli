@@ -2,6 +2,15 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+  type PermissionFragment,
+} from "../../../../../command-internal/command-permissions/model.ts";
+import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { aqua } from "../../../../../command-internal/colors.ts";
@@ -63,6 +72,13 @@ const config = {
   ),
 } as const;
 
+// Without a target flag, a run whose workdir has migrations can ask where to generate from.
+const noTargetFlag = (fragment: PermissionFragment) =>
+  (["db-url", "local", "linked"] as const).reduce(
+    (current, flag) => withCondition(current, { flag, present: false }),
+    fragment,
+  );
+
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
 export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<typeof config> & {
@@ -75,6 +91,34 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
     "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "overwrite",
+          "output-dir",
+          "reset",
+          "schema",
+          "no-cache",
+          "strict-coverage",
+        ],
+      },
+      withCondition(compose(dbConfigLinked, linkedProjectCache), { flag: "linked" }),
+      noTargetFlag(
+        compose(
+          withContext(
+            dbConfigLinked,
+            "migrations exist and the user picks the linked project in the target prompt, which needs an interactive terminal or --yes and a linked project ref",
+          ),
+          withContext(
+            linkedProjectCache,
+            "migrations exist and SUPABASE_PROJECT_ID or supabase/.temp/project-ref gives a ref, whichever target is picked",
+          ),
+        ),
+      ),
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
