@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { TestClock } from "effect/testing";
 import {
   Clock,
   DateTime,
@@ -194,7 +195,7 @@ const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line
 describe("stack logs", () => {
   const t0 = Date.parse("2026-09-29T10:00:00.000Z");
 
-  it.live("prints the newest lines across services with aligned labels, offline", () =>
+  it.effect("prints the newest lines across services with aligned labels, offline", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [mail("mail-a"), database("db-a")],
@@ -229,8 +230,9 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("selects history with --tail, --since, and repeated --service", () =>
+  it.effect("selects history with --tail, --since, and repeated --service", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(1_767_225_600_000);
       const now = yield* Clock.currentTimeMillis;
       const minutes = (count: number) => now - count * 60_000;
       const f = yield* fixture({
@@ -281,7 +283,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("starts --since start at each instance's highest launch record", () =>
+  it.effect("starts --since start at each instance's highest launch record", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [mail("mail-a"), mail("mail-b")],
@@ -311,7 +313,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("keeps the log-entry fields and reports markers in every output mode", () =>
+  it.effect("keeps the log-entry fields and reports markers in every output mode", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
       yield* f.writeSegment("mail", "mail-a", [
@@ -359,7 +361,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("fails --follow without a running owner before printing anything", () =>
+  it.effect("fails --follow without a running owner before printing anything", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
       yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
@@ -383,7 +385,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("follows each service after its printed history without repeating it", () =>
+  it.effect("follows each service after its printed history without repeating it", () =>
     Effect.gen(function* () {
       // Serves the history like an owner, from `from` inclusive or none for `tail: 0`, then one new record.
       const owner =
@@ -453,7 +455,7 @@ describe("stack logs", () => {
   const request =
     '127.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "GET /rest/v1/ HTTP/1.1" 200 2 "-" "curl/8.7.1" 3ms';
 
-  it.live("includes the gateway's requests by default and selects them with --service", () =>
+  it.effect("includes the gateway's requests by default and selects them with --service", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [mail("mail-a"), rest("rest-a")],
@@ -481,7 +483,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("rejects --service gateway when the stack has no shared API listener", () =>
+  it.effect("rejects --service gateway when the stack has no shared API listener", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
       yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
@@ -497,7 +499,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("follows the gateway's new requests through the owner", () =>
+  it.effect("follows the gateway's new requests through the owner", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [rest("rest-a")],
@@ -522,7 +524,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("keeps only the current owner run's gateway requests with --since start", () =>
+  it.effect("keeps only the current owner run's gateway requests with --since start", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [mail("mail-a"), rest("rest-a")],
@@ -547,7 +549,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("follows --since start without delayed records of an earlier launch", () =>
+  it.effect("follows --since start without delayed records of an earlier launch", () =>
     Effect.gen(function* () {
       const record = (offset: number, launchId: number, text: string): LogRecord => ({
         kind: "stdout",
@@ -582,7 +584,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("follows the services the running stack serves and names the others", () =>
+  it.effect("follows the services the running stack serves and names the others", () =>
     Effect.gen(function* () {
       const served = (text: string) =>
         Stream.make({
@@ -610,7 +612,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("fails --follow when the running stack serves none of the selected services", () =>
+  it.effect("fails --follow when the running stack serves none of the selected services", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [mail("mail-a")],
@@ -629,7 +631,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("interrupts a follow and releases its subscriptions", () =>
+  it.effect("interrupts a follow and releases its subscriptions", () =>
     Effect.gen(function* () {
       const subscribed = yield* Deferred.make<void>();
       const released = yield* Ref.make(false);

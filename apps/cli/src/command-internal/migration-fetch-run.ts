@@ -50,11 +50,9 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
 
   // Validated first, before any other work — same ordering as `migration down`/`repair`.
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   const connType = target.connType ?? "linked"; // fetch defaults to `--linked`.
@@ -64,12 +62,10 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   // Resolve the DB config BEFORE any filesystem/prompt side effects — an invalid
@@ -93,15 +89,13 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
   // Linked fetch caches the project ref on success. The ref is
   // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,
   // so a declined prompt returns before it runs.
-  const cacheLinkedRef =
-    connType === "linked"
-      ? yield* Effect.gen(function* () {
-          const projectRef = yield* ProjectRefResolver;
-          const linkedProjectCache = yield* LinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-          return linkedProjectCache.cache(ref);
-        })
-      : undefined;
+  let cacheLinkedRef: Effect.Effect<void> | undefined;
+  if (connType === "linked") {
+    const projectRef = yield* ProjectRefResolver;
+    const linkedProjectCache = yield* LinkedProjectCache;
+    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
+    cacheLinkedRef = linkedProjectCache.cache(ref);
+  }
 
   const fetchBody = Effect.gen(function* () {
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
@@ -129,9 +123,7 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
           ? assumeYes
           : yield* migrationConfirm(title, { defaultValue: true, yes });
       if (!overwrite) {
-        return yield* Effect.fail(
-          new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
-        );
+        return yield* new OperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
     }
 
@@ -160,12 +152,10 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
       const escapes = (segment: string) =>
         /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
       if (escapes(file.version) || escapes(file.name)) {
-        return yield* Effect.fail(
-          new MigrationFetchWriteError({
-            message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
-            writtenSoFar: [...written],
-          }),
-        );
+        return yield* new MigrationFetchWriteError({
+          message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
+          writtenSoFar: [...written],
+        });
       }
       const name = `${file.version}_${file.name}.sql`;
       const filePath = path.join(migrationsDir, name);

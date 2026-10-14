@@ -4,7 +4,10 @@ import { type CsvTableProvider, parseReportCsv } from "./report.csvq.ts";
 import { type InspectRule, buildRuleSummaryRows, evaluateInspectRule } from "./report.rules.ts";
 
 function provider(tables: Record<string, string>): CsvTableProvider {
-  return (name) => (name in tables ? parseReportCsv(tables[name]!) : undefined);
+  return (name) => {
+    const csv = tables[name];
+    return csv === undefined ? undefined : parseReportCsv(csv);
+  };
 }
 
 const RULE: InspectRule = {

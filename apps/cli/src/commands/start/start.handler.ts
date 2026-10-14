@@ -5,7 +5,7 @@
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
@@ -188,9 +188,17 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 const ANALYTICS_API_KEY = "api-key";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return Predicate.isObject(value) ? value : undefined;
+}
+
+function tryStartConfig<T>(thunk: () => T): Effect.Effect<T, StartInvalidConfigError> {
+  return Effect.try({
+    try: thunk,
+    catch: (cause) =>
+      new StartInvalidConfigError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 }
 
 /**
@@ -370,20 +378,15 @@ const resolveKongEmailTemplateMounts = Effect.fn("start.resolveEmailTemplateMoun
     name: string,
     contentPath: string,
   ) =>
-    Effect.try({
-      try: () =>
-        resolveEmailTemplateContentPath({
-          section,
-          name,
-          contentPath,
-          contentPresent: false,
-          base: workdir,
-        }),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    tryStartConfig(() =>
+      resolveEmailTemplateContentPath({
+        section,
+        name,
+        contentPath,
+        contentPresent: false,
+        base: workdir,
+      }),
+    );
   const mounts: Array<KongEmailTemplateMount> = [];
   for (const [id, template] of Object.entries(email.template)) {
     const resolvedPath = yield* resolveContentPath("template", id, template.content_path);
@@ -451,38 +454,28 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       (message) => new StartConfigLoadError({ message }),
     );
-    const values = yield* Effect.try({
-      try: () =>
-        resolveLocalConfigValues(
-          context.config,
-          context.hostname,
-          cliSettings.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const values = yield* tryStartConfig(() =>
+      resolveLocalConfigValues(
+        context.config,
+        context.hostname,
+        cliSettings.workdir,
+        context.projectEnvValues,
+        context.loaded?.document,
+      ),
+    );
     const { config, projectId, projectEnvValues } = context;
     // Resolved here (project `.env` aware) so it can be threaded through to `startDatabase`'s
     // own `setup.experimental` below.
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link resolveAuthEmail}'s doc comment.
-    const resolvedEmail = yield* Effect.try({
-      try: () =>
-        resolveAuthEmail(
-          config.auth.email,
-          asRecord(context.loaded?.document?.["auth"]),
-          projectEnvValues,
-        ),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const resolvedEmail = yield* tryStartConfig(() =>
+      resolveAuthEmail(
+        config.auth.email,
+        asRecord(context.loaded?.document?.["auth"]),
+        projectEnvValues,
+      ),
+    );
     // Kong mounts every configured template and every enabled notification's `content_path`,
     // regardless of `auth.enabled` — see {@link resolveKongEmailTemplateMounts} for why this
     // resolves and verifies each path once, here, rather than re-deriving it before Kong's
@@ -504,18 +497,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
-    const smsForValidation = yield* Effect.try({
-      try: () =>
-        resolveAuthSms(
-          asRecord(context.loaded?.document?.["auth"]),
-          config.auth.sms,
-          projectEnvValues,
-        ),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const smsForValidation = yield* tryStartConfig(() =>
+      resolveAuthSms(
+        asRecord(context.loaded?.document?.["auth"]),
+        config.auth.sms,
+        projectEnvValues,
+      ),
+    );
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
       parseGoDuration(smsForValidation.max_frequency),
     );
@@ -536,14 +524,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     ) {
       yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
     }
-    if (gotrueSessionsForValidation?.timebox !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.timebox", () =>
-        parseGoDuration(gotrueSessionsForValidation.timebox!),
-      );
+    const sessionsTimebox = gotrueSessionsForValidation?.timebox;
+    if (sessionsTimebox !== undefined) {
+      yield* wrapConfigOverride("auth.sessions.timebox", () => parseGoDuration(sessionsTimebox));
     }
-    if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
+    const sessionsInactivityTimeout = gotrueSessionsForValidation?.inactivity_timeout;
+    if (sessionsInactivityTimeout !== undefined) {
       yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+        parseGoDuration(sessionsInactivityTimeout),
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
@@ -638,8 +626,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
     const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
-      Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.void : Effect.fail(error),
+      Effect.catchIf(
+        (error) => isContainerNotFoundMessage(error.message),
+        () => Effect.void,
       ),
       Effect.tap((state) =>
         Effect.annotateCurrentSpan({
@@ -720,19 +709,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 5. Gate evaluation — see `start.gates.ts`. Wrapped because `envOverrideBool` throws
     // synchronously on an unparsable value, and this handler surfaces that as a typed error.
-    const gates = yield* Effect.try({
-      try: () =>
-        resolveStartGates({
-          config,
-          projectEnvValues,
-          excludedKeys,
-          document: context.loaded?.document,
-        }),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const gates = yield* tryStartConfig(() =>
+      resolveStartGates({
+        config,
+        projectEnvValues,
+        excludedKeys,
+        document: context.loaded?.document,
+      }),
+    );
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.

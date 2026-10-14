@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
 
@@ -90,6 +90,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
   path: Path.Path,
   workdir: string,
   migrations: ReadonlyArray<string>,
+  targetPath: string,
   localInputs: LocalDbContainerInputs,
   toml: DbTomlValues,
 ) {
@@ -160,7 +161,6 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             projectEnvValues: localInputs.context.projectEnvValues,
             client: dumpClient,
           });
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -252,7 +252,6 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             projectEnvValues: localInputs.context.projectEnvValues,
           });
 
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -332,11 +331,11 @@ const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
   const output = yield* Output;
   const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
   yield* Effect.annotateCurrentSpan({ "migration.count": migrations.length });
-  if (migrations.length === 0) {
+  const local = migrations.at(-1);
+  if (local === undefined) {
     return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
 
-  const local = migrations[migrations.length - 1]!;
   const rel = path.relative(workdir, local);
   if (migrations.length === 1) {
     yield* output.raw(`${bold(rel)} is already the earliest migration.\n`, "stderr");
@@ -348,7 +347,7 @@ const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
     } satisfies SquashToVersionResult;
   }
 
-  yield* squashMigrations(spawner, fs, path, workdir, migrations, localInputs, toml);
+  yield* squashMigrations(spawner, fs, path, workdir, migrations, local, localInputs, toml);
   yield* output.raw(`Squashed local migrations to ${bold(rel)}\n`, "stderr");
 
   const removed: Array<string> = [];
@@ -405,7 +404,7 @@ const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(funct
         debugLogger.debug(cause.message).pipe(Effect.as<ReadonlyArray<string>>([])),
       ),
     );
-    if (local.length > 0) resolvedVersion = local[0]!;
+    resolvedVersion = local[0] ?? resolvedVersion;
   }
 
   // Printed before connecting, the opposite order from every other prompting migration
@@ -469,7 +468,7 @@ const runSquash = Effect.fnUntraced(function* (
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     // Checked here, ahead of the root pre-run.
@@ -503,7 +502,7 @@ const runSquash = Effect.fnUntraced(function* (
     if (connType === "linked") {
       const projectRefResolver = yield* ProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, linkedRef);
     }
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
@@ -534,7 +533,7 @@ const runSquash = Effect.fnUntraced(function* (
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+    if (linkedRef !== undefined) yield* Ref.set(linkedRefForCache, linkedRef);
     yield* Effect.annotateCurrentSpan({ "db.conn_type": connType, "db.is_local": cfg.isLocal });
 
     // Loads after the flag-group check above, so a flag conflict surfaces before any
@@ -622,8 +621,8 @@ const runSquash = Effect.fnUntraced(function* (
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
   );

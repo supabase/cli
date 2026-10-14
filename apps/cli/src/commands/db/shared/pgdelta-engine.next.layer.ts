@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Layer, Path } from "effect";
+import { Clock, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import type { Pool } from "pg";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -134,7 +134,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
     const path = yield* Path.Path;
     const debugLogger = yield* DebugLogger;
     const output = yield* Output;
-    let feedbackInvitationShown = false;
+    const feedbackInvitationShown = yield* Ref.make(false);
 
     const saveDebugArtifacts = (
       workdir: string,
@@ -177,16 +177,16 @@ export const pgDeltaNextEngineLayer = Layer.effect(
         Effect.flatMap((connection) => acquirePgPool(connection, endpoint.connectOptions)),
       );
 
-    const reportDiagnostics = (
+    const reportDiagnostics = Effect.fnUntraced(function* (
       operation: PgDeltaNextOperation,
       diagnostics: Parameters<typeof reportPgDeltaNextDiagnostics>[1],
       strictCoverage: boolean,
       verboseDiagnostics: boolean,
-    ) => {
+    ) {
       const report = pgDeltaNextDiagnosticReport(diagnostics, strictCoverage);
-      const showFeedback = !feedbackInvitationShown && report.unmodeledKinds.length > 0;
-      if (showFeedback) feedbackInvitationShown = true;
-      return reportPgDeltaNextDiagnostics(
+      const showFeedback =
+        report.unmodeledKinds.length > 0 && !(yield* Ref.getAndSet(feedbackInvitationShown, true));
+      return yield* reportPgDeltaNextDiagnostics(
         operation,
         diagnostics,
         strictCoverage,
@@ -196,7 +196,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
         Effect.provideService(Output, output),
         Effect.provideService(DebugLogger, debugLogger),
       );
-    };
+    });
 
     const diffPools = Effect.fn("PgDeltaNextEngine.diff")(function* (
       input: {
@@ -235,172 +235,164 @@ export const pgDeltaNextEngineLayer = Layer.effect(
     });
 
     return PgDeltaEngine.of({
-      diffExplicit: (input) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            let shadow: { readonly migrationsUrl: string } | undefined;
-            const migrationsEndpoint =
-              input.source.kind === "migrations"
-                ? input.source
-                : input.desired.kind === "migrations"
-                  ? input.desired
-                  : undefined;
-            if (migrationsEndpoint !== undefined) {
-              if (input.toml === undefined) {
-                return yield* new PgDeltaEngineError({
-                  message: "pg-delta migrations endpoint requires loaded database config",
-                  cause: "missing database config",
-                });
-              }
-              shadow = yield* shadowService.provisionMigrations({
-                context: input.context,
-                toml: input.toml,
-                ...(migrationsEndpoint.projectRef !== undefined
-                  ? { projectRef: migrationsEndpoint.projectRef }
-                  : {}),
+      diffExplicit: Effect.fn("PgDeltaNextEngine.diffExplicit")(
+        function* (input) {
+          let shadow: { readonly migrationsUrl: string } | undefined;
+          const migrationsEndpoint =
+            input.source.kind === "migrations"
+              ? input.source
+              : input.desired.kind === "migrations"
+                ? input.desired
+                : undefined;
+          if (migrationsEndpoint !== undefined) {
+            if (input.toml === undefined) {
+              return yield* new PgDeltaEngineError({
+                message: "pg-delta migrations endpoint requires loaded database config",
+                cause: "missing database config",
               });
             }
-            const endpointPool = (endpoint: PgDeltaEndpoint) =>
-              Effect.gen(function* () {
-                if (endpoint.kind === "database") {
-                  return yield* acquireDatabase(endpoint, input.context.projectEnv);
-                }
-                if (shadow === undefined) {
-                  return yield* Effect.die("missing pg-delta migrations shadow");
-                }
-                const connection = yield* parseConnectionString(shadow.migrationsUrl);
-                if (connection === undefined) {
-                  return yield* new PgDeltaEngineError({
-                    message: "failed to parse pg-delta migrations shadow URL",
-                    cause: redactConnectionString(shadow.migrationsUrl),
-                  });
-                }
-                return yield* acquirePgPool(connection, {
-                  isLocal: true,
-                  dnsResolver: "native",
-                });
-              });
-            const [sourcePool, desiredPool] = yield* Effect.all(
-              [endpointPool(input.source), endpointPool(input.desired)],
-              { concurrency: 2 },
-            );
-            return yield* diffPools(input, sourcePool, desiredPool);
-          }),
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(pgDeltaNextEngineError),
-          Effect.withSpan("PgDeltaNextEngine.diffExplicit"),
-        ),
-      diffDatabase: (input) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const migrationsPool = yield* acquireDatabase(input.source, input.context.projectEnv);
-            const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
-            return yield* diffPools(input, migrationsPool, desiredPool);
-          }),
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(pgDeltaNextEngineError),
-          Effect.withSpan("PgDeltaNextEngine.diffDatabase"),
-        ),
-      exportDeclarativeSchema: (input) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const pool = yield* acquireDatabase(input.target, input.context.projectEnv);
-            const result = yield* adapter.exportDeclarativeSchema({
-              pool,
-              schema: input.schema,
-              formatOptions: input.formatOptions,
-            });
-            if (input.debug) {
-              const capture = yield* adapter
-                .captureSnapshot({ pool })
-                .pipe(Effect.orElseSucceed(() => undefined));
-              yield* saveDebugArtifacts(input.context.cwd, "declarativeExport", {
-                ...(capture !== undefined ? { desiredSnapshot: capture.snapshot } : {}),
-                diagnostics:
-                  capture === undefined
-                    ? result.diagnostics
-                    : [...result.diagnostics, ...capture.diagnostics],
-              });
-            }
-            yield* reportDiagnostics(
-              "declarativeExport",
-              result.diagnostics,
-              input.strictCoverage,
-              input.debug,
-            );
-            return { files: result.files, manifest: result.manifest };
-          }),
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(pgDeltaNextEngineError),
-          Effect.withSpan("PgDeltaNextEngine.exportDeclarativeSchema"),
-        ),
-      planDeclarativeSchema: (input) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const shadow = yield* shadowService.provisionPlan({
+            shadow = yield* shadowService.provisionMigrations({
               context: input.context,
               toml: input.toml,
-              ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
-              ...(input.noCache ? { bypassCache: true } : {}),
+              ...(migrationsEndpoint.projectRef !== undefined
+                ? { projectRef: migrationsEndpoint.projectRef }
+                : {}),
             });
-            const migrations = yield* parseConnectionString(shadow.migrationsUrl);
-            const declarative = yield* parseConnectionString(shadow.declarativeUrl);
-            if (migrations === undefined || declarative === undefined) {
-              return yield* new PgDeltaEngineError({
-                message: "failed to parse pg-delta next shadow database URL",
-                cause: "invalid password-free shadow output",
+          }
+          const endpointPool = (endpoint: PgDeltaEndpoint) =>
+            Effect.gen(function* () {
+              if (endpoint.kind === "database") {
+                return yield* acquireDatabase(endpoint, input.context.projectEnv);
+              }
+              if (shadow === undefined) {
+                return yield* Effect.die("missing pg-delta migrations shadow");
+              }
+              const connection = yield* parseConnectionString(shadow.migrationsUrl);
+              if (connection === undefined) {
+                return yield* new PgDeltaEngineError({
+                  message: "failed to parse pg-delta migrations shadow URL",
+                  cause: redactConnectionString(shadow.migrationsUrl),
+                });
+              }
+              return yield* acquirePgPool(connection, {
+                isLocal: true,
+                dnsResolver: "native",
               });
-            }
-            const [migrationsPool, declarativePool] = yield* Effect.all(
-              [
-                acquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
-                acquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
-              ],
-              { concurrency: 2 },
-            );
-            const prep = yield* prepareDeclarativeShadow(declarativePool, input.files);
-            const result = yield* adapter.planDeclarativeSchema({
-              targetPool: migrationsPool,
-              shadowPool: declarativePool,
-              files: filesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
-              allowDrops: true,
-              ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
-              debug: input.debug,
-              schema: input.schema,
-              formatOptions: input.formatOptions,
-              ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
             });
-            const debugDirectory =
-              result.debug !== undefined
-                ? yield* saveDebugArtifacts(input.context.cwd, "declarativePlan", {
-                    ...result.debug,
-                    diagnostics: result.diagnostics,
-                  })
-                : undefined;
-            yield* reportDiagnostics(
-              "declarativePlan",
-              result.diagnostics,
-              input.strictCoverage,
-              input.debug,
-            );
-            return {
-              ...normalizeNextDiff(result, debugDirectory),
-              sourceRef: "pg-delta-next:migrations",
-              targetRef: "pg-delta-next:declarative",
-            };
-          }),
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(pgDeltaNextEngineError),
-          Effect.withSpan("PgDeltaNextEngine.planDeclarativeSchema"),
-        ),
+          const [sourcePool, desiredPool] = yield* Effect.all(
+            [endpointPool(input.source), endpointPool(input.desired)],
+            { concurrency: 2 },
+          );
+          return yield* diffPools(input, sourcePool, desiredPool);
+        },
+        Effect.scoped,
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(pgDeltaNextEngineError),
+      ),
+      diffDatabase: Effect.fn("PgDeltaNextEngine.diffDatabase")(
+        function* (input) {
+          const migrationsPool = yield* acquireDatabase(input.source, input.context.projectEnv);
+          const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
+          return yield* diffPools(input, migrationsPool, desiredPool);
+        },
+        Effect.scoped,
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(pgDeltaNextEngineError),
+      ),
+      exportDeclarativeSchema: Effect.fn("PgDeltaNextEngine.exportDeclarativeSchema")(
+        function* (input) {
+          const pool = yield* acquireDatabase(input.target, input.context.projectEnv);
+          const result = yield* adapter.exportDeclarativeSchema({
+            pool,
+            schema: input.schema,
+            formatOptions: input.formatOptions,
+          });
+          if (input.debug) {
+            const capture = yield* adapter
+              .captureSnapshot({ pool })
+              .pipe(Effect.orElseSucceed(() => undefined));
+            yield* saveDebugArtifacts(input.context.cwd, "declarativeExport", {
+              ...(capture !== undefined ? { desiredSnapshot: capture.snapshot } : {}),
+              diagnostics:
+                capture === undefined
+                  ? result.diagnostics
+                  : [...result.diagnostics, ...capture.diagnostics],
+            });
+          }
+          yield* reportDiagnostics(
+            "declarativeExport",
+            result.diagnostics,
+            input.strictCoverage,
+            input.debug,
+          );
+          return { files: result.files, manifest: result.manifest };
+        },
+        Effect.scoped,
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(pgDeltaNextEngineError),
+      ),
+      planDeclarativeSchema: Effect.fn("PgDeltaNextEngine.planDeclarativeSchema")(
+        function* (input) {
+          const shadow = yield* shadowService.provisionPlan({
+            context: input.context,
+            toml: input.toml,
+            ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+            ...(input.noCache ? { bypassCache: true } : {}),
+          });
+          const migrations = yield* parseConnectionString(shadow.migrationsUrl);
+          const declarative = yield* parseConnectionString(shadow.declarativeUrl);
+          if (migrations === undefined || declarative === undefined) {
+            return yield* new PgDeltaEngineError({
+              message: "failed to parse pg-delta next shadow database URL",
+              cause: "invalid password-free shadow output",
+            });
+          }
+          const [migrationsPool, declarativePool] = yield* Effect.all(
+            [
+              acquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
+              acquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
+            ],
+            { concurrency: 2 },
+          );
+          const prep = yield* prepareDeclarativeShadow(declarativePool, input.files);
+          const result = yield* adapter.planDeclarativeSchema({
+            targetPool: migrationsPool,
+            shadowPool: declarativePool,
+            files: filesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
+            allowDrops: true,
+            ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
+            debug: input.debug,
+            schema: input.schema,
+            formatOptions: input.formatOptions,
+            ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
+          });
+          const debugDirectory =
+            result.debug !== undefined
+              ? yield* saveDebugArtifacts(input.context.cwd, "declarativePlan", {
+                  ...result.debug,
+                  diagnostics: result.diagnostics,
+                })
+              : undefined;
+          yield* reportDiagnostics(
+            "declarativePlan",
+            result.diagnostics,
+            input.strictCoverage,
+            input.debug,
+          );
+          return {
+            ...normalizeNextDiff(result, debugDirectory),
+            sourceRef: "pg-delta-next:migrations",
+            targetRef: "pg-delta-next:declarative",
+          };
+        },
+        Effect.scoped,
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(pgDeltaNextEngineError),
+      ),
     });
   }),
 );

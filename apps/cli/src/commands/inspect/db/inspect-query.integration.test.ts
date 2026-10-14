@@ -175,7 +175,7 @@ const flags = (over: Partial<InspectConnectionFlags> = {}): InspectConnectionFla
 });
 
 describe("inspect db query runner", () => {
-  it.live("renders a glamour table in text mode (db-stats)", () => {
+  it.effect("renders a glamour table in text mode (db-stats)", () => {
     const { layer, out, connection } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -192,7 +192,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("collapses statement whitespace and formats bool/int cells (locks)", () => {
+  it.effect("collapses statement whitespace and formats bool/int cells (locks)", () => {
     const { layer, out } = setup({ rows: [LOCKS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbLocks(flags());
@@ -202,7 +202,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty backtick-wrapped cell as two literal backticks (role-stats)", () => {
+  it.effect("renders an empty backtick-wrapped cell as two literal backticks (role-stats)", () => {
     const ROLE_ROW = {
       role_name: "postgres",
       active_connections: 3,
@@ -219,7 +219,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits raw rows in json mode", () => {
+  it.effect("emits raw rows in json mode", () => {
     const { layer, out } = setup({ format: "json", rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -234,7 +234,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event in stream-json mode", () => {
+  it.effect("emits a result event in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json", rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -244,7 +244,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("inspects an explicit database url", () => {
+  it.effect("inspects an explicit database url", () => {
     const { layer, resolver, connection } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -253,13 +253,13 @@ describe("inspect db query runner", () => {
     });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
-      expect(Option.isSome(resolver.resolveInput?.dbUrl ?? Option.none())).toBe(true);
+      expect(resolver.resolveInput?.dbUrl).toEqual(Option.some("postgres://x"));
       expect(resolver.resolveInput?.connType).toBe("db-url");
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("inspects the local database", () => {
+  it.effect("inspects the local database", () => {
     const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ local: true }));
@@ -268,16 +268,16 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("inspects the linked project by default (no connection flag)", () => {
+  it.effect("inspects the linked project by default (no connection flag)", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
       expect(resolver.resolveInput?.connType).toBe("linked");
-      expect(Option.isNone(resolver.resolveInput?.dbUrl ?? Option.some("x"))).toBe(true);
+      expect(resolver.resolveInput?.dbUrl).toEqual(Option.none());
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("labels the diagnostic 'remote' for a non-local connection", () => {
+  it.effect("labels the diagnostic 'remote' for a non-local connection", () => {
     const { layer, out } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -290,28 +290,18 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects conflicting connection flags", () => {
+  it.effect("rejects conflicting connection flags", () => {
     const { layer } = setup({ cliArgs: ["--linked", "--local"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(inspectDbDbStats(flags({ linked: true, local: true })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          const error = failure.value;
-          expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-          if (error instanceof InspectMutuallyExclusiveFlagsError) {
-            expect(error.message).toBe(
-              "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-            );
-          }
-        }
-      }
+      const error = yield* inspectDbDbStats(flags({ linked: true, local: true })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
+      expect(error.message).toBe(
+        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--local=false is Changed and routes to local (not linked)", () => {
+  it.effect("--local=false is Changed and routes to local (not linked)", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local=false"] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ local: false }));
@@ -319,28 +309,20 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--linked --local=false raises the mutual-exclusion error", () => {
+  it.effect("--linked --local=false raises the mutual-exclusion error", () => {
     const { layer } = setup({ cliArgs: ["--linked", "--local=false"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(inspectDbDbStats(flags({ linked: true, local: false })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          const error = failure.value;
-          expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-          if (error instanceof InspectMutuallyExclusiveFlagsError) {
-            expect(error.message).toBe(
-              "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-            );
-          }
-        }
-      }
+      const error = yield* inspectDbDbStats(flags({ linked: true, local: false })).pipe(
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
+      expect(error.message).toBe(
+        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--linked routes to linked", () => {
+  it.effect("--linked routes to linked", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--linked"] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ linked: true }));
@@ -348,7 +330,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("inspects the project given via --project-ref on the default linked path", () => {
+  it.effect("inspects the project given via --project-ref on the default linked path", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
@@ -358,32 +340,22 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        inspectDbDbStats(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+      const error = yield* inspectDbDbStats(
+        flags({ local: true, projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
+      expect(error.message).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          const error = failure.value;
-          expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-          if (error instanceof InspectMutuallyExclusiveFlagsError) {
-            expect(error.message).toBe(
-              "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-            );
-          }
-        }
-      }
       expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a query failure", () => {
+  it.effect("surfaces a query failure", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
@@ -395,7 +367,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a connection failure", () => {
+  it.effect("surfaces a connection failure", () => {
     const { layer } = setup({ connectFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
@@ -407,7 +379,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a resolution failure", () => {
+  it.effect("surfaces a resolution failure", () => {
     const { layer } = setup({ resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
@@ -419,7 +391,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders the header and separator for an empty result set", () => {
+  it.effect("renders the header and separator for an empty result set", () => {
     const { layer, out } = setup({ rows: [] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -429,7 +401,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits an empty rows array in json mode for no results", () => {
+  it.effect("emits an empty rows array in json mode for no results", () => {
     const { layer, out } = setup({ format: "json", rows: [] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -439,7 +411,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forwards the https dns resolver to the connection", () => {
+  it.effect("forwards the https dns resolver to the connection", () => {
     const { layer, connection } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -452,7 +424,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry on completion", () => {
+  it.effect("flushes telemetry on completion", () => {
     const { layer, telemetry } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
@@ -460,7 +432,7 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even when the query fails", () => {
+  it.effect("flushes telemetry even when the query fails", () => {
     const { layer, telemetry } = setup({ queryFails: true });
     return Effect.gen(function* () {
       yield* Effect.exit(inspectDbDbStats(flags()));
