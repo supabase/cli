@@ -130,3 +130,17 @@ describe("CLI upgrade notice (#5853)", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
+
+/** Only a real pipe whose reader has exited reproduces the broken-pipe write. */
+describe("CLI output to a closed stdout", () => {
+  it.live.each(["text", "json"])("ends quietly with exit 0 in %s output", (format) =>
+    Effect.gen(function* () {
+      const { exitCode, stderr } = yield* runSupabaseEffect(
+        ["gen", "signing-key", "--algorithm", "ES256", "--output-format", format],
+        { closeStdout: true },
+      );
+      expect(exitCode).toBe(0);
+      expect(stderr).not.toContain("Stdio");
+    }),
+  );
+});

@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Runtime } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -27,5 +27,17 @@ export class NonInteractiveError extends Data.TaggedError("NonInteractiveError")
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/**
+ * The process reading stdout closed it, for example `supabase … | head`. It ends the command
+ * through its finalizers and exits 0, the way a Unix tool stops on a broken pipe.
+ */
+export class StdoutClosedError extends Data.TaggedError("StdoutClosedError") {
+  override readonly [Runtime.errorExitCode] = 0;
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
   }
 }

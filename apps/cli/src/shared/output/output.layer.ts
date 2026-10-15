@@ -27,7 +27,7 @@ import {
 } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
-import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
@@ -63,25 +63,33 @@ const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
   return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EPIPE";
 };
 
+// Keyed by the Stdio service so every output layer built on the same process streams sees a
+// stream close, including the layer that renders the run's final error.
+const closedStreams = new WeakMap<typeof Stdio.Stdio.Service, Set<"stdout" | "stderr">>();
+
 /**
  * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
  * does not, so a streamed payload piped to a slow consumer buffers in memory.
  *
- * A reader that exits early (`| head`) ends the output, not the command. Later writes to that
- * stream are skipped: a closed stream never emits `drain` or `error` again, so the sink would hang.
+ * A closed stream never emits `drain` or `error` again, so writes to it are skipped rather than
+ * left to hang. A closed stdout also ends the command with `StdoutClosedError`; a closed stderr
+ * only drops diagnostics.
  */
 const stdioWriter = (stdio: typeof Stdio.Stdio.Service) => {
-  const closed = { stdout: false, stderr: false };
+  const closed = closedStreams.get(stdio) ?? new Set();
+  closedStreams.set(stdio, closed);
   return (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
     Effect.suspend(() =>
-      closed[stream]
+      closed.has(stream)
         ? Effect.void
         : Stream.make(chunk).pipe(
             Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
             Effect.catchIf(isBrokenPipe, () =>
-              Effect.sync(() => {
-                closed[stream] = true;
-              }),
+              Effect.sync(() => closed.add(stream)).pipe(
+                Effect.andThen(
+                  stream === "stdout" ? Effect.die(new StdoutClosedError()) : Effect.void,
+                ),
+              ),
             ),
             Effect.orDie,
           ),

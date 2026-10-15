@@ -14,7 +14,7 @@ import {
   Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
-import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -109,32 +109,46 @@ function mockStdio() {
   return { layer, stdout, stderr };
 }
 
-function failingStdoutStdio(code: string) {
-  let attempts = 0;
+function brokenStdio(failing: "stdout" | "stderr", code: string) {
+  const attempts = { stdout: 0, stderr: 0 };
+  const sink = (stream: "stdout" | "stderr") =>
+    Sink.forEach((_item: string | Uint8Array) =>
+      Effect.suspend(() => {
+        attempts[stream]++;
+        return stream === failing
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "Stdio",
+                method: stream,
+                cause: Object.assign(new Error(code), { code }),
+              }),
+            )
+          : Effect.void;
+      }),
+    );
   const layer = Layer.succeed(
     Stdio.Stdio,
     Stdio.make({
       args: Effect.succeed([]),
       stdin: Stream.empty,
-      stdout: () =>
-        Sink.forEach((_item: string | Uint8Array) =>
-          Effect.suspend(() => {
-            attempts++;
-            return Effect.fail(
-              PlatformError.systemError({
-                _tag: "Unknown",
-                module: "Stdio",
-                method: "stdout",
-                cause: Object.assign(new Error(code), { code }),
-              }),
-            );
-          }),
-        ),
-      stderr: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+      stdout: () => sink("stdout"),
+      stderr: () => sink("stderr"),
     }),
   );
-  return { layer, attempts: () => attempts };
+  return { layer, attempts };
 }
+
+const outputLayersOver = (stdio: Layer.Layer<Stdio.Stdio>) => [
+  {
+    name: "text",
+    layer: textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio)),
+    ),
+  },
+  { name: "json", layer: jsonOutputLayer.pipe(Layer.provide(stdio)) },
+  { name: "stream-json", layer: streamJsonOutputLayer.pipe(Layer.provide(stdio)) },
+];
 
 function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
   if (!Exit.isFailure(exit)) throw new Error("Expected failure");
@@ -800,28 +814,49 @@ describe("Output", () => {
     );
   });
 
-  describe("json layer", () => {
-    it.effect("stops writing stdout once its reader has closed the pipe", () => {
-      const stdio = failingStdoutStdio("EPIPE");
-      const layer = jsonOutputLayer.pipe(Layer.provide(stdio.layer));
-      return Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.raw("first\n");
-        yield* out.raw("second\n");
-        expect(stdio.attempts()).toBe(1);
-      }).pipe(Effect.provide(layer));
-    });
+  describe.each(["text", "json", "stream-json"])("%s layer on a broken pipe", (format) => {
+    const provideLayer = (stdio: Layer.Layer<Stdio.Stdio>) =>
+      Effect.provide(outputLayersOver(stdio).find(({ name }) => name === format)!.layer);
 
-    it.effect("dies on any other stdout write failure", () => {
-      const stdio = failingStdoutStdio("EIO");
-      const layer = jsonOutputLayer.pipe(Layer.provide(stdio.layer));
+    it.effect("ends the command once the stdout reader has closed, then skips stdout", () => {
+      const stdio = brokenStdio("stdout", "EPIPE");
       return Effect.gen(function* () {
         const out = yield* Output;
         const exit = yield* Effect.exit(out.raw("first\n"));
-        expect(Exit.hasDies(exit)).toBe(true);
-      }).pipe(Effect.provide(layer));
+        yield* out.raw("second\n");
+        yield* out.raw("diagnostic\n", "stderr");
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+        expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+      }).pipe(provideLayer(stdio.layer));
     });
 
+    it.effect("keeps writing stdout once the stderr reader has closed", () => {
+      const stdio = brokenStdio("stderr", "EPIPE");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("again\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("dies on any other stdout write failure", () => {
+      const stdio = brokenStdio("stdout", "EIO");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* Effect.exit(out.raw("first\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+          PlatformError.PlatformError,
+        );
+      }).pipe(provideLayer(stdio.layer));
+    });
+  });
+
+  describe("json layer", () => {
     it.effect("interactive is false", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
