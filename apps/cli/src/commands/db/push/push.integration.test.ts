@@ -12,6 +12,7 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -34,15 +35,20 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
   withConfigEnv,
+  withEmptyConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -82,20 +88,22 @@ const DEFAULT_FLAGS: DbPushFlags = {
 };
 
 function mockResolver(
-  opts: { isLocal?: boolean; onResolve?: (flags: DbConfigFlags) => void } = {},
+  opts: { isLocal?: boolean; onResolve?: (input: DbConnectionInput) => void } = {},
 ) {
-  const calls: Array<DbConfigFlags> = [];
+  const calls: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) =>
+    resolve: () => Effect.die("resolve is not used by db push"),
+    resolveConnection: (input: DbConnectionInput) =>
       Effect.sync(() => {
-        calls.push(flags);
-        opts.onResolve?.(flags);
+        calls.push(input);
+        opts.onResolve?.(input);
         return {
           conn: LOCAL_CONN,
-          isLocal: opts.isLocal ?? true,
-        } satisfies ResolvedDbConfig;
+          isLocal: opts.isLocal ?? input.target.kind !== "linked",
+          ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+          target: input.target,
+        } satisfies ResolvedDbConnection;
       }),
-    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return { layer, calls };
@@ -179,8 +187,7 @@ function setup(
     files?: Readonly<Record<string, string>>;
     format?: OutputFormat;
     confirm?: ReadonlyArray<boolean>;
-    piped?: string;
-    args?: ReadonlyArray<string>;
+    interactive?: boolean;
     yes?: boolean;
     includeSeed?: boolean;
     env?: Readonly<Record<string, string>>;
@@ -195,7 +202,7 @@ function setup(
     failExecWith?: { message: string; code?: string; detail?: string; position?: number };
     noProjectId?: boolean;
     // Simulates the real `DbConfigResolver`'s "Initialising login role..." stderr line,
-    // fired as part of `resolve()`'s own connection work, strictly before `dbPushCore`
+    // fired as part of `resolveConnection()`'s own work, strictly before `dbPushCore`
     // runs; `mockResolver` is otherwise silent, so tests pin output ordering against it.
     simulateInitialisingLoginRole?: boolean;
     /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
@@ -218,7 +225,11 @@ function setup(
     }),
   ).pipe(Layer.provide(BunServices.layer));
 
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive: opts.interactive,
+    promptConfirmResponses: opts.confirm,
+  });
   const conn = mockConnection(opts);
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
@@ -226,26 +237,27 @@ function setup(
   const projectRefLayer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? VALID_REF),
-    resolveRef: () =>
-      Effect.succeed({ ref: opts.projectRef ?? VALID_REF, source: "file", matchesLinkedRef: true }),
-    resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
-    // An explicit `--project-ref` flag takes top precedence, short-circuiting before
-    // the "not linked" failure.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    resolveRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed(flagValue.value)
+        ? Effect.succeed({ ref: flagValue.value, source: "flag", matchesLinkedRef: false })
         : opts.linkedFails === true
           ? Effect.fail(
               new ProjectRefNotLinkedError({
                 message: "Cannot find project ref. Have you run supabase link?",
               }),
             )
-          : Effect.succeed(opts.projectRef ?? VALID_REF),
+          : Effect.succeed({
+              ref: opts.projectRef ?? VALID_REF,
+              source: "file",
+              matchesLinkedRef: true,
+            }),
+    resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
+    loadProjectRef: () => Effect.die("loadProjectRef is not used by db push"),
     promptProjectRef: () => Effect.succeed(opts.projectRef ?? VALID_REF),
   });
 
   const resolver = mockResolver({
-    isLocal: opts.isLocal ?? true,
+    isLocal: opts.isLocal,
     onResolve:
       opts.simulateInitialisingLoginRole === true
         ? () => {
@@ -275,12 +287,12 @@ function setup(
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
     BunServices.layer,
-    // Prompts are answered through mockOutput's `promptConfirmResponses` (the
-    // TTY/clack path) unless `piped` feeds promptYesNo's non-TTY branch.
-    mockTty({ stdinIsTty: opts.piped === undefined }),
-    mockStdin(opts.piped === undefined, opts.piped),
-    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
+    mockTty({ stdinIsTty: opts.interactive ?? true }),
+    mockStdin(opts.interactive ?? true),
+    Layer.succeed(CliArgs, { args: ["db", "push"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(TargetPolicy, { group: "sync", consent: "no" }),
     Layer.succeed(DnsResolverFlag, "native"),
     projectRefLayer,
     telemetry.layer,
@@ -358,25 +370,27 @@ describe("db push", () => {
     });
   });
 
-  it.effect("rejects mutually exclusive target flags", () => {
-    const { layer } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      args: ["db", "push", "--local", "--linked"],
-    });
+  it.effect("rejects mutually exclusive target flags before connecting", () => {
+    const { layer, conn, resolver } = setup(tmp.current, { toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
-      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(failError(exit)._tag).toBe("TargetSelectorConflictError");
+      expect(resolver.calls).toEqual([]);
+      expect(conn.execs).toEqual([]);
     });
   });
 
-  it.effect("applies a pending migration after confirmation", () => {
+  it.effect("applies a pending migration to the local database without asking", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.promptConfirmCalls).toEqual([]);
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
       expect(out.stdoutText).toContain("Finished");
       expect(out.stdoutText).toContain("supabase db push");
@@ -397,7 +411,6 @@ describe("db push", () => {
         "20240101000000",
         `-- pg-delta: transaction=false\n${set};\n${action};\nRESET ALL;`,
       ),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -416,53 +429,6 @@ describe("db push", () => {
       ).toBe(true);
     });
   });
-
-  it.effect("returns context canceled when the migration prompt is declined", () => {
-    const { layer, conn } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: migrationFile("20240101000000"),
-      confirm: [false],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("context canceled");
-      }
-      expect(conn.execs).not.toContain("BEGIN");
-    });
-  });
-
-  it.effect.each(["u", "yess", "nope", "   ", "n", "no"])(
-    "applies nothing when the piped answer is %j",
-    (answer) => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        piped: `${answer}\n`,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(conn.execs).not.toContain("BEGIN");
-      });
-    },
-  );
-
-  it.effect.each(["y\n", "yes\n", "\n", ""])(
-    "applies migrations when the piped answer is %j",
-    (piped) => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        piped,
-      });
-      return Effect.gen(function* () {
-        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(conn.execs).toContain("BEGIN");
-      });
-    },
-  );
 
   it.effect("prints the plan without applying in dry-run mode", () => {
     const { layer, out, conn } = setup(tmp.current, {
@@ -509,9 +475,6 @@ describe("db push", () => {
       );
       expect(loginRoleIndex).toBeGreaterThanOrEqual(0);
       expect(dryRunIndex).toBeGreaterThan(loginRoleIndex);
-      // ...and, in turn, before the connect step's own progress line.
-      const connectingIndex = out.stderrText.indexOf("Connecting to local database...");
-      expect(connectingIndex).toBeGreaterThan(dryRunIndex);
     });
   });
 
@@ -538,7 +501,6 @@ describe("db push", () => {
     const dbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
-      args: ["db", "push", "--db-url", dbUrl],
       remoteMigrations: ["20240101000000"],
     });
     return Effect.gen(function* () {
@@ -575,7 +537,6 @@ describe("db push", () => {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), ...migrationFile("20240202000000") },
       remoteMigrations: ["20240202000000"],
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeAll: true }).pipe(Effect.provide(layer));
@@ -602,7 +563,6 @@ describe("db push", () => {
       includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -626,7 +586,6 @@ describe("db push", () => {
         "supabase/seeds/nested/b.sql": "insert into t values (2);",
         "supabase/seeds/notes.txt": "not a seed",
       },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -684,7 +643,6 @@ describe("db push", () => {
       includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -708,99 +666,67 @@ describe("db push", () => {
     });
   });
 
-  describe("seeding into a target that matched a [remotes.*] block", () => {
-    const remoteSeed = (
-      opts: {
-        yes?: boolean;
-        format?: OutputFormat;
-        confirm?: ReadonlyArray<boolean>;
-        piped?: string;
-        migrations?: boolean;
-        dryRun?: boolean;
-        remoteBlock?: string;
-      } = {},
-    ) =>
-      setup(tmp.current, {
-        includeSeed: true,
-        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n${opts.remoteBlock ?? ""}`,
-        files: {
-          "supabase/seed.sql": "insert into t values (1);",
-          ...(opts.migrations === true ? migrationFile("20240101000000") : {}),
-        },
-        args: ["db", "push", "--linked"],
-        isLocal: false,
-        projectRef: VALID_REF,
-        yes: opts.yes,
-        format: opts.format,
-        confirm: opts.confirm,
-        piped: opts.piped,
-      });
-    const flags = {
-      ...DEFAULT_FLAGS,
-      local: false,
-      linked: true,
-      includeSeed: Option.some(true),
+  describe("hosted consent on a linked project", () => {
+    const linked = { ...DEFAULT_FLAGS, local: false, linked: true };
+    const allFlags = { ...linked, includeRoles: true, includeSeed: Option.some(true) };
+    const allFiles = {
+      ...migrationFile("20240101000000"),
+      "supabase/roles.sql": "create role app;",
+      "supabase/seed.sql": "insert into t values (1);",
     };
     const seeded = (conn: ReturnType<typeof mockConnection>) =>
       conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"));
+    const previewToml = (remoteBlock = "") =>
+      `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n${remoteBlock}`;
 
-    it.effect("asks first, naming the ref, the remote and the files, defaulting to no", () => {
-      const { layer, out, conn } = remoteSeed({ confirm: [true] });
+    it.effect("asks once for roles, migrations and seeds together, defaulting to no", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        includeSeed: true,
+        toml: 'project_id = "test"\n',
+        files: allFiles,
+        confirm: [true],
+      });
       return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
+        yield* dbPush(allFlags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toHaveLength(1);
         expect(out.promptConfirmCalls[0]?.message).toBe(
-          `Project ${VALID_REF} matches [remotes.preview]. Run 1 seed file (supabase/seed.sql) against it?`,
+          "Create custom roles, apply 1 migration and seed 1 file?",
         );
         expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(out.stderrText).toContain("20240101000000_test.sql");
+        expect(out.stderrText).toContain("supabase/seed.sql");
+        expect(conn.execs).toContain("BEGIN");
         expect(seeded(conn)).toBe(true);
       });
     });
 
-    it.effect("asks about seeding once after the matched-remote consent is given", () => {
-      const { layer, out, conn } = remoteSeed({ confirm: [true] });
-      return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls).toHaveLength(1);
-        expect(seeded(conn)).toBe(true);
+    it.effect("stops before any write when the question is declined", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        includeSeed: true,
+        toml: 'project_id = "test"\n',
+        files: allFiles,
+        confirm: [false],
       });
-    });
-
-    it.effect("cancels without a bare context canceled before any write when declined", () => {
-      const { layer, out, conn } = remoteSeed({ confirm: [false], migrations: true });
       return Effect.gen(function* () {
-        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit).message).toBe("Seeding cancelled; nothing was changed.");
-        expect(failSuggestion(exit)).toBe(
-          "Pass --yes to seed, or drop --include-seed to push migrations only.",
-        );
-        expect(out.stderrText).not.toContain("context canceled");
+        const exit = yield* dbPush(allFlags).pipe(Effect.provide(layer), Effect.exit);
+        expect(failError(exit)._tag).toBe("HostedMutationDeclinedError");
+        expect(out.stderrText).not.toContain("Applying migration");
+        expect(out.stderrText).not.toContain("Seeding globals");
         expect(conn.execs).not.toContain("BEGIN");
         expect(seeded(conn)).toBe(false);
       });
     });
 
-    it.effect("proceeds without asking when --yes is passed, naming what enabled seeding", () => {
-      const { layer, out, conn } = remoteSeed({ yes: true });
-      return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls.some((call) => call.message.includes("[remotes."))).toBe(
-          false,
-        );
-        expect(out.stderrText).toContain("Seeding enabled by --include-seed");
-        expect(seeded(conn)).toBe(true);
+    it.effect("fails before any write when nothing can ask and --yes is absent", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        includeSeed: true,
+        toml: 'project_id = "test"\n',
+        files: allFiles,
+        format: "json",
       });
-    });
-
-    it.effect("fails with SeedConsentRequiredError before any write when non-interactive", () => {
-      const { layer, out, conn } = remoteSeed({ format: "json", migrations: true });
       return Effect.gen(function* () {
-        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)._tag).toBe("SeedConsentRequiredError");
-        expect(failError(exit).message).toBe(
-          `Seeding ${VALID_REF} ([remotes.preview]) needs confirmation and this run can't prompt. Nothing was changed.`,
-        );
+        const exit = yield* dbPush(allFlags).pipe(Effect.provide(layer), Effect.exit);
+        expect(failError(exit)._tag).toBe("HostedMutationConsentRequiredError");
         expect(failSuggestion(exit)).toContain("--yes");
         expect(out.promptConfirmCalls).toEqual([]);
         expect(conn.execs).not.toContain("BEGIN");
@@ -808,113 +734,125 @@ describe("db push", () => {
       });
     });
 
-    it.effect("fails with SeedConsentRequiredError when piped stdin ends without an answer", () => {
-      const { layer, conn } = remoteSeed({ piped: "" });
-      return Effect.gen(function* () {
-        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)._tag).toBe("SeedConsentRequiredError");
-        expect(failError(exit).message).toBe(
-          `Seeding ${VALID_REF} ([remotes.preview]) needs confirmation and this run can't prompt. Nothing was changed.`,
-        );
-        expect(failSuggestion(exit)).toBe(
-          "Pass --yes to seed, or drop --include-seed to push migrations only.",
-        );
-        expect(conn.execs).not.toContain("BEGIN");
-        expect(seeded(conn)).toBe(false);
-      });
-    });
-
-    it.live.each(["n\n", "\n"])("declines a piped answer of %j without seeding", (piped) => {
-      const { layer, conn } = remoteSeed({ piped });
-      return Effect.gen(function* () {
-        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)._tag).toBe("DbPushCancelledError");
-        expect(failError(exit).message).toBe("Seeding cancelled; nothing was changed.");
-        expect(conn.execs).not.toContain("BEGIN");
-        expect(seeded(conn)).toBe(false);
-      });
-    });
-
-    it.effect("seeds when a piped y answers the prompt", () => {
-      const { layer, conn } = remoteSeed({ piped: "y\n" });
-      return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(seeded(conn)).toBe(true);
-      });
-    });
-
-    it.effect("does not ask when the matched remote block itself enables seeding", () => {
-      const { layer, out, conn } = remoteSeed({
-        format: "json",
-        remoteBlock: "\n[remotes.preview.db.seed]\nenabled = true\n",
-      });
-      return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(seeded(conn)).toBe(true);
-      });
-    });
-
-    it.effect("does not ask when the matched remote block enables seeding with a number", () => {
-      const { layer, out, conn } = remoteSeed({
-        format: "json",
-        remoteBlock: "\n[remotes.preview.db.seed]\nenabled = 1\n",
-      });
-      return Effect.gen(function* () {
-        yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(seeded(conn)).toBe(true);
-      });
-    });
-
-    it.effect("--dry-run says a real run will ask, without prompting or writing", () => {
-      const { layer, out, conn } = remoteSeed({ migrations: true });
-      return Effect.gen(function* () {
-        yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain(
-          `A real run will ask before seeding ${VALID_REF} ([remotes.preview]).`,
-        );
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(conn.execs).not.toContain("BEGIN");
-      });
-    });
-
-    it.effect("--dry-run says a real run needs --yes when nothing can prompt", () => {
-      const { layer, out } = remoteSeed({ format: "json", migrations: true });
-      return Effect.gen(function* () {
-        yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain(
-          `A real run will need --yes to seed ${VALID_REF} ([remotes.preview]).`,
-        );
-      });
-    });
-
-    it.effect("does not ask when the target matched no remote block", () => {
+    it.effect("runs under --yes without asking and says what it confirmed", () => {
       const { layer, out, conn } = setup(tmp.current, {
         includeSeed: true,
         toml: 'project_id = "test"\n',
-        files: { "supabase/seed.sql": "insert into t values (1);" },
-        confirm: [true],
+        files: allFiles,
+        format: "json",
+        yes: true,
       });
       return Effect.gen(function* () {
-        yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
-          Effect.provide(layer),
+        yield* dbPush(allFlags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(out.stderrText).toContain(
+          "Confirmed by --yes: Create custom roles, apply 1 migration and seed 1 file",
         );
-        expect(out.promptConfirmCalls.some((call) => call.message.includes("[remotes."))).toBe(
-          false,
-        );
+        expect(conn.execs).toContain("BEGIN");
         expect(seeded(conn)).toBe(true);
       });
     });
+
+    it.effect("asks nothing for --dry-run", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        includeSeed: true,
+        toml: 'project_id = "test"\n',
+        files: allFiles,
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        yield* dbPush({ ...allFlags, dryRun: true }).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(out.stderrText).toContain("Would push these migrations:");
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    });
+
+    it.effect("asks nothing when the linked database is already up to date", () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(linked).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(out.messages.find((m) => m.type === "success")?.data?.["upToDate"]).toBe(true);
+      });
+    });
+
+    it.effect(
+      "names the matched [remotes.*] block and what enabled seeding in the same question",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          includeSeed: true,
+          toml: previewToml(),
+          files: { "supabase/seed.sql": "insert into t values (1);" },
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbPush({ ...linked, includeSeed: Option.some(true) }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain(
+            "Seed 1 file into [remotes.preview] (seeding enabled by --include-seed)",
+          );
+          expect(seeded(conn)).toBe(true);
+        });
+      },
+    );
+
+    it.effect(
+      "does not credit --include-seed when the matched remote block enables seeding",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          includeSeed: true,
+          toml: previewToml("\n[remotes.preview.db.seed]\nenabled = true\n"),
+          files: { "supabase/seed.sql": "insert into t values (1);" },
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbPush({ ...linked, includeSeed: Option.some(true) }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Seed 1 file into [remotes.preview]");
+          expect(out.stderrText).not.toContain("seeding enabled by");
+          expect(seeded(conn)).toBe(true);
+        });
+      },
+    );
+
+    it.effect("asks before pushing to a --db-url that is not local", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        isLocal: false,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush({
+          ...DEFAULT_FLAGS,
+          local: false,
+          dbUrl: Option.some("postgresql://postgres:pw@db.example.com:5432/postgres"),
+        }).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toHaveLength(1);
+        expect(conn.execs).toContain("BEGIN");
+      });
+    });
+
+    it.effect("lets the connection clear a network ban only under --yes", () =>
+      Effect.gen(function* () {
+        const withYes = setup(tmp.current, { toml: 'project_id = "test"\n', yes: true });
+        yield* dbPush(linked).pipe(Effect.provide(withYes.layer));
+        expect(Option.isSome(withYes.resolver.calls[0]!.networkBanRemoval)).toBe(true);
+
+        const withoutYes = setup(tmp.current, { toml: 'project_id = "test"\n' });
+        yield* withEmptyConfigEnv(dbPush(linked).pipe(Effect.provide(withoutYes.layer)));
+        expect(Option.isNone(withoutYes.resolver.calls[0]!.networkBanRemoval)).toBe(true);
+      }),
+    );
   });
 
   it.effect("creates custom roles with --include-roles", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
@@ -927,7 +865,6 @@ describe("db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
@@ -961,44 +898,10 @@ describe("db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Schema migrations are up to date.");
-    });
-  });
-
-  it.effect("returns context canceled when the roles prompt is declined", () => {
-    const { layer } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: { "supabase/roles.sql": "create role app;" },
-      confirm: [false],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
-    });
-  });
-
-  it.effect("returns context canceled when the seed prompt is declined", () => {
-    const { layer } = setup(tmp.current, {
-      includeSeed: true,
-      toml: 'project_id = "test"\n',
-      files: { "supabase/seed.sql": "insert into t values (1);" },
-      confirm: [false],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -1009,7 +912,6 @@ describe("db push", () => {
       files: { "supabase/seed.sql": "insert into t values (1);" },
       // Remote hash differs → dirty.
       remoteSeeds: { "supabase/seed.sql": "stalehash" },
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -1026,7 +928,6 @@ describe("db push", () => {
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
       noSeedTable: true,
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -1055,7 +956,6 @@ describe("db push", () => {
       includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
       files: migrationFile("20240101000000"),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
@@ -1071,7 +971,6 @@ describe("db push", () => {
       files: migrationFile("20240101000000"),
       // `existing` already present remotely → update; `fresh` → create.
       vaultRows: [{ id: "id-1", name: "existing" }],
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1088,7 +987,6 @@ describe("db push", () => {
       toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
       files: migrationFile("20240101000000"),
       vaultRows: [{ id: "id-1", name: "existing" }],
-      confirm: [true],
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(Effect.provide(layer));
@@ -1105,7 +1003,6 @@ describe("db push", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
       files: migrationFile("20240101000000"),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       const exit = yield* dbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
@@ -1131,7 +1028,6 @@ describe("db push", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(Cause.pretty(exit.cause)).toContain("failed to parse config:");
-      expect(out.stderrText).not.toContain("Connecting to local database...");
       expect(conn.queries).toEqual([]);
     });
   });
@@ -1150,7 +1046,6 @@ describe("db push", () => {
           ...migrationFile("20240101000000"),
           "supabase/.env": `DOTENV_PRIVATE_KEY=${PRIVATE_KEY}\n`,
         },
-        confirm: [true],
       });
       return Effect.gen(function* () {
         yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1163,15 +1058,16 @@ describe("db push", () => {
   );
 
   it.effect("defaults to the linked target when no target flag is set", () => {
-    const { layer, out } = setup(tmp.current, {
+    const { layer, out, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
-      args: ["db", "push"],
-      isLocal: false,
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false }).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(resolver.calls[0]).toMatchObject({
+        target: { kind: "linked", ref: VALID_REF, source: "file", matchesLinkedRef: true },
+        hasPasswordFlag: true,
+      });
       expect(out.stdoutText).toBe("Remote database is up to date.\n");
     });
   });
@@ -1180,8 +1076,6 @@ describe("db push", () => {
     // No target flag: push defaults to the linked project.
     const { layer, projectHttp } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
-      args: ["db", "push", "--project-ref", VALID_REF],
-      isLocal: false,
       realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
@@ -1217,8 +1111,6 @@ describe("db push", () => {
   it.effect("does not mint a login role when --password is given", () => {
     const { layer, projectHttp } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
-      args: ["db", "push", "--linked", "--project-ref", VALID_REF, "--password", "secret"],
-      isLocal: false,
       realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
@@ -1252,7 +1144,6 @@ describe("db push", () => {
     () => {
       const { layer, projectHttp } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        args: ["db", "push", "--local"],
         realLayers: true,
       });
       const requests: Array<StubbedRequest> = [];
@@ -1282,7 +1173,6 @@ describe("db push", () => {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000", "BOOM;"),
       failExec: "BOOM",
-      confirm: [true],
     });
     return Effect.gen(function* () {
       const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
@@ -1308,7 +1198,6 @@ describe("db push", () => {
           detail: "Detail from the server.",
           position: 25,
         },
-        confirm: [true],
       });
       return Effect.gen(function* () {
         const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
@@ -1371,7 +1260,6 @@ describe("db push", () => {
   it.effect("uses embedded defaults when no config file is present", () => {
     const { layer, out } = setup(tmp.current, {
       files: migrationFile("20240101000000"),
-      confirm: [true],
     });
     return Effect.gen(function* () {
       // No config.toml written → the resolved config reports no config file → default config
@@ -1380,24 +1268,6 @@ describe("db push", () => {
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     });
   });
-
-  it.effect(
-    "auto-confirms pending migrations via SUPABASE_YES set only in the project .env",
-    () => {
-      // The project `.env` is applied before the history prompt reads
-      // `SUPABASE_YES`, so a `SUPABASE_YES` in supabase/.env auto-confirms without
-      // any interactive answer.
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
-        // No `confirm` responses; the prompt must be auto-confirmed.
-      });
-      return Effect.gen(function* () {
-        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      });
-    },
-  );
 
   it.effect("fails when config.toml cannot be parsed", () => {
     const { layer } = setup(tmp.current, { toml: "this is = = not [[[ valid toml" });
@@ -1418,7 +1288,6 @@ describe("db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       files: migrationFile("20240101000000"),
-      confirm: [true],
       env: { SEED_ENABLED: "true" },
     });
     return Effect.gen(function* () {
@@ -1434,8 +1303,6 @@ describe("db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       projectRef: VALID_REF,
       confirm: [true],
     });
@@ -1449,8 +1316,6 @@ describe("db push", () => {
   it.effect("announces a matching [remotes.*] override on the linked path", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
@@ -1464,8 +1329,6 @@ describe("db push", () => {
     () => {
       const { layer, out } = setup(tmp.current, {
         toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
-        args: ["db", "push", "--linked"],
-        isLocal: false,
         projectRef: VALID_REF,
         env: { SUPABASE_REMOTES_PREVIEW_PROJECT_ID: VALID_REF },
       });
@@ -1479,8 +1342,6 @@ describe("db push", () => {
   it.effect("leaves a [remotes.*] block unselected when its project_id is not the target", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
@@ -1493,15 +1354,13 @@ describe("db push", () => {
     const { layer, out, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       projectRef: VALID_REF,
       format: "json",
-      confirm: [true],
+      yes: true,
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(out.stderrText).toContain("Confirmed by --yes: Apply 1 migration");
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(VALID_REF);
       const success = out.messages.find((m) => m.type === "success");
@@ -1514,11 +1373,9 @@ describe("db push", () => {
     const { layer, out, linkedCache, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       linkedFails: true,
       format: "json",
-      confirm: [true],
+      yes: true,
     });
     return Effect.gen(function* () {
       yield* dbPush({
@@ -1527,10 +1384,14 @@ describe("db push", () => {
         linked: true,
         projectRef: Option.some(FLAG_PROJECT_REF),
       }).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Connecting to remote database...");
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
-      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_PROJECT_REF));
+      expect(resolver.calls[0]?.target).toEqual({
+        kind: "linked",
+        ref: FLAG_PROJECT_REF,
+        source: "flag",
+        matchesLinkedRef: false,
+      });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
     });
@@ -1541,8 +1402,6 @@ describe("db push", () => {
     // `VALID_REF` fallback, so the override only announces if the flag resolved it.
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.staging]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
-      args: ["db", "push", "--linked"],
-      isLocal: false,
     });
     return Effect.gen(function* () {
       yield* dbPush({
@@ -1559,8 +1418,6 @@ describe("db push", () => {
     const { layer, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      args: ["db", "push", "--linked"],
-      isLocal: false,
       // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
       projectRef: VALID_REF,
       confirm: [true],
@@ -1582,22 +1439,48 @@ describe("db push", () => {
     const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
-      args: ["db", "push", "--local"],
     });
     return Effect.gen(function* () {
       const exit = yield* dbPush({
         ...DEFAULT_FLAGS,
         projectRef: Option.some(FLAG_PROJECT_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
+      expect(failError(exit)._tag).toBe("TargetProjectRefConflictError");
       expect(conn.execs).toEqual([]);
       expect(resolver.calls).toEqual([]);
       expect(linkedCache.cached).toBe(false);
     });
   });
+});
+
+describeHostedConsent("db push", {
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${workdir}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${workdir}/supabase/.temp/project-ref`, VALID_REF);
+      yield* fs.writeFileString(`${workdir}/supabase/config.toml`, 'project_id = "test"\n');
+      yield* fs.makeDirectory(`${workdir}/${MIGRATION_DIR}`, { recursive: true });
+      yield* fs.writeFileString(
+        `${workdir}/${MIGRATION_DIR}/20240101000000_test.sql`,
+        "create table t ();",
+      );
+    }),
+  invoke: ({ out }) => {
+    const conn = mockConnection({});
+    return {
+      run: dbPush({ ...DEFAULT_FLAGS, local: false }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            conn.layer,
+            mockResolver().layer,
+            configValuesLayer({ output: out.layer }),
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+      ),
+      mutations: () =>
+        conn.queries.filter((q) => q.sql.includes("INSERT INTO supabase_migrations")).length,
+    };
+  },
 });

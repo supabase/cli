@@ -16,6 +16,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPush } from "./push.handler.ts";
 import { dbPushRuntimeLayer } from "./push.layers.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -41,29 +42,7 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Pushes to the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Pushes to the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Pushes to the local database."),
-    Flag.withDefault(false),
-  ),
-  // Feeds `ProjectRefResolver.loadProjectRef`: flag > `SUPABASE_PROJECT_ID` >
-  // `supabase/.temp/project-ref`. Only feeds ref resolution — it does not affect local
-  // container ids or the pg-delta project id (see `db-config.types.ts`'s
-  // `linkedProjectRef` doc) — and is rejected outright on a non-linked target rather
-  // than silently ignored (see the handler's guard).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "sync", subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
