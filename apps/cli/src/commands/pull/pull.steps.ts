@@ -14,7 +14,7 @@ import {
   type ConfigPullRunPlan,
   type ConfigPullSource,
 } from "../../command-internal/config-pull-run.ts";
-import { runDbPull, type DbPullFlags } from "../../command-internal/db-pull-run.ts";
+import { runDbPull, type DbPullRunFlags } from "../../command-internal/db-pull-run.ts";
 import {
   runMigrationFetch,
   type MigrationFetchFlags,
@@ -83,17 +83,14 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 /**
  * `db` step: pulls the linked project's schema in migration mode, targeting `context.ref`
  * directly and suppressing `db pull`'s remote-history-update prompt with `assumeYes`.
- * `forceMigrationMode: true` prevents an ambient `--experimental` gate from silently switching to
- * the declarative export path, which `pull`'s dirty-check and confirmation don't guard against.
  * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
  * `pull` level (ADR 0024).
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
-  const flags: DbPullFlags = {
+  const flags: DbPullRunFlags = {
     name: Option.none(),
     declarative: Option.none(),
-    usePgDelta: Option.none(),
     diffEngine: Option.none(),
     strictCoverage: false,
     schema: [],
@@ -103,10 +100,7 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
     projectRef: Option.some(context.ref),
     password: Option.none(),
   };
-  return yield* runDbPull(flags, {
-    assumeYes: context.assumeYes,
-    forceMigrationMode: true,
-  }).pipe(
+  return yield* runDbPull(flags, { assumeYes: context.assumeYes }).pipe(
     Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",
       outcome,

@@ -84,33 +84,6 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "is inert apart from the stderr deprecation warning when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup({ outputFlag: "json" });
-      return Effect.gen(function* () {
-        yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stdoutText).toBe("");
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n" +
-            "Deleted custom hostname config successfully.\n",
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe(
-        "Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.\n" +
-          "Deleted custom hostname config successfully.\n",
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {

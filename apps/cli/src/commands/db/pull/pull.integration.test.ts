@@ -63,7 +63,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
-import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-values-layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -93,7 +93,6 @@ import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.ser
 import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
-import { runDbPull } from "../../../command-internal/db-pull-run.ts";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -140,7 +139,6 @@ const PgDeltaPlanEnvelope = Schema.fromJsonString(
 );
 
 interface SetupOpts {
-  readonly usePgDelta?: boolean;
   readonly env?: Readonly<Record<string, string>>;
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
@@ -167,8 +165,7 @@ interface SetupOpts {
   readonly dumpFailFirstWith?: string;
   // Bytes the first dump attempt streams before failing with `dumpFailFirstWith`.
   readonly dumpFailFirstPartialBytes?: string;
-  // Raw argv seen by the handler (CliArgs). Only consulted when both `--declarative`
-  // and `--use-pg-delta` are present, to replay last-occurrence-wins ordering.
+  // Raw argv seen by the handler (CliArgs); the explicit `--yes`/`--experimental` scanners read it.
   readonly args?: ReadonlyArray<string>;
   readonly networkId?: string;
   readonly platform?: NodeJS.Platform;
@@ -477,10 +474,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out.layer,
     configValuesLayer({
       output: out.layer,
-      flags:
-        opts.usePgDelta === undefined
-          ? []
-          : [flagInput("experimental.pgdelta.enabled", "use-pg-delta", opts.usePgDelta)],
       env: opts.env,
     }),
     telemetry.layer,
@@ -695,11 +688,11 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("honors --project-ref on the deprecated --experimental export", () => {
+  it.effect("honors --project-ref on the declarative export", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
+    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
-      yield* dbPull(flags({ projectRef: Option.some(FLAG_REF) }));
+      yield* dbPull(flags({ declarative: Option.some(true), projectRef: Option.some(FLAG_REF) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(s.engineCalls[0]?.projectRef).toBe(FLAG_REF);
     }).pipe(Effect.provide(s.layer));
@@ -1091,23 +1084,6 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "deprecated --use-pg-delta prints the deprecation line and behaves like --declarative",
-    () => {
-      const s = setup(tmp.current, { usePgDelta: true, edgeStdout: EXPORT_JSON });
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ usePgDelta: Option.some(true) }));
-        expect(streamText(s.out, "stderr")).toContain(
-          "Flag --use-pg-delta has been deprecated, use --declarative instead.\n",
-        );
-        const path = yield* Path.Path;
-        expect(streamText(s.out, "stderr")).toContain(
-          `Declarative schema written to ${path.join("supabase", "schemas")}\n`,
-        );
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
   it.effect("passes the config/workdir-resolved project id to the pg-delta engine", () => {
     // Absent env/config project_id, the workdir basename must reach the pg-delta
     // engine's project id, including on the declarative-export path (read before any
@@ -1145,67 +1121,6 @@ describe("db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
-
-  it.effect(
-    "--declarative --use-pg-delta=false stays in migration mode (last occurrence wins)",
-    () => {
-      // Both flags bind to one variable, so the last occurrence wins — ORing the two
-      // parsed flags would wrongly take the declarative path instead.
-      const s = setup(tmp.current, {
-        usePgDelta: false,
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
-        edgeStdout: "create table remote ();\n",
-        yes: true,
-        args: ["db", "pull", "--declarative", "--use-pg-delta=false"],
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
-        expect(s.historyUpserts.length).toBe(1);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "--use-pg-delta --declarative=false stays in migration mode and diffs with pg-delta",
-    () => {
-      const s = setup(tmp.current, {
-        usePgDelta: true,
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },
-        edgeStdout: pgDeltaDiffEnvelope([
-          { name: "schema_changes", sql: "create table remote ();" },
-        ]),
-        yes: true,
-        args: ["db", "pull", "--use-pg-delta", "--declarative=false"],
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }));
-        expect(s.historyUpserts.length).toBe(1);
-        expect(s.engineCalls[0]?.operation).toBe("diff");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect("--declarative --use-pg-delta (both true) takes the declarative export path", () => {
-    const s = setup(tmp.current, {
-      usePgDelta: true,
-      edgeStdout: EXPORT_JSON,
-      args: ["db", "pull", "--declarative", "--use-pg-delta"],
-    });
-    return Effect.gen(function* () {
-      yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
-      expect(s.engineCalls[0]?.operation).toBe("export");
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      expect(
-        yield* fs.exists(path.join(tmp.current, "supabase", "schemas", "public", "t.sql")),
-      ).toBe(true);
-      expect(s.historyUpserts.length).toBe(0);
-    }).pipe(Effect.provide(s.layer));
-  });
 
   it.effect("a migration-history conflict fails with the repair suggestion", () => {
     const s = setup(tmp.current, {
@@ -1806,139 +1721,24 @@ describe("db pull", () => {
     },
   );
 
-  it.effect(
-    "SUPABASE_EXPERIMENTAL prints a deprecation warning and runs the in-process declarative export",
-    () => {
-      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-      return Effect.gen(function* () {
-        yield* withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, dbPull(flags()));
-        expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
-        expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
-        );
-        expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "forceMigrationMode overrides SUPABASE_EXPERIMENTAL to keep runDbPull in migration mode; unset preserves the existing declarative-export resolution",
-    () => {
-      const forced = setup(tmp.current, {
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        edgeStdout: pgDeltaDiffEnvelope([
-          { name: "schema_changes", sql: "create table remote ();" },
-        ]),
-      });
-      const unforced = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-      return withConfigEnv(
-        { SUPABASE_EXPERIMENTAL: "true" },
-        Effect.gen(function* () {
-          // `forceMigrationMode: true` keeps an in-process caller in migration mode
-          // even though the ambient `SUPABASE_EXPERIMENTAL` gate would otherwise select
-          // the deprecated declarative export.
-          yield* runDbPull(flags({ diffEngine: Option.some("pg-delta") }), {
-            forceMigrationMode: true,
-          }).pipe(Effect.provide(forced.layer));
-          expect(forced.engineCalls[0]?.operation).toBe("diff");
-          expect(streamText(forced.out, "stderr")).not.toContain(
-            "Preparing declarative schema export",
-          );
-
-          // Unset preserves the original behavior: the ambient gate still switches to
-          // the in-process declarative export.
-          yield* runDbPull(flags()).pipe(Effect.provide(unforced.layer));
-          expect(unforced.engineCalls[0]?.operation).toBe("export");
-          expect(streamText(unforced.out, "stderr")).toContain(
-            "Preparing declarative schema export",
-          );
-        }),
-      );
-    },
-  );
-
-  it.effect("--experimental still exports when the last --declarative alias is false", () => {
+  it.effect("--experimental --declarative runs the declarative export without an error", () => {
     const s = setup(tmp.current, {
-      usePgDelta: false,
       experimental: true,
       edgeStdout: EXPORT_JSON,
-      args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
+      args: ["db", "pull", "--experimental", "--declarative"],
     });
     return Effect.gen(function* () {
-      yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
+      yield* dbPull(flags({ declarative: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(streamText(s.out, "stderr")).toContain(
-        "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
+        "Preparing declarative schema export using pg-delta...",
       );
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect("--experimental with --diff-engine still runs the in-process export", () => {
-    const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
-    return Effect.gen(function* () {
-      yield* dbPull(flags({ diffEngine: Option.some("migra") }));
-      expect(s.engineCalls[0]?.operation).toBe("export");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect(
-    "the global --experimental flag prints a deprecation warning and runs the in-process export",
-    () => {
-      const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
-      return Effect.gen(function* () {
-        yield* dbPull(flags());
-        expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
-        expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release.",
-        );
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "an experimental pull in json mode reports a declarative export with no history repair",
-    () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        format: "json",
-        edgeStdout: EXPORT_JSON,
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags());
-        const success = s.out.messages.find((m) => m.type === "success");
-        expect(success?.data).toMatchObject({
-          declarative: true,
-          remoteHistoryUpdated: false,
-          engine: "pg-delta",
-        });
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "--declarative wins over --experimental and is unaffected by the deprecated experimental mode",
-    () => {
-      // Declarative mode is checked before the experimental gate, so it runs normally
-      // even when --experimental is also set.
-      const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ declarative: Option.some(true) }));
-        expect(streamText(s.out, "stderr")).toContain(
-          "Preparing declarative schema export using pg-delta...",
-        );
-        expect(streamText(s.out, "stderr")).not.toContain("is deprecated");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect(
     "an explicit --experimental=false wins over SUPABASE_EXPERIMENTAL=true and pulls normally",
     () => {
-      // A set flag value wins over env regardless of true/false, so `--experimental=false`
-      // isn't overridden by a truthy `SUPABASE_EXPERIMENTAL`.
       const s = setup(tmp.current, {
         migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
@@ -1949,62 +1749,7 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ diffEngine: Option.some("migra") }));
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
-      );
-    },
-  );
-
-  it.effect(
-    "a migration name literally '--experimental=false' after -- does not suppress SUPABASE_EXPERIMENTAL",
-    () => {
-      // Flag parsing stops at the first bare
-      // `--`, so `db pull -- --experimental=false` passes it as the positional
-      // migration-name argument, not a flag occurrence — unlike the unterminated case
-      // above, this must still take the experimental export.
-      const s = setup(tmp.current, {
-        args: ["db", "pull", "--", "--experimental=false"],
-        edgeStdout: EXPORT_JSON,
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ name: Option.some("--experimental=false") }));
-        expect(s.engineCalls[0]?.operation).toBe("export");
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
-      );
-    },
-  );
-
-  it.effect(
-    "a repeated --experimental=false --experimental=true still exports (last Set() wins)",
-    () => {
-      // Each flag binds one variable: repeated occurrences collapse to
-      // whichever Set() call happened last, so a resolver must not get this ordering
-      // backwards.
-      const s = setup(tmp.current, {
-        args: ["db", "pull", "--experimental=false", "--experimental=true"],
-        edgeStdout: EXPORT_JSON,
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags());
-        expect(s.engineCalls[0]?.operation).toBe("export");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL still gates the experimental export",
-    () => {
-      // `--password --experimental=false` parses as `--password`'s value being the
-      // literal string "--experimental=false" — `--experimental` itself was never
-      // Changed, so the pull must still fall back to `SUPABASE_EXPERIMENTAL=true`.
-      const s = setup(tmp.current, {
-        args: ["db", "pull", "--password", "--experimental=false"],
-        edgeStdout: EXPORT_JSON,
-      });
-      return Effect.gen(function* () {
-        yield* dbPull(flags());
-        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer), (body) =>
         withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
       );

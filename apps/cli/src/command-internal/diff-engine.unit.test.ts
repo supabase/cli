@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseBoolEnv,
-  resolveDeclarativeFromArgs,
-  resolveDiffEngine,
-  resolvePullDiffEngine,
-} from "./diff-engine.ts";
+import { resolveDiffEngine, resolvePullDiffEngine } from "./diff-engine.ts";
 
 describe("resolveDiffEngine", () => {
   const base = {
@@ -61,51 +56,5 @@ describe("resolvePullDiffEngine", () => {
         pgDeltaDefault: false,
       }),
     ).toBe(false);
-  });
-});
-
-describe("parseBoolEnv", () => {
-  it("accepts only the boolean truthy strings", () => {
-    for (const v of ["1", "t", "T", "TRUE", "true", "True"]) {
-      expect(parseBoolEnv(v)).toBe(true);
-    }
-  });
-
-  it("treats every other value (including unset) as false", () => {
-    for (const v of ["0", "f", "FALSE", "false", "yes", "on", "2", "", "TrUe"]) {
-      expect(parseBoolEnv(v)).toBe(false);
-    }
-    expect(parseBoolEnv(undefined)).toBe(false);
-  });
-});
-
-describe("resolveDeclarativeFromArgs", () => {
-  it("returns undefined when neither flag is present", () => {
-    expect(resolveDeclarativeFromArgs(["db", "pull"])).toBeUndefined();
-    expect(resolveDeclarativeFromArgs([])).toBeUndefined();
-  });
-
-  it("treats a bare flag as true", () => {
-    expect(resolveDeclarativeFromArgs(["db", "pull", "--declarative"])).toBe(true);
-    expect(resolveDeclarativeFromArgs(["db", "pull", "--use-pg-delta"])).toBe(true);
-  });
-
-  it("parses an =value with boolean semantics", () => {
-    expect(resolveDeclarativeFromArgs(["--declarative=false"])).toBe(false);
-    expect(resolveDeclarativeFromArgs(["--declarative=true"])).toBe(true);
-    expect(resolveDeclarativeFromArgs(["--use-pg-delta=0"])).toBe(false);
-    expect(resolveDeclarativeFromArgs(["--use-pg-delta=1"])).toBe(true);
-  });
-
-  it("lets the last occurrence win across both flag names", () => {
-    expect(resolveDeclarativeFromArgs(["--declarative", "--use-pg-delta=false"])).toBe(false);
-    expect(resolveDeclarativeFromArgs(["--use-pg-delta", "--declarative=false"])).toBe(false);
-    expect(resolveDeclarativeFromArgs(["--declarative=false", "--use-pg-delta"])).toBe(true);
-    expect(resolveDeclarativeFromArgs(["--use-pg-delta=false", "--declarative"])).toBe(true);
-  });
-
-  it("ignores tokens after the `--` argv terminator", () => {
-    expect(resolveDeclarativeFromArgs(["--declarative", "--", "--use-pg-delta=false"])).toBe(true);
-    expect(resolveDeclarativeFromArgs(["--", "--declarative"])).toBeUndefined();
   });
 });

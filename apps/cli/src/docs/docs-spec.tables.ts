@@ -215,18 +215,10 @@ export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string
 };
 
 /**
- * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`.
- * `--include-raw-output` stays parse-visible for compatibility (see
- * `commands/domains/SIDE_EFFECTS.md`) but is hidden from docs here. Validated at build time
- * like the other tables.
+ * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`. Validated at build
+ * time like the other tables.
  */
-export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
-  "supabase-domains-activate include-raw-output",
-  "supabase-domains-create include-raw-output",
-  "supabase-domains-delete include-raw-output",
-  "supabase-domains-get include-raw-output",
-  "supabase-domains-reverify include-raw-output",
-]);
+export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([]);
 
 /**
  * Usage argument overrides, keyed by doc id, for commands whose published argument rendering

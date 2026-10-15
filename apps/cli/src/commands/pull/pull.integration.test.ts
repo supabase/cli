@@ -38,6 +38,7 @@ import {
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
   transportFailure,
+  withConfigEnv,
   shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
@@ -604,7 +605,7 @@ interface SetupOpts {
   readonly confirmSideEffect?: Effect.Effect<void, PlatformError.PlatformError>;
   /** Overrides `cliSettings.workdir` — defaults to the temp project root. */
   readonly workdir?: string;
-  /** Overrides the ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate — defaults to `false`. */
+  /** Overrides the global `--experimental` flag — defaults to `false`. */
   readonly experimental?: boolean;
 }
 
@@ -1383,32 +1384,31 @@ describe("pull integration", () => {
   );
 
   it.effect(
-    "the db step stays in migration mode with the ambient --experimental gate on, never taking the declarative export path",
+    "the db step pulls migrations when --experimental or SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, out } = setup({
         yes: true,
         experimental: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
-        // A real diff, so the db step actually writes. If `pullDbStep` didn't forward
-        // `forceMigrationMode: true`, the ambient `--experimental` gate would route this to
-        // the declarative path instead, which the mocked `PgDeltaEngine.exportDeclarativeSchema`
-        // dies on.
         diffOutcome: () => ({
           changes: true,
           files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
         }),
       });
-      return Effect.gen(function* () {
-        yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
-        yield* writeConfig();
-        yield* seedLocalMigration("20260101000000");
-        const exit = yield* Effect.exit(runPull(pullFlags()));
-        expect(Exit.isSuccess(exit)).toBe(true);
+      return withConfigEnv(
+        { SUPABASE_EXPERIMENTAL: "true" },
+        Effect.gen(function* () {
+          yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isSuccess(exit)).toBe(true);
 
-        expect((yield* listMigrations).length).toBeGreaterThan(1);
-        expect(yield* projectFileExists("supabase", "schemas")).toBe(false);
-        expect(stepLine(out.stdoutText, "db")).toContain("changed");
-      }).pipe(Effect.provide(layer));
+          expect((yield* listMigrations).length).toBeGreaterThan(1);
+          expect(yield* projectFileExists("supabase", "schemas")).toBe(false);
+          expect(stepLine(out.stdoutText, "db")).toContain("changed");
+        }).pipe(Effect.provide(layer)),
+      );
     },
   );
 

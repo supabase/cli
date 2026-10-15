@@ -114,36 +114,28 @@ function terminateHumanStatus(status: string): string {
  *     nothing goes to stdout.
  *   - In a structured `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
  *     response goes to **stdout** and the human status is suppressed.
- *   - `--include-raw-output` (deprecated) forces `-o` to `json` when unset or `pretty`.
  *   - For `--output-format json|stream-json` (no `-o` flag), emits a single
  *     structured `success` event and suppresses the stderr status.
  */
-export const emitHostnameResult = Effect.fnUntraced(function* (
-  response: HostnameResponse,
-  includeRawOutput: boolean,
-) {
+export const emitHostnameResult = Effect.fnUntraced(function* (response: HostnameResponse) {
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
 
   const outputFlagFormat = Option.getOrUndefined(outputFlag);
-  const effectiveOutputFlagFormat =
-    includeRawOutput && (outputFlagFormat === undefined || outputFlagFormat === "pretty")
-      ? "json"
-      : outputFlagFormat;
 
-  if (effectiveOutputFlagFormat === "json") {
+  if (outputFlagFormat === "json") {
     yield* output.raw(encodeSortedJson(normalizeHostnameResponse(response)));
     return;
   }
-  if (effectiveOutputFlagFormat === "yaml") {
+  if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeStructYaml(response, HOSTNAME_RESPONSE_SHAPE));
     return;
   }
-  if (effectiveOutputFlagFormat === "toml") {
+  if (outputFlagFormat === "toml") {
     yield* output.raw(encodeStructToml(response, HOSTNAME_RESPONSE_SHAPE));
     return;
   }
-  if (effectiveOutputFlagFormat === "env") {
+  if (outputFlagFormat === "env") {
     yield* output.raw(encodeEnv(normalizeHostnameResponse(response)) + "\n");
     return;
   }

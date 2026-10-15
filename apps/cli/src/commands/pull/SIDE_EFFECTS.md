@@ -314,10 +314,9 @@ pull`/`migration fetch`'s own internal resolution) — this doesn't matter in pr
   reused step's own prompt is unconditionally bypassed (`assumeYes: true`) once `pull`'s own
   confirmation is accepted.
 - **The db step always runs in migration mode when orchestrated by `pull`, never the declarative
-  path.** `pull` never sets `--declarative`/`--use-pg-delta`/`--diff-engine` on its own db-step
-  invocation, AND `pullDbStep` (`pull.steps.ts`) passes `forceMigrationMode: true` into `runDbPull`
-  (`command-internal/db-pull-run.ts`), which forces `experimental` to `false` unconditionally,
-  regardless of any ambient `--experimental` flag or `SUPABASE_EXPERIMENTAL` (shell or project
-  dotenv). The deprecated `--experimental`-without-`--declarative` structured-dump export therefore
-  can never engage when the db step runs through `pull` — see `db/pull/SIDE_EFFECTS.md`'s own notes
-  on that path, which still applies to the standalone `db pull` command.
+  path.** `pull` never sets `--declarative`/`--diff-engine` on its own db-step invocation and calls
+  `runDbPull` (`command-internal/db-pull-run.ts`), where the experimental gate no longer selects
+  the pull mode (its local-container prelude still resolves the gate for the local stack). Only the
+  standalone `db pull` command rejects an ambient experimental gate without `--declarative` (see
+  `db/pull/SIDE_EFFECTS.md`), so `pull` keeps working when it is set. The retry hint for the db step ends in `--experimental=false` so that command does not hit
+  that rejection either.

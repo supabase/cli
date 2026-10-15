@@ -290,7 +290,7 @@ describe("buildDocsSpec", () => {
 });
 
 describe("review fixes stay fixed", () => {
-  it("excludes the deprecated --include-raw-output from every domains page", () => {
+  it("does not publish the removed --include-raw-output on any domains page", () => {
     const { spec, byId } = builtSpec();
     for (const command of spec.commands) {
       expect(
