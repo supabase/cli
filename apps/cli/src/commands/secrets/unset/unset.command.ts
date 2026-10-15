@@ -60,7 +60,11 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
     compose(
       {
         operations: [
-          { operationId: "v1-list-all-secrets", kind: "required", when: [{ flag: "all", is: true }] },
+          {
+            operationId: "v1-list-all-secrets",
+            kind: "required",
+            when: [{ flag: "all", is: true }],
+          },
           {
             operationId: "v1-bulk-delete-secrets",
             kind: "required",
