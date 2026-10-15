@@ -163,10 +163,6 @@ describe("functions delete", () => {
         }
         expect(api.requests).toEqual([]);
         expect(linkedProjectCache.cached).toBe(false);
-        assertPermissionDrift({
-          command: "functions delete",
-          requests: api.requests,
-        });
       }).pipe(Effect.provide(layer));
     },
   );

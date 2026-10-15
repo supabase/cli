@@ -1,7 +1,7 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
@@ -67,10 +67,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
         operations: [],
         noApiEffectFlags: ["use-api", "use-docker", "legacy-bundle"],
       },
-      withContext(
-        functionsDownloadCalls,
-        "on the native path (with --legacy-bundle the Go binary makes these calls and they aren't recorded)",
-      ),
+      functionsDownloadCalls,
       projectRefPicker,
       linkedProjectCache,
     ),

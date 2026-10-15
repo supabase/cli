@@ -222,7 +222,7 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 });
 
 /**
- * PUTs the archive straight at the presigned slot, with no Supabase credentials attached — the
+ * Sends the archive straight to the presigned slot (POST or PUT, as the slot says), with no Supabase credentials attached — the
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */

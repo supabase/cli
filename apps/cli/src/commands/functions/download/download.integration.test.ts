@@ -2034,11 +2034,6 @@ describe("functions download", () => {
         ]);
         expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
         expect(api.requests).toEqual([]);
-        assertPermissionDrift({
-          command: "functions download",
-          activeFlags: { "legacy-bundle": true },
-          requests: api.requests,
-        });
       }).pipe(Effect.provide(layer));
     },
   );

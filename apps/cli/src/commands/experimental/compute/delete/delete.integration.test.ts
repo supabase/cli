@@ -161,7 +161,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The API grants `edge_functions:read` for the GET and `edge_functions:write`
+  // The API grants `workers_read` for the GET and `workers_write`
   // for the DELETE separately, so a credential holding only write could not
   // delete a compute it is entitled to delete.
   it.effect("deletes with --yes when the credential may not read the compute", () =>
