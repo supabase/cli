@@ -28,7 +28,7 @@ disabling safe compaction.
 | --------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`                                            | TOML   | always — pg-delta gate, format options                                                                                                                                                                                                                                                             |
 | `<workdir>/supabase/schemas/**/*.sql` (default declarative dir)             | SQL    | always — must exist (else error)                                                                                                                                                                                                                                                                   |
-| `<workdir>/supabase/migrations/*.sql`                                       | SQL    | applied to the live migrations shadow                                                                                                                                                                                                                                                              |
+| `<workdir>/supabase/migrations/*.sql`                                       | SQL    | applied to the live migrations shadow; the no-files bootstrap also lists them to decide whether to offer a local reset                                                                                                                                                                             |
 | `<workdir>/supabase/roles.sql`                                              | SQL    | hashed into the shadow-baseline cache key on every cache-eligible acquire, warm hits included, and applied to a cold shadow's baseline; missing file tolerated (hashed as empty)                                                                                                                   |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON   | export metadata, when present                                                                                                                                                                                                                                                                      |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | warm shadow-cache hit (migrations/declarative shadows); every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
@@ -46,10 +46,10 @@ disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                           | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                               | always                                                            |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                  | When                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache      | always                                                                                                                                                                                                 |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` | the failed-apply recovery (TTY only, apply failed, the user confirms "reset and reapply"); the no-files bootstrap with migrations and the staged export's reset offer, when confirmed or under `--yes` |
 
 ## Environment Variables
 
@@ -113,14 +113,20 @@ existing SQL or creates an export manifest.
   and `--experimental` is omitted.
 - `--file` sets the migration filename stem (default `declarative_sync`); `--name`
   overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
-- When no declarative files exist, a TTY offers to generate them (from local) first.
+- When no declarative files exist, a TTY offers to generate them first (`--yes`/`SUPABASE_YES`
+  accepts). The bootstrap always exports from the local database: it checks the local Postgres
+  image, starts a stopped local database and, when `supabase/migrations` holds migrations, asks
+  `Reset local database to match migrations first? (local data will be lost)` (default no;
+  `--yes` answers yes). It never asks which database to use, and `sync` has no target flags. Run
+  `supabase db schema declarative generate --linked` (or `--db-url`) first to start from a hosted
+  database.
 - The declarative directory is the complete desired state: omitted objects,
   including extensions, are removals. Use `generate --output-dir <staging-dir>`
   to review a next-compatible tree without changing config or activating it.
 - The interactive staged export announces that it snapshots the RUNNING local
   database (not the migrations state) and offers the same
-  "Reset local database to match migrations first?" prompt as the smart-target
-  local path before exporting. The printed staged-upgrade/adoption commands are
+  "Reset local database to match migrations first?" prompt as the no-files
+  bootstrap before exporting. The printed staged-upgrade/adoption commands are
   rendered for the host platform: POSIX shells get `rm -rf`/`mv`, Windows gets
   single-line PowerShell (`Remove-Item`/`Move-Item`).
 - When `declarative_schema_path` is unset, the new `supabase/schemas` default is
@@ -132,8 +138,8 @@ existing SQL or creates an export manifest.
   history). On apply failure a debug bundle is written under
   `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
   (the reset itself is native too — `resetLocalDatabase` — run in-process,
-  sharing this command's own telemetry/linked-project-cache finalizer cycle
-  rather than firing a second one from a child process).
+  sharing this command's own telemetry finalizer cycle rather than firing a
+  second one from a child process).
 - **Architecture:** the engine plans and renders in-process from two live
   shadows.
 - **Stale local-container guard.** Before diffing against the running local `db`
