@@ -27,13 +27,22 @@ vi.mock("node:net", (importOriginal) =>
 
 import {
   VALID_TOKEN,
+  withConfigEnv,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import {
+  AgentFlag,
+  DnsResolverFlag,
+  OutputFlag,
+  YesFlag,
+} from "../../../command-internal/global-flags.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
@@ -48,6 +57,16 @@ import { ProjectRefReadError } from "../../../shared/config/temp-paths.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigParseUrlError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { HostedMutationConsentRequiredError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+} from "../../../command-internal/target/target.errors.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -80,20 +99,27 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
-function mockResolver(isLocal = true, resolveFails = false) {
+function mockResolver(isLocal: boolean | undefined, resolveFails = false) {
   return Layer.succeed(DbConfigResolver, {
-    resolve: () =>
+    resolve: () => Effect.die("resolve is not used by this test"),
+    resolveConnection: (input: DbConnectionInput) =>
       resolveFails
         ? Effect.fail(
             new DbConfigParseUrlError({
               message: "failed to parse connection string: invalid dsn",
             }),
           )
-        : Effect.succeed({ conn: LOCAL_CONN, isLocal }),
-    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
+        : Effect.succeed({
+            conn: LOCAL_CONN,
+            isLocal: isLocal ?? input.target.kind === "local",
+            ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+            target: input.target,
+          } satisfies ResolvedDbConnection),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
+
+const WRITE_STATEMENT = /^\s*(insert|update|delete|create|drop|alter)\b/iu;
 
 function mockDbConnection(opts: {
   result?: QueryResult;
@@ -101,7 +127,9 @@ function mockDbConnection(opts: {
   rlsFails?: boolean;
   queryFails?: boolean;
 }) {
-  return Layer.succeed(DbConnection, {
+  const statements: Array<string> = [];
+  let inReadOnly = false;
+  const layer = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
@@ -109,22 +137,45 @@ function mockDbConnection(opts: {
         query: () => Effect.succeed([]),
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
-        queryRaw: (sql: string) => {
-          if (sql === RLS_CHECK_SQL) {
-            return opts.rlsFails === true
-              ? Effect.fail(new DbExecError({ message: "advisory failed" }))
-              : Effect.succeed({
-                  fields: ["format"],
-                  rows: (opts.rlsTables ?? []).map((table) => [table]),
-                  commandTag: `SELECT ${(opts.rlsTables ?? []).length}`,
-                });
-          }
-          return opts.queryFails === true
-            ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
-            : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
-        },
+        queryRaw: (sql: string) =>
+          Effect.suspend(() => {
+            if (sql === RLS_CHECK_SQL) {
+              return opts.rlsFails === true
+                ? Effect.fail(new DbExecError({ message: "advisory failed" }))
+                : Effect.succeed({
+                    fields: ["format"],
+                    rows: (opts.rlsTables ?? []).map((table) => [table]),
+                    commandTag: `SELECT ${(opts.rlsTables ?? []).length}`,
+                  });
+            }
+            statements.push(sql);
+            if (sql === "BEGIN READ ONLY") {
+              inReadOnly = true;
+              return Effect.succeed({ fields: [], rows: [], commandTag: "BEGIN" });
+            }
+            if (sql === "ROLLBACK") {
+              inReadOnly = false;
+              return Effect.succeed({ fields: [], rows: [], commandTag: "ROLLBACK" });
+            }
+            if (inReadOnly && WRITE_STATEMENT.test(sql)) {
+              return Effect.fail(
+                new DbExecError({ message: "cannot execute INSERT in a read-only transaction" }),
+              );
+            }
+            return opts.queryFails === true
+              ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
+              : Effect.succeed(
+                  opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" },
+                );
+          }),
       }),
   });
+  return {
+    layer,
+    get statements() {
+      return statements;
+    },
+  };
 }
 
 function mockTelemetryOutputFormat() {
@@ -144,11 +195,11 @@ function mockTelemetryOutputFormat() {
 }
 
 function mockProjectRef(unlinked = false, refReadFails = false) {
-  // `loadProjectRef` mirrors the real preflight: an explicit `--project-ref` flag wins first,
-  // then ErrNotLinked when absent, or a read error (ProjectRefReadError) for an unreadable file.
-  const loadProjectRef = (flagValue: Option.Option<string>) =>
+  // An explicit `--project-ref` wins first, then ProjectRefNotLinkedError when unlinked, or a
+  // read error for an unreadable ref file.
+  const resolveRef = (flagValue: Option.Option<string>) =>
     Option.isSome(flagValue) && flagValue.value.length > 0
-      ? Effect.succeed(flagValue.value)
+      ? Effect.succeed({ ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false })
       : refReadFails
         ? Effect.fail(
             new ProjectRefReadError({
@@ -157,13 +208,13 @@ function mockProjectRef(unlinked = false, refReadFails = false) {
           )
         : unlinked
           ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-          : Effect.succeed(REF);
+          : Effect.succeed({ ref: REF, source: "file" as const, matchesLinkedRef: true });
   return Layer.succeed(ProjectRefResolver, {
-    resolve: () => Effect.succeed(REF),
+    resolve: () => Effect.die("resolve is not used by this test"),
     resolveForLink: () => Effect.succeed(REF),
-    resolveRef: () => Effect.succeed({ ref: REF, source: "file", matchesLinkedRef: true }),
+    resolveRef,
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
-    loadProjectRef,
+    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(REF),
   });
 }
@@ -203,11 +254,15 @@ function mockHttpClient(opts: {
 }) {
   const requests: Array<string> = [];
   const calls: Array<{ method: string; url: string }> = [];
+  const bodies: Array<unknown> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       requests.push(request.url);
       calls.push({ method: request.method, url: request.url });
+      if (request.body._tag === "Uint8Array") {
+        bodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+      }
       const routed = opts.route?.({ method: request.method, url: request.url });
       if (routed !== undefined) {
         return Effect.succeed(
@@ -245,7 +300,23 @@ function mockHttpClient(opts: {
     get calls() {
       return calls;
     },
+    get bodies() {
+      return bodies;
+    },
   };
+}
+
+// `invalid` exercises the real `sbp_` token validator via `getAccessToken`.
+function mockCredentials(invalid = false, accessToken?: Option.Option<Redacted.Redacted<string>>) {
+  return Layer.succeed(CommandCredentials, {
+    getAccessToken: invalid
+      ? validateAccessToken("not_sbp").pipe(Effect.map((t) => Option.some(Redacted.make(t))))
+      : Effect.succeed(accessToken ?? Option.some(Redacted.make(VALID_TOKEN))),
+    saveAccessToken: () => Effect.die("unexpected credentials write in test"),
+    deleteAccessToken: Effect.die("unexpected credentials delete in test"),
+    deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
+    deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
+  });
 }
 
 interface SetupOpts {
@@ -273,10 +344,19 @@ interface SetupOpts {
   realCache?: boolean;
   /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
   realDbConfig?: boolean;
+  /** `--yes`; on by default so hosted runs reach the query. */
+  yes?: boolean;
+  interactive?: boolean;
+  confirm?: ReadonlyArray<boolean>;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const out = mockOutput({ format: opts.format ?? "text" });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive: opts.interactive,
+    promptConfirmResponses: opts.confirm,
+  });
+  const dbConnection = mockDbConnection(opts);
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
   const telemetryOutputFormat = mockTelemetryOutputFormat();
@@ -312,12 +392,17 @@ function setup(opts: SetupOpts = {}) {
     opts.realDbConfig === true
       ? realDbConfigResolver({
           workdir: opts.workdir ?? "/work/project",
-          dbConnection: mockDbConnection(opts),
+          dbConnection: dbConnection.layer,
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : mockResolver(opts.isLocal, opts.resolveFails),
-    mockDbConnection(opts),
+    dbConnection.layer,
     mockProjectRef(opts.unlinked, opts.refReadFails),
+    cliConfigValuesTestLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    Layer.succeed(CliArgs, { args: [] }),
+    mockTty({ stdinIsTty: opts.interactive ?? false }),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
     Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
     Layer.succeed(AiTool, {
@@ -333,30 +418,21 @@ function setup(opts: SetupOpts = {}) {
       workdir: opts.workdir ?? "/work/project",
       accessToken: opts.accessToken,
     }),
-    // `accessTokenInvalid` exercises the real `sbp_` token validator via `getAccessToken`.
-    Layer.succeed(CommandCredentials, {
-      getAccessToken:
-        opts.accessTokenInvalid === true
-          ? validateAccessToken("not_sbp").pipe(Effect.map((t) => Option.some(Redacted.make(t))))
-          : Effect.succeed(opts.accessToken ?? Option.some(Redacted.make(VALID_TOKEN))),
-      saveAccessToken: () => Effect.die("unexpected credentials write in test"),
-      deleteAccessToken: Effect.die("unexpected credentials delete in test"),
-      deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
-      deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
-    }),
+    mockCredentials(opts.accessTokenInvalid === true, opts.accessToken),
     httpClient.layer,
     BunServices.layer,
   );
-  return { layer, out, telemetry, cache, telemetryOutputFormat, httpClient };
+  return { layer, out, telemetry, cache, telemetryOutputFormat, httpClient, dbConnection };
 }
 
 const flags = (over: Partial<DbQueryFlags> = {}): DbQueryFlags => ({
   sql: over.sql ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? Option.none(),
-  local: over.local ?? Option.none(),
+  linked: over.linked ?? false,
+  local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
   file: over.file ?? Option.none(),
+  readOnly: over.readOnly ?? false,
 });
 
 const SELECT_RESULT: QueryResult = {
@@ -374,8 +450,7 @@ describe("db query integration", () => {
   it.effect("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select * from users"), local: Option.some(true) }));
-      expect(out.stderrText).toContain("Connecting to local database...");
+      yield* dbQuery(flags({ sql: Option.some("select * from users"), local: true }));
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).toContain("│ 1  │ alice │");
       expect(cache.cached).toBe(false);
@@ -393,23 +468,42 @@ describe("db query integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText).toContain("│ 1000000 │ 1e+06 │");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports connecting to the remote database for a --db-url target", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, isLocal: false });
+  it.effect("asks with a preview of the SQL before running it on a hosted --db-url target", () => {
+    const { layer, out, dbConnection } = setup({
+      result: SELECT_RESULT,
+      isLocal: false,
+      yes: false,
+      interactive: true,
+      confirm: [true],
+    });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), dbUrl: Option.some("postgres://x/y") }));
-      expect(out.stderrText).toContain("Connecting to remote database...");
+      yield* dbQuery(
+        flags({ sql: Option.some("delete  from\n users"), dbUrl: Option.some("postgres://x/y") }),
+      );
+      expect(out.stderrText).toContain("sql: delete from users");
+      expect(out.promptConfirmCalls).toHaveLength(1);
+      expect(dbConnection.statements).toEqual(["delete  from\n users"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("runs a local query without asking for consent", () => {
+    const { layer, out } = setup({ result: SELECT_RESULT, yes: false });
+    return Effect.gen(function* () {
+      yield* dbQuery(flags({ sql: Option.some("delete from users"), local: true }));
+      expect(out.promptConfirmCalls).toEqual([]);
+      expect(out.stdoutText).toContain("alice");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("errors when no SQL is provided on a TTY", () => {
     const { layer } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ local: true })).pipe(Effect.exit);
       expect(failMessage(exit)).toBe(
         "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
       );
@@ -419,7 +513,7 @@ describe("db query integration", () => {
   it.effect("reads SQL piped via stdin", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, stdinTTY: false, piped: "select 1\n" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ local: Option.some(true) }));
+      yield* dbQuery(flags({ local: true }));
       expect(out.stdoutText).toContain("alice");
     }).pipe(Effect.provide(layer));
   });
@@ -432,7 +526,7 @@ describe("db query integration", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-" });
       const filePath = path.join(dir, "q.sql");
       yield* fs.writeFileString(filePath, "select * from users");
-      yield* dbQuery(flags({ local: Option.some(true), file: Option.some(filePath) }));
+      yield* dbQuery(flags({ local: true, file: Option.some(filePath) }));
       expect(out.stdoutText).toContain("alice");
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
@@ -444,7 +538,7 @@ describe("db query integration", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-wd-" });
       yield* fs.writeFileString(path.join(dir, "q.sql"), "select * from users");
       const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
-      yield* dbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") })).pipe(
+      yield* dbQuery(flags({ local: true, file: Option.some("q.sql") })).pipe(
         Effect.provide(layer),
       );
       expect(out.stdoutText).toContain("alice");
@@ -455,7 +549,7 @@ describe("db query integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ local: Option.some(true), file: Option.some("/no/such/file.sql") }),
+        flags({ local: true, file: Option.some("/no/such/file.sql") }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to read SQL file");
     }).pipe(Effect.provide(layer));
@@ -464,7 +558,7 @@ describe("db query integration", () => {
   it.effect("errors on empty stdin", () => {
     const { layer } = setup({ stdinTTY: false, piped: "   " });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ local: true })).pipe(Effect.exit);
       expect(failMessage(exit)).toBe("no SQL provided via stdin");
     }).pipe(Effect.provide(layer));
   });
@@ -472,7 +566,7 @@ describe("db query integration", () => {
   it.effect("prints the command tag for DDL with no result columns", () => {
     const { layer, out } = setup({ result: { fields: [], rows: [], commandTag: "CREATE TABLE" } });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("create table t()"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("create table t()"), local: true }));
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -480,7 +574,7 @@ describe("db query integration", () => {
   it.effect("renders JSON for agents by default with the untrusted-data envelope", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       const parsed = yield* decodeJson(out.stdoutText);
       expect(parsed).toHaveProperty("boundary", BOUNDARY);
       expect(parsed).toHaveProperty("rows", [
@@ -494,7 +588,7 @@ describe("db query integration", () => {
   it.effect("auto-detects an agent from AiTool and defaults to JSON", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(yield* decodeJson(out.stdoutText)).toHaveProperty("boundary", BOUNDARY);
     }).pipe(Effect.provide(layer));
   });
@@ -502,7 +596,7 @@ describe("db query integration", () => {
   it.effect("renders plain JSON (no envelope) for a human with -o json", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       const parsed = yield* decodeJson(out.stdoutText);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual([
@@ -515,7 +609,7 @@ describe("db query integration", () => {
   it.effect("renders plain JSON for --output-format json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(yield* decodeJson(out.stdoutText)).toEqual([
         { id: 1, name: "alice" },
         { id: 2, name: "bob" },
@@ -526,7 +620,7 @@ describe("db query integration", () => {
   it.effect("emits a result event for --output-format stream-json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
       expect(yield* decodeJson(out.stdoutText)).toEqual(
         expect.objectContaining({
@@ -555,7 +649,7 @@ describe("db query integration", () => {
       format: "stream-json",
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
       expect(out.stdoutText).toContain('"n": 9223372036854775807');
     }).pipe(Effect.provide(layer));
@@ -569,7 +663,7 @@ describe("db query integration", () => {
       outputFlag: "pretty",
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -583,7 +677,7 @@ describe("db query integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 'NaN'::float8"), local: Option.some(true) }),
+        flags({ sql: Option.some("select 'NaN'::float8"), local: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("json: unsupported value: NaN");
@@ -596,15 +690,15 @@ describe("db query integration", () => {
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
     const csv = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "csv" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
         Effect.provide(human.layer),
       );
       expect(human.telemetryOutputFormat.format).toBe("table");
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
         Effect.provide(agent.layer),
       );
       expect(agent.telemetryOutputFormat.format).toBe("json");
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
         Effect.provide(csv.layer),
       );
       expect(csv.telemetryOutputFormat.format).toBe("csv");
@@ -614,7 +708,7 @@ describe("db query integration", () => {
   it.effect("renders CSV with -o csv", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "csv" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
     }).pipe(Effect.provide(layer));
   });
@@ -622,7 +716,7 @@ describe("db query integration", () => {
   it.effect("honors an explicit -o table over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", outputFlag: "table" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).not.toContain("boundary");
     }).pipe(Effect.provide(layer));
@@ -631,7 +725,7 @@ describe("db query integration", () => {
   it.effect("honors an explicit -o csv over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", outputFlag: "csv" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
     }).pipe(Effect.provide(layer));
   });
@@ -643,7 +737,7 @@ describe("db query integration", () => {
       rlsTables: ["public.users"],
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(yield* decodeJson(out.stdoutText)).toHaveProperty(["advisory", "id"], "rls_disabled");
     }).pipe(Effect.provide(layer));
   });
@@ -651,7 +745,7 @@ describe("db query integration", () => {
   it.effect("omits the advisory when the RLS check fails", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", rlsFails: true });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(yield* decodeJson(out.stdoutText)).not.toHaveProperty("advisory");
     }).pipe(Effect.provide(layer));
   });
@@ -671,44 +765,33 @@ describe("db query integration", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("bad"), local: Option.some(true) }),
+        flags({ sql: Option.some("bad"), local: true }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("rejects conflicting targets (--linked --local) before running any SQL", () => {
-    const { layer, cache } = setup();
+    const { layer, cache, dbConnection } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({
-          sql: Option.some("select 1"),
-          linked: Option.some(true),
-          local: Option.some(true),
-        }),
+        flags({ sql: Option.some("select 1"), linked: true, local: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-      );
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
+      }
+      expect(dbConnection.statements).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --local=false --linked=false as a target conflict", () => {
-    const { layer } = setup();
+  it.effect("treats --local=false --linked=false as absent and queries the local target", () => {
+    const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({
-          sql: Option.some("select 1"),
-          linked: Option.some(false),
-          local: Option.some(false),
-        }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-      );
+      yield* dbQuery(flags({ sql: Option.some("select 1") }));
+      expect(out.stdoutText).toContain("alice");
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -716,7 +799,7 @@ describe("db query integration", () => {
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("Cannot find project ref. Have you run supabase link?");
@@ -727,7 +810,7 @@ describe("db query integration", () => {
     const { layer } = setup({ refReadFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to load project ref");
@@ -741,7 +824,7 @@ describe("db query integration", () => {
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
       assertPermissionDrift({
@@ -764,7 +847,7 @@ describe("db query integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({ ref: REF });
       expect(httpClient.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST https://api.supabase.com/v1/projects/${REF}/database/query`,
@@ -804,7 +887,7 @@ describe("db query integration", () => {
       yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
-          linked: Option.some(true),
+          linked: true,
           projectRef: Option.some(REF),
         }),
       );
@@ -848,7 +931,7 @@ describe("db query integration", () => {
       yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
-          linked: Option.some(true),
+          linked: true,
           projectRef: Option.some(FLAG_REF),
         }),
       );
@@ -877,7 +960,7 @@ describe("db query integration", () => {
       yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
-          linked: Option.some(true),
+          linked: true,
           projectRef: Option.some(FLAG_REF),
         }),
       );
@@ -890,30 +973,51 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref without --linked (query defaults to the local target)", () => {
+  it.effect("selects the linked project from --project-ref alone", () => {
     const FLAG_REF = "flagflagflagflagflag";
+    const { layer, cache, httpClient } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+    });
+    return Effect.gen(function* () {
+      yield* dbQuery(flags({ sql: Option.some("select 1"), projectRef: Option.some(FLAG_REF) }));
+      expect(
+        httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
+      ).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --project-ref combined with --local", () => {
     const { layer, out, cache, httpClient } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), projectRef: Option.some(FLAG_REF) }),
+        flags({
+          sql: Option.some("select 1"),
+          local: true,
+          projectRef: Option.some("flagflagflagflagflag"),
+        }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toBe(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetProjectRefConflictError);
+      }
       expect(out.stdoutText).toBe("");
       expect(httpClient.requests).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats --linked=false as an explicit linked target", () => {
+  it.effect("follows a remote workspace target when no selector flag is given", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(false) }));
+      yield* withConfigEnv(
+        { SUPABASE_TARGET: "remote" },
+        dbQuery(flags({ sql: Option.some("select 1"), linked: false })),
+      );
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -927,7 +1031,7 @@ describe("db query integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to parse connection string");
@@ -939,7 +1043,7 @@ describe("db query integration", () => {
   it.effect("caches the linked project even when SQL resolution fails", () => {
     const { layer, cache } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ linked: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("no SQL query provided");
       expect(cache.cached).toBe(true);
@@ -955,7 +1059,7 @@ describe("db query integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* dbQuery(
-          flags({ sql: Option.some("bad"), linked: Option.some(true) }),
+          flags({ sql: Option.some("bad"), linked: true }),
         ).pipe(Effect.exit);
         expect(failMessage(exit)).toContain("unexpected status 400");
         expect(cache.cached).toBe(true);
@@ -967,7 +1071,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
       yield* dbQuery(
-        flags({ sql: Option.some("select 1 where false"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1 where false"), linked: true }),
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -976,7 +1080,7 @@ describe("db query integration", () => {
   it.effect("prints the raw body when the linked response is not a JSON array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '{"command":"INSERT"}' });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("insert ..."), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("insert ..."), linked: true }));
       expect(out.stdoutText).toBe('{"command":"INSERT"}\n');
     }).pipe(Effect.provide(layer));
   });
@@ -984,7 +1088,7 @@ describe("db query integration", () => {
   it.effect("prints the raw body when the linked response is not valid JSON", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "CREATE TABLE" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("create ..."), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("create ..."), linked: true }));
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -996,7 +1100,7 @@ describe("db query integration", () => {
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       const parsed = yield* decodeJson(out.stdoutText);
       expect(parsed).toHaveProperty("boundary", BOUNDARY);
       expect(parsed).toHaveProperty("rows", [{ id: 1 }]);
@@ -1007,7 +1111,7 @@ describe("db query integration", () => {
   it.effect("falls back to map keys when the first linked row has no orderable keys", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[null]" });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -1015,7 +1119,7 @@ describe("db query integration", () => {
   it.effect("renders NULL for a null row object in a linked result", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"a":1},null]' });
     return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       expect(out.stdoutText).toContain("NULL");
       expect(out.stdoutText).toContain("│ 1");
     }).pipe(Effect.provide(layer));
@@ -1025,7 +1129,7 @@ describe("db query integration", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
@@ -1035,7 +1139,7 @@ describe("db query integration", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
@@ -1045,7 +1149,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("Invalid access token format");
@@ -1057,7 +1161,7 @@ describe("db query integration", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ linked: Option.some(true), file: Option.some("/no/such/file.sql") }),
+        flags({ linked: true, file: Option.some("/no/such/file.sql") }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
       expect(failMessage(exit)).not.toContain("failed to read SQL file");
@@ -1068,10 +1172,129 @@ describe("db query integration", () => {
     const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        flags({ sql: Option.some("select 1"), linked: true }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(failMessage(exit)).not.toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
   });
+  describe("--read-only", () => {
+    it.effect("brackets the statement in a read-only transaction on a local target", () => {
+      const { layer, out, dbConnection } = setup({ result: SELECT_RESULT });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1"), local: true, readOnly: true }));
+        expect(dbConnection.statements).toEqual(["BEGIN READ ONLY", "select 1", "ROLLBACK"]);
+        expect(out.stdoutText).toContain("alice");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails a write and still rolls the transaction back", () => {
+      const { layer, dbConnection } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* dbQuery(
+          flags({ sql: Option.some("insert into t values (1)"), local: true, readOnly: true }),
+        ).pipe(Effect.exit);
+        expect(failMessage(exit)).toContain("read-only transaction");
+        expect(dbConnection.statements).toEqual([
+          "BEGIN READ ONLY",
+          "insert into t values (1)",
+          "ROLLBACK",
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("lets the same write through without --read-only", () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("insert into t values (1)"), local: true }));
+        expect(out.stdoutText).toBe("CREATE TABLE\n");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("runs in a read-only transaction on a --db-url target", () => {
+      const { layer, dbConnection } = setup({
+        result: SELECT_RESULT,
+        isLocal: false,
+        yes: false,
+      });
+      return Effect.gen(function* () {
+        yield* dbQuery(
+          flags({
+            sql: Option.some("select 1"),
+            dbUrl: Option.some("postgres://x/y"),
+            readOnly: true,
+          }),
+        );
+        expect(dbConnection.statements).toEqual(["BEGIN READ ONLY", "select 1", "ROLLBACK"]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("sends read_only to the Management API for a linked target", () => {
+      const { layer, httpClient } = setup({ linkedStatus: 201, linkedBody: '[{"id":1}]' });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true, readOnly: true }));
+        expect(httpClient.bodies).toEqual([{ query: "select 1", read_only: true }]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("omits read_only from the Management API request by default", () => {
+      const { layer, httpClient } = setup({ linkedStatus: 201, linkedBody: '[{"id":1}]' });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+        expect(httpClient.bodies).toEqual([{ query: "select 1" }]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("skips the hosted consent that a plain linked query needs", () => {
+      const refused = setup({ linkedStatus: 201, linkedBody: '[{"id":1}]', yes: false });
+      const allowed = setup({ linkedStatus: 201, linkedBody: '[{"id":1}]', yes: false });
+      return Effect.gen(function* () {
+        const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+          Effect.provide(refused.layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+          HostedMutationConsentRequiredError,
+        );
+        expect(refused.httpClient.requests).toEqual([]);
+
+        yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true, readOnly: true })).pipe(
+          Effect.provide(allowed.layer),
+        );
+        expect(allowed.out.promptConfirmCalls).toEqual([]);
+        expect(allowed.httpClient.requests).toHaveLength(1);
+      });
+    });
+  });
+});
+
+describeHostedConsent("db query", {
+  invoke: () => {
+    const httpClient = mockHttpClient({ status: 201, body: '[{"id":1}]' });
+    return {
+      run: dbQuery(
+        flags({
+          sql: Option.some("insert into t values (1)"),
+          linked: true,
+          projectRef: Option.some(REF),
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockResolver(false),
+            mockDbConnection({}).layer,
+            httpClient.layer,
+            mockCredentials(),
+            cliConfigValuesTestLayer,
+            mockTelemetryOutputFormat().layer,
+            Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
+            Layer.succeed(AiTool, { name: Option.none() }),
+            Layer.succeed(AgentFlag, "no"),
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+      ),
+      mutations: () => httpClient.calls.filter(({ method }) => method === "POST").length,
+    };
+  },
 });
