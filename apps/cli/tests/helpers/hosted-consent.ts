@@ -28,15 +28,15 @@ const consentLayer = (runtime: RuntimeLayer, yes: boolean, policy: TargetPolicyS
   Layer.mergeAll(runtime, Layer.succeed(YesFlag, yes), Layer.succeed(TargetPolicy, policy));
 
 /** Everything a leaf's handler can require while `describeHostedConsent` runs it. */
-export type HostedConsentServices = Layer.Success<ReturnType<typeof consentLayer>>;
+type HostedConsentServices = Layer.Success<ReturnType<typeof consentLayer>>;
 
-export interface HostedConsentEnv {
+interface HostedConsentEnv {
   readonly workdir: string;
   readonly out: ReturnType<typeof mockOutput>;
   readonly api: ReturnType<typeof mockCommandPlatformApi>;
 }
 
-export interface HostedConsentInvocation {
+interface HostedConsentInvocation {
   readonly run: Effect.Effect<unknown, unknown, HostedConsentServices>;
   /** Persistent writes made so far; defaults to the non-GET requests the mocked platform API recorded. */
   readonly mutations?: () => number;

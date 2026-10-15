@@ -65,7 +65,7 @@ export const resolveDbSeedInput = Effect.fn("DbSeedInput.resolve")(function* (
 });
 
 /** The seed input plus the line a hosted-mutation consent shows for the files a run would seed. */
-export interface DbSeedPlan {
+interface DbSeedPlan {
   readonly input: DbSeedInput;
   /** `undefined` when seeding is off or `files` is empty. */
   readonly detail: (files: ReadonlyArray<string>) => string | undefined;

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { configValuesLayer } from "../../tests/helpers/config-values-layer.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
@@ -30,9 +30,13 @@ const plan = (
     return yield* planDbSeed(resolved, { workdir, ref: REF });
   }).pipe(
     Effect.scoped,
-    Effect.provide(configValuesLayer({ env: options.env })),
-    Effect.provide(mockCommandSettings({ workdir: "/unused" })),
-    Effect.provide(BunServices.layer),
+    Effect.provide(
+      Layer.mergeAll(
+        configValuesLayer({ env: options.env }),
+        mockCommandSettings({ workdir: "/unused" }),
+        BunServices.layer,
+      ),
+    ),
   );
 
 const FILES = ["supabase/seed.sql", "supabase/seed_users.sql"];
