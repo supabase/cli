@@ -784,9 +784,7 @@ describe("pushSummaryMessage", () => {
     expect(
       pushSummaryMessage({
         projectRef: "abcdefghijklmnopqrst",
-        services: [
-          { service: "api", status: "updated", changes: [["api", "max_rows"]] },
-        ],
+        services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
         unsupported: [["db", "major_version"]],
         unencodable: [],
         forced: [],

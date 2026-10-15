@@ -175,14 +175,17 @@ describe("secrets unset integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("fails with HostedMutationDeclinedError and sends no DELETE when the user declines", () => {
-      const { layer, api } = setup({ stdinIsTty: true, confirm: false });
-      return Effect.gen(function* () {
-        const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-        expect(api.requests).toEqual([]);
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "fails with HostedMutationDeclinedError and sends no DELETE when the user declines",
+      () => {
+        const { layer, api } = setup({ stdinIsTty: true, confirm: false });
+        return Effect.gen(function* () {
+          const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("--all", () => {

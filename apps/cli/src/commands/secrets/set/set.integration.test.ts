@@ -1070,6 +1070,8 @@ describeHostedConsent("secrets set", {
       projectRef: Option.none(),
       envFile: Option.none(),
       secrets: ["FOO=bar"],
-    }).pipe(Effect.provide(Layer.mergeAll(cliConfigValuesTestLayer, mockDebugLoggerTracked().layer))),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cliConfigValuesTestLayer, mockDebugLoggerTracked().layer)),
+    ),
   }),
 });

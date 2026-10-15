@@ -1212,22 +1212,25 @@ describe("functions deploy", () => {
     const mutations = (api: { readonly requests: ReadonlyArray<{ readonly method: string }> }) =>
       api.requests.filter((request) => request.method !== "GET");
 
-    it.effect("deletes pruned functions under --yes after echoing one combined confirmation", () => {
-      const { out, api, layer } = setupPrune({ yes: true });
+    it.effect(
+      "deletes pruned functions under --yes after echoing one combined confirmation",
+      () => {
+        const { out, api, layer } = setupPrune({ yes: true });
 
-      return Effect.gen(function* () {
-        yield* writeCliConfig(tempRoot.current);
-        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
-        yield* functionsDeploy({ ...baseFlags, prune: true });
+          yield* functionsDeploy({ ...baseFlags, prune: true });
 
-        expect(stripControlSequences(out.stderrText)).toContain(
-          "Confirmed by --yes: deploy 1 Function and delete 1 Function with --prune on project",
-        );
-        expect(out.promptConfirmCalls).toHaveLength(0);
-        expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
-      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-    });
+          expect(stripControlSequences(out.stderrText)).toContain(
+            "Confirmed by --yes: deploy 1 Function and delete 1 Function with --prune on project",
+          );
+          expect(out.promptConfirmCalls).toHaveLength(0);
+          expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
 
     it.effect("asks one question covering the deploy and the prune before deploying", () => {
       const { out, api, layer } = setupPrune({

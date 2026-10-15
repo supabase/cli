@@ -48,7 +48,6 @@ import {
   HostedMutationDeclinedError,
 } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
@@ -2190,20 +2189,23 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("an enroll-only flip (verify_enabled absent) lists the addon's price before asking", () => {
-    const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
-    const { layer, out } = setupService({
-      toml,
-      confirm: [true],
-      addons: PHONE_MFA_ADDON,
-      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain("Enabling Phone MFA will cost you $75.00/ month.\n");
-      expect(out.promptConfirmCalls).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "an enroll-only flip (verify_enabled absent) lists the addon's price before asking",
+    () => {
+      const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
+      const { layer, out } = setupService({
+        toml,
+        confirm: [true],
+        addons: PHONE_MFA_ADDON,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain("Enabling Phone MFA will cost you $75.00/ month.\n");
+        expect(out.promptConfirmCalls).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
     "an enroll-only flip (verify_enabled absent) pushes mfa_phone_enroll_enabled when accepted",
@@ -3093,18 +3095,21 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--yes confirms a branch push and echoes the confirmation with the branch target", () => {
-    const { layer, out, api } = setupLinkedBranchPush({ yes: true });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(
-        `Confirmed by --yes: push config changes to API on project My App (${PARENT_REF}) · branch (${BRANCH_REF})`,
-      );
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--yes confirms a branch push and echoes the confirmation with the branch target",
+    () => {
+      const { layer, out, api } = setupLinkedBranchPush({ yes: true });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          `Confirmed by --yes: push config changes to API on project My App (${PARENT_REF}) · branch (${BRANCH_REF})`,
+        );
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("json output mode with --yes reports the branch target in the machine payload", () => {
     const { layer, out } = setupLinkedBranchPush({ format: "json", yes: true });
@@ -3400,23 +3405,26 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     },
   );
 
-  it.effect("--project-ref <uuid> is confirmed like any target: unattended without --yes fails", () => {
-    const { layer, out, api } = setup({
-      toml: BRANCH_PUSH_TOML,
-      yes: false,
-      stdinIsTty: false,
-      projectId: Option.none(),
-      project: { status: 404, body: {} },
-      branchById: { status: 200, body: BRANCH_CONFIG },
-      v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
-    });
-    return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
-      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--project-ref <uuid> is confirmed like any target: unattended without --yes fails",
+    () => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: false,
+        stdinIsTty: false,
+        projectId: Option.none(),
+        project: { status: 404, body: {} },
+        branchById: { status: 200, body: BRANCH_CONFIG },
+        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+      });
+      return Effect.gen(function* () {
+        const error = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+        expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
+        expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("--project-ref <unknown-branch-name> fails with a branches-list suggestion", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
@@ -3604,8 +3612,6 @@ describeHostedConsent("config push", {
       );
     }).pipe(Effect.provide(BunServices.layer)),
   invoke: () => ({
-    run: configPush({ projectRef: Option.none() }).pipe(
-      Effect.provide(cliConfigValuesTestLayer),
-    ),
+    run: configPush({ projectRef: Option.none() }).pipe(Effect.provide(cliConfigValuesTestLayer)),
   }),
 });
