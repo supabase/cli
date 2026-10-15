@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Crypto,
   Deferred,
   Duration,
@@ -824,6 +825,38 @@ describe("native artifact catalog", () => {
           );
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
+  );
+
+  it.live("downloads from the base named by SUPABASE_INTERNAL_SLIM_RELEASES_URL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { releaseVersion } = yield* resolveArtifact({ service: "rest" });
+        const asset = `postgrest-${releaseVersion}-linux-amd64`;
+        const requested: string[] = [];
+        const fs = yield* FileSystem.FileSystem;
+        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-override-" });
+
+        yield* withFetch(
+          serving({}, requested),
+          prepareNativeArtifact({ service: "rest" }, cacheRoot, linux).pipe(
+            Effect.exit,
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    SUPABASE_INTERNAL_SLIM_RELEASES_URL: "https://releases.fixture.test/base/",
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(requested[0]).toBe(
+          `https://releases.fixture.test/base/postgrest-${releaseVersion}/${asset}.manifest.json`,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 
   it.live(

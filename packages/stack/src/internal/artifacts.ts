@@ -18,3 +18,11 @@ export {
   type NativePin,
   type ServiceKind,
 } from "../Artifacts.ts";
+export {
+  ReleaseIntegrity,
+  ReleaseTransient,
+  ReleaseUnpublished,
+  resolvePin,
+  type ReleaseError,
+  type ResolvePinRequest,
+} from "../preparation/ReleaseResolver.ts";

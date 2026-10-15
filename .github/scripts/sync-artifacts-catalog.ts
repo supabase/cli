@@ -3,11 +3,19 @@
  * `docs/adr/0026-slim-artifact-mirrors.md` for the catalog model and this script's three modes.
  */
 
+import { createHash } from "node:crypto";
+import {
+  MIRROR_PRODUCERS,
+  NATIVE_TARGETS,
+  UPSTREAM_IMAGE_PATTERN,
+  normalizeUpstreamImage,
+  parseSha256Sums,
+  type SlimNativeTarget,
+} from "../../packages/stack/src/preparation/SlimRelease.ts";
 import {
   DIGEST_PATTERN,
   InvalidPayloadError,
   SOURCE_REGISTRY,
-  checksumFor,
   escapeRegExp,
   nativeFileNames,
   nativeObjectUrl,
@@ -17,9 +25,7 @@ export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
-/** Native targets the catalog pins per revision, in `Artifacts.ts`'s serialization order. */
-const NATIVE_TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
-type NativeTargetName = (typeof NATIVE_TARGETS)[number];
+type NativeTargetName = SlimNativeTarget;
 
 /** Overridable so an integration test can point at a local fixture server instead of GitHub. */
 const RELEASES_API =
@@ -308,11 +314,15 @@ export async function resolveRevisionPin(
     };
   }
 
+  const parsedSums = parseSha256Sums(checksums);
+  if (parsedSums.kind === "malformed") {
+    throw new InvalidPayloadError(`${service}-${releaseVersion}: ${parsedSums.message}.`);
+  }
   const natives: Record<string, { archive: string; manifest: string }> = {};
   for (const target of NATIVE_TARGETS) {
     const files = nativeFileNames(service, releaseVersion, target);
-    const archive = checksumFor(checksums, files.archive);
-    const manifest = checksumFor(checksums, files.manifest);
+    const archive = parsedSums.sums.get(files.archive);
+    const manifest = parsedSums.sums.get(files.manifest);
     if (archive === undefined || manifest === undefined) {
       return {
         status: "incomplete",
@@ -384,14 +394,6 @@ export async function resolveRevisionPin(
   };
 }
 
-/**
- * Services slim-services mirrors from an unmodified upstream image rather than building from
- * source: their `upstreamImage` comes from the release's `oci-provenance.json` `source` field,
- * not a native target's manifest. Keep this in sync with `SlimServicesSource`'s mirror-mode
- * services.
- */
-const MIRROR_MODE_SOURCE_SERVICES: ReadonlySet<string> = new Set(["vector", "mailpit", "imgproxy"]);
-
 function parseJsonRecord(raw: string): Record<string, unknown> | undefined {
   let parsed: unknown;
   try {
@@ -409,26 +411,9 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** Strips a `docker.io/` prefix and any `@sha256:…` digest, to match the Dockerfile's `FROM` form. */
-function normalizeUpstreamImage(image: string): string {
-  const withoutDigest = image.split("@")[0] ?? image;
-  return withoutDigest.startsWith("docker.io/")
-    ? withoutDigest.slice("docker.io/".length)
-    : withoutDigest;
-}
-
-/**
- * A normalized `upstreamImage`: one or more lowercase `registry`/`repository` path segments
- * (each `[a-z0-9]`, optionally separated internally by `.`/`_`/`-`), a `:`, and a tag matching
- * Docker's own tag grammar. Anchored, so no whitespace, quote, or template/expression syntax can
- * slip through — this value gets embedded as a TypeScript string literal in `Artifacts.ts`.
- */
-const IMAGE_REFERENCE_PATTERN =
-  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
-
 /** Validates a normalized `upstreamImage` before it's ever written to `Artifacts.ts`. */
 function validateUpstreamImage(image: string, context: string): string {
-  if (!IMAGE_REFERENCE_PATTERN.test(image)) {
+  if (!UPSTREAM_IMAGE_PATTERN.test(image)) {
     throw new InvalidPayloadError(
       `${context} has an invalid upstreamImage ${JSON.stringify(image)}.`,
     );
@@ -450,10 +435,27 @@ async function resolveUpstreamImage(
   upstreamVersion: string,
   io: RevisionIo,
 ): Promise<string> {
-  if (MIRROR_MODE_SOURCE_SERVICES.has(service)) {
+  if (MIRROR_PRODUCERS.has(service)) {
     const provenance = await io.fetchProvenance(service, releaseVersion, upstreamVersion);
     if (provenance === undefined) {
       throw new InvalidPayloadError(`${service}-${releaseVersion} has no oci-provenance asset.`);
+    }
+    const name = `${service}-${upstreamVersion}.oci-provenance.json`;
+    const checksums = await io.fetchChecksums(service, releaseVersion);
+    const parsed = parseSha256Sums(checksums ?? "");
+    if (parsed.kind === "malformed") {
+      throw new InvalidPayloadError(`${service}-${releaseVersion}: ${parsed.message}.`);
+    }
+    const expected = parsed.sums.get(name);
+    if (expected === undefined) {
+      throw new InvalidPayloadError(
+        `${service}-${releaseVersion} SHA256SUMS has no line for ${name}.`,
+      );
+    }
+    if (createHash("sha256").update(provenance).digest("hex") !== expected) {
+      throw new InvalidPayloadError(
+        `${service}-${releaseVersion} ${name} does not match SHA256SUMS.`,
+      );
     }
     const source = stringField(parseJsonRecord(provenance), "source");
     if (source === undefined) {

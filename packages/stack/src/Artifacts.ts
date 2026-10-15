@@ -1,6 +1,7 @@
 import { Data, Effect, Path, Record } from "effect";
 import type { StackFailureKind } from "./FailureKind.ts";
 import { makeArtifactStore } from "./preparation/ArtifactStore.ts";
+import { SLIM_IMAGE_GHCR_REGISTRY, slimReleasesUrl } from "./preparation/SlimEndpoints.ts";
 import {
   makeSlimServicesSource,
   type SlimServicesArtifact,
@@ -107,8 +108,6 @@ const definition = (
   requiredRuntimePaths,
   executablePath,
 });
-
-const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
 
 const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
@@ -519,8 +518,6 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
-const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/releases/download";
-
 /**
  * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
  * agent sandboxes that allow `*.amazonaws.com`.
@@ -540,11 +537,12 @@ const artifactFor = (
   service: ArtifactKind,
   resolved: ArtifactResolution,
   target: NativeTarget,
+  releasesUrl: string,
 ): SlimServicesArtifact => {
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.releaseVersion}`;
   const assetName = `${releaseTag}-${target}`;
-  const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
+  const githubRelease = `${releasesUrl}/${releaseTag}`;
   const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.releaseVersion}`;
   const pin = resolved.natives[target];
   return {
@@ -636,6 +634,10 @@ export const postgresVersion = (version: string): string =>
     (candidate) => !isOrioledbVersion(candidate) && postgresMajor(candidate) === version,
   ) ?? version;
 
+/** The slim-services producer that publishes releases of an artifact. */
+export const artifactSourceService = (service: ArtifactKind): string =>
+  definitions[service].sourceService;
+
 /** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
   Record.keys(definitions).filter(isServiceKind);
@@ -679,7 +681,8 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
       platform: platformText(platform),
       kind: "platform-unsupported",
     });
-  const sourceArtifact = artifactFor(request.service, resolved, target);
+  const releasesUrl = yield* slimReleasesUrl;
+  const sourceArtifact = artifactFor(request.service, resolved, target, releasesUrl);
   const key = artifactKey(sourceArtifact);
   const source = makeSlimServicesSource((candidate) =>
     candidate.key === key ? sourceArtifact : undefined,
