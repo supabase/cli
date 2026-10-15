@@ -1,14 +1,18 @@
 import { BunServices } from "@effect/platform-bun";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Predicate, Schedule, FileSystem, Path, Schema } from "effect";
+import { Effect, Layer, Option, Predicate, Schedule, FileSystem, Path, Schema } from "effect";
 import {
   makeComputeProject,
+  seedLinkedComputeProject,
   setupCompute,
+  type ComputeSetupOptions,
   computeResource,
   computeRoute,
   COMPUTE_PROJECT_REF,
   type ComputeHttpRoutes,
 } from "../../../../../tests/helpers/compute.ts";
+import { configValuesLayer } from "../../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../../tests/helpers/hosted-consent.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -28,7 +32,10 @@ import {
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computePush } from "./push.handler.ts";
+import { computePushCommand } from "./push.command.ts";
 import type { ComputePushFlags } from "./push.command.ts";
+
+const setupPush = (options: ComputeSetupOptions) => setupCompute({ yes: true, ...options });
 
 const UPLOAD_URL = "https://storage.example/deploy-context/api.tar.gz?signed";
 const UPLOAD_ID = "cafe0000000000000000000000000000";
@@ -122,7 +129,7 @@ describe("compute push", () => {
   it.effect("packages, uploads, deploys and waits for the build to settle", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -168,7 +175,7 @@ describe("compute push", () => {
   it.effect("returns once the deploy is accepted when --no-wait is passed", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ noWait: true });
@@ -194,7 +201,7 @@ describe("compute push", () => {
   // surface as a timeout instead of the answer the platform already gave.
   describe("honours a terminal deploy response instead of polling", () => {
     const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
-      setupCompute({
+      setupPush({
         workdir: repoDir,
         routes: routes({
           [`POST ${computeRoute("/api/deploy")}`]: {
@@ -247,7 +254,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "dockerfile"\n`,
         "supabase/compute/api/Dockerfile": "FROM node:24-alpine\nEXPOSE 8080\n",
       });
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -280,7 +287,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n`,
         "supabase/compute/api/package.json": "{}\n",
       });
-      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ exposure: Option.some("private") });
@@ -306,7 +313,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n`,
         "supabase/compute/api/package.json": "{}\n",
       });
-      const { layer, http, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http, out } = setupPush({ workdir: repo.dir, routes: routes() });
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
         expect(Predicate.isTagged(error, "MissingComputeExposureError")).toBe(true);
@@ -324,7 +331,7 @@ describe("compute push", () => {
           "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
           "supabase/compute/web/package.json": "{}\n",
         });
-        const { layer, http, out } = setupCompute({
+        const { layer, http, out } = setupPush({
           workdir: repo.dir,
           routes: routes({
             [`POST ${computeRoute("/web/uploads")}`]: { status: 201, body: uploadSlot },
@@ -376,7 +383,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "cobol"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -396,7 +403,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "huge"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -416,7 +423,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ instances: Option.some(3) });
@@ -437,7 +444,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\ninstances = 4\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -453,7 +460,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\ninstances = 4\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ instances: Option.some(1) });
@@ -472,7 +479,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -492,7 +499,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -510,7 +517,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ exposure: Option.some("public") });
@@ -531,7 +538,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nexposure = "privat"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -555,7 +562,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nexposure = ""\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -580,7 +587,7 @@ describe("compute push", () => {
     const pushWith = (config: string, exposure: "public" | "private") => {
       return Effect.gen(function* () {
         const repo = yield* project({ "supabase/config.toml": config });
-        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
         return { layer, out, run: () => push({ exposure: Option.some(exposure) }) };
       });
     };
@@ -677,7 +684,7 @@ describe("compute push", () => {
       const repo = yield* project({
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nexposure = "privat"\n`,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ exposure: Option.some("private") });
@@ -693,7 +700,7 @@ describe("compute push", () => {
   it.effect("polls until the build leaves `building`", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: [
@@ -727,7 +734,7 @@ describe("compute push", () => {
   it.effect("fails with the build's own reason when the build fails", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -760,7 +767,7 @@ describe("compute push", () => {
   it.effect("reports a failed build that came with no reason", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -786,7 +793,7 @@ describe("compute push", () => {
   it.effect("omits the URL for a compute the platform did not expose publicly", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -820,7 +827,7 @@ describe("compute push", () => {
   it.effect("deploys when called the way the command wires it, with no test seams", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* computePush(flags());
@@ -834,7 +841,7 @@ describe("compute push", () => {
   it.effect("stops waiting on a build that never settles, and says where to look", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -859,7 +866,7 @@ describe("compute push", () => {
 
   describe("carries an explicit --project-ref into its hints", () => {
     const unlinked = (repoDir: string, routeOverrides = {}) =>
-      setupCompute({
+      setupPush({
         workdir: repoDir,
         linked: false,
         routes: routes(routeOverrides),
@@ -934,7 +941,7 @@ describe("compute push", () => {
     it.effect("but leaves it off when the link supplied the ref", () =>
       Effect.gen(function* () {
         const repo = yield* project();
-        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           yield* push({ noWait: true });
@@ -949,7 +956,7 @@ describe("compute push", () => {
   it.effect("fails before deploying when the presigned upload is rejected", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({ "PUT /deploy-context/api.tar.gz": { status: 403, body: "expired" } }),
       });
@@ -972,7 +979,7 @@ describe("compute push", () => {
   it.effect("reports a rejected deploy after the context has been uploaded", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/deploy")}`]: { status: 500, body: { message: "boom" } },
@@ -998,7 +1005,7 @@ describe("compute push", () => {
         }),
         "supabase/compute/api/index.js": "export default { fetch: () => new Response('ok') };\n",
       });
-      const { layer, http, out } = setupCompute({ workdir: created.dir, routes: routes() });
+      const { layer, http, out } = setupPush({ workdir: created.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -1023,7 +1030,7 @@ describe("compute push", () => {
   it.effect("keeps the presigned signature out of an upload transport failure", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           "PUT /deploy-context/api.tar.gz": { transportError: "connection reset by peer" },
@@ -1051,7 +1058,7 @@ describe("compute push", () => {
   it.effect("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/uploads")}`]: {
@@ -1078,7 +1085,7 @@ describe("compute push", () => {
   it.effect("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/uploads")}`]: {
@@ -1105,7 +1112,7 @@ describe("compute push", () => {
   it.effect("points at the project ref when no such project exists", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/uploads")}`]: {
@@ -1128,7 +1135,7 @@ describe("compute push", () => {
   it.effect("names the unserved route instead of the project when the API has no such route", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/uploads")}`]: {
@@ -1156,7 +1163,7 @@ describe("compute push", () => {
   it.effect("keeps the enrolment answer for a 404 body it does not recognize", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`POST ${computeRoute("/api/uploads")}`]: { status: 404, body: { unexpected: true } },
@@ -1180,7 +1187,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1203,7 +1210,7 @@ describe("compute push", () => {
       yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", "index.js"), {
         force: true,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1233,7 +1240,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1261,7 +1268,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1287,7 +1294,7 @@ describe("compute push", () => {
       const source = path.join(repo.dir, "supabase", "compute", "api");
       yield* fs.remove(source, { recursive: true, force: true });
       yield* fs.writeFileString(source, "not a directory");
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1315,7 +1322,7 @@ describe("compute push", () => {
       const source = path.join(repo.dir, "supabase", "compute", "api");
       yield* fs.remove(source, { recursive: true, force: true });
       yield* fs.symlink("api", source);
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1345,7 +1352,7 @@ describe("compute push", () => {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       ));
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         if (!unreadable) {
@@ -1376,7 +1383,7 @@ describe("compute push", () => {
         "../../config.toml",
         path.join(repo.dir, "supabase", "compute", "api", "escape.toml"),
       );
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1391,7 +1398,7 @@ describe("compute push", () => {
   it.effect("rides out a transient failure while polling the build", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: [
@@ -1418,7 +1425,7 @@ describe("compute push", () => {
   it.effect("surfaces a permanent poll failure on the first read instead of retrying it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
@@ -1456,7 +1463,7 @@ describe("compute push", () => {
       // process is somewhere else entirely.
       const repo = yield* project();
       const elsewhere = yield* makeComputeProject();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         cwd: elsewhere.dir,
         routes: routes(),
@@ -1476,7 +1483,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\n\n[compute.web]\nruntime = "node"\n`,
         "supabase/compute/web/index.js": "export default {};\n",
       });
-      const { layer, out, http } = setupCompute({
+      const { layer, out, http } = setupPush({
         workdir: repo.dir,
         routes: {
           ...routes(),
@@ -1535,7 +1542,7 @@ describe("compute push", () => {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         if (stattable) {
@@ -1561,7 +1568,7 @@ describe("compute push", () => {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* project();
       yield* fs.symlink("nowhere", path.join(repo.dir, "supabase", "compute", "ghost"));
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push({ names: [] });
@@ -1590,7 +1597,7 @@ describe("compute push", () => {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push({ names: [] }).pipe(Effect.flip);
@@ -1613,7 +1620,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\n\n[compute.web]\nruntime = "node"\n`,
         "supabase/compute/web/index.js": "export default {};\n",
       });
-      const { layer, out, http } = setupCompute({
+      const { layer, out, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           // `api` sorts first, so the run stops before `web` is ever touched.
@@ -1658,7 +1665,7 @@ describe("compute push", () => {
         "supabase/compute/web/index.js": "export default {};\n",
         "supabase/compute/zap/index.js": "export default {};\n",
       });
-      const { layer, out, http } = setupCompute({
+      const { layer, out, http } = setupPush({
         workdir: repo.dir,
         routes: routes({
           // The upload slot points at one URL for every compute, so `web` reuses
@@ -1697,7 +1704,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push({ names: [] }).pipe(Effect.flip);
@@ -1711,7 +1718,7 @@ describe("compute push", () => {
   it.effect("requires a linked project or an explicit --project-ref", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({ workdir: repo.dir, linked: false, routes: routes() });
+      const { layer } = setupPush({ workdir: repo.dir, linked: false, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1733,7 +1740,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push();
@@ -1747,7 +1754,7 @@ describe("compute push", () => {
   it.effect("emits a structured result in json mode", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out } = setupPush({
         workdir: repo.dir,
         format: "json",
         routes: routes(),
@@ -1783,7 +1790,7 @@ describe("compute push", () => {
   // names an image this deploy did not produce.
   describe("does not report the previous image while a re-push is still building", () => {
     const rePush = (repoDir: string, format?: "json") =>
-      setupCompute({
+      setupPush({
         workdir: repoDir,
         ...(format === undefined ? {} : { format }),
         routes: routes({
@@ -1848,7 +1855,7 @@ describe("compute push", () => {
     it.effect("still reports the image once the build has settled", () =>
       Effect.gen(function* () {
         const repo = yield* project();
-        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           yield* push();
@@ -1866,7 +1873,7 @@ describe("compute push", () => {
   it.effect("reports the build as still running in json mode under --no-wait", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out } = setupPush({
         workdir: repo.dir,
         format: "json",
         routes: routes(),
@@ -1901,7 +1908,7 @@ describe("compute push", () => {
         "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\n\n[compute.web]\nruntime = "node"\n`,
         "supabase/compute/web/index.js": "export default {};\n",
       });
-      const { layer, out } = setupCompute({
+      const { layer, out } = setupPush({
         workdir: repo.dir,
         format: "json",
         routes: {
@@ -1935,7 +1942,7 @@ describe("compute push", () => {
   it.effect("refuses -o env before making any request at all", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, http } = setupCompute({
+      const { layer, http } = setupPush({
         workdir: repo.dir,
         routes: routes(),
         outputFlag: "env",
@@ -1960,7 +1967,7 @@ describe("compute push", () => {
       const repo = yield* project({ "supabase/compute/api/nested/.keep": "" });
       yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", "index.js"));
       yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", "nested", ".keep"));
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -1984,7 +1991,7 @@ describe("compute push", () => {
         recursive: true,
         force: true,
       });
-      const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
@@ -2000,7 +2007,7 @@ describe("compute push", () => {
   it.effect("encodes -o toml when the deployed compute has no image version", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out } = setupPush({
         workdir: repo.dir,
         outputFlag: "toml",
         routes: routes({
@@ -2032,7 +2039,7 @@ describe("compute push", () => {
     it.effect("leaves the matched paths out of the uploaded context and says how many", () =>
       Effect.gen(function* () {
         const repo = yield* withExtraFiles('[".env", "node_modules"]');
-        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           yield* push();
@@ -2049,7 +2056,7 @@ describe("compute push", () => {
     it.effect("says nothing about exclusions when the compute configures none", () =>
       Effect.gen(function* () {
         const repo = yield* project();
-        const { layer, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           yield* push();
@@ -2065,7 +2072,7 @@ describe("compute push", () => {
     it.effect("refuses a re-inclusion pattern before anything is uploaded", () =>
       Effect.gen(function* () {
         const repo = yield* withExtraFiles('["node_modules", "!node_modules/left-pad"]');
-        const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, out, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           const error = yield* push().pipe(Effect.flip);
@@ -2082,7 +2089,7 @@ describe("compute push", () => {
     it.effect("names the patterns when they match every file in the source", () =>
       Effect.gen(function* () {
         const repo = yield* withExtraFiles('["*"]');
-        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           const error = yield* push().pipe(Effect.flip);
@@ -2113,7 +2120,7 @@ describe("compute push", () => {
           recursive: true,
         });
         yield* fs.makeDirectory(path.join(repo.dir, "supabase", "compute", "api", "nested"));
-        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           const error = yield* push().pipe(Effect.flip);
@@ -2133,7 +2140,7 @@ describe("compute push", () => {
     it.effect("refuses a malformed pattern", () =>
       Effect.gen(function* () {
         const repo = yield* withExtraFiles('["src/[oops"]');
-        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+        const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
         return yield* Effect.gen(function* () {
           const error = yield* push().pipe(Effect.flip);
@@ -2150,7 +2157,7 @@ describe("compute push", () => {
   it.effect("flushes telemetry when the project config cannot be loaded", () =>
     Effect.gen(function* () {
       const repo = yield* project({ "supabase/config.toml": "project_id = [unclosed\n" });
-      const { layer, telemetry } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const { layer, telemetry } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
         yield* push().pipe(Effect.flip);
@@ -2159,4 +2166,20 @@ describe("compute push", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("compute push", {
+  command: computePushCommand,
+  setup: (workdir) =>
+    seedLinkedComputeProject(workdir, {
+      "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\n`,
+      "supabase/compute/api/index.js": "export default {};\n",
+    }),
+  invoke: ({ workdir }) => {
+    const { http } = setupCompute({ workdir, routes: routes() });
+    return {
+      run: push().pipe(Effect.provide(Layer.mergeAll(http.layer, configValuesLayer()))),
+      mutations: () => http.requests.filter((request) => request.method !== "GET").length,
+    };
+  },
 });

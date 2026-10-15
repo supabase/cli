@@ -31,6 +31,16 @@ and the command handler does not run. See the [Compute command guide](../../../.
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always — flushed on success and on failure                      |
 | `<workdir>/supabase/.temp/linked-project.json`  | JSON   | after the project ref resolves, when the cache does not hold it |
 
+## Confirmation
+
+Before anything is uploaded, the command asks `deploy compute <names>?` (default
+**No**). `--yes` (the root persistent flag) or a shell `SUPABASE_YES` answers it and
+prints `Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not
+count. With neither — and no interactive terminal to prompt on, which includes a
+redirected stdout, piped stdin and any `--output-format json`/`stream-json` or `-o`
+machine format — the command fails with the consent-required error rather than
+deploying unasked. Stdin is never read for the answer.
+
 ## API Routes
 
 | Method | Path                                         | Auth                                        | Request body                                        | Response (used fields)                                 |
@@ -62,6 +72,8 @@ run reports the accepted spec the deploy response returned.
 | `1`  | build context upload failed                                                                           |
 | `1`  | the build reached `failed`, or never left `building`                                                  |
 | `1`  | with `--no-wait`: the deploy was answered with `build_state: failed`                                  |
+| `1`  | confirmation declined                                                                                 |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`                                         |
 | `1`  | API error, or project not enrolled in the alpha                                                       |
 
 ## Environment Variables
@@ -73,6 +85,7 @@ run reports the accepted spec the deploy response returned.
 | `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                                         | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
 | `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                                           | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
 | `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                                              | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
+| `SUPABASE_YES`                  | answers the deploy confirmation, as `--yes` does                                                                                                | no (defaults to prompting)                                                                                                                                                                                                            |
 
 ## Telemetry Events Fired
 

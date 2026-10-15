@@ -47,3 +47,9 @@ settings into an ignored file. To deploy a source directory without a Compute
 configuration entry, `compute push` requires an explicit `--exposure public` or
 `--exposure private`. Record the entry in the authoritative config to persist
 its deployment settings.
+
+`compute push` and `compute delete` change the remote project, so both ask for
+confirmation first, and both default to no. `compute delete` asks for the
+compute's name to be typed back. Pass `--yes`, or set `SUPABASE_YES` in your
+shell, to confirm in scripts and CI; without it, a run that cannot prompt fails
+before changing anything.
