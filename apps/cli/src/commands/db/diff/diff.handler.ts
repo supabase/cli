@@ -11,7 +11,6 @@ import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
@@ -21,7 +20,11 @@ import {
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import {
+  resolveTarget,
+  type ResolvedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -79,7 +82,6 @@ import {
   DbDiffDbNotRunningError,
   DbDiffEngineConflictError,
   DbDiffExplicitFlagsError,
-  DbDiffTargetFlagsError,
   DbDiffUnknownTargetError,
   DbDiffWriteError,
 } from "./diff.errors.ts";
@@ -131,10 +133,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    // The engine flags (`use-migra use-pgadmin use-pg-delta`) and the target flags
-    // (`db-url linked local`) are each mutually exclusive groups; "set" means the flag was
-    // explicitly passed (`Option.isSome`). `use-pg-schema` is rejected unconditionally above,
-    // so it never reaches `engineSet`.
+    // The engine flags (`use-migra use-pgadmin use-pg-delta`) are a mutually exclusive group;
+    // "set" means the flag was explicitly passed (`Option.isSome`). `use-pg-schema` is rejected
+    // unconditionally above, so it never reaches `engineSet`.
     const engineSet: Array<string> = [];
     if (Option.isSome(flags.useMigra)) engineSet.push("use-migra");
     if (Option.isSome(flags.usePgAdmin)) engineSet.push("use-pgadmin");
@@ -142,15 +143,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (engineSet.length > 1) {
       return yield* new DbDiffEngineConflictError({
         message: `if any flags in the group [use-migra use-pgadmin use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
-      });
-    }
-    const targetSet: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
-    if (Option.isSome(flags.linked)) targetSet.push("linked");
-    if (Option.isSome(flags.local)) targetSet.push("local");
-    if (targetSet.length > 1) {
-      return yield* new DbDiffTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
       });
     }
     // `--use-migra=false` / `--use-pgadmin=false` keep the pg-delta default, which the stack
@@ -178,22 +170,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: "must set both --from and --to when using explicit diff mode",
         });
       }
-      // `--project-ref` never implies `--linked` and must not be silently discarded (see
-      // push.handler.ts's identical guard). Two exceptions in explicit mode: `--from`/`--to
-      // linked` resolves a linked ref without any `--linked`/target flag, so the guard must not
-      // fire when either side is the literal ref "linked"; and a changed `--linked` (even
-      // `--linked=false`) genuinely consumes `--project-ref` via the preflight below.
-      if (
-        Option.isSome(flags.projectRef) &&
-        Option.isNone(flags.linked) &&
-        classifyExplicitRef(from) !== "linked" &&
-        classifyExplicitRef(to) !== "linked"
-      ) {
-        return yield* new DbDiffTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-        });
-      }
       // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or cascade) so the
       // config read below and a later `migrations` catalog export merge the matching
       // `[remotes.<ref>]` override. Undefined until a linked ref resolves, so a `migrations` ref
@@ -202,29 +178,26 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
       let migrationsToml: DbTomlValues | undefined;
-      // The preflight target resolve below validates a changed target flag and is stateful: a
-      // changed `--linked` resolves the project ref and merges `[remotes.<ref>]`, so the
-      // explicit `local`/`migrations` refs below see that override. `--local`/`--db-url` load
-      // base config (no merge).
-      if (Option.isSome(flags.dbUrl) || Option.isSome(flags.linked) || Option.isSome(flags.local)) {
-        const preflightConnType: DbConnType = Option.isSome(flags.dbUrl)
-          ? "db-url"
-          : Option.isSome(flags.linked)
-            ? "linked"
-            : "local";
-        const preflight = yield* resolver.resolve({
+      // The linked project resolves once, so `--from linked --to linked` announces it once.
+      let linkedTarget: ResolvedTarget | undefined;
+      // A target flag validates the selection and, for the linked project, merges
+      // `[remotes.<ref>]` so the explicit `local`/`migrations` refs below see that override.
+      if (
+        flags.local ||
+        flags.linked ||
+        Option.isSome(flags.dbUrl) ||
+        Option.isSome(flags.projectRef)
+      ) {
+        const preflight = yield* resolveTarget({
+          local: flags.local,
+          linked: flags.linked,
           dbUrl: flags.dbUrl,
-          connType: preflightConnType,
-          dnsResolver,
-          password: Option.none(),
-          linkedProjectRef: flags.projectRef,
+          projectRef: flags.projectRef,
         });
-        if (preflightConnType === "linked") {
-          const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
-          if (preflightRef !== undefined) {
-            yield* Ref.set(linkedRefForCache, Option.some(preflightRef));
-            mergedLinkedRef = preflightRef;
-          }
+        if (preflight.kind === "linked") {
+          linkedTarget = preflight;
+          yield* Ref.set(linkedRefForCache, Option.some(preflight.ref));
+          mergedLinkedRef = preflight.ref;
         }
       }
       // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
@@ -287,12 +260,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               } satisfies PgDeltaDatabaseEndpoint;
             }
             case "linked": {
-              const resolved = yield* resolver.resolve({
+              linkedTarget ??= yield* resolveTarget({
+                local: false,
+                linked: true,
                 dbUrl: Option.none(),
-                connType: "linked",
+                projectRef: flags.projectRef,
+              });
+              const resolved = yield* resolver.resolveConnection({
+                target: linkedTarget,
                 dnsResolver,
                 password: Option.none(),
-                linkedProjectRef: flags.projectRef,
+                networkBanRemoval: yield* hostedMutationPreapproval,
               });
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
@@ -389,29 +367,18 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
 
     // Native path: resolve the target, provision a live shadow source, then diff.
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : Option.isSome(flags.linked)
-        ? "linked"
-        : "local";
+    const diffTarget = yield* resolveTarget({
+      local: flags.local,
+      linked: flags.linked,
+      dbUrl: flags.dbUrl,
+      projectRef: flags.projectRef,
+    });
 
-    // `--project-ref` never implies `--linked` and must not be silently discarded on a
-    // non-linked target (see push.handler.ts's identical guard; explicit mode has its own).
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbDiffTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-
-    // The ref is resolved and config read here, before `resolver.resolve()` below, so the
-    // "Loading config override" print and merged-config validation happen before the actual
-    // connection work (TCP probe / temp-role mint). Only the linked path pre-resolves a ref; the
-    // default local/db-url target never merges a remote block.
-    let linkedRef: string | undefined;
-    if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+    // The config is read before `resolver.resolveConnection()` below, so the "Loading config
+    // override" print and merged-config validation happen before the actual connection work
+    // (TCP probe / temp-role mint). Only the linked target merges a remote block.
+    const linkedRef = diffTarget.kind === "linked" ? diffTarget.ref : undefined;
+    if (linkedRef !== undefined) {
       // Cached the moment the ref is known, not after `cfg`/`localInputs` below (both
       // fallible) resolve, so the project cache is still written even if a later step fails.
       yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
@@ -427,7 +394,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const networkIdFlag = yield* NetworkIdFlag;
-    // Built before `resolver.resolve()` below, not just before the "Creating shadow
+    // Built before `resolver.resolveConnection()` below, not just before the "Creating shadow
     // database..." banner: this performs a second config load (distinct from `cfg` above) with
     // its own validation, which can print a warning or fail outright. All config loading should
     // happen before a linked target's temp-role mint over the Management API, so a config error
@@ -441,20 +408,15 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
       // as `cfg` above (`readDbToml(..., linkedRef)`).
-      connType === "linked" ? linkedRef : undefined,
+      linkedRef,
     );
 
-    const resolved = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const resolved = yield* resolver.resolveConnection({
+      target: diffTarget,
       dnsResolver,
       password: Option.none(),
-      linkedProjectRef: flags.projectRef,
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
-    if (linkedRef === undefined) {
-      linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
-    }
-    if (linkedRef !== undefined) yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
       projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
