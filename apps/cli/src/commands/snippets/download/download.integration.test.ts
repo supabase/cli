@@ -1,16 +1,23 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { snippetsDownload } from "./download.handler.ts";
 
@@ -50,6 +57,7 @@ interface SetupOpts {
 }
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-snippets-download-int-");
 
@@ -232,6 +240,7 @@ describe("snippets download integration", () => {
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
       expect(api.requests[0]?.urlParams).toBe("");
+      assertPermissionDrift({ command: "snippets download", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -249,12 +258,63 @@ describe("snippets download integration", () => {
 
   it.effect("uses --project-ref flag value when resolving the linked-project cache", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
-    const { layer, cache } = setup();
+    const { layer, cache, api } = setup();
     return Effect.gen(function* () {
       yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.some(flagRef) });
       // The download endpoint itself takes only the snippet ID, but the
       // resolved project ref still flows into the linked-project cache write.
       expect(cache.cached).toBe(true);
+      expect(api.requests).toHaveLength(1);
+      assertPermissionDrift({
+        command: "snippets download",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker, sends no ref, and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 200, SNIPPET_RESPONSE));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      telemetry: mockTelemetryStateTracked().layer,
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/snippets/${VALID_ID}`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.urlParams).toBe("");
+      expect(out.stdoutText).toBe(`${SQL}\n`);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "snippets download", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

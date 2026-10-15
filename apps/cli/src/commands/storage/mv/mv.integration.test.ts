@@ -1,15 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Predicate } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Predicate } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
-import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
 
 const MOVE = "/storage/v1/object/move";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
+const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+const CACHE_FILE = "supabase/.temp/linked-project.json";
 
 function mvFlags(opts: {
   src: string;
@@ -409,6 +413,41 @@ describe("storage mv", () => {
       expect(linkedCache.cached).toBe(true);
     });
   });
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+        });
+        yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* storageMv(
+            mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", local: false }),
+          );
+          expect(
+            managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+          ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+          const move = requests.find((r) => r.url.includes(MOVE));
+          expect(move?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+          expect(move?.body).toEqual({
+            bucketId: "private",
+            sourceKey: "a",
+            destinationKey: "b",
+          });
+          expect(out.stderrText).toContain("Successfully moved");
+          expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
+          assertPermissionDrift({
+            command: "storage mv",
+            activeFlags: { local: false },
+            requests: managementRequests,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+  );
 });
 
 describe("stack backend", () => {

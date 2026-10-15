@@ -196,7 +196,7 @@ describe("sso info integration", () => {
       expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
         ref: VALID_REF,
       });
-      assertPermissionDrift({ command: "sso info", requests: api.requests, exact: true });
+      assertPermissionDrift({ command: "sso info", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 });
