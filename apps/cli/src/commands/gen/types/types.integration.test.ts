@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vitest";
 import { BunPath, BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
@@ -30,17 +31,34 @@ import {
 import { DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  primaryPoolerConfigs,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
+import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
   buildTestRuntime,
   VALID_REF,
+  VALID_TOKEN,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { toConnectError } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import type { DbConfigError } from "../../../command-internal/db-config.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -58,6 +76,15 @@ import {
   type GenTypesGenerateInput,
   GenTypesToolFailedError,
 } from "./types.generator.service.ts";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
 
 const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
 
@@ -2894,4 +2921,393 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
   });
+});
+
+const BRANCH_REF = "branchbranchbranchbr";
+
+const projectBody = (ref: string) => ({
+  id: ref,
+  ref,
+  organization_id: "org-id",
+  organization_slug: "org",
+  name: "demo",
+  region: "us-east-1",
+  created_at: "2025-01-01T00:00:00Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: `db.${ref}.invalid`,
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+});
+
+/**
+ * Runs `gen types` through the real database config resolver and linked-project cache, with the
+ * Management API recorded at the HTTP level: the typed client's requests in `api.requests`, the
+ * resolver's in the stubbed fetch, and the cache's in `http.calls`. The handler's own settings
+ * use `projectHost: "invalid"`, so the pooler fallback treats `db.<ref>.invalid` as the direct host.
+ */
+const setupRecorded = Effect.fnUntraced(function* (opts: {
+  readonly args: ReadonlyArray<string>;
+  /** Written to `supabase/.temp/project-ref`. */
+  readonly projectRefFile?: string;
+  /** The ref the cache's project lookup answers for. */
+  readonly cacheRef?: string;
+  readonly branchOf?: string;
+  readonly pickRef?: string;
+  readonly generator?: ReturnType<typeof mockGenTypesGenerator>;
+}) {
+  const workdir = yield* makeWorkdir("supabase-gen-types-recorded-");
+  yield* ensureDefaultConfig(workdir);
+  if (opts.projectRefFile !== undefined) {
+    yield* writeTempFile(workdir, "project-ref", opts.projectRefFile);
+  }
+  const out = mockOutput({
+    format: "text",
+    interactive: opts.pickRef !== undefined,
+    promptSelectResponses: opts.pickRef === undefined ? undefined : [opts.pickRef],
+  });
+  const telemetry = mockTelemetryStateTracked();
+  const generator = opts.generator ?? mockGenTypesGenerator({ output: "generated" });
+  const api = mockCommandPlatformApi({
+    handler: (request) =>
+      Effect.sync(() => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/v1/projects") {
+          return jsonResponse(request, 200, [projectBody(opts.pickRef ?? VALID_REF)]);
+        }
+        const branchMatch = /^\/v1\/branches\/(?<ref>[^/]+)$/u.exec(pathname);
+        if (branchMatch?.groups?.["ref"] !== undefined) {
+          return jsonResponse(request, 200, {
+            ref: branchMatch.groups["ref"],
+            postgres_version: "15.1",
+            postgres_engine: "15",
+            release_channel: "ga",
+            status: "ACTIVE_HEALTHY",
+            db_host: `db.${branchMatch.groups["ref"]}.invalid`,
+            db_port: 5432,
+            db_user: "postgres",
+            db_pass: "branch-password",
+            jwt_secret: "secret",
+          });
+        }
+        const poolerMatch = /^\/v1\/projects\/(?<ref>[^/]+)\/config\/database\/pooler$/u.exec(
+          pathname,
+        );
+        if (poolerMatch?.groups?.["ref"] !== undefined) {
+          return jsonResponse(request, 200, primaryPoolerConfigs(poolerMatch.groups["ref"]));
+        }
+        const typesMatch = /^\/v1\/projects\/(?<ref>[^/]+)\/types\/typescript$/u.exec(pathname);
+        if (typesMatch !== null) {
+          return jsonResponse(request, 200, { types: "export type Database = {};" });
+        }
+        const projectMatch = /^\/v1\/projects\/(?<ref>[^/]+)$/u.exec(pathname);
+        if (projectMatch?.groups?.["ref"] !== undefined) {
+          return projectMatch.groups["ref"] === opts.branchOf
+            ? jsonResponse(request, 404, { message: "Project not found" })
+            : jsonResponse(request, 200, projectBody(projectMatch.groups["ref"]));
+        }
+        return jsonResponse(request, 404, { message: "unexpected request" });
+      }),
+  });
+  const http = recordingProjectHttpClient(opts.cacheRef ?? VALID_REF);
+  const cliSettings = mockCommandSettings({
+    workdir,
+    projectHost: "invalid",
+    projectId: Option.none(),
+  });
+  const runtime = buildTestRuntime({
+    out,
+    api,
+    cliSettings,
+    telemetry: telemetry.layer,
+    tty: mockTty({ stdinIsTty: opts.pickRef !== undefined }),
+    linkedProjectCache: realLinkedProjectCache({
+      httpClient: http.layer,
+      cliSettings: mockCommandSettings({ workdir, projectId: Option.none() }),
+    }),
+  });
+  const layer = Layer.mergeAll(
+    runtime,
+    BunServices.layer,
+    mockInspectSpawner().layer,
+    Stdio.layerTest({ args: Effect.succeed(opts.args) }),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(DnsResolverFlag, "native" as const),
+    realDbConfigResolver({
+      workdir,
+      dbConnection: Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.succeed({
+            exec: () => Effect.void,
+            execBatch: () => Effect.void,
+            query: () => Effect.succeed([]),
+            extensionExists: () => Effect.succeed(false),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          }),
+      }),
+      env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+    }),
+    generator.layer,
+  );
+  const stubbed: Array<StubbedRequest> = [];
+  const recordedRequests = () => [
+    ...api.requests.map(({ method, url }) => ({ method, url })),
+    ...asRecordedRequests(stubbed),
+    ...http.calls,
+  ];
+  const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(opts.cacheRef ?? VALID_REF));
+      return yield* effect;
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  return { workdir, out, generator, api, http, stubbed, recordedRequests, run };
+});
+
+// Effective values of the switches the declaration checks (both default to false).
+const DEFAULT_SWITCHES = { local: false, "postgrest-v9-compat": false };
+
+const methodPaths = (requests: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${new URL(url).pathname}`);
+
+describe("gen types permissions through the real layers", () => {
+  it.effect("generates typescript for --project-id with one types call and the cache fill", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const ctx = yield* setupRecorded({
+        args: ["gen", "types", "--project-id", VALID_REF],
+      });
+      yield* ctx.run(genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })));
+
+      expect(ctx.out.stdoutText).toBe("export type Database = {};");
+      expect(methodPaths(ctx.api.requests)).toEqual([
+        `GET /v1/projects/${VALID_REF}/types/typescript`,
+      ]);
+      expect(ctx.stubbed).toEqual([]);
+      expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+      // The cache fill also calls the project lookup; without it, no TypeScript entry may require one.
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, "project-id": true, lang: "typescript" },
+        requests: ctx.api.requests,
+        exact: true,
+      });
+      expect(yield* fs.exists(`${ctx.workdir}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, "project-id": true, lang: "typescript" },
+        requests: ctx.recordedRequests(),
+        exact: true,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("looks the project up, then reaches the database through the pooler for go", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setupRecorded({
+        args: ["gen", "types", "--project-id", VALID_REF, "--lang", "go"],
+      });
+      yield* ctx.run(genTypes(defaultFlags({ projectId: Option.some(VALID_REF), lang: "go" })));
+
+      expect(methodPaths(ctx.api.requests)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+      expect(ctx.stubbed.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+      expect(ctx.generator.calls[0]?.conn.host).toBe("aws-0-us-east-1.pooler.supabase.com");
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, "project-id": true, lang: "go" },
+        requests: ctx.recordedRequests(),
+        exact: true,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "retries through the pooler after an IPv6 failure on the direct host for --linked",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* setupRecorded({
+          args: ["gen", "types", "--linked", "--lang", "go"],
+          projectRefFile: VALID_REF,
+          generator: sequentialGenerator([
+            () => Effect.fail(ipv6Failure()),
+            () => Effect.succeed("type Public struct {}"),
+          ]),
+        });
+        yield* ctx.run(
+          Effect.gen(function* () {
+            yield* withReachableDirectHost(fixtureNet);
+            yield* genTypes(defaultFlags({ linked: true, lang: "go" }));
+          }),
+        );
+
+        expect(ctx.out.stdoutText).toBe("type Public struct {}");
+        expect(methodPaths(ctx.api.requests)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+        expect(ctx.stubbed.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(ctx.generator.calls.map((call) => call.conn.host)).toEqual([
+          `db.${VALID_REF}.invalid`,
+          "aws-0-us-east-1.pooler.supabase.com",
+        ]);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: { ...DEFAULT_SWITCHES, linked: true, lang: "go" },
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("falls back to the preview branch config when the project lookup returns 404", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setupRecorded({
+        args: ["gen", "types", "--project-id", BRANCH_REF, "--lang", "go"],
+        branchOf: BRANCH_REF,
+        cacheRef: BRANCH_REF,
+        generator: sequentialGenerator([
+          () => Effect.fail(ipv6Failure()),
+          () => Effect.succeed("type Public struct {}"),
+        ]),
+      });
+      yield* ctx.run(genTypes(defaultFlags({ projectId: Option.some(BRANCH_REF), lang: "go" })));
+
+      expect(methodPaths(ctx.api.requests)).toEqual([
+        `GET /v1/projects/${BRANCH_REF}`,
+        `GET /v1/branches/${BRANCH_REF}`,
+        `GET /v1/projects/${BRANCH_REF}/config/database/pooler`,
+      ]);
+      expect(ctx.stubbed).toEqual([]);
+      expect(ctx.generator.calls.map((call) => call.conn.host)).toEqual([
+        `db.${BRANCH_REF}.invalid`,
+        "aws-0-us-east-1.pooler.supabase.com",
+      ]);
+      expect(ctx.generator.calls[1]?.conn.password).toBe("branch-password");
+      expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${BRANCH_REF}`]);
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, "project-id": true, lang: "go" },
+        requests: ctx.recordedRequests(),
+        exact: true,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("asks which project to use for --linked when no ref is saved", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setupRecorded({
+        args: ["gen", "types", "--linked"],
+        pickRef: VALID_REF,
+      });
+      yield* ctx.run(genTypes(defaultFlags({ linked: true })));
+
+      expect(methodPaths(ctx.api.requests)).toEqual([
+        "GET /v1/projects",
+        `GET /v1/projects/${VALID_REF}/types/typescript`,
+      ]);
+      expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+      assertPermissionDrift({
+        command: "gen types",
+        activeFlags: { ...DEFAULT_SWITCHES, linked: true, lang: "typescript" },
+        requests: ctx.recordedRequests(),
+        exact: true,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "the implicit linked fallback generates from the saved ref when no target flag is given",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* setupRecorded({
+          args: ["gen", "types"],
+          projectRefFile: VALID_REF,
+        });
+        yield* ctx.run(genTypes(defaultFlags()));
+
+        expect(methodPaths(ctx.api.requests)).toEqual([
+          `GET /v1/projects/${VALID_REF}/types/typescript`,
+        ]);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: { ...DEFAULT_SWITCHES, lang: "typescript" },
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  const NO_API_SCENARIOS = [
+    {
+      name: "--local",
+      args: ["gen", "types", "--local"],
+      flags: defaultFlags({ local: true }),
+      activeFlags: { ...DEFAULT_SWITCHES, local: true, lang: "typescript" },
+      generates: true,
+    },
+    {
+      name: "--db-url, whatever the language",
+      args: [
+        "gen",
+        "types",
+        "--db-url",
+        "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+        "--lang",
+        "go",
+      ],
+      flags: defaultFlags({
+        dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
+        lang: "go",
+      }),
+      activeFlags: { ...DEFAULT_SWITCHES, "db-url": true, lang: "go" },
+      generates: true,
+    },
+    {
+      name: "--postgrest-v9-compat without --db-url, which fails first",
+      args: ["gen", "types", "--project-id", VALID_REF, "--postgrest-v9-compat"],
+      flags: defaultFlags({ projectId: Option.some(VALID_REF), postgrestV9Compat: true }),
+      activeFlags: {
+        ...DEFAULT_SWITCHES,
+        "postgrest-v9-compat": true,
+        "project-id": true,
+        lang: "typescript",
+      },
+      generates: false,
+    },
+  ] as const;
+
+  for (const scenario of NO_API_SCENARIOS) {
+    it.effect(`makes no Management API request for ${scenario.name}`, () =>
+      Effect.gen(function* () {
+        const ctx = yield* setupRecorded({ args: scenario.args });
+        const exit = yield* ctx.run(genTypes(scenario.flags)).pipe(Effect.exit);
+
+        expect(Exit.isSuccess(exit)).toBe(scenario.generates);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "--postgrest-v9-compat must used together with --db-url",
+          );
+        }
+        expect(ctx.generator.calls).toHaveLength(scenario.generates ? 1 : 0);
+        expect(ctx.recordedRequests()).toEqual([]);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: scenario.activeFlags,
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  }
 });
