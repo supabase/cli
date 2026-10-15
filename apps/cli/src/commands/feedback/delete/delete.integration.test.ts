@@ -9,7 +9,6 @@ import {
 import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   mockContextualAnalytics,
@@ -436,7 +435,7 @@ describeHostedConsent("feedback delete", {
   invoke: () => {
     const client = mockFeedbackClient();
     return {
-      run: withAccountTargetBanner(feedbackDelete(deleteArgs())).pipe(
+      run: feedbackDelete(deleteArgs()).pipe(
         Effect.provide(Layer.mergeAll(client.layer, mockTelemetryRuntime({ cliVersion: "9.9.9" }))),
       ),
       mutations: () => client.deleteCalls.length,

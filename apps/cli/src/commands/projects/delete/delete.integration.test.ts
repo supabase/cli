@@ -2,7 +2,6 @@ import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
-import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -267,5 +266,5 @@ describe("projects delete integration", () => {
 
 describeHostedConsent("projects delete", {
   api: { byMethod: { DELETE: { status: 200, body: DELETED } } },
-  invoke: () => ({ run: withAccountTargetBanner(projectsDelete({ ref: Option.some(VALID_REF) })) }),
+  invoke: () => ({ run: projectsDelete({ ref: Option.some(VALID_REF) }) }),
 });

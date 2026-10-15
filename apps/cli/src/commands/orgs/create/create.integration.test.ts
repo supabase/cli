@@ -2,7 +2,6 @@ import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -237,5 +236,5 @@ describe("orgs create integration", () => {
 
 describeHostedConsent("orgs create", {
   api: { response: { status: 201, body: CREATED } },
-  invoke: () => ({ run: withAccountTargetBanner(orgsCreate({ name: "Acme" })) }),
+  invoke: () => ({ run: orgsCreate({ name: "Acme" }) }),
 });

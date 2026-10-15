@@ -187,14 +187,22 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
       }),
     );
 
-    it.effect("runs under --yes, echoes the confirmation, and shows the target banner", () =>
-      Effect.gen(function* () {
-        const { exit, out, mutations } = yield* runCase({ json: true, yes: true });
-        expectSuccess(exit);
-        expect(mutations).toBeGreaterThan(0);
-        expect(out.stderrText).toContain("Confirmed by --yes: ");
-        expect(out.stderrText).toContain("Target: ");
-      }),
+    it.effect(
+      policy.group === "account"
+        ? "runs under --yes and echoes the confirmation"
+        : "runs under --yes, echoes the confirmation, and shows the target banner",
+      () =>
+        Effect.gen(function* () {
+          const { exit, out, mutations } = yield* runCase({ json: true, yes: true });
+          expectSuccess(exit);
+          expect(mutations).toBeGreaterThan(0);
+          expect(out.stderrText).toContain("Confirmed by --yes: ");
+          if (policy.group === "account") {
+            expect(out.stderrText).not.toContain("Target: ");
+          } else {
+            expect(out.stderrText).toContain("Target: ");
+          }
+        }),
     );
 
     it.effect("runs under a shell SUPABASE_YES", () =>
