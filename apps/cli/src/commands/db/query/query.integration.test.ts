@@ -118,7 +118,8 @@ function mockResolver(isLocal: boolean | undefined, resolveFails = false) {
   });
 }
 
-const WRITE_STATEMENT = /^\s*(insert|update|delete|create|drop|alter)\b/iu;
+const WRITE_STATEMENT = /\b(insert|update|delete|create|drop|alter)\b/iu;
+const READ_ONLY_LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '5s'";
 
 function mockDbConnection(opts: {
   result?: QueryResult;
@@ -1139,21 +1140,28 @@ describe("db query integration", () => {
       const { layer, out, dbConnection } = setup({ result: SELECT_RESULT });
       return Effect.gen(function* () {
         yield* dbQuery(flags({ sql: Option.some("select 1"), local: true, readOnly: true }));
-        expect(dbConnection.statements).toEqual(["BEGIN READ ONLY", "select 1", "ROLLBACK"]);
+        expect(dbConnection.statements).toEqual([
+          "BEGIN READ ONLY",
+          READ_ONLY_LOCK_TIMEOUT_SQL,
+          "select 1",
+          "ROLLBACK",
+        ]);
         expect(out.stdoutText).toContain("alice");
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("fails a write and still rolls the transaction back", () => {
+    it.effect("fails a write inside a read statement and still rolls the transaction back", () => {
+      const sql = "with d as (delete from t returning *) select * from d";
       const { layer, dbConnection } = setup();
       return Effect.gen(function* () {
         const exit = yield* dbQuery(
-          flags({ sql: Option.some("insert into t values (1)"), local: true, readOnly: true }),
+          flags({ sql: Option.some(sql), local: true, readOnly: true }),
         ).pipe(Effect.exit);
         expect(failMessage(exit)).toContain("read-only transaction");
         expect(dbConnection.statements).toEqual([
           "BEGIN READ ONLY",
-          "insert into t values (1)",
+          READ_ONLY_LOCK_TIMEOUT_SQL,
+          sql,
           "ROLLBACK",
         ]);
       }).pipe(Effect.provide(layer));
@@ -1181,7 +1189,12 @@ describe("db query integration", () => {
             readOnly: true,
           }),
         );
-        expect(dbConnection.statements).toEqual(["BEGIN READ ONLY", "select 1", "ROLLBACK"]);
+        expect(dbConnection.statements).toEqual([
+          "BEGIN READ ONLY",
+          READ_ONLY_LOCK_TIMEOUT_SQL,
+          "select 1",
+          "ROLLBACK",
+        ]);
       }).pipe(Effect.provide(layer));
     });
 
@@ -1223,7 +1236,7 @@ describe("db query integration", () => {
               DbQueryReadOnlyStatementError,
             );
             expect(failMessage(exit)).toBe(
-              "--read-only does not allow transaction control or read-only setting changes (found: COMMIT)",
+              "--read-only only allows SELECT, WITH, VALUES, TABLE, SHOW, EXPLAIN statements (found: COMMIT)",
             );
             expect(rejected.dbConnection.connects).toBe(0);
             expect(rejected.dbConnection.statements).toEqual([]);
@@ -1238,6 +1251,36 @@ describe("db query integration", () => {
           });
         },
       );
+    }
+
+    const refusedStatements = [
+      ["a statement that is not a read", "CLUSTER users", "CLUSTER"],
+      ["a role switch", "SET ROLE postgres", "SET"],
+      [
+        "a nested comment that hides a commit",
+        "/* /* */* x */ COMMIT; DELETE FROM users; /* */",
+        "COMMIT",
+      ],
+      [
+        "an unterminated comment",
+        "select 1 /* COMMIT",
+        "an unterminated comment, quote or dollar quote",
+      ],
+    ] as const;
+    for (const [name, sql, found] of refusedStatements) {
+      it.effect(`refuses ${name} on a local target without connecting`, () => {
+        const { layer, dbConnection } = setup({ result: SELECT_RESULT });
+        return Effect.gen(function* () {
+          const exit = yield* dbQuery(
+            flags({ sql: Option.some(sql), local: true, readOnly: true }),
+          ).pipe(Effect.exit);
+          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+            DbQueryReadOnlyStatementError,
+          );
+          expect(failMessage(exit)).toContain(`(found: ${found})`);
+          expect(dbConnection.connects).toBe(0);
+        }).pipe(Effect.provide(layer));
+      });
     }
 
     it.effect("omits read_only from the Management API request by default", () => {

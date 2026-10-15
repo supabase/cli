@@ -11,7 +11,8 @@ in `config.toml`, default `local`; see
 
 Any statement sent to a hosted target (linked project or remote `--db-url`) asks for one
 confirmation first, because the command cannot tell a read from a write. `--read-only` skips that
-confirmation and makes the statement unable to write (see Notes). The local stack never prompts.
+confirmation and accepts only read statements in a read-only transaction (see Notes). The local
+stack never prompts.
 
 ## Files Read
 
@@ -48,14 +49,14 @@ confirmation and makes the statement unable to write (see Notes). The local stac
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                   |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                     |
-| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status |
-| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                              |
-| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                |
-| `1`  | `--read-only` with transaction control or a read-only setting change (`DbQueryReadOnlyStatementError`); nothing is sent                                                                                     |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                    |
+| Code | Condition                                                                                                                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success                                                                                                                                                                                                                              |
+| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status                          |
+| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                                                       |
+| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                         |
+| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW` or `EXPLAIN`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                             |
 
 ## Output
 
@@ -107,16 +108,20 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   (`Confirmed by --yes: …`); a `SUPABASE_YES` in `supabase/.env` and a piped answer do not. Stdin
   is never read for the answer. Reading a missing SQL source (no SQL, empty stdin, unreadable
   `--file`) fails before the question.
-- **`--read-only`.** Skips the hosted confirmation entirely and prints no question. A linked
-  target sends `"read_only": true` in the Management API request, so the server rejects writes.
-  The local stack and a `--db-url` database run the statement inside `BEGIN READ ONLY` … `ROLLBACK`,
-  so Postgres rejects writes. On every target, before the statement is sent or any question is asked, the
-  SQL is split into statements and any whose leading keywords (after whitespace, a BOM and comments)
-  are `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ABORT`, `ROLLBACK`, `PREPARE TRANSACTION`,
-  `SET TRANSACTION`, `SET SESSION CHARACTERISTICS`, `RESET ALL`, or a `SET`/`SET SESSION`/`SET LOCAL`/
-  `RESET` of `transaction_read_only` or `default_transaction_read_only` fails with
-  `DbQueryReadOnlyStatementError` naming only that keyword. Keywords inside strings, dollar quotes
-  and comments, and reads such as `SELECT set_config(...)`, pass.
+- **`--read-only`.** Skips the hosted confirmation entirely and prints no question. On every
+  target, before the statement is sent or any question is asked, the SQL is split into statements
+  and each must start (after whitespace, a BOM and comments) with `SELECT`, `WITH`, `VALUES`,
+  `TABLE`, `SHOW` or `EXPLAIN`. Any other statement (`COMMIT`, `SET`, `CALL`, `DO`, `COPY`, `LOCK`,
+  …), input that ends inside a comment, quote or dollar quote, and input containing
+  `BEGIN ATOMIC` (the splitter reads such a body as one statement) fails with
+  `DbQueryReadOnlyStatementError`, naming only the leading keyword or a fixed label. Keywords
+  inside strings, dollar quotes and comments, and reads such as `SELECT set_config(...)`, pass the
+  keyword check. A linked target sends `"read_only": true` in the Management API request, and the
+  API enforces it. The local stack and a `--db-url` database run the statement inside
+  `BEGIN READ ONLY`, `SET LOCAL lock_timeout = '5s'`, the statement, then `ROLLBACK`, so Postgres
+  rejects writes and the read cannot queue behind heavy locks (there is no `statement_timeout`).
+  What it does not cover: a function with side effects called from a read statement, such as
+  `pg_terminate_backend` or `dblink_exec`, still runs.
 - **Linked-project cache.** On the `--linked` path,
   after the query runs — whether it succeeds or fails — the handler issues
   `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The

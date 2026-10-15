@@ -2,42 +2,86 @@ import { describe, expect, it } from "vitest";
 
 import { findReadOnlyViolation } from "./query.read-only.ts";
 
+const UNRECOGNISED = "an unrecognised statement";
+const UNTERMINATED = "an unterminated comment, quote or dollar quote";
+
 describe("findReadOnlyViolation", () => {
   it.each([
     ["BEGIN", "BEGIN"],
     ["begin read write", "BEGIN"],
-    ["START TRANSACTION ISOLATION LEVEL SERIALIZABLE", "START TRANSACTION"],
-    ["start\n\ttransaction", "START TRANSACTION"],
+    ["START TRANSACTION ISOLATION LEVEL SERIALIZABLE", "START"],
     ["COMMIT", "COMMIT"],
     ["commit and chain", "COMMIT"],
     ["COMMIT PREPARED 'tx'", "COMMIT"],
     ["END", "END"],
     ["ABORT", "ABORT"],
-    ["ROLLBACK", "ROLLBACK"],
     ["ROLLBACK TO SAVEPOINT s", "ROLLBACK"],
-    ["ROLLBACK PREPARED 'tx'", "ROLLBACK"],
-    ["PREPARE TRANSACTION 'tx'", "PREPARE TRANSACTION"],
-  ])("rejects transaction control: %s", (sql, found) => {
-    expect(findReadOnlyViolation(sql)).toBe(found);
+    ["PREPARE TRANSACTION 'tx'", "PREPARE"],
+    ["SAVEPOINT s", "SAVEPOINT"],
+    ["RELEASE SAVEPOINT s", "RELEASE"],
+  ])("rejects transaction control: %s", (sql, label) => {
+    expect(findReadOnlyViolation(sql)).toBe(label);
   });
 
   it.each([
-    ["SET TRANSACTION READ WRITE", "SET TRANSACTION"],
-    ["set transaction isolation level serializable", "SET TRANSACTION"],
-    ["SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", "SET SESSION CHARACTERISTICS"],
-    ["SET default_transaction_read_only = off", "SET default_transaction_read_only"],
-    ["SET SESSION default_transaction_read_only TO off", "SET default_transaction_read_only"],
-    ["SET LOCAL default_transaction_read_only = off", "SET default_transaction_read_only"],
-    ["SET transaction_read_only = off", "SET transaction_read_only"],
-    ["SET LOCAL TRANSACTION_READ_ONLY TO DEFAULT", "SET transaction_read_only"],
-    ['SET "Transaction_Read_Only" = off', "SET transaction_read_only"],
-    ['SET U&"transaction\\005fread\\005fonly" = off', 'SET U&"..."'],
-    ["RESET default_transaction_read_only", "RESET default_transaction_read_only"],
-    ["RESET transaction_read_only", "RESET transaction_read_only"],
-    ["RESET ALL", "RESET ALL"],
-    ["reset\nall", "RESET ALL"],
-  ])("rejects read-only characteristic changes: %s", (sql, found) => {
-    expect(findReadOnlyViolation(sql)).toBe(found);
+    "SET TRANSACTION READ WRITE",
+    "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+    "SET default_transaction_read_only = off",
+    "SET LOCAL transaction_read_only TO off",
+    'SET U&"transaction\\005fread\\005fonly" = off',
+    "SET ROLE postgres",
+    "SET SESSION AUTHORIZATION postgres",
+    "SET search_path TO public",
+    "SET LOCAL statement_timeout = '5s'",
+    "SET LOCAL lock_timeout = 0",
+  ])("rejects SET: %s", (sql) => {
+    expect(findReadOnlyViolation(sql)).toBe("SET");
+  });
+
+  it.each([
+    ["RESET ALL", "RESET"],
+    ["RESET transaction_read_only", "RESET"],
+    ["CLUSTER t", "CLUSTER"],
+    ["REINDEX TABLE t", "REINDEX"],
+    ["LOCK TABLE t IN ACCESS EXCLUSIVE MODE", "LOCK"],
+    ["ANALYZE t", "ANALYZE"],
+    ["VACUUM t", "VACUUM"],
+    ["NOTIFY chan", "NOTIFY"],
+    ["LISTEN chan", "LISTEN"],
+    ["COPY t TO STDOUT", "COPY"],
+    ["CALL p()", "CALL"],
+    ["DO $$ BEGIN PERFORM 1; END $$", "DO"],
+    ["INSERT INTO t VALUES (1)", "INSERT"],
+    ["update t set a = 1", "UPDATE"],
+    ["DELETE FROM t", "DELETE"],
+    ["MERGE INTO t USING s ON true WHEN MATCHED THEN DELETE", "MERGE"],
+    ["TRUNCATE t", "TRUNCATE"],
+    ["CREATE TABLE t ()", "CREATE"],
+    ["ALTER TABLE t ADD COLUMN c int", "ALTER"],
+    ["DROP TABLE t", "DROP"],
+    ["GRANT SELECT ON t TO r", "GRANT"],
+    ["PREPARE q AS SELECT 1", "PREPARE"],
+    ["EXECUTE q", "EXECUTE"],
+    ["DECLARE c CURSOR FOR SELECT 1", "DECLARE"],
+    ["FETCH c", "FETCH"],
+    ["DISCARD ALL", "DISCARD"],
+    ["CHECKPOINT", "CHECKPOINT"],
+  ])("rejects a statement that is not a read: %s", (sql, label) => {
+    expect(findReadOnlyViolation(sql)).toBe(label);
+  });
+
+  it.each([
+    ["an unknown word", "FROBNICATE t"],
+    ["a parenthesised query", "(SELECT 1) UNION (SELECT 2)"],
+    ["a quoted keyword", '"select" 1'],
+    ["a keyword with a trailing identifier character", "SELECTx 1"],
+    ["a keyword with a trailing digit", "SELECT1"],
+    ["a non-ASCII lookalike of a keyword", "ſelect 1"],
+    ["a string", "'SELECT 1'"],
+    ["a number", "1"],
+    ["a dollar quote", "$$SELECT 1$$"],
+  ])("labels %s without echoing it", (_name, sql) => {
+    expect(findReadOnlyViolation(sql)).toBe(UNRECOGNISED);
   });
 
   it.each([
@@ -49,10 +93,18 @@ describe("findReadOnlyViolation", () => {
     ["byte order mark", "﻿COMMIT"],
     ["byte order mark before a comment", "﻿-- note\nCOMMIT"],
     ["form feed", "\fCOMMIT"],
-    ["comment between keywords", "SET /* rw */ TRANSACTION READ WRITE"],
-    ["comment before the setting", "SET -- rw\n transaction_read_only = off"],
+    ["nested comment closed by */ then *", "/* /* */* x */ COMMIT; DELETE FROM t; /* */"],
+    ["comment opened by /*/", "/*/ x */ COMMIT"],
   ])("sees through a %s", (_name, sql) => {
-    expect(findReadOnlyViolation(sql)).toBeDefined();
+    expect(findReadOnlyViolation(sql)).toBe("COMMIT");
+  });
+
+  it("refuses a read-only setting change hidden after a nested comment", () => {
+    expect(
+      findReadOnlyViolation(
+        "/* /* */* x */ SET default_transaction_read_only = off; DELETE FROM t",
+      ),
+    ).toBe("SET");
   });
 
   it("finds a rejected statement after other statements", () => {
@@ -60,8 +112,52 @@ describe("findReadOnlyViolation", () => {
       "COMMIT",
     );
     expect(findReadOnlyViolation("SELECT 1;\n-- c\nset transaction read write;\nSELECT 2")).toBe(
-      "SET TRANSACTION",
+      "SET",
     );
+  });
+
+  it.each([
+    "SELECT 1 /* COMMIT",
+    "/* COMMIT",
+    "SELECT 'COMMIT",
+    "SELECT 1; SELECT 'a",
+    'SELECT "a',
+    "SELECT $$ COMMIT; DELETE FROM t",
+    "SELECT $t$ COMMIT $$",
+    "SELECT 1 /* a /* b */",
+    String.raw`SELECT E'a\'`,
+  ])("rejects input that ends inside a comment or quote: %s", (sql) => {
+    expect(findReadOnlyViolation(sql)).toBe(UNTERMINATED);
+  });
+
+  it.each([
+    "WITH begin AS (SELECT 1) SELECT * FROM begin atomic; COMMIT; DELETE FROM users; END",
+    "WITH begin AS (SELECT 1) SELECT * FROM begin\n  ATOMIC; SET transaction_read_only = off; DELETE FROM users; END",
+    "SELECT 'begin atomic'",
+  ])("rejects input containing BEGIN ATOMIC: %s", (sql) => {
+    expect(findReadOnlyViolation(sql)).toBe("BEGIN ATOMIC");
+  });
+
+  it.each([
+    ["SELECT", "SELECT 1"],
+    ["a lowercase SELECT", "select 1"],
+    ["WITH", "WITH t AS (SELECT 1) SELECT * FROM t"],
+    [
+      "WITH RECURSIVE",
+      "with recursive t(n) as (select 1 union all select n + 1 from t) select n from t",
+    ],
+    ["VALUES", "VALUES (1), (2)"],
+    ["TABLE", "TABLE users"],
+    ["SHOW", "SHOW search_path"],
+    ["SHOW ALL", "show all"],
+    ["EXPLAIN", "EXPLAIN SELECT 1"],
+    ["EXPLAIN ANALYZE", "EXPLAIN (ANALYZE, BUFFERS) SELECT 1"],
+    ["a keyword glued to a punctuation mark", "SELECT*FROM t"],
+    ["a keyword after a line comment", "-- note\nSELECT 1"],
+    ["a keyword after a nested block comment", "/* a /* b */ c */ SELECT 1"],
+    ["a keyword after a byte order mark", "﻿SELECT 1"],
+  ])("lets through %s", (_name, sql) => {
+    expect(findReadOnlyViolation(sql)).toBeUndefined();
   });
 
   it.each([
@@ -71,29 +167,15 @@ describe("findReadOnlyViolation", () => {
     ["a keyword inside a tagged dollar quote", "SELECT $q$; BEGIN; COMMIT; $q$"],
     ["a keyword inside a line comment", "SELECT 1 -- COMMIT\n; SELECT 2"],
     ["a keyword inside a block comment", "SELECT 1 /* ROLLBACK; */ ; SELECT 2"],
-    ["a statement that is only a comment", "-- COMMIT"],
-    ["an unterminated block comment", "/* COMMIT"],
     ["a keyword as a quoted identifier", 'SELECT "commit", "begin" FROM t'],
     ["a keyword as a column", "SELECT begin, commit, rollback FROM t"],
-    ["an identifier that starts with a keyword", "COMMITTED_ROWS"],
-    ["an identifier that starts with BEGIN", "BEGINNERS"],
-    ["a function body", "CREATE FUNCTION f() RETURNS void LANGUAGE sql BEGIN ATOMIC SELECT 1; END"],
-    [
-      "a plpgsql body",
-      "DO $$ BEGIN PERFORM set_config('transaction_read_only', 'off', true); END $$",
-    ],
     ["set_config", "SELECT set_config('default_transaction_read_only', 'off', false)"],
     ["current_setting", "SELECT current_setting('transaction_read_only')"],
-    ["an unrelated SET", "SET search_path TO public"],
-    ["an unrelated SET LOCAL", "SET LOCAL statement_timeout = '5s'"],
-    ["SET SESSION AUTHORIZATION", "SET SESSION AUTHORIZATION postgres"],
-    ["an unrelated RESET", "RESET search_path"],
-    ["a similarly named setting", "SET transaction_read_only_hint = 1"],
-    ["a custom setting", "SET my.transaction_read_only = 1"],
-    ["a SAVEPOINT", "SAVEPOINT s; RELEASE SAVEPOINT s"],
-    ["a PREPARE of a query", "PREPARE q AS SELECT 1"],
-    ["START as an identifier", "START_DATE"],
     ["a plain multi-statement read", "SELECT 1; SELECT 2;\nWITH t AS (SELECT 1) SELECT * FROM t"],
+    ["a trailing line comment", "SELECT 1 -- COMMIT"],
+    ["a trailing closed block comment", "SELECT 1 /* COMMIT */"],
+    ["a statement that is only a comment", "-- COMMIT"],
+    ["a statement that is only a closed block comment", "/* COMMIT */"],
     ["an empty statement", ";;"],
     ["blank SQL", "  \n"],
   ])("lets through %s", (_name, sql) => {
