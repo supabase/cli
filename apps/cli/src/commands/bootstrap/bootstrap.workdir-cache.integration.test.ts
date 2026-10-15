@@ -33,6 +33,7 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { SuccessTrailer, successTrailerLayer } from "../../shared/cli/success-trailer.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
@@ -312,6 +313,23 @@ describe("bootstrap linked-project cache location", () => {
         // With no `supabase/seed.sql` file, the seed glob matches nothing, so this line only
         // prints when `includeSeed` is true.
         expect(out.stderrText).toContain("Seed files are up to date.");
+
+        // The tenant service probes share the recording client; only the Management API
+        // requests are mapped.
+        expect(
+          api.requests
+            .filter(({ url }) => url.startsWith("https://api.supabase.com"))
+            .map(({ method, url }) => `${method} ${url.slice("https://api.supabase.com".length)}`),
+        ).toEqual([
+          "GET /v1/organizations",
+          "POST /v1/projects",
+          `GET /v1/projects/${VALID_REF}/api-keys`,
+          `GET /v1/projects/${VALID_REF}/config/storage`,
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `GET /v1/projects/${VALID_REF}/health`,
+          `GET /v1/projects/${VALID_REF}`,
+        ]);
+        assertPermissionDrift({ command: "bootstrap", requests: api.requests, exact: true });
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

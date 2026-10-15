@@ -106,7 +106,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a TS-only branch-name lookup (CLI-2167). |
 | `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                        |
-| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (the DB-connection path that would consume it is dead code in Go)                                                                                                   |
+| `SUPABASE_DB_PASSWORD`  | **no-op** for `link`: neither this variable nor `--password` is read (the DB-connection path that would consume them is dead code in Go)                                                                                       |
 
 ## Exit Codes
 

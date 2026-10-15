@@ -1,7 +1,5 @@
 /** Leaf command paths that don't declare their permissions with `withPermissions` yet. */
 export const PENDING_COMMANDS: ReadonlyArray<string> = [
-  "bootstrap",
-
   "completion bash",
   "completion fish",
   "completion powershell",
@@ -41,8 +39,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "issue docs",
   "issue feature",
 
-  "link",
-
   "login",
 
   "logout",
@@ -53,21 +49,11 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "network-restrictions get",
   "network-restrictions update",
 
-  "orgs create",
-  "orgs list",
-
   "postgres-config delete",
   "postgres-config get",
   "postgres-config update",
 
-  "projects api-keys",
-  "projects create",
-  "projects delete",
-  "projects list",
-
   "pull",
-
-  "services",
 
   "ssl-enforcement get",
   "ssl-enforcement update",
@@ -90,8 +76,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "unlink",
 
   "vanity-subdomains activate",
   "vanity-subdomains check-availability",
