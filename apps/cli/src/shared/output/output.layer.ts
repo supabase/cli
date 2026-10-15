@@ -58,9 +58,17 @@ function formatTaskMessage(message: string | undefined): string | undefined {
   return [firstLine, ...rest.map((line) => `${guide}${line}`)].join("\n");
 }
 
+// libuv reports a write to a pipe whose reader exited as `EOF` on Windows (`ERROR_BROKEN_PIPE`).
+const brokenPipeCodes: ReadonlySet<unknown> = new Set(["EPIPE", "EOF"]);
+
 const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
   const cause = error.reason.cause;
-  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EPIPE";
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    brokenPipeCodes.has(cause.code)
+  );
 };
 
 // Keyed by the Stdio service so every output layer built on the same process streams sees a

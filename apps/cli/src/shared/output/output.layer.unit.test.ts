@@ -818,18 +818,23 @@ describe("Output", () => {
     const provideLayer = (stdio: Layer.Layer<Stdio.Stdio>) =>
       Effect.provide(outputLayersOver(stdio).find(({ name }) => name === format)!.layer);
 
-    it.effect("ends the command once the stdout reader has closed, then skips stdout", () => {
-      const stdio = brokenStdio("stdout", "EPIPE");
-      return Effect.gen(function* () {
-        const out = yield* Output;
-        const exit = yield* Effect.exit(out.raw("first\n"));
-        yield* out.raw("second\n");
-        yield* out.raw("diagnostic\n", "stderr");
+    it.effect.each(["EPIPE", "EOF"])(
+      "ends the command once the stdout reader has closed (%s), then skips stdout",
+      (code) => {
+        const stdio = brokenStdio("stdout", code);
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const exit = yield* Effect.exit(out.raw("first\n"));
+          yield* out.raw("second\n");
+          yield* out.raw("diagnostic\n", "stderr");
 
-        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
-        expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
-      }).pipe(provideLayer(stdio.layer));
-    });
+          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+            StdoutClosedError,
+          );
+          expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+        }).pipe(provideLayer(stdio.layer));
+      },
+    );
 
     it.effect("keeps writing stdout once the stderr reader has closed", () => {
       const stdio = brokenStdio("stderr", "EPIPE");
