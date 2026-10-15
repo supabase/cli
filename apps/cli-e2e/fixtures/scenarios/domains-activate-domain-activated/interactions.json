@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/__PROJECT_REF__/custom-hostname/activate",
+      "path": "/v1/projects/replayfixtureprojref/custom-hostname/activate",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",

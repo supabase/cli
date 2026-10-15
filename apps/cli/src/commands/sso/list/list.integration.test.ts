@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -12,6 +12,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
@@ -37,6 +42,8 @@ const PROVIDER_ITEM = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
@@ -45,6 +52,7 @@ interface SetupOpts {
   status?: number;
   body?: unknown;
   network?: "fail";
+  projectId?: Option.Option<string>;
   // Configures the upgrade-gate side-call branches:
   //   "gated"     → entitlement says auth.saml_2 has_access=false
   //   "notGated"  → entitlement says auth.saml_2 has_access=true
@@ -124,7 +132,10 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    projectId: opts.projectId,
+  });
   const layer = buildTestRuntime({
     out,
     api,
@@ -331,10 +342,16 @@ describe("sso list integration", () => {
   });
 
   it.effect("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
+    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        "GET https://api.supabase.com/v1/organizations/acme/entitlements",
+      ]);
+      assertPermissionDrift({ command: "sso list", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -382,8 +399,76 @@ describe("sso list integration", () => {
       yield* ssoList({ projectRef: Option.none() });
       const ssoRequest = api.requests.find((r) => r.url.endsWith(`/config/auth/sso/providers`));
       expect(ssoRequest?.method).toBe("GET");
+      assertPermissionDrift({ command: "sso list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("ignores an empty --project-ref and resolves the saved ref without the picker", () => {
+    const { layer, api } = setup({ projectId: Option.none() });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
+      yield* ssoList({ projectRef: Option.some("") });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+      ]);
+      assertPermissionDrift({
+        command: "sso list",
+        activeFlags: { "project-ref": "" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "lists the picker's projects, the providers and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.url === "https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          return Effect.succeed(jsonResponse(request, 200, { items: [PROVIDER_ITEM] }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* ssoList({ projectRef: Option.none() });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "sso list", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();

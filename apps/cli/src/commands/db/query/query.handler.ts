@@ -1,17 +1,8 @@
-import {
-  DateTime,
-  Effect,
-  FileSystem,
-  Option,
-  Path,
-  Predicate,
-  Redacted,
-  Ref,
-  Schema,
-} from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { DateTime, Effect, FileSystem, Option, Path, Predicate, Ref, Schema } from "effect";
+import * as HttpClientError from "effect/http/HttpClientError";
 
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -19,6 +10,10 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import {
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -172,41 +167,38 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     );
   };
 
-  const runLinked = (
-    sql: string,
-    format: ResolvedFormat,
-    agentMode: boolean,
-    ref: string,
-    token: Redacted.Redacted<string>,
-  ) =>
+  const runLinked = (sql: string, format: ResolvedFormat, agentMode: boolean, ref: string) =>
     Effect.gen(function* () {
-      const cliSettings = yield* CommandSettings;
-      const httpClient = yield* HttpClient.HttpClient;
+      const apiFactory = yield* CommandPlatformApiFactory;
+      const api = yield* apiFactory.make;
 
-      const request = HttpClientRequest.post(
-        `${cliSettings.apiUrl}/v1/projects/${ref}/database/query`,
-      ).pipe(
-        HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(token)}`),
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-        HttpClientRequest.bodyJsonUnsafe({ query: sql }),
-      );
-      const { status, body } = yield* Effect.gen(function* () {
-        const response = yield* httpClient.execute(request);
-        const text = yield* response.text;
-        return { status: response.status, body: text };
-      }).pipe(
+      // `v1RunAQuery` declares no response body, so `executeRaw` keeps the row JSON text intact
+      // (column order, number formatting) for rendering.
+      const response = yield* api
+        .executeRaw(
+          operationDefinitions.v1RunAQuery,
+          { ref, query: sql },
+          { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbQueryExecError({
+                message: `failed to execute query: ${cause}`,
+                transport: HttpClientError.isHttpClientError(cause),
+              }),
+          ),
+        );
+      const body = yield* response.text.pipe(
         Effect.mapError(
           (cause) =>
-            new DbQueryExecError({
-              message: `failed to execute query: ${cause}`,
-              transport: true,
-            }),
+            new DbQueryExecError({ message: `failed to execute query: ${cause}`, transport: true }),
         ),
       );
-      if (status !== 201) {
+      if (response.status !== 201) {
         return yield* new DbQueryUnexpectedStatusError({
-          status,
-          message: `unexpected status ${status}: ${body}`,
+          status: response.status,
+          message: unexpectedStatusMessage(response.status, sanitizeErrorBody(body)),
         });
       }
 
@@ -255,7 +247,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // For `--linked`, the access token is checked and the project ref is loaded before SQL is
     // resolved, so a missing `--file` or a blocking stdin pipe doesn't mask a login/not-linked
     // error.
-    let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
+    let linkedRef: string | undefined;
     if (Option.isSome(flags.linked)) {
       const credentials = yield* CommandCredentials;
       const projectRef = yield* ProjectRefResolver;
@@ -284,16 +276,16 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
           suggestion: "Run supabase login first.",
         });
       }
-      linkedAuth = { token: tokenOpt.value, ref };
+      linkedRef = ref;
     }
 
     // Resolves the `--db-url`/local connection target before reading `--file`/stdin, so a bad
     // `--db-url` or config error surfaces ahead of a missing-file error or a blocking stdin read.
     const localTarget =
-      linkedAuth === undefined
+      linkedRef === undefined
         ? yield* resolver.resolve({
             dbUrl: flags.dbUrl,
-            // linkedAuth handles `--linked`, so this branch's target is `--db-url` or local.
+            // linkedRef handles `--linked`, so this branch's target is `--db-url` or local.
             connType: Option.isSome(flags.dbUrl) ? "db-url" : "local",
             dnsResolver,
           })
@@ -350,14 +342,14 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     yield* telemetryOutputFormat.set(format);
     yield* Effect.annotateCurrentSpan({
       "db.conn_type":
-        linkedAuth !== undefined ? "linked" : Option.isSome(flags.dbUrl) ? "db-url" : "local",
+        linkedRef !== undefined ? "linked" : Option.isSome(flags.dbUrl) ? "db-url" : "local",
       "query.format": format,
       "query.agent_mode": agentMode,
     });
 
     // 3. Linked queries go through the Management API; local/--db-url connect directly.
-    if (linkedAuth !== undefined) {
-      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token).pipe(
+    if (linkedRef !== undefined) {
+      return yield* runLinked(sql, format, agentMode, linkedRef).pipe(
         Effect.withSpan("db.query.runLinked"),
       );
     }

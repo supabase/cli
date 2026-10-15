@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -14,9 +14,16 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { secretsUnset } from "./unset.handler.ts";
 
 type SecretsList = typeof V1ListAllSecretsOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -81,6 +88,7 @@ describe("secrets unset integration", () => {
       expect(deletes).toHaveLength(1);
       expect(deletes[0]?.body).toEqual(["FOO"]);
       expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
+      assertPermissionDrift({ command: "secrets unset", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -111,6 +119,8 @@ describe("secrets unset integration", () => {
       const deletes = api.requests.filter((r) => r.method === "DELETE");
       expect(gets).toHaveLength(1);
       expect(deletes[0]?.body).toEqual(["FOO", "BAR"]);
+      expect(api.requests.map((r) => r.method)).toEqual(["GET", "DELETE"]);
+      assertPermissionDrift({ command: "secrets unset", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -123,6 +133,8 @@ describe("secrets unset integration", () => {
       yield* secretsUnset({ projectRef: Option.none(), names: [] });
       expect(out.stderrText).toContain("You have not set any function secrets, nothing to do.");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
+      expect(api.requests.map((r) => r.method)).toEqual(["GET"]);
+      assertPermissionDrift({ command: "secrets unset", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -215,6 +227,65 @@ describe("secrets unset integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("SecretsUnsetCancelledError");
       }
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const projectUrl = `https://api.supabase.com/v1/projects/${VALID_REF}`;
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === projectUrl) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (request.url === `${projectUrl}/secrets` && request.method === "GET") {
+          return Effect.succeed(
+            jsonResponse(request, 200, [
+              { name: "FOO", value: "d1" },
+              { name: "SUPABASE_AUTH_TOKEN", value: "d2" },
+            ]),
+          );
+        }
+        return Effect.succeed(jsonResponse(request, 200, null));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: false }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* secretsUnset({ projectRef: Option.none(), names: [] });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET ${projectUrl}/secrets`,
+        `DELETE ${projectUrl}/secrets`,
+        `GET ${projectUrl}`,
+      ]);
+      expect(api.requests[2]?.body).toEqual(["FOO"]);
+      expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "secrets unset", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

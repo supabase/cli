@@ -1,8 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { makeApiClient } from "@supabase/api/effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import {
+  DEFAULT_API_URL,
+  VALID_TOKEN,
   VALID_REF,
   buildTestRuntime,
   jsonResponse,
@@ -13,13 +18,95 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../tests/helpers/permission-real-layers.ts";
 import { postgresConfigDelete } from "./delete/delete.handler.ts";
 import { postgresConfigGet } from "./get/get.handler.ts";
+import { postgresConfigRead, postgresConfigWrite } from "./postgres-config.shared.ts";
 import { postgresConfigUpdate } from "./update/update.handler.ts";
 
 type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
 
+const failure = (
+  exit: Exit.Exit<unknown, unknown>,
+): { readonly _tag: string; readonly message: string } | undefined => {
+  if (!Exit.isFailure(exit)) return undefined;
+  const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+  return error instanceof Error
+    ? { _tag: String(Reflect.get(error, "_tag")), message: error.message }
+    : undefined;
+};
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
+
+const PROJECTS_URL = "https://api.supabase.com/v1/projects";
+const PROJECT_URL = `${PROJECTS_URL}/${VALID_REF}`;
+const CONFIG_URL = `${PROJECT_URL}/config/database/postgres`;
+
+const requestLines = (api: ReturnType<typeof mockCommandPlatformApi>) =>
+  api.requests.map(({ method, url }) => `${method} ${url}`);
+
+// No linked ref anywhere, so the picker runs and the real cache fills after the command.
+function composedRuntime(opts: {
+  readonly stored: Record<string, unknown>;
+  readonly updated: Record<string, unknown>;
+}) {
+  const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+  const api = mockCommandPlatformApi({
+    handler: (request) =>
+      Effect.succeed(
+        request.url === PROJECTS_URL
+          ? jsonResponse(request, 200, [projectResponse(VALID_REF)])
+          : request.url === PROJECT_URL
+            ? jsonResponse(request, 200, projectResponse(VALID_REF))
+            : request.url === CONFIG_URL
+              ? jsonResponse(request, 200, request.method === "PUT" ? opts.updated : opts.stored)
+              : jsonResponse(request, 404, { message: "unrouted request" }),
+      ),
+  });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
+  const layer = buildTestRuntime({
+    out,
+    api,
+    cliSettings,
+    tty: mockTty({ stdinIsTty: true }),
+    linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+  });
+  return { out, api, layer };
+}
+
+const readLinkedProjectCache = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* decodeJson(
+    yield* fs.readFileString(`${tempRoot.current}/supabase/.temp/linked-project.json`),
+  );
+});
+
+// The shared mock disables client retries; this restores the production default so a test can
+// prove a command opts a request out of retrying.
+const withProductionRetries = (
+  api: ReturnType<typeof mockCommandPlatformApi>,
+): ReturnType<typeof mockCommandPlatformApi> => ({
+  ...api,
+  layer: Layer.effect(
+    CommandPlatformApi,
+    makeApiClient({ baseUrl: DEFAULT_API_URL, accessToken: VALID_TOKEN }),
+  ).pipe(Layer.provide(api.httpClientLayer)),
+});
+
+const textResponse = (request: Parameters<typeof jsonResponse>[0], status: number, body: string) =>
+  HttpClientResponse.fromWeb(request, new Response(body, { status }));
 
 function runtimeWith(opts: {
   readonly out: ReturnType<typeof mockOutput>;
@@ -57,6 +144,34 @@ describe("postgres-config get", () => {
       expect(out.stdoutText).toContain("100");
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/config/database/postgres`);
+      assertPermissionDrift({
+        command: "postgres-config get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, reads its config and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { max_connections: 100 },
+      updated: {},
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigGet({ projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(out.stdoutText).toContain("max_connections");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config get",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -206,6 +321,20 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("shows stored overrides the typed update contract does not model", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockCommandPlatformApi({
+      response: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigGet({ projectRef: Option.none() });
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toEqual({ max_connections: 100, stored_only_key: "x" });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("maps HTTP 503 to the get unexpected-status error", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 503, body: {} } });
@@ -240,57 +369,91 @@ describe("postgres-config get", () => {
 });
 
 describe("postgres-config update", () => {
-  it.effect(
-    "merges current overrides, coerces values, and PUTs arbitrary keys through raw HTTP",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi({
-        byMethod: {
-          GET: { status: 200, body: { wal_keep_size: "1GB" } },
-          PUT: {
-            status: 200,
-            body: {
-              wal_keep_size: "1GB",
-              max_connections: 100,
-              track_commit_timestamp: true,
-              statement_timeout: "600",
-              custom_key: "alpha",
-              restart_database: false,
-            },
+  it.effect("merges current overrides and coerces --config values into the PUT body", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        GET: { status: 200, body: { wal_keep_size: "1GB" } },
+        PUT: {
+          status: 200,
+          body: {
+            wal_keep_size: "1GB",
+            max_connections: 100,
+            track_commit_timestamp: true,
+            statement_timeout: "600",
+            shared_buffers: "128MB",
+            restart_database: false,
           },
         },
-      });
-      const layer = runtimeWith({ out, api });
+      },
+    });
+    const layer = runtimeWith({ out, api });
 
-      return Effect.gen(function* () {
-        yield* postgresConfigUpdate({
-          projectRef: Option.none(),
-          config: [
-            "max_connections=100",
-            "track_commit_timestamp=true",
-            "statement_timeout=600",
-            "custom_key=alpha",
-          ],
-          replaceExistingOverrides: false,
-          noRestart: true,
-        });
-        expect(out.progressEvents[0]?.message).toBe("Updating Postgres config...");
-        expect(api.requests).toHaveLength(2);
-        expect(api.requests[1]?.method).toBe("PUT");
-        expect(api.requests[1]?.body).toEqual({
-          wal_keep_size: "1GB",
-          max_connections: 100,
-          track_commit_timestamp: true,
-          statement_timeout: "600",
-          custom_key: "alpha",
-          restart_database: false,
-        });
-        expect(out.stderrText).toBe(
-          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: [
+          "max_connections=100",
+          "track_commit_timestamp=true",
+          "statement_timeout=600",
+          "shared_buffers=128MB",
+        ],
+        replaceExistingOverrides: false,
+        noRestart: true,
+      });
+      expect(out.progressEvents[0]?.message).toBe("Updating Postgres config...");
+      expect(api.requests).toHaveLength(2);
+      expect(api.requests[1]?.method).toBe("PUT");
+      expect(api.requests[1]?.body).toEqual({
+        wal_keep_size: "1GB",
+        max_connections: 100,
+        track_commit_timestamp: true,
+        statement_timeout: "600",
+        shared_buffers: "128MB",
+        restart_database: false,
+      });
+      expect(out.stderrText).toBe(
+        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+      );
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false, "no-restart": true, config: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, merges overrides and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { wal_keep_size: "1GB" },
+      updated: { wal_keep_size: "1GB", max_connections: 100 },
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["max_connections=100"],
+        replaceExistingOverrides: false,
+        noRestart: false,
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `PUT ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(api.requests[2]?.body).toEqual({ wal_keep_size: "1GB", max_connections: 100 });
+      expect(out.stdoutText).toContain("max_connections");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("skips the initial GET in replace mode", () => {
     const out = mockOutput({ format: "json" });
@@ -313,6 +476,18 @@ describe("postgres-config update", () => {
       expect(api.requests[0]?.body).toEqual({ max_connections: 100 });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toEqual({ max_connections: 100 });
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": true },
+        requests: api.requests,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "postgres-config update",
+          activeFlags: { "replace-existing-overrides": true },
+          requests: [{ method: "GET", url: CONFIG_URL }],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -357,6 +532,197 @@ describe("postgres-config update", () => {
     }),
   );
 
+  it.effect("rejects an unknown --config parameter before sending the PUT", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: { GET: { status: 200, body: { wal_keep_size: "1GB" } } },
+    });
+    const cache = mockLinkedProjectCacheTracked();
+    const layer = runtimeWith({ out, api, linkedProjectCache: cache.layer });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["max_conections=100", "bogus=1", "max_connections=100"],
+          replaceExistingOverrides: false,
+          noRestart: false,
+        }),
+      );
+      const error = failure(exit);
+      expect(error?._tag).toBe("PostgresConfigUpdateSerializeError");
+      expect(error?.message).toBe(
+        "unknown Postgres config parameters: max_conections, bogus " +
+          "(if this is a newly supported parameter, upgrade the CLI)",
+      );
+      expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
+      expect(cache.cached).toBe(true);
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "forwards a stored override the typed contract does not model when updating another key",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        byMethod: {
+          GET: { status: 200, body: { wal_keep_size: "1GB", stored_only_key: "x" } },
+          PUT: {
+            status: 200,
+            body: { wal_keep_size: "1GB", stored_only_key: "x", max_connections: 100 },
+          },
+        },
+      });
+      const layer = runtimeWith({ out, api });
+
+      return Effect.gen(function* () {
+        yield* postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["max_connections=100"],
+          replaceExistingOverrides: false,
+          noRestart: false,
+        });
+        expect(api.requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
+        expect(api.requests[1]?.body).toEqual({
+          wal_keep_size: "1GB",
+          stored_only_key: "x",
+          max_connections: 100,
+        });
+        expect(out.stdoutText).toContain("stored_only_key");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("lets a --config value replace the stored value of the same key", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        GET: { status: 200, body: { max_connections: 50, stored_only_key: "x" } },
+        PUT: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+      },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["max_connections=100"],
+        replaceExistingOverrides: false,
+        noRestart: false,
+      });
+      expect(api.requests[1]?.body).toEqual({ max_connections: 100, stored_only_key: "x" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports a value the typed contract rejects with its parameter name", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["max_connections=lots"],
+          replaceExistingOverrides: true,
+          noRestart: false,
+        }),
+      );
+      expect(failure(exit)?.message).toMatch(
+        /^invalid Postgres config value for max_connections: /,
+      );
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects a numeric value for a string parameter locally with a unit hint", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["work_mem=4096"],
+          replaceExistingOverrides: true,
+          noRestart: false,
+        }),
+      );
+      const error = failure(exit);
+      expect(error?._tag).toBe("PostgresConfigUpdateSerializeError");
+      expect(error?.message).toMatch(/^invalid Postgres config value for work_mem: /);
+      expect(error?.message).toContain("(pass the value with its unit, such as 4096kB or 4096ms)");
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("sends a value with its unit as a string", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockCommandPlatformApi({
+      byMethod: { PUT: { status: 200, body: { work_mem: "4096kB" } } },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["work_mem=4096kB"],
+        replaceExistingOverrides: true,
+        noRestart: false,
+      });
+      expect(api.requests.map((request) => request.body)).toEqual([{ work_mem: "4096kB" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("shows response keys the typed contract does not model", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        PUT: { status: 200, body: { max_connections: 100, server_only_key: "x" } },
+      },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["max_connections=100"],
+        replaceExistingOverrides: true,
+        noRestart: false,
+      });
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toEqual({ max_connections: 100, server_only_key: "x" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("maps a non-JSON 2xx PUT body to the update unmarshal error", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => Effect.sync(() => textResponse(request, 200, "<html>")),
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        postgresConfigUpdate({
+          projectRef: Option.none(),
+          config: ["max_connections=100"],
+          replaceExistingOverrides: true,
+          noRestart: false,
+        }),
+      );
+      const error = failure(exit);
+      expect(error?._tag).toBe("PostgresConfigUpdateUnmarshalError");
+      expect(error?.message).toMatch(/^failed to unmarshal update response: /);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails before ref resolution on malformed config input", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
@@ -390,14 +756,16 @@ describe("postgres-config update", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("maps PUT failures to the update unexpected-status error", () => {
+  it.effect("surfaces a PUT 503 as the update unexpected-status error without retrying", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      byMethod: {
-        GET: { status: 200, body: { wal_keep_size: "1GB" } },
-        PUT: { status: 503, body: {} },
-      },
-    });
+    const api = withProductionRetries(
+      mockCommandPlatformApi({
+        byMethod: {
+          GET: { status: 200, body: { wal_keep_size: "1GB" } },
+          PUT: { status: 503, body: {} },
+        },
+      }),
+    );
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
@@ -415,6 +783,7 @@ describe("postgres-config update", () => {
         expect(causeText).toContain("PostgresConfigUpdateUnexpectedStatusError");
         expect(causeText).toContain("unexpected update config overrides status 503");
       }
+      expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -502,6 +871,84 @@ describe("postgres-config delete", () => {
       expect(out.stderrText).toBe(
         "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        activeFlags: { config: true, "no-restart": true },
+        requests: api.requests,
+        exact: true,
+      });
+      assertBlockDrift(postgresConfigRead, { requests: api.requests.slice(0, 1), exact: true });
+      assertBlockDrift(postgresConfigWrite, { requests: api.requests.slice(1, 2), exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, deletes the override and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { max_connections: 100, shared_buffers: "1GB" },
+      updated: { shared_buffers: "1GB" },
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigDelete({
+        projectRef: Option.none(),
+        config: ["max_connections"],
+        noRestart: false,
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `PUT ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(api.requests[2]?.body).toEqual({ shared_buffers: "1GB" });
+      expect(out.stdoutText).toContain("shared_buffers");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("removes a stored override the update contract does not model", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        GET: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+        PUT: { status: 200, body: { max_connections: 100 } },
+      },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigDelete({
+        projectRef: Option.none(),
+        config: ["stored_only_key"],
+        noRestart: false,
+      });
+      expect(api.requests[1]?.body).toEqual({ max_connections: 100 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("forwards a stored override the update contract does not model", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      byMethod: {
+        GET: { status: 200, body: { max_connections: 100, stored_only_key: "x" } },
+        PUT: { status: 200, body: { stored_only_key: "x", restart_database: false } },
+      },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigDelete({
+        projectRef: Option.none(),
+        config: ["max_connections"],
+        noRestart: true,
+      });
+      expect(api.requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
+      expect(api.requests[1]?.body).toEqual({ stored_only_key: "x", restart_database: false });
     }).pipe(Effect.provide(layer));
   });
 
@@ -569,12 +1016,14 @@ describe("postgres-config delete", () => {
 
   it.effect("flushes telemetry and caches the ref when delete fails after resolution", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      byMethod: {
-        GET: { status: 200, body: { max_connections: 100 } },
-        PUT: { status: 503, body: {} },
-      },
-    });
+    const api = withProductionRetries(
+      mockCommandPlatformApi({
+        byMethod: {
+          GET: { status: 200, body: { max_connections: 100 } },
+          PUT: { status: 503, body: {} },
+        },
+      }),
+    );
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();
     const layer = runtimeWith({
@@ -597,8 +1046,35 @@ describe("postgres-config delete", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("PostgresConfigDeleteUnexpectedStatusError");
       }
+      expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("maps a non-JSON 2xx PUT body to the delete unmarshal error", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() =>
+          request.method === "GET"
+            ? jsonResponse(request, 200, { max_connections: 100 })
+            : textResponse(request, 200, "<html>"),
+        ),
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        postgresConfigDelete({
+          projectRef: Option.none(),
+          config: ["max_connections"],
+          noRestart: false,
+        }),
+      );
+      const error = failure(exit);
+      expect(error?._tag).toBe("PostgresConfigDeleteUnmarshalError");
+      expect(error?.message).toMatch(/^failed to unmarshal delete response: /);
     }).pipe(Effect.provide(layer));
   });
 
@@ -622,8 +1098,11 @@ describe("postgres-config delete", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("PostgresConfigGetUnexpectedStatusError");
       }
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.method).toBe("GET");
+      expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 

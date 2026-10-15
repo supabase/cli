@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  NOTEBOOKS_PROJECT_REF,
   notebookListPage,
   notebookResource,
   notebooksProject,
@@ -9,10 +10,16 @@ import {
   setupNotebooks,
 } from "../../../../tests/helpers/notebooks.ts";
 import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
   NotebookFileError,
   NotebookNameConflictError,
   NotebookNotFoundError,
 } from "../notebooks.errors.ts";
+import { notebookCreate, notebookRead, notebooksList } from "../notebooks.shared.ts";
 import { notebooksPushHandler as notebooksPush } from "./push.command.ts";
 import type { NotebooksPushFlags } from "./push.command.ts";
 
@@ -82,6 +89,16 @@ describe("notebooks push", () => {
       });
       expect(http.requests.filter((request) => request.method === "POST")).toHaveLength(1);
       expect(out.stdoutText).toContain("(1 created, 1 updated)");
+      expect(http.routeKeys).toEqual([
+        `GET ${notebooksRoute()}`,
+        `POST ${notebooksRoute()}`,
+        `PATCH ${notebooksRoute(`/${SALES_ID}`)}`,
+      ]);
+      assertPermissionDrift({ command: "notebooks push", requests: http.driftRequests });
+      assertBlockDrift(notebookCreate, {
+        requests: http.driftRequests.filter((request) => request.method === "POST"),
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -111,6 +128,10 @@ describe("notebooks push", () => {
         `GET ${notebooksRoute()}`,
         `PATCH ${notebooksRoute(`/${SALES_ID}`)}`,
       ]);
+      assertPermissionDrift({
+        command: "notebooks push",
+        requests: http.driftRequests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -176,6 +197,12 @@ describe("notebooks push", () => {
       expect(http.routeKeys).toContain(`DELETE ${notebooksRoute(`/${ERRORS_ID}`)}`);
       expect(out.stderrText).toContain(" • stale");
       expect(out.stdoutText).toContain("Deleted 1 notebook(s) from the project.");
+      expect(http.routeKeys).toEqual([
+        `GET ${notebooksRoute()}`,
+        `PATCH ${notebooksRoute(`/${SALES_ID}`)}`,
+        `DELETE ${notebooksRoute(`/${ERRORS_ID}`)}`,
+      ]);
+      assertPermissionDrift({ command: "notebooks push", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -202,6 +229,17 @@ describe("notebooks push", () => {
 
       expect(yield* repo.exists("error-rates")).toBe(true);
       expect(http.routeKeys).not.toContain(`DELETE ${notebooksRoute(`/${ERRORS_ID}`)}`);
+      expect(http.routeKeys).toEqual([
+        `GET ${notebooksRoute()}`,
+        `GET ${notebooksRoute(`/${ERRORS_ID}`)}`,
+      ]);
+      assertPermissionDrift({ command: "notebooks push", requests: http.driftRequests });
+      assertBlockDrift(notebookRead, {
+        requests: http.driftRequests.filter(
+          (request) => new URL(request.url).pathname === notebooksRoute(`/${ERRORS_ID}`),
+        ),
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -224,12 +262,61 @@ describe("notebooks push", () => {
 
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
+      assertPermissionDrift({ command: "notebooks push", requests: http.driftRequests });
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
           data: expect.objectContaining({ created: [], updated: [], deleted: [] }),
         }),
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks the project, pushes its notebooks and records the linked project", () => {
+    const repo = project();
+    const { layer, http, out } = setupNotebooks({
+      command: "push",
+      workdir: repo.dir,
+      realLayers: true,
+      promptSelectResponses: [NOTEBOOKS_PROJECT_REF],
+      routes: {
+        "GET /v1/projects": { status: 200, body: [projectResponse(NOTEBOOKS_PROJECT_REF)] },
+        [`GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`]: {
+          status: 200,
+          body: projectResponse(NOTEBOOKS_PROJECT_REF),
+        },
+        [`GET ${notebooksRoute()}`]: {
+          status: 200,
+          body: notebookListPage({ notebooks: [{ id: SALES_ID, name: "sales-dashboard" }] }),
+        },
+        [`PATCH ${notebooksRoute(`/${SALES_ID}`)}`]: {
+          status: 200,
+          body: { data: notebookResource({ id: SALES_ID, name: "sales-dashboard" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* repo.write("sales-dashboard", SALES_FILE);
+      yield* notebooksPush(flags());
+
+      expect(http.routeKeys).toEqual([
+        "GET /v1/projects",
+        `GET ${notebooksRoute()}`,
+        `PATCH ${notebooksRoute(`/${SALES_ID}`)}`,
+        `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`,
+      ]);
+      expect(out.promptSelectCalls).toHaveLength(1);
+      expect(out.stdoutText).toContain("(0 created, 1 updated)");
+      expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({ command: "notebooks push", requests: http.driftRequests });
+      assertBlockDrift(notebooksList, {
+        requests: http.driftRequests.filter(
+          (request) => new URL(request.url).pathname === notebooksRoute(),
+        ),
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

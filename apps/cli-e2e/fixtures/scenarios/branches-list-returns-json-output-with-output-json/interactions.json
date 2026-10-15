@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/branches",
+      "path": "/v1/projects/replayfixtureprojref/branches",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -26,7 +26,7 @@
           "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           "name": "test-branch",
           "project_ref": "branchrefaaaaaaaaa",
-          "parent_project_ref": "__PROJECT_REF__",
+          "parent_project_ref": "replayfixtureprojref",
           "is_default": false,
           "persistent": false,
           "status": "MIGRATIONS_PASSED",

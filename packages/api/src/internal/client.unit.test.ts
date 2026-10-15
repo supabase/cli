@@ -1,10 +1,22 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import {
+  Cause,
+  Clock,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Random,
+  Redacted,
+} from "effect";
+import { TestClock } from "effect/testing";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as UrlParams from "effect/http/UrlParams";
 import * as Schema from "effect/Schema";
 
@@ -12,6 +24,9 @@ import { operationDefinitions } from "../generated/contracts.ts";
 import {
   makeSupabaseApiClient,
   markSupabaseApiInputErrorAsUserInput,
+  type SupabaseApiClientOptions,
+  type SupabaseApiClientShape,
+  type SupabaseApiRetryOptions,
   SupabaseApiInputError,
 } from "./client.ts";
 
@@ -159,6 +174,60 @@ const config = {
   userAgent: "supabase-api/test",
 } as const;
 
+/** Runs `effect` on a virtual clock with every retry jitter draw fixed at `jitter`. */
+function onVirtualClock<A, E>(
+  effect: Effect.Effect<A, E, TestClock.TestClock>,
+  jitter = 0.5,
+): Promise<A> {
+  return Effect.runPromise(
+    effect.pipe(
+      Effect.provideService(Random.Random, {
+        nextIntUnsafe: () => 0,
+        nextDoubleUnsafe: () => jitter,
+      }),
+      Effect.provide(TestClock.layer()),
+    ),
+  );
+}
+
+/**
+ * Starts one client call against a stub transport on the virtual clock and records the clock
+ * reading of every request the transport receives.
+ */
+function startVirtualCall<A, E>(
+  call: (client: SupabaseApiClientShape) => Effect.Effect<A, E, never>,
+  respond: (
+    request: HttpClientRequest.HttpClientRequest,
+    attempt: number,
+  ) => HttpClientResponse.HttpClientResponse | HttpClientError.HttpClientError,
+  options?: SupabaseApiClientOptions,
+) {
+  return Effect.gen(function* () {
+    const requestTimes: Array<number> = [];
+    const fiber = yield* makeSupabaseApiClient(config, options).pipe(
+      Effect.flatMap(call),
+      Effect.exit,
+      Effect.provide(
+        httpClientLayer((request) =>
+          Effect.gen(function* () {
+            requestTimes.push(yield* Clock.currentTimeMillis);
+            const outcome = respond(request, requestTimes.length);
+            return yield* HttpClientError.isHttpClientError(outcome)
+              ? Effect.fail(outcome)
+              : Effect.succeed(outcome);
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    yield* Effect.yieldNow;
+    return { requestTimes, fiber };
+  });
+}
+
+const listProjects = (client: SupabaseApiClientShape) =>
+  client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {});
+
 describe("makeSupabaseApiClient", () => {
   test("defaults request-schema failures to generated-client provenance", async () => {
     let requests = 0;
@@ -206,6 +275,142 @@ describe("makeSupabaseApiClient", () => {
     expect(requests).toBe(0);
   });
 
+  test("rejects unknown request keys at any depth before sending a request", async () => {
+    let requests = 0;
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+    const ref = "abcdefghijklmnopqrst";
+    const topLevelExcess = { ref, requestedConfig: { database: true }, junk: 1 };
+    const nestedExcess = { ref, requestedConfig: { database: true, junk: 1 } };
+
+    const errors = await Promise.all([
+      Effect.runPromise(
+        client
+          .execute(operationDefinitions.v1UpdateSslEnforcementConfig, topLevelExcess)
+          .pipe(Effect.flip),
+      ),
+      Effect.runPromise(
+        client
+          .executeRaw(operationDefinitions.v1UpdateSslEnforcementConfig, nestedExcess)
+          .pipe(Effect.flip),
+      ),
+    ]);
+
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(SupabaseApiInputError);
+    }
+    expect(errors[0]?.message).toContain('["junk"]');
+    expect(errors[1]?.message).toContain('["requestedConfig"]["junk"]');
+    expect(requests).toBe(0);
+  });
+
+  test("per-request options override the base URL, token, and headers for that request only", async () => {
+    const seen: Array<{
+      url: string;
+      authorization: string | undefined;
+      userAgent: string | undefined;
+      custom: string | undefined;
+    }> = [];
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient({ ...config, headers: { "X-Custom": "default" } }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seen.push({
+              url: request.url,
+              authorization: request.headers.authorization,
+              userAgent: request.headers["user-agent"],
+              custom: request.headers["x-custom"],
+            });
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        {
+          baseUrl: "https://api.example.test/prefix",
+          accessToken: Redacted.make("override-token"),
+          headers: { "X-Custom": "override" },
+        },
+      ),
+    );
+    await Effect.runPromise(
+      client.executeRaw(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        { baseUrl: "https://raw.example.test", accessToken: "raw-token" },
+      ),
+    );
+    await Effect.runPromise(client.execute(operationDefinitions.v1ListAllProjects, {}));
+
+    expect(seen).toEqual([
+      {
+        url: "https://api.example.test/prefix/v1/projects",
+        authorization: "Bearer override-token",
+        userAgent: "supabase-api/test",
+        custom: "override",
+      },
+      {
+        url: "https://raw.example.test/v1/projects",
+        authorization: "Bearer raw-token",
+        userAgent: "supabase-api/test",
+        custom: "default",
+      },
+      {
+        url: "https://api.supabase.com/v1/projects",
+        authorization: "Bearer test-token",
+        userAgent: "supabase-api/test",
+        custom: "default",
+      },
+    ]);
+  });
+
+  test("requests with per-request overrides still pass through transformClient", async () => {
+    const transformed: Array<string> = [];
+    const wire: Array<{ url: string; stamp: string | undefined }> = [];
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config, {
+        transformClient: (inner) =>
+          Effect.succeed(
+            HttpClient.mapRequest(inner, (request) => {
+              transformed.push(request.url);
+              return HttpClientRequest.setHeader(request, "X-Stamp", "stamped");
+            }),
+          ),
+      }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            wire.push({ url: request.url, stamp: request.headers["x-stamp"] });
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(
+        operationDefinitions.v1ListAllProjects,
+        {},
+        { baseUrl: "https://api.example.test" },
+      ),
+    );
+
+    expect(transformed).toEqual(["https://api.example.test/v1/projects"]);
+    expect(wire).toEqual([{ url: "https://api.example.test/v1/projects", stamp: "stamped" }]);
+  });
+
   test("fails request-body construction before sending a request", async () => {
     class BrokenBlob extends Blob {
       override arrayBuffer(): Promise<ArrayBuffer> {
@@ -237,29 +442,67 @@ describe("makeSupabaseApiClient", () => {
     expect(requests).toBe(0);
   });
 
-  test("retries transport errors for GET requests", async () => {
-    let attempts = 0;
-
-    const result = await Effect.runPromise(
+  test("executeRaw forwards extraBody fields and lets validated fields win", async () => {
+    const bodies: unknown[] = [];
+    await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
-          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
+          client.executeRaw(
+            operationDefinitions.v1UpdatePostgresConfig,
+            { ref: "abcdefghijklmnopqrst", effective_cache_size: "4GB" },
+            {
+              extraBody: {
+                effective_cache_size: "1GB",
+                future_parameter: "on",
+              },
+            },
+          ),
         ),
         Effect.provide(
           httpClientLayer((request) => {
-            attempts += 1;
-            if (attempts < 3) {
-              return Effect.fail(transportError(request, "socket reset"));
-            }
+            bodies.push(JSON.parse(requestBodyText(request)));
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
 
+    expect(bodies).toEqual([{ effective_cache_size: "4GB", future_parameter: "on" }]);
+  });
+
+  test("executeRaw rejects extraBody on operations without a JSON field body", async () => {
+    let requests = 0;
+    const exit = await Effect.runPromiseExit(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(operationDefinitions.v1ListAllProjects, {}, { extraBody: { a: 1 } }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
             return Effect.succeed(jsonResponse(request, 200, []));
           }),
         ),
       ),
     );
 
-    expect(attempts).toBe(3);
-    expect(result).toEqual([]);
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+    expect(requests).toBe(0);
+  });
+
+  test("retries transport errors for GET requests", async () => {
+    const { requestTimes, result } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+          attempt < 3 ? transportError(request, "socket reset") : jsonResponse(request, 200, []),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        return { requestTimes: call.requestTimes, result: yield* Fiber.join(call.fiber) };
+      }),
+    );
+
+    expect(requestTimes).toHaveLength(3);
+    expect(result).toEqual(Exit.succeed([]));
   });
 
   test("reveals redacted auth tokens only at the transport boundary", async () => {
@@ -352,54 +595,6 @@ describe("makeSupabaseApiClient", () => {
       commandRunId: "run-123",
       idempotencyKey: "migration-123",
     });
-  });
-
-  test("retries 5xx responses for idempotent GET requests", async () => {
-    let attempts = 0;
-
-    const result = await Effect.runPromise(
-      makeSupabaseApiClient(config).pipe(
-        Effect.flatMap((client) =>
-          client.execute<"v1GetProject">(operationDefinitions.v1GetProject, {
-            ref: "abcdefghijklmnopqrst",
-          }),
-        ),
-        Effect.provide(
-          httpClientLayer((request) => {
-            attempts += 1;
-            if (attempts === 1) {
-              return Effect.succeed(
-                jsonResponse(request, 500, {
-                  error: "temporary failure",
-                }),
-              );
-            }
-
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: "db.supabase.internal",
-                  version: "17.0.1",
-                  postgres_engine: "17",
-                  release_channel: "ga",
-                },
-              }),
-            );
-          }),
-        ),
-      ),
-    );
-
-    expect(attempts).toBe(2);
-    expect(result.database.host).toBe("db.supabase.internal");
   });
 
   test("decodes nullable JWT templates in API key responses", async () => {
@@ -735,28 +930,19 @@ describe("makeSupabaseApiClient", () => {
   });
 
   test("stops after the configured number of transport retries", async () => {
-    let attempts = 0;
-
-    const exit = await Effect.runPromise(
-      makeSupabaseApiClient(config, {
-        retry: {
-          maxRetries: 2,
-        },
-      }).pipe(
-        Effect.flatMap((client) =>
-          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
-        ),
-        Effect.exit,
-        Effect.provide(
-          httpClientLayer((request) => {
-            attempts += 1;
-            return Effect.fail(transportError(request, "still broken"));
-          }),
-        ),
-      ),
+    const { requestTimes, exit } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(
+          listProjects,
+          (request) => transportError(request, "still broken"),
+          { retry: { maxRetries: 2 } },
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+      }),
     );
 
-    expect(attempts).toBe(3);
+    expect(requestTimes).toHaveLength(3);
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
@@ -1226,5 +1412,332 @@ describe("makeSupabaseApiClient", () => {
     // The un-expanded names never reach the wire.
     expect(requestUrlParam(seenRequest!, "page")).toBeUndefined();
     expect(requestUrlParam(seenRequest!, "filter")).toBeUndefined();
+  });
+});
+
+describe("retry policy", () => {
+  const createProject = (client: SupabaseApiClientShape) =>
+    client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
+      db_pass: "hunter2",
+      name: "project-name",
+      organization_slug: "my-org",
+    });
+
+  const createdProject = (request: HttpClientRequest.HttpClientRequest) =>
+    jsonResponse(request, 201, {
+      id: "project-id",
+      ref: "abcdefghijklmnopqrst",
+      organization_id: "org-id",
+      organization_slug: "my-org",
+      name: "project-name",
+      region: "us-east-1",
+      created_at: "2026-03-13T12:00:00.000Z",
+      status: "ACTIVE_HEALTHY",
+    });
+
+  const gaps = (times: ReadonlyArray<number>) => times.slice(1).map((time, i) => time - times[i]!);
+
+  test.each([500, 503])(
+    "waits out the backoff before retrying a GET after a %i",
+    async (status) => {
+      const { early, afterBackoff, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+            attempt === 1 ? jsonResponse(request, status, {}) : jsonResponse(request, 200, []),
+          );
+          // The first backoff ceiling is 250ms, so a jitter draw of 0.5 waits 125ms.
+          yield* TestClock.adjust(Duration.millis(124));
+          const early = call.requestTimes.length;
+          yield* TestClock.adjust(Duration.millis(1));
+          const afterBackoff = call.requestTimes.length;
+          return { early, afterBackoff, exit: yield* Fiber.join(call.fiber) };
+        }),
+      );
+
+      expect(early).toBe(1);
+      expect(afterBackoff).toBe(2);
+      expect(exit).toEqual(Exit.succeed([]));
+    },
+  );
+
+  test("backs off exponentially up to the delay cap", async () => {
+    const requestTimes = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(
+          listProjects,
+          (request) => jsonResponse(request, 503, {}),
+          { retry: { maxRetries: 8 } },
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Fiber.join(call.fiber);
+        return call.requestTimes;
+      }),
+      1,
+    );
+
+    expect(gaps(requestTimes)).toEqual([250, 500, 1000, 2000, 4000, 4000, 4000, 4000]);
+  });
+
+  test("retries a POST after a 429 only once its Retry-After seconds have elapsed", async () => {
+    const { early, afterWait, exit } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(createProject, (request, attempt) =>
+          attempt === 1
+            ? HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", { status: 429, headers: { "retry-after": "2" } }),
+              )
+            : createdProject(request),
+        );
+        yield* TestClock.adjust(Duration.millis(1999));
+        const early = call.requestTimes.length;
+        yield* TestClock.adjust(Duration.millis(1));
+        const afterWait = call.requestTimes.length;
+        return { early, afterWait, exit: yield* Fiber.join(call.fiber) };
+      }),
+    );
+
+    expect(early).toBe(1);
+    expect(afterWait).toBe(2);
+    expect(Exit.isSuccess(exit)).toBe(true);
+  });
+
+  test("retries a GET immediately after a 500 with Retry-After 0", async () => {
+    const requestTimes = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+          attempt === 1
+            ? HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", { status: 500, headers: { "retry-after": "0" } }),
+              )
+            : jsonResponse(request, 200, []),
+        );
+        yield* TestClock.adjust(Duration.millis(0));
+        yield* Fiber.join(call.fiber);
+        return call.requestTimes;
+      }),
+    );
+
+    expect(gaps(requestTimes)).toEqual([0]);
+  });
+
+  test("honours an HTTP-date Retry-After on a 503", async () => {
+    const now = Date.parse("2026-10-13T12:00:00Z");
+    const requestTimes = await onVirtualClock(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+          attempt === 1
+            ? HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", {
+                  status: 503,
+                  headers: { "retry-after": "Tue, 13 Oct 2026 12:00:03 GMT" },
+                }),
+              )
+            : jsonResponse(request, 200, []),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Fiber.join(call.fiber);
+        return call.requestTimes;
+      }),
+    );
+
+    expect(gaps(requestTimes)).toEqual([3000]);
+  });
+
+  test.each(["soon", "-5", ""])(
+    "falls back to the backoff when Retry-After is %j",
+    async (retryAfter) => {
+      const requestTimes = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+            attempt === 1
+              ? HttpClientResponse.fromWeb(
+                  request,
+                  new Response("{}", { status: 429, headers: { "retry-after": retryAfter } }),
+                )
+              : jsonResponse(request, 200, []),
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Fiber.join(call.fiber);
+          return call.requestTimes;
+        }),
+      );
+
+      expect(gaps(requestTimes)).toEqual([125]);
+    },
+  );
+
+  test("returns a 429 whose Retry-After exceeds the cap without retrying", async () => {
+    const { requestTimes, exit } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request) =>
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "30" } }),
+          ),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+      }),
+    );
+
+    expect(requestTimes).toHaveLength(1);
+    const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+    if (!HttpClientError.isHttpClientError(error) || error.reason._tag !== "StatusCodeError") {
+      throw new Error("expected StatusCodeError");
+    }
+    expect(error.reason.response.status).toBe(429);
+  });
+
+  test("honours a Retry-After exactly at the cap", async () => {
+    const requestTimes = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request, attempt) =>
+          attempt === 1
+            ? HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", { status: 429, headers: { "retry-after": "10" } }),
+              )
+            : jsonResponse(request, 200, []),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Fiber.join(call.fiber);
+        return call.requestTimes;
+      }),
+    );
+
+    expect(gaps(requestTimes)).toEqual([10_000]);
+  });
+
+  describe("per-request retry options", () => {
+    const listProjectsWith = (retry: SupabaseApiRetryOptions) => (client: SupabaseApiClientShape) =>
+      client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}, { retry });
+
+    const failedStatus = (exit: Exit.Exit<unknown, unknown>) => {
+      const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      if (!HttpClientError.isHttpClientError(error) || error.reason._tag !== "StatusCodeError") {
+        throw new Error("expected StatusCodeError");
+      }
+      return error.reason.response.status;
+    };
+
+    test("maxRetries 0 makes a single attempt and returns the 503", async () => {
+      const { requestTimes, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(listProjectsWith({ maxRetries: 0 }), (request) =>
+            jsonResponse(request, 503, {}),
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(1);
+      expect(failedStatus(exit)).toBe(503);
+    });
+
+    test("wins over the client-level retry options, field by field", async () => {
+      const { requestTimes, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(
+            listProjectsWith({ maxRetries: 1 }),
+            (request) => jsonResponse(request, 503, {}),
+            { retry: { maxRetries: 4, requestTimeoutMs: 1000 } },
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(2);
+      expect(failedStatus(exit)).toBe(503);
+    });
+
+    test("still applies when transformClient wraps the client", async () => {
+      const { requestTimes } = await onVirtualClock(
+        Effect.gen(function* () {
+          const call = yield* startVirtualCall(
+            listProjectsWith({ maxRetries: 0 }),
+            (request) => jsonResponse(request, 503, {}),
+            {
+              transformClient: (client) => Effect.succeed(HttpClient.mapRequest(client, (r) => r)),
+            },
+          );
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Fiber.join(call.fiber);
+          return { requestTimes: call.requestTimes };
+        }),
+      );
+
+      expect(requestTimes).toHaveLength(1);
+    });
+
+    test("requestTimeoutMs Infinity lets an attempt outlast the default timeout", async () => {
+      const { attempts, exit } = await onVirtualClock(
+        Effect.gen(function* () {
+          let attempts = 0;
+          const fiber = yield* makeSupabaseApiClient(config).pipe(
+            Effect.flatMap(listProjectsWith({ requestTimeoutMs: Number.POSITIVE_INFINITY })),
+            Effect.exit,
+            Effect.provide(
+              httpClientLayer((request) =>
+                Effect.suspend(() => {
+                  attempts += 1;
+                  return Effect.as(
+                    Effect.sleep(Duration.minutes(5)),
+                    jsonResponse(request, 200, []),
+                  );
+                }),
+              ),
+            ),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.minutes(5));
+          return { attempts, exit: yield* Fiber.join(fiber) };
+        }),
+      );
+
+      expect(attempts).toBe(1);
+      expect(exit).toEqual(Exit.succeed([]));
+    });
+  });
+
+  test("does not retry a POST after a 500 however long it waits", async () => {
+    const requestTimes = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(createProject, (request) =>
+          jsonResponse(request, 500, {}),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Fiber.join(call.fiber);
+        return call.requestTimes;
+      }),
+    );
+
+    expect(requestTimes).toHaveLength(1);
+  });
+
+  test("surfaces the last 503 once a GET exhausts its retries", async () => {
+    const { requestTimes, exit } = await onVirtualClock(
+      Effect.gen(function* () {
+        const call = yield* startVirtualCall(listProjects, (request) =>
+          jsonResponse(request, 503, { message: "unavailable" }),
+        );
+        yield* TestClock.adjust(Duration.minutes(1));
+        return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+      }),
+    );
+
+    expect(requestTimes).toHaveLength(6);
+    const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+    expect(HttpClientError.isHttpClientError(error)).toBe(true);
+    if (!HttpClientError.isHttpClientError(error) || error.reason._tag !== "StatusCodeError") {
+      throw new Error("expected StatusCodeError");
+    }
+    expect(error.reason.response.status).toBe(503);
   });
 });

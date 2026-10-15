@@ -3,13 +3,32 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -248,6 +267,8 @@ interface SetupOpts {
   dockerInstalled?: boolean;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` against `workdir`. */
+  realLayers?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -259,7 +280,13 @@ function setup(opts: SetupOpts = {}) {
   const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir: opts.workdir ?? "/work/project",
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     connection.layer,
     docker.layer,
     bundled.layer,
@@ -756,5 +783,67 @@ describe("test db integration", () => {
         name: "supabase_network_My_Project",
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("mints a login role through the real resolver for --linked --project-ref", () => {
+    const { layer, connection } = setup({
+      args: ["test", "db", "--linked", "--project-ref", VALID_REF],
+      realLayers: true,
+      workdir: tempWorkdir.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* testDb(flags({ linked: true, local: false, projectRef: Option.some(VALID_REF) }));
+      expect(connection.connectCalls[0]?.isLocal).toBe(false);
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      assertPermissionDrift({
+        command: "test db",
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("makes no Management API request for the default local target", () => {
+    const { layer } = setup({
+      args: ["test", "db"],
+      realLayers: true,
+      workdir: tempWorkdir.current,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* testDb(flags());
+      expect(requests).toEqual([]);
+      assertPermissionDrift({
+        command: "test db",
+        requests: asRecordedRequests(requests),
+        exact: true,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "test db",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

@@ -1,5 +1,14 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+} from "../../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
@@ -80,6 +89,23 @@ export const computePushCommand = Command.make("push", config).pipe(
       description: "Deploy without blocking on the build",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v2-create-compute-instance-upload", kind: "required" },
+          { operationId: "v2-deploy-a-compute-instance", kind: "required" },
+        ],
+        noApiEffectFlags: ["instances", "exposure"],
+      },
+      withContext(
+        withCondition(computeRead, { flag: "no-wait", is: false }),
+        "the deploy response reports the build as still building",
+      ),
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     computePush(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

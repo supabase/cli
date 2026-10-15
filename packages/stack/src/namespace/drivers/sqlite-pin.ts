@@ -19,10 +19,10 @@ const ensurePinTable = (connection: DatabaseSync): void => {
 /**
  * Takes a SHARED read lock: a deferred `BEGIN` plus a real `SELECT`, held until the connection
  * commits or closes. Multiple SHARED holders coexist; only a concurrent EXCLUSIVE holder (a
- * retirement sweep) contends, surfacing as SQLite's busy errcode under `busy_timeout = 0`.
+ * retirement sweep) contends, surfacing as SQLite's busy errcode once `busyTimeoutMillis` passes.
  */
-export const takeSharedLockSync = (connection: DatabaseSync): void => {
-  connection.exec("PRAGMA busy_timeout = 0");
+export const takeSharedLockSync = (connection: DatabaseSync, busyTimeoutMillis = 0): void => {
+  connection.exec(`PRAGMA busy_timeout = ${busyTimeoutMillis}`);
   ensurePinTable(connection);
   connection.exec("BEGIN");
   try {

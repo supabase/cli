@@ -9,11 +9,13 @@ const files = ["src/a.e2e.test.ts", "src/b.e2e.test.ts", "src/c.e2e.test.ts", "s
 const sortedShards = (shards: readonly (readonly string[])[]) =>
   shards.map((shard) => [...shard].sort());
 
+const concurrent = (keys: readonly string[]) => keys.map((key) => ({ key, exclusive: false }));
+
 describe("packShards", () => {
   test.each([1, files.length, files.length + 3])(
     "partitions every file into exactly one of %i shards",
     (count) => {
-      const shards = packShards(files, { "src/a.e2e.test.ts": 100 }, count);
+      const shards = packShards(concurrent(files), { "src/a.e2e.test.ts": 100 }, count, 1);
 
       expect(shards).toHaveLength(count);
       expect(shards.flat().sort()).toEqual([...files].sort());
@@ -21,7 +23,7 @@ describe("packShards", () => {
   );
 
   test("leaves trailing shards empty when there are more shards than files", () => {
-    const shards = packShards(["src/a.e2e.test.ts", "src/b.e2e.test.ts"], {}, 4);
+    const shards = packShards(concurrent(["src/a.e2e.test.ts", "src/b.e2e.test.ts"]), {}, 4, 1);
 
     expect(shards).toEqual([["src/a.e2e.test.ts"], ["src/b.e2e.test.ts"], [], []]);
   });
@@ -33,8 +35,8 @@ describe("packShards", () => {
       "src/c.e2e.test.ts": 900,
     };
 
-    const forward = packShards(files, timings, 2);
-    const reversed = packShards([...files].reverse(), timings, 2);
+    const forward = packShards(concurrent(files), timings, 2, 1);
+    const reversed = packShards(concurrent([...files].reverse()), timings, 2, 1);
 
     expect(reversed).toEqual(forward);
   });
@@ -47,11 +49,32 @@ describe("packShards", () => {
       "src/d.e2e.test.ts": 10,
     };
 
-    const shards = packShards(files, timings, 2);
+    const shards = packShards(concurrent(files), timings, 2, 1);
 
     expect(sortedShards(shards)).toEqual([
       ["src/b.e2e.test.ts"],
       ["src/a.e2e.test.ts", "src/c.e2e.test.ts", "src/d.e2e.test.ts"],
+    ]);
+  });
+
+  test("packs concurrent files beside a long one while an exclusive file runs alone", () => {
+    const timings = {
+      "src/long.e2e.test.ts": 90,
+      "src/exclusive.e2e.test.ts": 80,
+      "src/a.e2e.test.ts": 20,
+      "src/b.e2e.test.ts": 20,
+      "src/c.e2e.test.ts": 20,
+    };
+    const shardFiles = Object.keys(timings).map((key) => ({
+      key,
+      exclusive: key === "src/exclusive.e2e.test.ts",
+    }));
+
+    const shards = packShards(shardFiles, timings, 2, 4);
+
+    expect(sortedShards(shards)).toEqual([
+      ["src/a.e2e.test.ts", "src/b.e2e.test.ts", "src/c.e2e.test.ts", "src/long.e2e.test.ts"],
+      ["src/exclusive.e2e.test.ts"],
     ]);
   });
 
@@ -63,7 +86,7 @@ describe("packShards", () => {
     };
 
     // d is unmeasured; at the median (300) it ties with b and follows it into the second shard.
-    const shards = packShards(files, timings, 2);
+    const shards = packShards(concurrent(files), timings, 2, 1);
 
     expect(sortedShards(shards)).toEqual([
       ["src/a.e2e.test.ts", "src/c.e2e.test.ts"],
@@ -74,13 +97,15 @@ describe("packShards", () => {
   test("weights every file at the default duration when nothing has been measured", () => {
     const allDefault = Object.fromEntries(files.map((file) => [file, DEFAULT_DURATION_MS]));
 
-    expect(packShards(files, {}, 3)).toEqual(packShards(files, allDefault, 3));
+    expect(packShards(concurrent(files), {}, 3, 1)).toEqual(
+      packShards(concurrent(files), allDefault, 3, 1),
+    );
   });
 
   test("breaks duration ties by key so equal files spread deterministically", () => {
     const timings = { "src/c.e2e.test.ts": 50, "src/a.e2e.test.ts": 50, "src/b.e2e.test.ts": 50 };
 
-    const shards = packShards(Object.keys(timings), timings, 3);
+    const shards = packShards(concurrent(Object.keys(timings)), timings, 3, 1);
 
     expect(shards).toEqual([["src/a.e2e.test.ts"], ["src/b.e2e.test.ts"], ["src/c.e2e.test.ts"]]);
   });

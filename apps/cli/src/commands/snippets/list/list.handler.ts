@@ -1,8 +1,8 @@
-import { Effect, Option, Predicate } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Effect, Option, Predicate, Schema } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -18,9 +18,7 @@ import {
   goString,
   goStruct,
 } from "../../../command-internal/go-struct-output.encoders.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
-import { requestWithAuth } from "../../../command-internal/raw-http.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -31,21 +29,6 @@ import {
 } from "../snippets.errors.ts";
 import { renderSnippetsTable, type SnippetRow } from "../snippets.format.ts";
 import type { SnippetsListFlags } from "./list.command.ts";
-
-// Tolerant accessors for the API response body. The real `/v1/snippets`
-// payload omits optional fields the generated schema declares required, so
-// routing through the typed client fails with `SchemaError: Missing key …`.
-function readString(obj: unknown, key: string): string {
-  if (Predicate.hasProperty(obj, key)) {
-    const value = obj[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
-
-function asRecord(obj: unknown): Record<string, unknown> {
-  return Predicate.isObjectOrArray(obj) ? { ...obj } : {};
-}
 
 /**
  * Type shape for the snippets-list response, used to drive `-o yaml|toml` key
@@ -92,32 +75,24 @@ const GO_SNIPPET_LIST = goStruct([
   ],
 ]);
 
-interface SnippetsResponseBody {
-  readonly data: ReadonlyArray<unknown>;
-}
+const asRecord = (value: unknown): Record<string, unknown> =>
+  Predicate.isObjectOrArray(value) ? { ...value } : {};
 
-function parseSnippetsResponse(body: unknown): SnippetsResponseBody {
-  const data = Predicate.hasProperty(body, "data") && Array.isArray(body.data) ? body.data : [];
-  return { data };
-}
+const decodeSnippetsList = Schema.decodeUnknownEffect(
+  operationDefinitions.v1ListAllSnippets.outputSchema,
+);
 
-function toSnippetRow(raw: unknown): SnippetRow {
-  const owner = Predicate.hasProperty(raw, "owner") ? raw.owner : undefined;
-  return {
-    id: readString(raw, "id"),
-    name: readString(raw, "name"),
-    visibility: readString(raw, "visibility"),
-    owner: { username: readString(owner, "username") },
-    inserted_at: readString(raw, "inserted_at"),
-    updated_at: readString(raw, "updated_at"),
-  };
-}
+const mapListError = mapHttpError({
+  networkError: SnippetsListNetworkError,
+  statusError: SnippetsListUnexpectedStatusError,
+  networkMessage: (cause) => `failed to list snippets: ${cause}`,
+  statusMessage: (status, body) => `unexpected list snippets status ${status}: ${body}`,
+});
 
 export const snippetsList = Effect.fn("snippets.list")(function* (flags: SnippetsListFlags) {
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
+  const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -137,52 +112,33 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
         });
       }
 
-      const tokenOpt = yield* resolveAccessToken;
-      const request = requestWithAuth(
-        HttpClientRequest.get(`${cliSettings.apiUrl}/v1/snippets`).pipe(
-          HttpClientRequest.setUrlParams({ project_ref: ref }),
-        ),
-        tokenOpt,
-        cliSettings.userAgent,
-      );
-
       const fetching =
         output.format === "text" ? yield* output.task("Fetching snippets...") : undefined;
-      const response = yield* httpClient.execute(request).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new SnippetsListNetworkError({
-              message: `failed to list snippets: ${cause.reason.description ?? cause.reason._tag}`,
-            }),
-        ),
-      );
-
-      if (response.status !== 200) {
-        yield* fetching?.fail() ?? Effect.void;
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        const body = sanitizeErrorBody(rawBody);
-        return yield* new SnippetsListUnexpectedStatusError({
-          status: response.status,
-          body,
-          message: `unexpected list snippets status ${response.status}: ${body}`,
-        });
-      }
-
+      // `executeRaw` keeps the response body intact so JSON output emits it as the API returned
+      // it; the typed schema decodes a copy for rendering.
+      const response = yield* api
+        .executeRaw(operationDefinitions.v1ListAllSnippets, { project_ref: ref })
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.catch(mapListError),
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        );
       const rawBody = yield* response.json.pipe(
         Effect.mapError(
           (cause) =>
             new SnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,
-              // 200-response body decode failure — an API-response problem, not
-              // a transport/network failure.
               decode: true,
             }),
         ),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      );
+      const parsed = yield* decodeSnippetsList(rawBody).pipe(
+        Effect.catch(mapListError),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
       );
       yield* fetching?.clear ?? Effect.void;
 
-      const parsed = parseSnippetsResponse(rawBody);
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "json") {
@@ -216,7 +172,18 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
         return;
       }
 
-      yield* output.raw(renderSnippetsTable(parsed.data.map(toSnippetRow)));
+      yield* output.raw(
+        renderSnippetsTable(
+          parsed.data.map((snippet): SnippetRow => ({
+            id: snippet.id,
+            name: snippet.name,
+            visibility: snippet.visibility,
+            owner: { username: snippet.owner?.username ?? "" },
+            inserted_at: snippet.inserted_at,
+            updated_at: snippet.updated_at,
+          })),
+        ),
+      );
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

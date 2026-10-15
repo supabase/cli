@@ -22,6 +22,7 @@ import { Effect, FileSystem, Result, Schema, SchemaIssue } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { block } from "./command-permissions/model.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
 import type { ConfigTarget } from "./project-target.ts";
 import { BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
@@ -588,6 +589,11 @@ export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function*
 
   return { loaded, text: loaded.rawText };
 });
+
+/** `planConfigPullRun`'s remote config read, shared by `config pull` and `pull`. */
+export const configPullRun = block("config-pull-run", [
+  { operationId: "v2-get-project-config", kind: "required" },
+]);
 
 /**
  * Resolves the pull destination, reloads with the `[remotes.*]` overlay when block reuse

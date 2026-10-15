@@ -61,6 +61,8 @@ export interface PrDetails {
   headRepoFullName: string;
   /** `owner/name` of the repository the PR targets. */
   baseRepoFullName: string;
+  /** Head commit when the run resolved; every job reviews this commit even if the branch moves. */
+  headSha: string;
 }
 
 /** A prior review or issue comment, checked for the dedup marker. */
@@ -85,13 +87,15 @@ export interface ResolveResult {
   /** Human-readable explanation, present whenever `shouldRun` is false. */
   skipReason?: string;
   trigger: Trigger;
+  /** Commit every job reviews, present whenever `shouldRun` is true. */
+  headSha?: string;
 }
 
 /** No size gate: Claude and Codex review agentically over many turns, so any
  * PR that clears the draft/bot/fork/dedup checks is reviewed regardless of
  * size, best-effort within the model's context/turn budget. */
-function decideForPr(trigger: Trigger): ResolveResult {
-  return { shouldRun: true, trigger };
+function decideForPr(trigger: Trigger, pr: PrDetails): ResolveResult {
+  return { shouldRun: true, trigger, headSha: pr.headSha };
 }
 
 /**
@@ -156,7 +160,7 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     }
     // A maintainer explicitly asked, so the marker/dedup guard and the
     // draft/fork/bot skips below don't apply.
-    return decideForPr(trigger);
+    return decideForPr(trigger, pr);
   }
 
   if (pr.draft) {
@@ -206,7 +210,7 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     };
   }
 
-  return decideForPr(trigger);
+  return decideForPr(trigger, pr);
 }
 
 function requireEnv(name: string): string {
@@ -243,7 +247,7 @@ interface RestPullRequest {
   state: "open" | "closed";
   draft: boolean;
   user: { login: string; type: string } | null;
-  head: { repo: { full_name: string } | null };
+  head: { sha: string; repo: { full_name: string } | null };
   base: { repo: { full_name: string } };
 }
 
@@ -274,6 +278,7 @@ function assertRestPullRequest(value: unknown): asserts value is RestPullRequest
         typeof value.user.type === "string")
     ) ||
     !isRecordEntry(value.head) ||
+    typeof value.head.sha !== "string" ||
     !(
       value.head.repo === null ||
       (isRecordEntry(value.head.repo) && typeof value.head.repo.full_name === "string")
@@ -314,6 +319,7 @@ async function fetchPullRequest(token: string, base: string, prNumber: number): 
     authorLogin: pr.user?.login ?? "",
     headRepoFullName: pr.head.repo?.full_name ?? "",
     baseRepoFullName: pr.base.repo.full_name,
+    headSha: pr.head.sha,
   };
 }
 
@@ -369,6 +375,7 @@ function writeOutputs(result: ResolveResult, prNumber: number): void {
     should_run: String(result.shouldRun),
     pr_number: String(prNumber),
     head_ref: `refs/pull/${prNumber}/head`,
+    head_sha: result.headSha ?? "",
     trigger: result.trigger,
   };
   const lines = Object.entries(entries).map(([name, value]) => {

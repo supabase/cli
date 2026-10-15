@@ -14,6 +14,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageRm } from "./rm.handler.ts";
 
 const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
@@ -28,6 +29,9 @@ const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
 const DELETE_BUCKET = (bucket: string) => `/storage/v1/bucket/${bucket}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
+const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+const CACHE_FILE = "supabase/.temp/linked-project.json";
 
 function prefixesOf(body: unknown): ReadonlyArray<unknown> | undefined {
   return Predicate.hasProperty(body, "prefixes") && Array.isArray(body.prefixes)
@@ -874,6 +878,44 @@ describe("storage rm", () => {
       expect(success?.data?.["buckets_deleted"]).toEqual([]);
     });
   });
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          yes: true,
+          routes: [
+            { method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] },
+          ],
+        });
+        yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* storageRm({
+            files: ["ss:///private/a.pdf"],
+            recursive: false,
+            linked: true,
+            local: false,
+            projectRef: Option.none(),
+          });
+          expect(
+            managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+          ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+          const del = requests.find((r) => r.method === "DELETE");
+          expect(del?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+          expect(del?.body).toEqual({ prefixes: ["a.pdf"] });
+          expect(out.stderrText).toContain("Deleting objects: [a.pdf]");
+          expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
+          assertPermissionDrift({
+            command: "storage rm",
+            activeFlags: { local: false },
+            requests: managementRequests,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+  );
 });
 
 describe("stack backend", () => {

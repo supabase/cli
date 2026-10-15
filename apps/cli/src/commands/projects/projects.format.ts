@@ -8,9 +8,8 @@ import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 /**
- * Lenient project record. `projects list`/`create` parse the `/v1/projects` response via the raw
- * HTTP client because the typed schema's `ref` pattern (20+ lowercase letters) rejects placeholder
- * refs in test fixtures, so projects flow through as plain JSON objects.
+ * Lenient project record. `projects list`/`create` read the `/v1/projects` response without
+ * schema decoding, so projects flow through as plain JSON objects exactly as the API returned them.
  */
 export type LinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
 

@@ -1778,6 +1778,9 @@ function rateLimitDelayText(milliseconds: number) {
   return `${Math.round(milliseconds / 1_000)}s`;
 }
 
+// The command's own 429 loop is the only retry layer.
+const NO_CLIENT_RETRY = { retry: { maxRetries: 0 } } as const;
+
 const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   action: string,
   request: () => Effect.Effect<
@@ -1827,15 +1830,19 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   );
   const response = yield* rateLimitedRequest(`deploying function ${config.slug}`, () =>
     api
-      .executeRaw(operationDefinitions.v1DeployAFunction, {
-        ref: projectRef,
-        slug: config.slug,
-        ...(bundleOnly ? { bundleOnly: true } : {}),
-        body: {
-          metadata,
-          file: files,
+      .executeRaw(
+        operationDefinitions.v1DeployAFunction,
+        {
+          ref: projectRef,
+          slug: config.slug,
+          ...(bundleOnly ? { bundleOnly: true } : {}),
+          body: {
+            metadata,
+            file: files,
+          },
         },
-      })
+        NO_CLIENT_RETRY,
+      )
       .pipe(
         // Read the body as text (never failing) so the status check below wins:
         // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
@@ -1871,12 +1878,35 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   );
 });
 
-function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): BulkUpdateFunction {
+function bulkUpdateStatus(
+  slug: string,
+  status: string,
+): Effect.Effect<BulkUpdateFunction["status"], FunctionsApiStatusError> {
+  switch (status) {
+    case "ACTIVE":
+    case "REMOVED":
+    case "THROTTLED":
+      return Effect.succeed(status);
+    default:
+      return Effect.fail(
+        new FunctionsApiStatusError({
+          status: 200,
+          message: `failed to read function ${slug}: unexpected status ${status}`,
+          decode: true,
+        }),
+      );
+  }
+}
+
+const toBulkUpdateItem = Effect.fnUntraced(function* (
+  remote: RemoteFunction | DeployFunctionResponse,
+) {
+  const status = yield* bulkUpdateStatus(remote.slug, remote.status);
   return {
     id: remote.id,
     slug: remote.slug,
     name: remote.name,
-    status: remote.status,
+    status,
     version: remote.version,
     ...(remote.created_at === undefined ? {} : { created_at: remote.created_at }),
     ...(remote.verify_jwt == null ? {} : { verify_jwt: remote.verify_jwt }),
@@ -1884,8 +1914,8 @@ function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): Bulk
     ...(remote.entrypoint_path == null ? {} : { entrypoint_path: remote.entrypoint_path }),
     ...(remote.import_map_path == null ? {} : { import_map_path: remote.import_map_path }),
     ...(remote.ezbr_sha256 == null ? {} : { ezbr_sha256: remote.ezbr_sha256 }),
-  };
-}
+  } satisfies BulkUpdateFunction;
+});
 
 const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunctions")(function* (
   api: ApiClient,
@@ -1896,10 +1926,14 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* rateLimitedRequest("bulk updating functions", () =>
       api
-        .executeRaw(operationDefinitions.v1BulkUpdateFunctions, {
-          ref: projectRef,
-          body: functions.map(toBulkUpdateItem),
-        })
+        .executeRaw(
+          operationDefinitions.v1BulkUpdateFunctions,
+          {
+            ref: projectRef,
+            body: functions,
+          },
+          NO_CLIENT_RETRY,
+        )
         .pipe(
           // Read the body as text (never failing) so the status check wins even
           // if the body cannot be read.
@@ -2284,7 +2318,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
     (config) =>
       Effect.gen(function* () {
         yield* output.raw(`Deploying Function: ${config.slug}\n`, "stderr");
-        return toBulkUpdateItem(
+        return yield* toBulkUpdateItem(
           yield* uploadFunctionSource(
             api,
             projectRef,
@@ -2398,7 +2432,7 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
       "stderr",
     );
     changed.push(
-      toBulkUpdateItem(
+      yield* toBulkUpdateItem(
         yield* upsertBundledFunction(api, projectRef, bundled, current !== undefined),
       ),
     );

@@ -1,6 +1,7 @@
 import type { ApiClient } from "@supabase/api/effect";
 import { V2GetNotebookInput, V2UpdateNotebookInput } from "@supabase/api/effect";
 import { Effect, Exit, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
@@ -30,6 +31,21 @@ import {
  * not unique in the API, so a project holding two notebooks of one name is
  * refused rather than guessed at (`NotebookNameConflictError`).
  */
+
+/** `listRemoteNotebooks`: every page of the project's notebooks. */
+export const notebooksList = block("notebooks-list", [
+  { operationId: "v2-list-notebooks", kind: "required" },
+]);
+
+/** `downloadNotebook` / `downloadNotebookById`: one notebook's content. */
+export const notebookRead = block("notebook-read", [
+  { operationId: "v2-get-notebook", kind: "required" },
+]);
+
+/** `uploadNotebook` for a name no project notebook carries. */
+export const notebookCreate = block("notebook-create", [
+  { operationId: "v2-create-notebook", kind: "required" },
+]);
 
 /** `supabase/notebooks/`, alongside `supabase/functions/` and `supabase/workers/`. */
 export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
@@ -441,13 +457,23 @@ const readRemoteNotebook = Effect.fnUntraced(function* (
     );
 
   const { description, favorite, content, name } = response.data.attributes;
+  // Response enums are open; the file must hold values a push can send back.
+  const file = yield* Schema.decodeUnknownEffect(NotebookFileSchema)({
+    ...(description === null ? {} : { description }),
+    favorite,
+    content: { cells: content.cells },
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NotebookFileError({
+          detail: `Notebook ${subject} has content this CLI cannot write to a file: ${cause.message}`,
+          suggestion: "Update the CLI, or edit the notebook in the dashboard.",
+        }),
+    ),
+  );
   return {
     notebook: { id: response.data.id, name } satisfies RemoteNotebook,
-    file: {
-      ...(description === null ? {} : { description }),
-      favorite,
-      content: { cells: content.cells },
-    } satisfies NotebookFile,
+    file,
   };
 });
 

@@ -167,11 +167,38 @@ describe("makeApiClient", () => {
           ref: "abcdefghijklmnopqrst",
           function_slug: "hello-world",
         },
-        { Accept: "multipart/form-data" },
+        { headers: { Accept: "multipart/form-data" } },
       ),
     );
 
     expect(accept).toBe("multipart/form-data");
+  });
+
+  test("forwards per-request options through generated typed methods", async () => {
+    let seen: { url: string; authorization: string | undefined } | undefined;
+
+    const client = await Effect.runPromise(
+      makeApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seen = { url: request.url, authorization: request.headers.authorization };
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.v1.listAllProjects(
+        {},
+        { baseUrl: "https://api.example.test", accessToken: "per-request-token" },
+      ),
+    );
+
+    expect(seen).toEqual({
+      url: "https://api.example.test/v1/projects",
+      authorization: "Bearer per-request-token",
+    });
   });
 
   test("uses the default API URL when baseUrl is omitted", async () => {

@@ -44,32 +44,38 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
       const updating =
         output.format === "text" ? yield* output.task("Updating Postgres config...") : undefined;
 
-      const finalOverrides = flags.replaceExistingOverrides
+      const preserved = flags.replaceExistingOverrides
         ? {}
         : yield* fetchCurrentPostgresConfig(ref).pipe(
             Effect.tapError(() => updating?.fail() ?? Effect.void),
           );
 
+      const changes: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(nextOverrides)) {
-        finalOverrides[key] = parseConfigValue(value);
+        changes[key] = parseConfigValue(value);
       }
 
       if (flags.noRestart) {
-        finalOverrides["restart_database"] = false;
+        changes["restart_database"] = false;
       }
 
-      normalizeTimeoutConfig(finalOverrides);
+      normalizeTimeoutConfig(changes);
+      normalizeTimeoutConfig(preserved);
 
-      const updated = yield* putPostgresConfig(ref, finalOverrides, {
-        serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
-        networkError: (args) => new PostgresConfigUpdateNetworkError(args),
-        statusError: (args) => new PostgresConfigUpdateUnexpectedStatusError(args),
-        unmarshalError: (args) => new PostgresConfigUpdateUnmarshalError(args),
-        networkMessage: (description) => `failed to update config overrides: ${description}`,
-        statusMessage: (status, body) =>
-          `unexpected update config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
-      }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
+      const updated = yield* putPostgresConfig(
+        ref,
+        { changes, preserved },
+        {
+          serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
+          networkError: PostgresConfigUpdateNetworkError,
+          statusError: PostgresConfigUpdateUnexpectedStatusError,
+          unmarshalError: (args) => new PostgresConfigUpdateUnmarshalError(args),
+          networkMessage: (description) => `failed to update config overrides: ${description}`,
+          statusMessage: (status, body) =>
+            `unexpected update config overrides status ${status}: ${body}`,
+          unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
+        },
+      ).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
       yield* updating?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(updated);

@@ -6,35 +6,38 @@ additionally reads the new key from stdin.
 
 ## Files Read
 
-| Path                                             | Format                    | When                                                                      |
-| ------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------- |
-| `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | when `--project-ref` / `SUPABASE_PROJECT_ID` unset, to resolve linked ref |
-| stdin                                            | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key)        |
+| Path                                           | Format                    | When                                                                                                                 |
+| ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                           |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write            |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset; also by `linkedProjectCache` on a cache miss |
+| stdin                                          | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key)                                                   |
 
 ## Files Written
 
-| Path                                             | Format | When                                              |
-| ------------------------------------------------ | ------ | ------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | PersistentPostRun, after the project ref resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | PersistentPostRun, on success or failure          |
+| Path                                           | Format | When                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves (and, for `update-root-key`, after the key is read), on success or failure of the API call — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
+| `~/.supabase/telemetry.json`                   | JSON   | PersistentPostRun, on success or failure                                                                                                                                                                                                                                                           |
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields) |
-| ------ | ----------------------------- | ------------ | ------------ | ---------------------- |
-| `GET`  | `/v1/projects/{ref}/pgsodium` | Bearer token | none         | `{root_key}`           |
-| `PUT`  | `/v1/projects/{ref}/pgsodium` | Bearer token | `{root_key}` | `{root_key}`           |
+| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
+| ------ | ----------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/projects`                | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `GET`  | `/v1/projects/{ref}/pgsodium` | Bearer token | none         | `{root_key}`                                                                                                                                                                                                 |
+| `PUT`  | `/v1/projects/{ref}/pgsodium` | Bearer token | `{root_key}` | `{root_key}`                                                                                                                                                                                                 |
+| `GET`  | `/v1/projects/{ref}`          | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 `get-root-key` calls `GET`; `update-root-key` calls `PUT`.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)    | no (falls back to linked-project file → prompt)         |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| Variable                | Purpose                                              | Required?                                                                                     |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)                                       |
+| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)    | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
 
 ## Exit Codes
 

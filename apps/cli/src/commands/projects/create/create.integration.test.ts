@@ -1,6 +1,6 @@
 import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -11,6 +11,7 @@ import {
   type ApiResponse,
   type HttpMethod,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -18,6 +19,12 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import { organizationPicker } from "../../../command-internal/organization-picker.ts";
 import { projectsCreateCommand, type ProjectsCreateFlags } from "./create.command.ts";
 import { projectsCreate } from "./create.handler.ts";
 
@@ -52,6 +59,8 @@ const BASE_FLAGS: ProjectsCreateFlags = {
 const tempRoot = useTempWorkdir("supabase-projects-create-int-");
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const API = "https://api.supabase.com";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -130,6 +139,15 @@ describe("projects create integration", () => {
       );
       expect(out.stdoutText).toContain("REFERENCE ID");
       expect(out.stdoutText).toContain("East US (North Virginia)");
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${API}/v1/projects`,
+      ]);
+      assertPermissionDrift({
+        command: "projects create",
+        activeFlags: { "org-id": true, "db-password": true, region: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -369,8 +387,43 @@ describe("projects create integration", () => {
       });
       expect(out.stderrText).toContain("Selected org-id:");
       expect(out.stderrText).toContain("Selected region:");
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/organizations`,
+        `POST ${API}/v1/projects`,
+      ]);
+      assertPermissionDrift({ command: "projects create", requests: api.requests });
+      assertBlockDrift(organizationPicker, { requests: api.requests.slice(0, 1), exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "lists the organizations when --interactive is passed on a TTY without --org-id",
+    () => {
+      const { layer, api } = setup({
+        stdinIsTty: true,
+        promptSelectResponses: ["org-abc"],
+      });
+      return Effect.gen(function* () {
+        yield* projectsCreate({
+          ...BASE_FLAGS,
+          name: Option.some("alpha"),
+          dbPassword: Option.some("s3cret-pass"),
+          region: Option.some("us-east-1"),
+          interactive: Option.some(true),
+        });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/organizations`,
+          `POST ${API}/v1/projects`,
+        ]);
+        assertPermissionDrift({
+          command: "projects create",
+          activeFlags: { interactive: true, "db-password": true, region: true },
+          requests: api.requests,
+          exact: true,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
     const { layer } = setup({ stdinIsTty: true, promptTextResponses: [""] });
@@ -384,7 +437,7 @@ describe("projects create integration", () => {
   });
 
   it.effect("fails when the interactive organization list request errors", () => {
-    const { layer } = setup({
+    const { layer, api } = setup({
       stdinIsTty: true,
       byMethod: { GET: { status: 500, body: {} }, POST: { status: 201, body: CREATED } },
     });
@@ -396,6 +449,10 @@ describe("projects create integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ProjectsOrgsListUnexpectedStatusError");
       }
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/organizations`,
+      ]);
+      assertPermissionDrift({ command: "projects create", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -533,13 +590,10 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
-    // The typed client validates refs to be 20+ chars; `executeRaw` bypasses that to render
-    // placeholders verbatim.
+  it.effect("passes through created-project fields the schema does not declare", () => {
     const { layer, out } = setup({
-      byMethod: {
-        POST: { status: 201, body: { ...CREATED, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" } },
-      },
+      goOutput: "json",
+      byMethod: { POST: { status: 201, body: { ...CREATED, undeclared_field: "kept" } } },
     });
     return Effect.gen(function* () {
       yield* projectsCreate({
@@ -549,9 +603,7 @@ describe("projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      expect(out.stderrText).toContain(
-        "Created a new project at https://supabase.com/dashboard/project/__PROJECT_REF__",
-      );
+      expect(out.stdoutText).toContain('"undeclared_field": "kept"');
     }).pipe(Effect.provide(layer));
   });
 
@@ -567,6 +619,69 @@ describe("projects create integration", () => {
       });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fills the real linked-project cache with the created project", () => {
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          if (request.method === "POST" && request.url === `${API}/v1/projects`) {
+            return jsonResponse(request, 201, CREATED);
+          }
+          if (request.method === "GET" && request.url === `${API}/v1/projects/${CREATED.ref}`) {
+            return jsonResponse(request, 200, {
+              ...CREATED,
+              database: {
+                host: "db.alpha.supabase.co",
+                version: "15.1",
+                postgres_engine: "15",
+                release_channel: "ga",
+              },
+            });
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out: mockOutput({ format: "text" }),
+        api,
+        cliSettings,
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(ExperimentalFlag, false),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* projectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+      });
+
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${API}/v1/projects`,
+        `GET ${API}/v1/projects/${CREATED.ref}`,
+      ]);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: CREATED.ref,
+      });
+      assertPermissionDrift({
+        command: "projects create",
+        activeFlags: { "org-id": true, "db-password": true, region: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
