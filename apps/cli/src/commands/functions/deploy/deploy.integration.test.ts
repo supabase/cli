@@ -1724,7 +1724,6 @@ describe("functions deploy", () => {
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             localConfigLoader: functionsLocalConfigLoader,
-            yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
@@ -2335,7 +2334,6 @@ describe("functions deploy", () => {
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             localConfigLoader: functionsLocalConfigLoader,
-            yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
@@ -2362,7 +2360,7 @@ describeHostedConsent("functions deploy", {
     Effect.gen(function* () {
       yield* writeCliConfig(workdir);
       yield* writeLocalFunction(workdir, "hello-world");
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   invoke: () => ({
     run: functionsDeploy(baseFlags).pipe(
       Effect.provide(
