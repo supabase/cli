@@ -495,8 +495,8 @@ describe("db push", () => {
     });
   });
 
-  it.effect("keeps repair suggestions targetless for an explicit local database URL", () => {
-    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+  it.effect("points repair suggestions at an explicit database URL without echoing it", () => {
+    const dbUrl = "postgresql://postgres:s3cret@127.0.0.1:54322/postgres";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       remoteMigrations: ["20240101000000"],
@@ -507,10 +507,27 @@ describe("db push", () => {
         dbUrl: Option.some(dbUrl),
         local: false,
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(failSuggestion(exit)).toContain("migration repair --status reverted");
-      expect(failSuggestion(exit)).not.toContain("migration repair --local");
-      if (Exit.isFailure(exit))
-        expect(Cause.pretty(exit.cause)).not.toContain("migration repair --local");
+      expect(failSuggestion(exit)).toContain(
+        "migration repair --db-url <redacted> --status reverted",
+      );
+      expect(failSuggestion(exit)).toContain("supabase db pull --db-url <redacted>");
+      expect(failSuggestion(exit)).not.toContain("s3cret");
+    });
+  });
+
+  it.effect("points repair suggestions at the linked project", () => {
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      remoteMigrations: ["20240101000000"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(failSuggestion(exit)).toContain("migration repair --linked --status reverted");
+      expect(failSuggestion(exit)).toContain("supabase db pull --linked");
+      expect(failSuggestion(exit)).not.toContain("--local");
     });
   });
 

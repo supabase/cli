@@ -344,7 +344,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       projectRef,
       conn,
       isLocal: false,
-      repairSuggestsLocalFlag: false,
+      repairTargetFlags: "--linked",
       dryRun: false,
       includeAll: false,
       includeRoles: true,

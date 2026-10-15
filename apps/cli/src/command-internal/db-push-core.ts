@@ -62,14 +62,8 @@ export interface DbPushCoreInput {
   readonly projectRef: string;
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
-  /**
-   * Whether `--local` (not `--db-url`/`--linked`) was the explicit target selector, distinct
-   * from `isLocal` (whether the resolved connection happens to point at a local address, e.g. a
-   * `--db-url` pointing at `127.0.0.1`). Only feeds the "missing local migrations" repair
-   * suggestion's `--local` flag; `bootstrap` never selects `--local`, so it is always `false`
-   * there.
-   */
-  readonly repairSuggestsLocalFlag: boolean;
+  /** Flags that point the "missing local migrations" repair suggestion at the pushed target. */
+  readonly repairTargetFlags: string;
   /**
    * Gates the "DRY RUN: …" heads-up line, the "Would push/seed/create …" plan, and the JSON
    * `dryRun` field.
@@ -103,7 +97,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
     projectRef,
     conn,
     isLocal,
-    repairSuggestsLocalFlag,
+    repairTargetFlags,
     dryRun,
     includeAll,
     includeRoles,
@@ -144,7 +138,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
         if (result.kind === "missing-local") {
           return yield* new DbPushMissingLocalError({
             message: ERR_MISSING_LOCAL,
-            suggestion: suggestRevertHistory(result.versions, repairSuggestsLocalFlag),
+            suggestion: suggestRevertHistory(result.versions, repairTargetFlags),
           });
         }
         if (result.kind === "missing-remote") {
