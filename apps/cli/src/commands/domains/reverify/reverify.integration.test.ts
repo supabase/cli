@@ -1,16 +1,23 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsReverify } from "./reverify.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
@@ -42,6 +49,8 @@ interface SetupOpts {
 }
 
 const tempRoot = useTempWorkdir("supabase-domains-reverify-int-");
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -107,6 +116,7 @@ describe("domains reverify integration", () => {
       expect(api.requests[0]?.url).toContain("/custom-hostname/reverify");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      assertPermissionDrift({ command: "domains reverify", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -195,4 +205,59 @@ describe("domains reverify integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, reverifies the hostname and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (
+            route ===
+            `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/reverify`
+          ) {
+            return Effect.succeed(jsonResponse(request, 201, HOSTNAME_RESPONSE));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsReverify(baseFlags);
+        expect(out.stderrText).toContain("being initialized");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/reverify`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains reverify", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
