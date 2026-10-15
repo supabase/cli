@@ -1,7 +1,6 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
