@@ -1,7 +1,9 @@
 import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
+import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -10,6 +12,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { orgsCreate } from "./create.handler.ts";
 
 type CreatedOrganization = typeof V1CreateAnOrganizationOutput.Type;
@@ -21,6 +25,11 @@ const CREATED: CreatedOrganization = {
 };
 
 const tempRoot = useTempWorkdir("supabase-orgs-create-int-");
+
+const consentLayer = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
+);
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -37,12 +46,15 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentLayer,
+  );
   return { layer, out, api };
 }
 
@@ -54,12 +66,15 @@ function setupTracked(opts: SetupOpts = {}) {
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+    }),
+    consentLayer,
+  );
   return { layer, out, api, telemetry };
 }
 
@@ -218,4 +233,9 @@ describe("orgs create integration", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("orgs create", {
+  api: { response: { status: 201, body: CREATED } },
+  invoke: () => ({ run: withAccountTargetBanner(orgsCreate({ name: "Acme" })) }),
 });

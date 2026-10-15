@@ -47,13 +47,14 @@ subcommand's own `SIDE_EFFECTS.md`.
 
 ## Exit Codes
 
-| Code | Condition                                                                      |
-| ---- | ------------------------------------------------------------------------------ |
-| `0`  | success                                                                        |
-| `1`  | auth / network / non-2xx status (incl. decode failure) / invalid ref           |
-| `1`  | `create`: required params missing in non-interactive mode / empty project name |
-| `1`  | `delete`: declined confirmation (cancellation) / no ref on a non-TTY           |
-| `1`  | `list`: `--output env` is unsupported                                          |
+| Code | Condition                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                       |
+| `1`  | auth / network / non-2xx status (incl. decode failure) / invalid ref                          |
+| `1`  | `create`: required params missing in non-interactive mode / empty project name                |
+| `1`  | `create` / `delete`: confirmation declined, or needed on a run that can't prompt (no `--yes`) |
+| `1`  | `delete`: no ref on a non-TTY                                                                 |
+| `1`  | `list`: `--output env` is unsupported                                                         |
 
 ## Telemetry Events Fired
 
@@ -70,8 +71,8 @@ subcommand's own `SIDE_EFFECTS.md`.
 `--output-format {text|json|stream-json}` applies.
 
 - **list** — pretty/text: table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
-- **create** — stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
-- **delete** — text: confirmation prompt (default No, honours `--yes`) then stdout `Deleted project: <name>`; `--output-format json/stream-json` `success("Deleted project", {name})`.
+- **create** — a confirmation question (default Yes) first, unless `--yes`/`SUPABASE_YES` answers it; stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
+- **delete** — text: confirmation prompt (default No, `--yes`/`SUPABASE_YES` answers it) then stdout `Deleted project: <name>`; `--output-format json/stream-json` need `--yes` and emit `success("Deleted project", {name})`.
 - **api-keys** — pretty/text: table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
 
 ## Notes
@@ -89,6 +90,11 @@ subcommand's own `SIDE_EFFECTS.md`.
 - `--plan` on `create` is accepted but ignored (no-op, hidden) — a vestigial flag.
 - `create` interactivity is gated on `--interactive` (default true) **and** a TTY stdin
   **and** an interactive (text-mode) `Output`.
-- `delete` confirmation defaults to **No** and honours the global `--yes`.
+- `create` asks before the `POST` (default **Yes**) and `delete` asks before the `DELETE`
+  (default **No**, irreversible). `--yes` or a shell `SUPABASE_YES` answers either;
+  a `SUPABASE_YES` in a project `.env` does not. Without one of them a run that
+  can't prompt (piped stdin, `--output-format json`/`stream-json`, `-o json`/`yaml`/`toml`/`env`)
+  fails with the consent-required error before any API write, and stdin is never
+  read for the answer.
 - `api-keys` resolves `--project-ref` via the shared resolver (flag → env →
   `.temp/project-ref` → prompt on a TTY → error when unlinked).
