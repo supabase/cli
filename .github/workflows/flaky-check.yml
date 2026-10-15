@@ -142,7 +142,7 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          docker-images: ${{ matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker') }}
+          docker-images: ${{ matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker' || matrix.scenario == 'lifecycle' && matrix.runtime == 'native') }}
           native-artifacts: ${{ matrix.runtime == 'native' }}
 
       - name: Setup Podman
@@ -182,7 +182,7 @@ jobs:
 
       # Releases /var/lib/docker so the image disk unmounts cleanly.
       - name: Stop Docker
-        if: always() && matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker')
+        if: always() && matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker' || matrix.scenario == 'lifecycle' && matrix.runtime == 'native')
         run: sudo systemctl stop docker.socket docker.service
 
   report:

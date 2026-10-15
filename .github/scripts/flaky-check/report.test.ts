@@ -138,7 +138,12 @@ describe("aggregate", () => {
     expect(report).toEqual({
       flaky: [],
       failing: [
-        ["hook.unit.test.ts", "(file setup)", "2/2", "failed outside any test (hook or setup)"],
+        [
+          "hook.unit.test.ts",
+          "(file setup) [whole-stack.docker.lifecycle]",
+          "2/2",
+          "failed outside any test (hook or setup)",
+        ],
       ],
       runProblems: [],
     });

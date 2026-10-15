@@ -43,6 +43,8 @@ type Execution = { run: number; iteration: number };
 
 type TestVerdict = {
   suite: string;
+  /** Report name without its directory and iteration, such as `whole-stack.docker.lifecycle`. */
+  source: string;
   file: string;
   name: string;
   executions: number;
@@ -153,6 +155,7 @@ export function aggregate(
         const title = testCase.titles.join(" > ");
         const verdict = verdicts.get(key) ?? {
           suite: meta.suite,
+          source: source.replace(/^.*--/, ""),
           file: testCase.file,
           name: occurrence === 1 ? title : `${title} (#${occurrence})`,
           executions: 0,
@@ -210,6 +213,18 @@ export function aggregate(
         name,
         problem: "no results uploaded (the job failed before collecting, such as in setup)",
       });
+    }
+  }
+
+  // A test that several scenarios run under one name gets its source, so rows stay distinguishable.
+  const sources = new Map<string, Set<string>>();
+  for (const v of verdicts.values()) {
+    const label = `${v.suite}\0${v.file}\0${v.name}`;
+    sources.set(label, (sources.get(label) ?? new Set()).add(v.source));
+  }
+  for (const v of verdicts.values()) {
+    if ((sources.get(`${v.suite}\0${v.file}\0${v.name}`)?.size ?? 0) > 1) {
+      v.name = `${v.name} [${v.source}]`;
     }
   }
 
