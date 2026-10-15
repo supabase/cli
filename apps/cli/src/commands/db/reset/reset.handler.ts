@@ -237,7 +237,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       action: `Reset the remote database${resolvedVersion === "" ? "" : ` to version ${resolvedVersion}`}`,
       details: [
         "drop every user schema",
-        ...(vaultCount > 0 ? [`upsert ${vaultCount} vault secret${vaultCount === 1 ? "" : "s"}`] : []),
+        ...(vaultCount > 0
+          ? [`upsert ${vaultCount} vault secret${vaultCount === 1 ? "" : "s"}`]
+          : []),
         useSchemaFiles
           ? "apply the declarative schema files"
           : `apply local migrations${resolvedVersion === "" ? "" : ` up to version ${resolvedVersion}`}`,

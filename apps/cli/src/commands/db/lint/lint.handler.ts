@@ -95,10 +95,7 @@ const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
   return results;
 });
 
-const runLint = Effect.fnUntraced(function* (
-  flags: DbLintFlags,
-  dnsResolver: "native" | "https",
-) {
+const runLint = Effect.fnUntraced(function* (flags: DbLintFlags, dnsResolver: "native" | "https") {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const dbConn = yield* DbConnection;

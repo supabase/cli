@@ -164,9 +164,7 @@ function mockDbConnection(opts: {
             }
             return opts.queryFails === true
               ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
-              : Effect.succeed(
-                  opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" },
-                );
+              : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
           }),
       }),
   });
@@ -764,9 +762,9 @@ describe("db query integration", () => {
   it.effect("fails with DbQueryExecError when the query errors", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("bad"), local: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("bad"), local: true })).pipe(
+        Effect.exit,
+      );
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
   });
@@ -798,9 +796,9 @@ describe("db query integration", () => {
   it.effect("fails an unlinked --linked query without prompting for a project", () => {
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("Cannot find project ref. Have you run supabase link?");
     }).pipe(Effect.provide(layer));
@@ -809,9 +807,9 @@ describe("db query integration", () => {
   it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
     const { layer } = setup({ refReadFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to load project ref");
       expect(failMessage(exit)).not.toContain("Cannot find project ref");
@@ -1030,9 +1028,9 @@ describe("db query integration", () => {
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(out.stdoutText).toBe("");
@@ -1058,9 +1056,9 @@ describe("db query integration", () => {
         linkedBody: '{"message":"syntax error"}',
       });
       return Effect.gen(function* () {
-        const exit = yield* dbQuery(
-          flags({ sql: Option.some("bad"), linked: true }),
-        ).pipe(Effect.exit);
+        const exit = yield* dbQuery(flags({ sql: Option.some("bad"), linked: true })).pipe(
+          Effect.exit,
+        );
         expect(failMessage(exit)).toContain("unexpected status 400");
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -1070,9 +1068,7 @@ describe("db query integration", () => {
   it.effect("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
-      yield* dbQuery(
-        flags({ sql: Option.some("select 1 where false"), linked: true }),
-      );
+      yield* dbQuery(flags({ sql: Option.some("select 1 where false"), linked: true }));
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -1128,9 +1124,9 @@ describe("db query integration", () => {
   it.effect("maps a linked HTTP transport failure to an exec error", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
   });
@@ -1138,9 +1134,9 @@ describe("db query integration", () => {
   it.effect("requires login before querying --linked", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(failMessage(exit)).toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
   });
@@ -1148,9 +1144,9 @@ describe("db query integration", () => {
   it.effect("rejects an invalid env access token before the linked query", () => {
     const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("Invalid access token format");
       expect(out.stdoutText).toBe("");
@@ -1171,9 +1167,9 @@ describe("db query integration", () => {
   it.effect("surfaces a linked config/connection failure before the missing-token error", () => {
     const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(
-        flags({ sql: Option.some("select 1"), linked: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
       expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(failMessage(exit)).not.toContain("Access token not provided");
     }).pipe(Effect.provide(layer));

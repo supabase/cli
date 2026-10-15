@@ -411,7 +411,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 connType: "linked",
                 dnsResolver,
                 password: flags.password,
-                linkedProjectRef: target.kind === "linked" ? Option.some(target.ref) : Option.none(),
+                linkedProjectRef:
+                  target.kind === "linked" ? Option.some(target.ref) : Option.none(),
                 adHocProjectRef: target.kind === "linked" && !target.matchesLinkedRef,
               })
               .pipe(Effect.orElseSucceed(() => Option.none())),

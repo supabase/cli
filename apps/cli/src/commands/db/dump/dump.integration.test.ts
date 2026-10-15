@@ -570,9 +570,7 @@ describe("db dump integration", () => {
   it.effect("errors when --use-copy is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ useCopy: true, local: true })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbDump(flags({ useCopy: true, local: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -594,9 +592,9 @@ describe("db dump integration", () => {
   it.effect("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ exclude: ["public.users"], local: true }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ exclude: ["public.users"], local: true })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -731,9 +729,7 @@ describe("db dump integration", () => {
         path.join(tmp.current, "supabase", "config.toml"),
         ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
       );
-      const exit = yield* dbDump(flags({ dryRun: true, local: true })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbDump(flags({ dryRun: true, local: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain(
         "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
@@ -772,9 +768,7 @@ describe("db dump integration", () => {
   it.effect("dumps only data without column inserts when --use-copy is set", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(
-        flags({ dataOnly: Option.some(true), useCopy: true, local: true }),
-      );
+      yield* dbDump(flags({ dataOnly: Option.some(true), useCopy: true, local: true }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -959,9 +953,9 @@ describe("db dump integration", () => {
         resolveFails: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* dbDump(
-          flags({ linked: true, projectRef: Option.some(FLAG_REF) }),
-        ).pipe(Effect.exit);
+        const exit = yield* dbDump(flags({ linked: true, projectRef: Option.some(FLAG_REF) })).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
@@ -1034,9 +1028,9 @@ describe("db dump integration", () => {
       // fast with no connection/API work and no cache write.
       const { layer, cache, resolver } = setup();
       return Effect.gen(function* () {
-        const exit = yield* dbDump(
-          flags({ linked: true, projectRef: Option.some("BADREF") }),
-        ).pipe(Effect.exit);
+        const exit = yield* dbDump(flags({ linked: true, projectRef: Option.some("BADREF") })).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failMessage(exit)).toBe(INVALID_PROJECT_REF_MESSAGE);
         expect(resolver.calls).toEqual([]);
@@ -1049,9 +1043,9 @@ describe("db dump integration", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, resolver, cache } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      const error = yield* dbDump(
-        flags({ local: true, projectRef: Option.some(FLAG_REF) }),
-      ).pipe(Effect.flip);
+      const error = yield* dbDump(flags({ local: true, projectRef: Option.some(FLAG_REF) })).pipe(
+        Effect.flip,
+      );
       expect(error).toBeInstanceOf(TargetProjectRefConflictError);
       expect(resolver.calls).toEqual([]);
       expect(cache.cached).toBe(false);

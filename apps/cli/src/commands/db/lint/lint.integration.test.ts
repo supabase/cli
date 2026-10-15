@@ -693,10 +693,7 @@ describe("db lint", () => {
   it.effect("follows a remote workspace target when no selector flag is given", () => {
     const { layer, resolver, cache } = setup({ isLocal: false, checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* withConfigEnv(
-        { SUPABASE_TARGET: "remote" },
-        dbLint(flags({ schema: ["public"] })),
-      );
+      yield* withConfigEnv({ SUPABASE_TARGET: "remote" }, dbLint(flags({ schema: ["public"] })));
       expect(resolver.resolveInput?.target.kind).toBe("linked");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
