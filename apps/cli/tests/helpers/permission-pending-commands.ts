@@ -3,8 +3,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "backups list",
   "backups restore",
 
-  "bootstrap",
-
   "branches create",
   "branches delete",
   "branches disable",
@@ -63,8 +61,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "issue docs",
   "issue feature",
 
-  "link",
-
   "login",
 
   "logout",
@@ -86,8 +82,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "secrets set",
   "secrets unset",
-
-  "services",
 
   "snippets download",
 
@@ -124,8 +118,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "unlink",
 
   "vanity-subdomains activate",
   "vanity-subdomains check-availability",
