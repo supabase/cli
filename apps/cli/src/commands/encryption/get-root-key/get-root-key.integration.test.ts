@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
+  jsonResponse,
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -11,7 +12,14 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { encryptionGetRootKey } from "./get-root-key.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const ROOT_KEY_RESPONSE = { root_key: "abc123rootkey" };
 
@@ -83,6 +91,61 @@ describe("encryption get-root-key integration", () => {
     return Effect.gen(function* () {
       yield* encryptionGetRootKey({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/pgsodium`);
+      assertPermissionDrift({
+        command: "encryption get-root-key",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (path === `/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (path === `/v1/projects/${VALID_REF}/pgsodium`) {
+          return Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE));
+        }
+        return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* encryptionGetRootKey(baseFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/pgsodium`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("abc123rootkey\n");
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "encryption get-root-key",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

@@ -17,9 +17,15 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
+  DEFAULT_API_URL,
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -27,6 +33,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProfileFlag } from "../../../command-internal/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
@@ -46,6 +57,8 @@ const RESPONSE_PROVIDER = {
   saml: { entity_id: "https://example.com" },
   domains: [{ domain: "new.com" }],
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-update-int-");
 
@@ -257,17 +270,77 @@ describe("sso update integration", () => {
       yield* ssoUpdate(defaultFlags);
       const methods = api.requests.map((r) => r.method);
       expect(methods.indexOf("GET")).toBeLessThan(methods.indexOf("PUT"));
+      assertPermissionDrift({ command: "sso update", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const projectsUrl = `${DEFAULT_API_URL}/v1/projects`;
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET" && request.url === projectsUrl) {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.method === "GET" && request.url === `${projectsUrl}/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(jsonResponse(request, 200, EXISTING_PROVIDER));
+        }
+        return Effect.succeed(jsonResponse(request, 200, RESPONSE_PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoUpdate(defaultFlags);
+      const providerUrl = `${projectsUrl}/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${projectsUrl}`,
+        `GET ${providerUrl}`,
+        `PUT ${providerUrl}`,
+        `GET ${projectsUrl}/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso update", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("GET 404 → NotFound error", () => {
-    const { layer } = setup({ getStatus: 404, getBody: {} });
+    const { layer, api } = setup({ getStatus: 404, getBody: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("SsoUpdateNotFoundError");
       }
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      assertPermissionDrift({ command: "sso update", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1583,6 +1656,11 @@ describe("sso update integration", () => {
             "http://second.example/v1/organizations/acme/entitlements",
           );
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
+          assertPermissionDrift({
+            command: "sso update",
+            requests: api.requests,
+            apiUrl: "http://second.example",
+          });
         }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );

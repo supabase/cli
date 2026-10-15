@@ -6,8 +6,10 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as UrlParams from "effect/http/UrlParams";
+import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
+import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
 import {
@@ -16,7 +18,8 @@ import {
   mockCommandSettings,
   transportFailure,
 } from "./command-mocks.ts";
-import { mockOutput, mockContextualAnalytics, mockProcessControl } from "./mocks.ts";
+import { mockOutput, mockContextualAnalytics, mockProcessControl, mockTty } from "./mocks.ts";
+import { realLinkedProjectCache } from "./permission-real-layers.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 
 /**
@@ -124,9 +127,18 @@ function mockNotebooksHttp(routes: NotebooksHttpRoutes) {
 
   return {
     layer: Layer.mergeAll(apiLayer, httpClientLayer),
+    httpClientLayer,
     requests,
     get routeKeys(): Array<string> {
       return requests.map((request) => `${request.method} ${new URL(request.url).pathname}`);
+    },
+    /** The requests in the shape the permission drift helpers take. */
+    get driftRequests() {
+      return requests.map(({ method, url, query }) => ({
+        method,
+        url,
+        urlParams: query.toString(),
+      }));
     },
   };
 }
@@ -245,6 +257,7 @@ export interface NotebooksSetupOptions {
   readonly workdir: string;
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
+  /** Picks the mock resolver's linkage; ignored with `realLayers`, where the workdir's ref file decides. */
   readonly linked?: boolean;
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -253,6 +266,12 @@ export interface NotebooksSetupOptions {
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
+  /**
+   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
+   * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
+   */
+  readonly realLayers?: boolean;
 }
 
 export function setupNotebooks(options: NotebooksSetupOptions) {
@@ -267,6 +286,28 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
 
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
+  const cliSettings =
+    options.realLayers === true
+      ? mockCommandSettings({ workdir: options.workdir, projectId: Option.none() })
+      : mockCommandSettings({ workdir: options.workdir });
+  const projectRef =
+    options.realLayers === true
+      ? projectRefLayer.pipe(
+          Layer.provide(
+            Layer.succeed(CommandPlatformApiFactory, {
+              make: CommandPlatformApi.pipe(Effect.provide(http.layer)),
+            }),
+          ),
+          Layer.provide(cliSettings),
+          Layer.provide(mockTty({ stdinIsTty: true })),
+          Layer.provide(out.layer),
+          Layer.provide(BunServices.layer),
+        )
+      : testProjectRefLayer(options.linked !== false);
+  const linkedProjectCache =
+    options.realLayers === true
+      ? realLinkedProjectCache({ httpClient: http.httpClientLayer, cliSettings })
+      : cache.layer;
   const analytics = mockContextualAnalytics();
   const process = mockProcessControl();
   const command = options.command ?? "pull";
@@ -280,10 +321,10 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
-      mockCommandSettings({ workdir: options.workdir }),
-      testProjectRefLayer(options.linked !== false),
+      cliSettings,
+      projectRef,
       telemetry.layer,
-      cache.layer,
+      linkedProjectCache,
       analytics.layer,
       process.layer,
       commandRuntimeLayer(["notebooks", command]).pipe(Layer.provide(BunServices.layer)),

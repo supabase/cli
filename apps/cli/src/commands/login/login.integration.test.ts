@@ -14,10 +14,14 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ProfileFlag } from "../../command-internal/global-flags.ts";
+import { loginApiLayer } from "../../command-internal/login-api.layer.ts";
 import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import {
   VALID_TOKEN,
   buildTestRuntime,
+  jsonResponse,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockCommandCredentialsTracked,
   mockLoginApi,
@@ -47,6 +51,8 @@ interface SetupOpts {
   readonly pipedStdin?: string;
   readonly gotrueId?: string;
   readonly profileFails?: boolean;
+  /** Runs the real login API layer against this recorded HTTP mock instead of the service-level mock. */
+  readonly httpApi?: Parameters<typeof mockCommandPlatformApi>[0];
   readonly failTimes?: number;
   readonly decryptFails?: boolean;
   readonly keygenFails?: boolean;
@@ -85,6 +91,7 @@ function setupLogin(opts: SetupOpts = {}) {
     profileFails: opts.profileFails,
   });
   const analytics = mockAnalytics();
+  const httpApi = opts.httpApi === undefined ? undefined : mockCommandPlatformApi(opts.httpApi);
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     profileEnvValue: opts.profileEnvValue,
@@ -111,13 +118,15 @@ function setupLogin(opts: SetupOpts = {}) {
     }),
     credentials.layer,
     crypto.layer,
-    loginApi.layer,
+    httpApi === undefined
+      ? loginApi.layer
+      : loginApiLayer.pipe(Layer.provide(httpApi.httpClientLayer), Layer.provide(cliSettings)),
     mockStdin(isTTY, opts.pipedStdin),
     mockBrowser(),
     Layer.succeed(ProfileFlag, opts.profileFlag ?? "supabase"),
     ...(opts.argv !== undefined ? [Layer.succeed(CliArgs, { args: opts.argv })] : []),
   );
-  return { layer, out, credentials, crypto, loginApi, telemetry, analytics };
+  return { layer, out, credentials, crypto, loginApi, telemetry, analytics, httpApi };
 }
 
 describe("login integration", () => {
@@ -278,6 +287,83 @@ describe("login integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  describe("profile lookup over the real login API", () => {
+    const PROFILE = { gotrue_id: "gotrue-abc", primary_email: "a@b.co", username: "ab" };
+    const SESSION = {
+      access_token: "656e6372797074656420746f6b656e",
+      public_key: "04abcd",
+      nonce: "0102030405060708090a0b0c",
+    };
+
+    it.effect("looks up the profile once with the new token after a --token login", () => {
+      const { layer, out, credentials, telemetry, httpApi } = setupLogin({
+        httpApi: { response: { status: 200, body: PROFILE } },
+      });
+      return Effect.gen(function* () {
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const requests = httpApi?.requests ?? [];
+
+        expect(credentials.savedToken).toBe(VALID_TOKEN);
+        expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
+        expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/profile",
+        ]);
+        expect(requests[0]?.headers["authorization"]).toBe(`Bearer ${VALID_TOKEN}`);
+        expect(telemetry.stitchedDistinctId).toBe("gotrue-abc");
+        assertPermissionDrift({ command: "login", activeFlags: { token: true }, requests });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "still logs in and clears the distinct id when the profile lookup is forbidden",
+      () => {
+        const { layer, out, credentials, telemetry, analytics, httpApi } = setupLogin({
+          httpApi: { response: { status: 403, body: { message: "Forbidden" } } },
+        });
+        return Effect.gen(function* () {
+          yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+          const requests = httpApi?.requests ?? [];
+
+          expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+            "GET https://api.supabase.com/v1/profile",
+          ]);
+          expect(credentials.savedToken).toBe(VALID_TOKEN);
+          expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
+          expect(telemetry.clearedDistinctId).toBe(true);
+          expect(telemetry.stitchedDistinctId).toBeUndefined();
+          expect(analytics.captured.map((c) => c.event)).toContain(EventLoginCompleted);
+          assertPermissionDrift({ command: "login", activeFlags: { token: true }, requests });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("polls the login session, then looks up the profile in the browser flow", () => {
+      const { layer, credentials, httpApi } = setupLogin({
+        isTTY: true,
+        httpApi: {
+          handler: (request) =>
+            Effect.succeed(
+              request.url.includes("/platform/cli/login/")
+                ? jsonResponse(request, 200, SESSION)
+                : jsonResponse(request, 200, PROFILE),
+            ),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* login(flags());
+        const requests = httpApi?.requests ?? [];
+
+        expect(credentials.savedToken).toBe(VALID_TOKEN);
+        expect(requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/platform/cli/login/test-session-id?device_code=123456",
+          "GET https://api.supabase.com/v1/profile",
+        ]);
+        expect(requests[1]?.headers["authorization"]).toBe(`Bearer ${VALID_TOKEN}`);
+        assertPermissionDrift({ command: "login", requests });
+      }).pipe(Effect.provide(layer));
+    });
+  });
 
   it.effect("flushes telemetry state via ensuring", () => {
     const { layer, telemetry } = setupLogin();

@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
-import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { StorageUnsupportedOperationError } from "../storage.errors.ts";
@@ -12,6 +13,9 @@ import type { StorageCpFlags } from "./cp.command.ts";
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
+const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+const CACHE_FILE = "supabase/.temp/linked-project.json";
 
 function cpFlags(opts: {
   src: string;
@@ -682,6 +686,43 @@ describe("storage cp", () => {
       expect(yield* fs.readFileString(path.join(dst, "b.txt"))).toBe("b-content");
     }).pipe(Effect.provide(layer));
   });
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+        });
+        yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
+          yield* storageCp(
+            cpFlags({
+              src: path.join(tmp.current, "readme.md"),
+              dst: "ss:///private/readme.md",
+              local: false,
+              jobs: 1,
+            }),
+          );
+          expect(
+            managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+          ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+          const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
+          expect(upload?.method).toBe("POST");
+          expect(upload?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+          expect(yield* fs.exists(path.join(tmp.current, CACHE_FILE))).toBe(true);
+          assertPermissionDrift({
+            command: "storage cp",
+            activeFlags: { local: false, jobs: "1" },
+            requests: managementRequests,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+  );
 });
 
 describe("stack backend", () => {

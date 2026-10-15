@@ -8,26 +8,29 @@
 | keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
 | `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
 | `<metadata-file>`                              | XML (UTF-8)               | when `--metadata-file` is provided                                                            |
 | `<attribute-mapping-file>`                     | JSON                      | when `--attribute-mapping-file` is provided                                                   |
 
 ## Files Written
 
-| Path                                           | Format | When                                             |
-| ---------------------------------------------- | ------ | ------------------------------------------------ |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
+| Path                                           | Format | When                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves, on success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
 
 ## API Routes
 
-| Method | Path                                           | Auth         | Request body                                                                          | Response (used fields)                                             |
-| ------ | ---------------------------------------------- | ------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `POST` | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | `{type, metadata_xml?, metadata_url?, domains?, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, created_at?, updated_at?}` (typed schema)   |
-| `GET`  | `<metadata-url>`                               | none         | `Accept: application/xml`, 10s timeout                                                | XML body (UTF-8) — validation when `--skip-url-validation` not set |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                                                                                  | `{organization_slug}` — upgrade-gate side-call on 4xx              |
-| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none                                                                                  | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate          |
+| Method | Path                                           | Auth         | Request body                                                                          | Response (used fields)                                                                                                                                                                                       |
+| ------ | ---------------------------------------------- | ------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/projects`                                 | Bearer token | none                                                                                  | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `POST` | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | `{type, metadata_xml?, metadata_url?, domains?, attribute_mapping?, name_id_format?}` | `{id, saml?, domains?, created_at?, updated_at?}` (typed schema)                                                                                                                                             |
+| `GET`  | `<metadata-url>`                               | none         | `Accept: application/xml`, 10s timeout                                                | XML body (UTF-8) — validation when `--skip-url-validation` not set                                                                                                                                           |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                                                                                  | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                  |
+| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none                                                                                  | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                             |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none                                                                                  | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
-The POST goes through the typed Management API client. `--attribute-mapping-file` is validated
+The POST goes through `api.executeRaw` with the typed `v1CreateASsoProvider` operation, which keeps the response body undecoded so structured output emits it as the API returned it; the typed provider schema decodes a copy for the table view. `--attribute-mapping-file` is validated
 against the API's `attribute_mapping` schema before the request: a key the schema does not model
 fails with `failed to parse attribute mapping: Expected no excess property at [...]` and nothing
 is sent. A 2xx response whose body does not match the provider schema fails as

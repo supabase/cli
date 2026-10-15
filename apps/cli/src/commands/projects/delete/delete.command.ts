@@ -1,6 +1,9 @@
 import { Layer } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -24,6 +27,22 @@ export const projectsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a project by ref",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-list-all-projects",
+            kind: "required",
+            context:
+              "no ref argument (or an empty one) and an interactive terminal (stdin TTY and text output); SUPABASE_PROJECT_ID and supabase/.temp/project-ref are ignored",
+          },
+          { operationId: "v1-delete-a-project", kind: "required" },
+        ],
+      },
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     projectsDelete(flags).pipe(
       withCommandTelemetry({ flags, safeFlags: [] }),

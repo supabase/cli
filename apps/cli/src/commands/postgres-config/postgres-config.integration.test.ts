@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient } from "@supabase/api/effect";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import {
   DEFAULT_API_URL,
@@ -18,8 +18,17 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../tests/helpers/permission-real-layers.ts";
 import { postgresConfigDelete } from "./delete/delete.handler.ts";
 import { postgresConfigGet } from "./get/get.handler.ts";
+import { postgresConfigRead, postgresConfigWrite } from "./postgres-config.shared.ts";
 import { postgresConfigUpdate } from "./update/update.handler.ts";
 
 type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
@@ -34,7 +43,55 @@ const failure = (
     : undefined;
 };
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
+
+const PROJECTS_URL = "https://api.supabase.com/v1/projects";
+const PROJECT_URL = `${PROJECTS_URL}/${VALID_REF}`;
+const CONFIG_URL = `${PROJECT_URL}/config/database/postgres`;
+
+const requestLines = (api: ReturnType<typeof mockCommandPlatformApi>) =>
+  api.requests.map(({ method, url }) => `${method} ${url}`);
+
+// No linked ref anywhere, so the picker runs and the real cache fills after the command.
+function composedRuntime(opts: {
+  readonly stored: Record<string, unknown>;
+  readonly updated: Record<string, unknown>;
+}) {
+  const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+  const api = mockCommandPlatformApi({
+    handler: (request) =>
+      Effect.succeed(
+        request.url === PROJECTS_URL
+          ? jsonResponse(request, 200, [projectResponse(VALID_REF)])
+          : request.url === PROJECT_URL
+            ? jsonResponse(request, 200, projectResponse(VALID_REF))
+            : request.url === CONFIG_URL
+              ? jsonResponse(request, 200, request.method === "PUT" ? opts.updated : opts.stored)
+              : jsonResponse(request, 404, { message: "unrouted request" }),
+      ),
+  });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
+  const layer = buildTestRuntime({
+    out,
+    api,
+    cliSettings,
+    tty: mockTty({ stdinIsTty: true }),
+    linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+  });
+  return { out, api, layer };
+}
+
+const readLinkedProjectCache = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* decodeJson(
+    yield* fs.readFileString(`${tempRoot.current}/supabase/.temp/linked-project.json`),
+  );
+});
 
 // The shared mock disables client retries; this restores the production default so a test can
 // prove a command opts a request out of retrying.
@@ -87,6 +144,34 @@ describe("postgres-config get", () => {
       expect(out.stdoutText).toContain("100");
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/config/database/postgres`);
+      assertPermissionDrift({
+        command: "postgres-config get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, reads its config and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { max_connections: 100 },
+      updated: {},
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigGet({ projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(out.stdoutText).toContain("max_connections");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config get",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -330,6 +415,43 @@ describe("postgres-config update", () => {
       expect(out.stderrText).toBe(
         "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false, "no-restart": true, config: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, merges overrides and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { wal_keep_size: "1GB" },
+      updated: { wal_keep_size: "1GB", max_connections: 100 },
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigUpdate({
+        projectRef: Option.none(),
+        config: ["max_connections=100"],
+        replaceExistingOverrides: false,
+        noRestart: false,
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `PUT ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(api.requests[2]?.body).toEqual({ wal_keep_size: "1GB", max_connections: 100 });
+      expect(out.stdoutText).toContain("max_connections");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -354,6 +476,18 @@ describe("postgres-config update", () => {
       expect(api.requests[0]?.body).toEqual({ max_connections: 100 });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toEqual({ max_connections: 100 });
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": true },
+        requests: api.requests,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "postgres-config update",
+          activeFlags: { "replace-existing-overrides": true },
+          requests: [{ method: "GET", url: CONFIG_URL }],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -423,6 +557,11 @@ describe("postgres-config update", () => {
       );
       expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
       expect(cache.cached).toBe(true);
+      assertPermissionDrift({
+        command: "postgres-config update",
+        activeFlags: { "replace-existing-overrides": false },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -732,6 +871,43 @@ describe("postgres-config delete", () => {
       expect(out.stderrText).toBe(
         "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        activeFlags: { config: true, "no-restart": true },
+        requests: api.requests,
+        exact: true,
+      });
+      assertBlockDrift(postgresConfigRead, { requests: api.requests.slice(0, 1), exact: true });
+      assertBlockDrift(postgresConfigWrite, { requests: api.requests.slice(1, 2), exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project, deletes the override and fills the linked-project cache", () => {
+    const { out, api, layer } = composedRuntime({
+      stored: { max_connections: 100, shared_buffers: "1GB" },
+      updated: { shared_buffers: "1GB" },
+    });
+
+    return Effect.gen(function* () {
+      yield* postgresConfigDelete({
+        projectRef: Option.none(),
+        config: ["max_connections"],
+        noRestart: false,
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${PROJECTS_URL}`,
+        `GET ${CONFIG_URL}`,
+        `PUT ${CONFIG_URL}`,
+        `GET ${PROJECT_URL}`,
+      ]);
+      expect(api.requests[2]?.body).toEqual({ shared_buffers: "1GB" });
+      expect(out.stdoutText).toContain("shared_buffers");
+      expect(yield* readLinkedProjectCache).toMatchObject({ ref: VALID_REF });
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -922,7 +1098,11 @@ describe("postgres-config delete", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("PostgresConfigGetUnexpectedStatusError");
       }
-      expect(api.requests.map((request) => request.method)).not.toContain("PUT");
+      expect(api.requests.map((request) => request.method)).toEqual(["GET"]);
+      assertPermissionDrift({
+        command: "postgres-config delete",
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 

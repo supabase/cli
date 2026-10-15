@@ -4,6 +4,7 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   StackStorageCapabilityError,
   StackStorageUnavailableError,
@@ -15,6 +16,9 @@ import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
+const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+const CACHE_FILE = "supabase/.temp/linked-project.json";
 
 const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -446,6 +450,119 @@ describe("storage ls", () => {
         expect(requests).toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer));
     },
+  );
+  it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+        });
+        const fs = yield* FileSystem.FileSystem;
+        yield* storageLs(lsFlags({ local: false })).pipe(Effect.provide(layer));
+        expect(
+          managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+        ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+        expect(out.stdoutText).toBe("remote/\n");
+        expect(requests[0]?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+        expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
+        assertPermissionDrift({
+          command: "storage ls",
+          activeFlags: { local: false },
+          requests: managementRequests,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
+
+  it.effect("asks for no api keys when SUPABASE_AUTH_SERVICE_ROLE_KEY is set", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      "env-service-role-key",
+      Effect.gen(function* () {
+        const { layer, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+        });
+        yield* storageLs(lsFlags({ local: false })).pipe(Effect.provide(layer));
+        expect(requests[0]?.headers["apikey"]).toBe("env-service-role-key");
+        expect(managementRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          PROJECT_LOOKUP,
+        ]);
+        assertPermissionDrift({
+          command: "storage ls",
+          activeFlags: { local: false },
+          requests: managementRequests,
+        });
+      }),
+    ),
+  );
+
+  it.effect("makes no Management API request for --local", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
+          toml: 'project_id = "test"\n[api]\nport = 65432\n',
+          recordManagementApi: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+        });
+        const fs = yield* FileSystem.FileSystem;
+        yield* storageLs(lsFlags({ local: true })).pipe(Effect.provide(layer));
+        expect(out.stdoutText).toBe("test/\n");
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.url.startsWith("http://127.0.0.1:65432")).toBe(true);
+        expect(managementRequests).toEqual([]);
+        expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(false);
+        assertPermissionDrift({
+          command: "storage ls",
+          activeFlags: { local: true },
+          requests: managementRequests,
+        });
+        expect(() =>
+          assertPermissionDrift({
+            command: "storage ls",
+            activeFlags: { local: true },
+            requests: [
+              {
+                method: "GET",
+                url: `https://api.supabase.com/v1/projects/${VALID_REF}/api-keys`,
+                urlParams: "reveal=true",
+              },
+            ],
+          }),
+        ).toThrow(/condition doesn't hold/);
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
+
+  it.effect("--linked=false still targets the linked project", () =>
+    withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
+          recordManagementApi: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+        });
+        yield* storageLs({ ...lsFlags({ local: false }), linked: false }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.stdoutText).toBe("remote/\n");
+        expect(requests[0]?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
+        expect(
+          managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
+        ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
+        assertPermissionDrift({
+          command: "storage ls",
+          activeFlags: { linked: false, local: false },
+          requests: managementRequests,
+        });
+      }),
+    ),
   );
 });
 

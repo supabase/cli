@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -86,6 +87,10 @@ const startRuntimeLayer = Layer.mergeAll(
 export const startCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
+  }),
   Command.withHandler((flags) =>
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
