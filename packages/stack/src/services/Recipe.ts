@@ -1,6 +1,7 @@
 import { Data, Schema } from "effect";
 import type { Effect, PubSub, Ref, Scope } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
+import type { PortError } from "../Ports.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
@@ -54,6 +55,11 @@ export interface CatalogOptions {
   readonly helpers?: DockerHelperRegistry;
   /** Shares one host-gateway probe across this host's container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** Claims a native backend port across this user's stacks until the ambient scope closes. */
+  readonly claimNativePort: (
+    key: string,
+    port: number,
+  ) => Effect.Effect<boolean, PortError, Scope.Scope>;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
 }
