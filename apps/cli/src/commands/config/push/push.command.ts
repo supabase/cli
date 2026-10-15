@@ -4,6 +4,11 @@ import { Command, Flag } from "effect/cli";
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
+import { branchTarget } from "../../../command-internal/branch-target.ts";
+import { configTarget } from "../../../command-internal/project-target.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -58,6 +63,64 @@ export const configPushCommand = Command.make("push", config).pipe(
       description: "Push local config to the 'staging' branch",
     },
   ]),
+  withPermissions(
+    compose(
+      configTarget,
+      {
+        operations: [
+          {
+            operationId: "v1-get-project",
+            kind: "best-effort",
+            context: "--project-ref is absent, empty or a 20-letter project ref (the branch probe)",
+          },
+          { operationId: "v1-list-project-addons", kind: "required" },
+          { operationId: "v2-get-project-config", kind: "required" },
+          {
+            operationId: "v1-update-postgrest-service-config",
+            kind: "required",
+            context: "config.toml's [api] settings differ from the remote's",
+          },
+          {
+            operationId: "v1-update-postgres-config",
+            kind: "required",
+            context: "config.toml's [db.settings] differ from the remote's",
+          },
+          {
+            operationId: "v1-update-network-restrictions",
+            kind: "required",
+            context:
+              "config.toml sets [db.network_restrictions] enabled = true and its rules differ from the remote's",
+          },
+          {
+            operationId: "v1-update-ssl-enforcement-config",
+            kind: "required",
+            context: "config.toml declares [db.ssl_enforcement] and it differs from the remote's",
+          },
+          {
+            operationId: "v1-update-auth-service-config",
+            kind: "required",
+            context:
+              "config.toml's [auth] settings, a referenced email template file, or a resolved auth secret differ from the remote's",
+          },
+          {
+            operationId: "v1-update-storage-config",
+            kind: "required",
+            context: "config.toml's [storage] settings differ from the remote's",
+          },
+          {
+            operationId: "v1-enable-database-webhook",
+            kind: "required",
+            context: "config.toml sets [experimental.webhooks] enabled = true",
+          },
+        ],
+      },
+      withContext(
+        branchTarget,
+        "the target is a branch (a UUID --project-ref, or the probe returned 404) and supabase/.temp/linked-project.json names a different project",
+      ),
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(configPushHandler),
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "push"]), stdinLayer)),
 );
