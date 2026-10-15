@@ -17,13 +17,14 @@ import * as NetAddress from "effect/net/NetAddress";
 import { discover, type Stack } from "./effect.ts";
 import { makeTestStack } from "./testing.ts";
 import { postgres } from "./Commands.ts";
+import { selection } from "../tests/pins.ts";
 
 const sql = (stack: Stack, databaseUrl: string, command: string) =>
   Effect.gen(function* () {
     const decoder = new TextDecoder();
     let stdout = "";
     let stderr = "";
-    const result = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+    const result = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
       args: ["--dbname", databaseUrl, "--set", "ON_ERROR_STOP=1", "-tA", "--command", command],
       stdout: (bytes) => Effect.sync(() => (stdout += decoder.decode(bytes))),
       stderr: (bytes) => Effect.sync(() => (stderr += decoder.decode(bytes))),
@@ -233,7 +234,7 @@ it.live(
       const port = occupied.address.port;
 
       const startup = yield* makeTestStack({
-        services: [{ service: "mail", endpoints: { http: { port } } }],
+        services: [{ service: "mail", pin: selection.mail, endpoints: { http: { port } } }],
         runtime: "native",
         stateRoot,
       }).pipe(Effect.scoped, Effect.exit);

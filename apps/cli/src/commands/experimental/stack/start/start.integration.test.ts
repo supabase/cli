@@ -20,7 +20,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import { orioledbVersions, postgresVersion } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions, type ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
   apiRoute,
   StackError,
@@ -40,6 +40,7 @@ import {
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
+import { database15, selection } from "../../../../../tests/helpers/pins.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -172,12 +173,14 @@ const instance = (
             if (input === undefined) return;
             current = {
               ...current,
-              ...("version" in input ? { version: input.version } : {}),
               ...("endpoints" in input ? { endpoints: input.endpoints } : {}),
               config: { ...current.config, ...input.config },
             };
           }),
-        status: Effect.sync(() => status(current)),
+        status: Effect.sync(() => {
+          const savedPin = view().savedPin;
+          return status(savedPin === undefined ? current : { ...current, pin: savedPin });
+        }),
         credentials: () =>
           Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
         saveSnapshot: () => Effect.die("unused"),
@@ -259,6 +262,7 @@ interface MemberView {
   readonly wakeEnabled: boolean;
   readonly health: "starting" | "healthy" | "unhealthy" | undefined;
   readonly ready: Effect.Effect<void, StackError>;
+  readonly savedPin: ArtifactPin | undefined;
 }
 
 interface MemberStatus {
@@ -306,6 +310,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let activations = new Map<string, "eager" | "lazy">();
   const memberStatuses = new Map<string, MemberStatus>();
   const memberReadiness = new Map<string, Effect.Effect<void, StackError>>();
+  const savedPins = new Map<string, ArtifactPin>();
   /** The endpoint changes a simulated owner startup re-planned, until the next `applyStartupReplan`. */
   let pendingStartupChanges: ReadonlyArray<EndpointPortChange> = [];
   let savedCredentials = credentialsFor(undefined, undefined);
@@ -318,6 +323,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         status?.wakeEnabled ?? (lifecycle === "running" && activations.get(id) === "lazy"),
       health: status?.health ?? (memberLifecycle === "running" ? "healthy" : undefined),
       ready: memberReadiness.get(id) ?? Effect.void,
+      savedPin: savedPins.get(id),
     };
   };
   /** Builds a member from a creation, tracking it for a later `reassignEndpoint`. */
@@ -453,6 +459,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     get savedCredentials() {
       return savedCredentials;
+    },
+    /** Replaces a member's saved artifact pin, which a real restart cannot change. */
+    replaceSavedPin(id: string, pin: ArtifactPin) {
+      savedPins.set(id, pin);
     },
     setMemberStatus(id: string, status: MemberStatus) {
       memberStatuses.set(id, status);
@@ -2062,54 +2072,35 @@ describe("experimental stack start", () => {
   );
 
   it.effect(
-    "names the full Postgres build, not major_version, when only the pinned build differs",
+    "launches the database pin selected by [db] major_version and the stock pin elsewhere",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-pg-build-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-selected-pin-" });
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           `${root}/supabase/config.toml`,
-          'project_id = "pg-build"\n[db]\nmajor_version = 17\n',
+          'project_id = "selected-pin"\n[db]\nmajor_version = 15\n',
         );
         const fixture = fakeStack();
         yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        const database = fixture.members.find(({ service }) => service === "database");
-        if (database?.service !== "database") return yield* Effect.die("Database missing");
-        const observed = yield* database.status;
-        if (observed.config.service !== "database")
-          return yield* Effect.die("Database config missing");
-        const pinnedVersion = postgresVersion("17");
-        // A saved build the current catalog no longer pins (`postgresVersion` only normalizes a
-        // recognized alias): same major as the requested `17`, different full build.
-        yield* database.restart({
-          config: { ...observed.config.config, version: "17.0.0-stale-build" },
-        });
-        yield* fixture.stack.composition.stop;
-        const error = yield* stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
 
-        expect(error).toMatchObject({
-          reason: "invalid-config",
-          message: expect.stringContaining(
-            `Postgres build: saved 17.0.0-stale-build, requested ${pinnedVersion}`,
-          ),
-        });
-        expect(error).toBeInstanceOf(StackCommandStartError);
-        if (error instanceof StackCommandStartError) {
-          expect(error.message).not.toContain("major_version");
-          expect(error.suggestion).not.toContain("Revert");
-          expect(error.suggestion).toContain(
-            "This CLI release starts a different Postgres build than the saved stack.",
-          );
-          expect(error.suggestion).toContain(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          );
+        const pins = new Map<string, ArtifactPin>();
+        for (const member of fixture.members) {
+          const observed = yield* member.status;
+          if (observed.config.service === "database") pins.set("database", observed.config.pin);
+          if (observed.config.service === "rest") pins.set("rest", observed.config.pin);
         }
+        expect(pins.get("database")).toEqual(database15);
+        expect(pins.get("rest")).toEqual(selection.rest);
       }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  const retiredOrioledbPin = (pin: ArtifactPin): ArtifactPin => ({
+    ...pin,
+    upstreamVersion: "17.0.0.000-orioledb",
+    image: "registry.invalid/postgres@sha256:retired",
+  });
 
   const [orioledb = ""] = orioledbVersions();
   for (const target of [
@@ -2216,10 +2207,7 @@ describe("experimental stack start", () => {
       if (database?.service !== "database") return yield* Effect.die("database missing");
       const observed = yield* database.status;
       if (observed.config.service !== "database") return yield* Effect.die("config missing");
-      yield* database.restart({
-        ...observed.config,
-        config: { ...observed.config.config, version: "17.0.0.000-orioledb" },
-      });
+      fixture.replaceSavedPin(database.id, retiredOrioledbPin(observed.config.pin));
       yield* fixture.stack.composition.stop;
       const error = yield* stackStart(flags()).pipe(
         Effect.provide(layers(root, fixture)),
@@ -2239,47 +2227,6 @@ describe("experimental stack start", () => {
   );
 
   it.effect(
-    "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-artifact-version-" });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          'project_id = "artifact-version"\n',
-        );
-        const fixture = fakeStack();
-        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        const rest = fixture.members.find(({ service }) => service === "rest");
-        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
-        const restObserved = yield* rest.status;
-        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
-        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
-        yield* fixture.stack.composition.stop;
-        const error = yield* stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
-
-        expect(error).toMatchObject({
-          reason: "invalid-config",
-          message: expect.stringContaining("rest artifact version"),
-        });
-        expect(error).toBeInstanceOf(StackCommandStartError);
-        if (error instanceof StackCommandStartError) {
-          expect(error.suggestion).not.toContain("Revert");
-          expect(error.suggestion).toContain(
-            "This CLI release starts a different rest artifact version than the saved stack.",
-          );
-          expect(error.suggestion).toContain(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          );
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
     "uses the destroy-only wording when a non-editable change accompanies an editable one",
     () =>
       Effect.gen(function* () {
@@ -2292,11 +2239,12 @@ describe("experimental stack start", () => {
         );
         const fixture = fakeStack();
         yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        const rest = fixture.members.find(({ service }) => service === "rest");
-        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
-        const restObserved = yield* rest.status;
-        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
-        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
+        const database = fixture.members.find(({ service }) => service === "database");
+        if (database?.service !== "database") return yield* Effect.die("Database missing");
+        const observed = yield* database.status;
+        if (observed.config.service !== "database")
+          return yield* Effect.die("Database config missing");
+        fixture.replaceSavedPin(database.id, retiredOrioledbPin(observed.config.pin));
         yield* fixture.stack.composition.stop;
 
         yield* fs.writeFileString(
@@ -2311,14 +2259,14 @@ describe("experimental stack start", () => {
         expect(error).toMatchObject({
           reason: "invalid-config",
           // The editable change still appears in the message even though reverting it alone
-          // can't unblock start: the non-editable artifact-version change still would.
+          // can't unblock start: the retired OrioleDB build still would.
           message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
         });
         expect(error).toBeInstanceOf(StackCommandStartError);
         if (error instanceof StackCommandStartError) {
           expect(error.suggestion).not.toContain("Revert");
           expect(error.suggestion).toContain(
-            "This CLI release starts a different rest artifact version than the saved stack.",
+            "This CLI release starts a different [db] orioledb_version than the saved stack.",
           );
           expect(error.suggestion).toContain(
             `supabase stack destroy --stack-id ${fixture.stack.id}`,
@@ -2354,7 +2302,7 @@ describe("experimental stack start", () => {
       expect(envelope.stack_changes).toEqual([
         {
           service: "database",
-          path: "config.version",
+          path: "pin",
           key: "[db] major_version",
           saved: "17",
           requested: "15",
@@ -2393,7 +2341,7 @@ describe("experimental stack start", () => {
       expect(event.stack_changes).toEqual([
         {
           service: "database",
-          path: "config.version",
+          path: "pin",
           key: "[db] major_version",
           saved: "17",
           requested: "15",
@@ -2446,25 +2394,19 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("matches a Postgres major alias to the saved pinned database version", () =>
+  it.effect("reuses the saved database member when the selected pin is unchanged", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-same-pin-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
-        'project_id = "start-postgres-alias"\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = false\n',
+        'project_id = "start-same-pin"\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = false\n',
       );
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
       const database = fixture.members.find(({ service }) => service === "database");
       if (database?.service !== "database") return yield* Effect.die("Database missing");
-      const observed = yield* database.status;
-      if (observed.config.service !== "database")
-        return yield* Effect.die("Database config missing");
-      const pinnedVersion = postgresVersion("17");
-      expect(pinnedVersion).not.toBe("17");
-      yield* database.restart({ config: { ...observed.config.config, version: pinnedVersion } });
       yield* fixture.stack.composition.stop;
 
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));

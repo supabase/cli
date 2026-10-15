@@ -186,11 +186,14 @@ add the same changes to the success payload. Any other incompatible path blocks 
 whole composition, even for a member whose own change is purely a changed endpoint: a changed
 `config.toml`-backed or env-var-backed setting (such as a changed PostgreSQL major version) still
 fails before modifying the stopped composition, naming the key or env var behind the change with its
-saved and requested values and suggesting reverting it; a changed catalog-pinned artifact version or
-a same-major PostgreSQL build mismatch, which no `config.toml` key or env var controls, instead uses
-a plain label with no revert advice. Either way the failure suggests running the stack's exact
+saved and requested values and suggesting reverting it. Only a database release-line change (the
+stock PostgreSQL major, or the exact OrioleDB build; path `pin`) or an endpoint change is
+incompatible; any other pin change, such as another service's catalog build or a same-major
+PostgreSQL build, restarts the service and does not block the start. A saved OrioleDB build the
+catalog no longer carries is reported as non-editable, with no revert advice. Either way the failure suggests
+running the stack's exact
 `supabase stack destroy` command to recreate it.
-Switching between stock PostgreSQL and OrioleDB is an artifact version change, reported as
+Switching between stock PostgreSQL and OrioleDB is a release-line change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
 Initialized database data is reused only on its own release line (the PostgreSQL major for stock
 builds, the exact build for OrioleDB, since a newer OrioleDB build may refuse older data). A

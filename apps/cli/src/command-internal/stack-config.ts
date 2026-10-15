@@ -9,6 +9,7 @@ import {
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/http";
 
@@ -18,7 +19,7 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
-import { stackDatabaseVersion } from "./stack-database-version.ts";
+import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 
 import {
   decryptAuthSecret,
@@ -80,6 +81,8 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 }
 
 interface StackStartConfig {
+  /** The artifact pins every creation of this command carries. */
+  readonly selection: ArtifactSelection;
   readonly creations: (
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
@@ -946,9 +949,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
-      const databaseVersion = yield* Effect.fromResult(
-        stackDatabaseVersion(validatedConfig.db),
-      ).pipe(Effect.mapError((message) => new StackConfigError({ message })));
+      const selection = yield* stackArtifactSelection(validatedConfig.db).pipe(
+        Effect.mapError((error) => new StackConfigError({ message: error.message })),
+      );
 
       const externalProviders = yield* Effect.try({
         try: () =>
@@ -1212,6 +1215,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const storagePath = legacyProjectStatePaths(path, projectRoot).stackUploadsDir;
       const pgmetaCreation: ServiceCreationType = {
         service: "pgmeta",
+        pin: selection.pgmeta,
         config: {},
         endpoints: { http: endpoint(undefined) },
       };
@@ -1222,8 +1226,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           return [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: databaseVersion,
                 ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
@@ -1236,6 +1240,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "analytics" as const,
+                    pin: selection.analytics,
                     config: {
                       backend: "postgres" as const,
                       apiKey: "api-key",
@@ -1248,6 +1253,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "pooler" as const,
+                    pin: selection.pooler,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
@@ -1264,6 +1270,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "rest" as const,
+                    pin: selection.rest,
                     config: {
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
@@ -1281,6 +1288,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "auth" as const,
+                    pin: selection.auth,
                     config: {
                       ...authConfig,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
@@ -1293,6 +1301,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "realtime" as const,
+                    pin: selection.realtime,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
@@ -1312,6 +1321,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "storage" as const,
+                    pin: selection.storage,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       filePath: `${storagePath}/${stackId}`,
@@ -1332,6 +1342,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "imgproxy" as const,
+                    pin: selection.imgproxy,
                     config: { filePath: `${storagePath}/${stackId}` },
                     endpoints: { http: endpoint(undefined) },
                   } satisfies ServiceCreationType,
@@ -1341,6 +1352,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "functions" as const,
+                    pin: selection.functions,
                     config: {
                       functionsRoot: `${projectRoot}/supabase/functions`,
                       filesRoot: projectRoot,
@@ -1368,6 +1380,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "studio" as const,
+                    pin: selection.studio,
                     config: {
                       snippetsRoot: `${projectRoot}/supabase/snippets`,
                       apiSchemas: validatedConfig.api.schemas.join(","),
@@ -1390,6 +1403,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "mail" as const,
+                    pin: selection.mail,
                     config: {},
                     endpoints: {
                       http: endpoint(mailPort),
@@ -1402,6 +1416,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ];
         });
       return {
+        selection,
         creations: createCreations,
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,

@@ -17,18 +17,18 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { postgresVersion } from "../Artifacts.ts";
 import { createHash } from "node:crypto";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
-import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
+import { makeDatabase, type BackendEndpoint, type PinnedDatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runEngine } from "../../tests/docker-fixture.ts";
 import { observeContainerStop, cleanStopEvents } from "../../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { database15, orioledb, selection } from "../../tests/pins.ts";
 
-const config: DatabaseConfig = {
-  version: "17",
+const config: PinnedDatabaseConfig = {
+  pin: selection.database,
   databasePassword: Redacted.make("supabase-test-password"),
   jwtSecret: Redacted.make("supabase-test-jwt-secret"),
   jwtExpiry: 3600,
@@ -62,9 +62,9 @@ const query = <Row extends object = object>(
 
 describe("database component", { timeout: 180_000 }, () => {
   for (const target of [
-    { runtime: "native", version: "17" },
-    { runtime: testEngine, version: "15" },
-    { runtime: testEngine, version: "17" },
+    { runtime: "native", version: "17", pin: selection.database },
+    { runtime: testEngine, version: "15", pin: database15 },
+    { runtime: testEngine, version: "17", pin: selection.database },
   ] as const)
     it.live(
       `preserves default encryption keys and Vault secrets after ${target.runtime} PostgreSQL ${target.version} recreation`,
@@ -85,9 +85,9 @@ describe("database component", { timeout: 180_000 }, () => {
               runtime: target.runtime,
               ...(target.runtime !== "native" ? { engineTarget } : {}),
             });
-            const defaults: DatabaseConfig = {
+            const defaults: PinnedDatabaseConfig = {
               healthTimeoutMs: 120_000,
-              version: target.version,
+              pin: target.pin,
               databasePassword: config.databasePassword,
               jwtSecret: config.jwtSecret,
               jwtExpiry: config.jwtExpiry,
@@ -186,12 +186,12 @@ describe("database component", { timeout: 180_000 }, () => {
         const prepare = recipe.definition.prepare;
         if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
         const instanceRoot = path.join(root, "database");
-        const orioledb: DatabaseConfig = { ...config, version: "17.11.0.002-orioledb" };
+        const orioledbConfig: PinnedDatabaseConfig = { ...config, pin: orioledb };
         const recreate =
           "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
         yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
         yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
-        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+        expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
           `Unmarked PostgreSQL data cannot be verified as OrioleDB data; ${recreate}`,
         );
 
@@ -199,7 +199,7 @@ describe("database component", { timeout: 180_000 }, () => {
           path.join(instanceRoot, ".supabase-database-ready.json"),
           '{"version":"17.11.0.002","runtime":"native","profile":"supabase"}',
         );
-        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+        expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
           `Initialized database data is 17.11.0.002 on the native runtime, but 17.11.0.002-orioledb on the native runtime was requested; ${recreate}`,
         );
       }),
@@ -231,7 +231,7 @@ describe("database component", { timeout: 180_000 }, () => {
         // A restart can pass prepare before the first start writes readiness; launch checks again.
         const prepared = yield* makeStandaloneService(
           { ...recipe.definition, prepare: () => Effect.void },
-          { id: "database", config: { ...config, version: "17.11.0.002-orioledb" } },
+          { id: "database", config: { ...config, pin: orioledb } },
         );
         expect(
           (yield* Effect.flip(prepared.start.pipe(Effect.andThen(prepared.ready)))).message,
@@ -250,9 +250,9 @@ describe("database component", { timeout: 180_000 }, () => {
         // Initialized data without its readiness marker is what an interrupted first start leaves.
         yield* fs.remove(path.join(root, "database", ".supabase-database-ready.json"));
 
-        expect(
-          (yield* Effect.flip(prepare({ ...config, version: "17.11.0.002-orioledb" }))).message,
-        ).toContain("belongs to release line 17, but 17.11.0.002-orioledb was requested");
+        expect((yield* Effect.flip(prepare({ ...config, pin: orioledb }))).message).toContain(
+          "belongs to release line 17, but 17.11.0.002-orioledb was requested",
+        );
         yield* service.start;
         yield* service.ready;
         expect(yield* fs.exists(path.join(root, "database", ".supabase-database-ready.json"))).toBe(
@@ -468,7 +468,10 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  for (const version of ["15", "17"])
+  for (const [version, pin] of [
+    ["15", database15],
+    ["17", selection.database],
+  ] as const)
     it.live(`runs native PostgreSQL ${version} cron jobs in supautils-guarded workers`, () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -481,7 +484,7 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot: artifactCacheRoot,
             runtime: "native",
           });
-          const databaseConfig = { ...config, version };
+          const databaseConfig = { ...config, pin };
           const service = yield* makeStandaloneService(database.definition, {
             id: "database:cron",
             config: databaseConfig,
@@ -654,7 +657,10 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot,
             runtime: "native",
           });
-          const loggedConfig: DatabaseConfig = { ...config, settings: { log_statement: "all" } };
+          const loggedConfig: PinnedDatabaseConfig = {
+            ...config,
+            settings: { log_statement: "all" },
+          };
           const service = yield* makeStandaloneService(first.definition, {
             id: "database:first",
             config: loggedConfig,
@@ -718,16 +724,16 @@ describe("database component", { timeout: 180_000 }, () => {
             .restart({ ...config, settings: { listen_addresses: "*" } })
             .pipe(Effect.flip);
           expect((yield* service.get).lifecycle).toBe("running");
-          yield* service.restart({ ...config, version: "unsupported" }).pipe(Effect.flip);
-          expect((yield* service.get).lifecycle).toBe("running");
-          const mismatch = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
+          const mismatch = yield* service.restart({ ...config, pin: database15 }).pipe(Effect.flip);
           expect(mismatch.message).toContain(
-            `Initialized database data is ${postgresVersion("17")} on the native runtime, but ${postgresVersion("15")} on the native runtime was requested`,
+            `Initialized database data is ${selection.database.upstreamVersion} on the native runtime, but ${database15.upstreamVersion} on the native runtime was requested`,
           );
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           yield* fs.remove(path.join(root, "first", ".supabase-database-ready.json"));
-          const incomplete = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
+          const incomplete = yield* service
+            .restart({ ...config, pin: database15 })
+            .pipe(Effect.flip);
           expect(incomplete.message).toContain(
             "PostgreSQL data from an unfinished first start is major 17, but major 15 was requested",
           );
@@ -802,11 +808,14 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  for (const version of ["15", "17"])
+  for (const [version, pin] of [
+    ["15", database15],
+    ["17", selection.database],
+  ] as const)
     it.live(`PostgreSQL ${version} persists container data and reconciles credentials`, () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const databaseConfig: DatabaseConfig = { ...config, version };
+          const databaseConfig: PinnedDatabaseConfig = { ...config, pin };
           const root = yield* makeDockerDatabaseRoot(
             "stack-database-container-",
             "stack-integration-container",

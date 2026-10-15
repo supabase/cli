@@ -38,6 +38,7 @@ import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
   new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
@@ -248,11 +249,13 @@ it.live("preserves composition outcomes over RPC", () =>
       const port = yield* occupiedPort;
       const lazy = yield* client.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" } },
       });
       const blocked = yield* client.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port } },
       });
@@ -552,6 +555,7 @@ it.live(
         expect(yield* client.startComposition()).toEqual([]);
         const mail = yield* client.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
         });
@@ -563,7 +567,7 @@ it.live(
             attachmentId: toolAttachment,
             command: {
               type: "postgres",
-              command: postgres.psql({ major: 17 }),
+              command: postgres.psql({ pin: selection.database }),
               args: ["--version"],
               env: {},
               stdin: true,
@@ -582,8 +586,8 @@ it.live(
         expect((yield* client.status({ id: mail.id })).lifecycle).toBe("running");
         const database = yield* client.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("host-test-password"),
             jwtSecret: Redacted.make("host-test-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
@@ -616,7 +620,7 @@ it.live(
               attachmentId: "draining-stdin",
               command: {
                 type: "postgres",
-                command: postgres.psql({ major: 17 }),
+                command: postgres.psql({ pin: selection.database }),
                 args: [
                   "-X",
                   "-t",
@@ -772,6 +776,7 @@ it.live("withdraws a command waiting for its prerequisite", () =>
       const client = yield* ownerClient(runtime.access);
       const mail = yield* client.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" } },
       });
@@ -849,6 +854,7 @@ it.live("finishes a service creation after its caller disconnects", () =>
       const creation = yield* Effect.forkScoped(
         client.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         }),
@@ -912,6 +918,7 @@ it.live("persists a composition change after its caller disconnects", () =>
       const client = yield* ownerClient(runtime.access);
       const mail = yield* client.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" } },
       });
@@ -923,7 +930,12 @@ it.live("persists a composition change after its caller disconnects", () =>
       yield* Fiber.interrupt(configure);
       yield* Deferred.await(interrupted);
       yield* Deferred.succeed(allow, undefined);
-      yield* client.createService({ service: "mail", config: {}, endpoints: {} });
+      yield* client.createService({
+        service: "mail",
+        pin: selection.mail,
+        config: {},
+        endpoints: {},
+      });
 
       expect((yield* state.read(saved.id))?.composition).toEqual({ members, dependencies: [] });
       yield* shutdownOwner(runtime.access, true);
@@ -979,8 +991,8 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
         services: [
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("abandoned-composition-password"),
               jwtSecret: Redacted.make("abandoned-composition-jwt-secret-at-least-32-chars"),
               jwtExpiry: 3600,

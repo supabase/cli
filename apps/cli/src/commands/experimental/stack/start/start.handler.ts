@@ -4,7 +4,6 @@ import {
   isOrioledbVersion,
   orioledbConfigVersion,
   orioledbVersions,
-  postgresVersion,
 } from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
@@ -241,9 +240,8 @@ const endpointPortLabel = (endpoints: unknown, name: string): string => {
   return port === "auto" ? "automatic" : typeof port === "number" ? String(port) : "unset";
 };
 
-const databaseVersionOf = (
-  creation: ServiceCreation | ServiceCreationInput | undefined,
-): string | undefined => (creation?.service === "database" ? creation.config.version : undefined);
+const databaseVersionOf = (creation: ServiceCreation | ServiceCreationInput | undefined): string =>
+  creation?.service === "database" ? creation.pin.upstreamVersion : "unknown";
 
 const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
 
@@ -270,8 +268,7 @@ const settingKeyLabel = (
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
  * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
- * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
- * artifact or Postgres build.
+ * `config.toml` key or env var the user can revert, or plain wording otherwise.
  */
 interface StructuredSettingChange {
   readonly service: string;
@@ -289,26 +286,13 @@ const describeSettingChange = (
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
 ): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
-  if (service === "database" && path === "config.version") {
-    // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
-    // composition plan actually compared, so the saved/requested pair reflects what changed.
-    const savedVersion = postgresVersion(databaseVersionOf(savedCreation) ?? "unknown");
-    const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
+  if (service === "database" && path === "pin") {
+    const savedVersion = databaseVersionOf(savedCreation);
+    const requestedVersion = databaseVersionOf(requestedCreation);
     const savedMajor = majorVersionOf(savedVersion);
     const requestedMajor = majorVersionOf(requestedVersion);
     const savedOrioledb = orioledbVersionOf(savedVersion);
     const requestedOrioledb = orioledbVersionOf(requestedVersion);
-    // Same major and engine but different pinned build: no setting controls this, so name the
-    // actual (unpinnable) versions instead.
-    if (savedMajor === requestedMajor && savedOrioledb === requestedOrioledb)
-      return {
-        service,
-        path,
-        key: "Postgres build",
-        saved: savedVersion,
-        requested: requestedVersion,
-        editable: false,
-      };
     const changes: Array<StructuredSettingChange> = [];
     if (savedMajor !== requestedMajor)
       changes.push({
@@ -343,14 +327,14 @@ const describeSettingChange = (
       requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
       editable: true,
     };
-  // No config.toml key or env var covers this path (e.g. the catalog-pinned artifact `version`):
-  // name it plainly instead of implying a setting the user could edit.
+  // No config.toml key or env var covers this path: name it plainly instead of implying a
+  // setting the user could edit.
   return {
     service,
     path,
-    key: path === "version" ? `${service} artifact version` : `${service} ${path}`,
-    saved: path === "version" ? (savedCreation?.version ?? "unknown") : "changed",
-    requested: path === "version" ? (requestedCreation?.version ?? "unknown") : "changed",
+    key: `${service} ${path}`,
+    saved: "changed",
+    requested: "changed",
     editable: false,
   };
 };
@@ -412,7 +396,7 @@ const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =
       ? `Revert ${editableKeys[0]} to its saved value`
       : "Revert the settings listed to their saved values";
 
-/** Rejects every saved member whose endpoints or artifact versions the request would change. */
+/** Rejects every saved member whose endpoints or database release line the request would change. */
 const incompatibleChange = (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
@@ -1015,7 +999,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }
         : undefined;
       yield* initializeStackDatabase({
-        target: { stack, database, databaseServices: catalogDatabaseServices(requested) },
+        target: {
+          stack,
+          database,
+          databaseServices: catalogDatabaseServices(requested),
+          selection: config.selection,
+        },
         overlay: projectCatalogOverlay(toml, target.projectRoot),
         ...(migrations === undefined ? {} : { migrations }),
       }).pipe(

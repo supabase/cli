@@ -19,6 +19,7 @@ import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
 import { FetchHttpClient } from "effect/http";
 import { catalogPins, prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
+import { selection } from "../../tests/pins.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
 import {
@@ -793,7 +794,10 @@ describe("native artifact catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { version, releaseVersion } = yield* resolveArtifact({ service: "rest" });
+          const { version, releaseVersion } = yield* resolveArtifact({
+            service: "rest",
+            pin: selection.rest,
+          });
           expect(releaseVersion).toMatch(/-r(0|[1-9][0-9]*)$/u);
           expect(releaseVersion.startsWith(`${version}-r`)).toBe(true);
           const asset = `postgrest-${releaseVersion}-linux-amd64`;
@@ -808,7 +812,9 @@ describe("native artifact catalog", () => {
           const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-catalog-" });
           const failed = yield* withFetch(
             fetcher,
-            prepareNativeArtifact({ service: "rest" }, cacheRoot, linux).pipe(Effect.exit),
+            prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux).pipe(
+              Effect.exit,
+            ),
           );
           const github = `https://github.com/supabase/slim-services/releases/download/postgrest-${releaseVersion}`;
           const bucket = `https://${s3}/postgrest/${releaseVersion}`;
@@ -830,7 +836,7 @@ describe("native artifact catalog", () => {
   it.live("downloads from the base named by SUPABASE_INTERNAL_SLIM_RELEASES_URL", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { releaseVersion } = yield* resolveArtifact({ service: "rest" });
+        const { releaseVersion } = yield* resolveArtifact({ service: "rest", pin: selection.rest });
         const asset = `postgrest-${releaseVersion}-linux-amd64`;
         const requested: string[] = [];
         const fs = yield* FileSystem.FileSystem;
@@ -838,7 +844,7 @@ describe("native artifact catalog", () => {
 
         yield* withFetch(
           serving({}, requested),
-          prepareNativeArtifact({ service: "rest" }, cacheRoot, linux).pipe(
+          prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux).pipe(
             Effect.exit,
             Effect.provide(
               ConfigProvider.layer(
@@ -864,7 +870,7 @@ describe("native artifact catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const resolved = yield* resolveArtifact({ service: "rest" });
+          const resolved = yield* resolveArtifact({ service: "rest", pin: selection.rest });
           const fs = yield* FileSystem.FileSystem;
           const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
           const requested: string[] = [];
@@ -886,7 +892,7 @@ describe("native artifact catalog", () => {
           );
           const prepared = yield* withFetch(
             serving({}, requested),
-            prepareNativeArtifact({ service: "rest" }, cacheRoot, linux),
+            prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux),
           );
           expect(prepared.root).toBe(seeded.path);
           expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");

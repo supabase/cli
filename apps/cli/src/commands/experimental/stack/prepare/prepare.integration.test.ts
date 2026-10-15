@@ -28,6 +28,7 @@ import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError } from "./prepare.errors.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const id = "a".repeat(64);
 const flags = (overrides: Partial<StackPrepareFlags> = {}): StackPrepareFlags => ({
@@ -101,8 +102,8 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       endpoints: [],
       config: {
         service: "database" as const,
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("password"),
           jwtSecret: Redacted.make("jwt-secret"),
           jwtExpiry: 3600,
@@ -277,7 +278,6 @@ describe("stack prepare", () => {
                 "pgmeta",
                 "studio",
               ]);
-              expect(prepared.every((result) => result.version !== "catalog default")).toBe(true);
               expect(fixture.prepareCount).toBe(2);
               expect(fixture.destroyCount).toBe(2);
               expect(fixture.startCount).toBe(0);

@@ -40,6 +40,7 @@ import * as Owner from "../Owner.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { reconcileContainerPassword } from "../services/Database.ts";
+import { selection } from "../../tests/pins.ts";
 
 const image = await Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -1710,7 +1711,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           container,
           spawner,
         });
-        yield* storage.prepare("17");
+        yield* storage.prepare(selection.database);
 
         // Password reconcile: the consumer F2 found spawning the engine unpinned.
         yield* reconcileContainerPassword(

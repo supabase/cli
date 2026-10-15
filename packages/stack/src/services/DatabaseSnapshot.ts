@@ -15,7 +15,7 @@ import {
 } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
-import { postgresVersion } from "../Artifacts.ts";
+import type { ArtifactPin } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
@@ -517,7 +517,7 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
   readonly instanceRoot: string;
   readonly cacheRoot: string;
   readonly runtime: DatabaseRuntime;
-  readonly version: string;
+  readonly pin: ArtifactPin;
 }) {
   const path = yield* Path.Path;
   const cache = path.join(options.cacheRoot, "stack-database-snapshots");
@@ -539,6 +539,6 @@ export const makeDatabaseSnapshots = Effect.fn("DatabaseSnapshot.make")(function
     },
     instanceRoot: options.instanceRoot,
     runtime: options.runtime,
-    version: postgresVersion(options.version),
+    version: options.pin.upstreamVersion,
   });
 });

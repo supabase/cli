@@ -35,6 +35,7 @@ import {
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
 
 type DatabaseInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
@@ -56,7 +57,6 @@ const functionsConfig = (): Extract<ServiceCreation, { service: "functions" }>["
 });
 
 const databaseConfig: Extract<ServiceCreation, { service: "database" }>["config"] = {
-  version: "15",
   databasePassword: Redacted.make("postgres"),
   jwtSecret: Redacted.make("jwt-secret"),
   jwtExpiry: 3600,
@@ -143,11 +143,13 @@ const fixture = (
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
       service: "database",
+      pin: database15,
       config: databaseConfig,
       endpoints: { sql: { port: 54322 } },
     };
     const functionsCreation = (): Extract<ServiceCreation, { service: "functions" }> => ({
       service: "functions",
+      pin: selection.functions,
       config: currentFunctions,
       endpoints: { http: { port: 54321 } },
     });

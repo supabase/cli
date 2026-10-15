@@ -59,6 +59,7 @@ import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
+  ServiceRestartInput as ServiceRestartInputSchema,
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
@@ -167,9 +168,10 @@ const failure = (operation: string, cause: unknown, kind?: StackFailureKind): St
 };
 
 type Kind = ServiceCreation["service"];
-type ServiceCreationRestartInput<K extends Kind> =
-  | Pick<Extract<ServiceCreationInput, { service: K }>, "config">
-  | Extract<ServiceCreationInput, { service: K }>;
+type ServiceCreationRestartInput<K extends Kind> = Omit<
+  Extract<ServiceCreationInput, { service: K }>,
+  "service" | "pin"
+>;
 /** An individually identified service controlled through the owner. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -609,9 +611,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
-        : Schema.decodeUnknownEffect(ServiceCreationInputSchema)(
-            "service" in input ? input : { service, config: input.config },
-          ).pipe(
+        : Schema.decodeUnknownEffect(ServiceRestartInputSchema)({ service, ...input }).pipe(
             Effect.mapError((cause) => failure("restart", cause)),
             Effect.flatMap((creation) =>
               call("restart", (rpc) => rpc.restartService({ id, config: creation })),

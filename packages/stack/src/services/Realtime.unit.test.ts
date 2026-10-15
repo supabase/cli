@@ -2,11 +2,13 @@ import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import type { ServiceEndpoint } from "./Recipe.ts";
 import { makeSpec, type Creation } from "./Realtime.ts";
+import { selection } from "../../tests/pins.ts";
 
 const realtimeEnv = (ipVersion: Creation["config"]["ipVersion"]) =>
   makeSpec().env(
     {
       service: "realtime",
+      pin: selection.realtime,
       config: {
         databaseUrl: "postgresql://supabase_admin:postgres@host.docker.internal:54322/postgres",
         ...(ipVersion === undefined ? {} : { ipVersion }),

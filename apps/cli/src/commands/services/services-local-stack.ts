@@ -1,16 +1,12 @@
-import {
-  artifactServiceKinds,
-  postgresVersion,
-  resolveArtifact,
-} from "@supabase/stack/internal/artifacts";
+import { artifactServiceKinds, type ArtifactSelection } from "@supabase/stack/internal/artifacts";
+import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { Effect, Result } from "effect";
 import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
 import {
   envOverrideMajorVersion,
   envOverrideOrioleDBVersion,
 } from "../../command-internal/local-config-values.ts";
-import { stackDatabaseVersion } from "../../command-internal/stack-database-version.ts";
-import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
+import { stackArtifactSelection } from "../../command-internal/stack-artifact-selection.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
 
@@ -27,7 +23,7 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
 ) {
   const context = yield* loadLocalProjectContext(workdir, (message) => message).pipe(Effect.result);
   let configError: string | undefined;
-  let databaseVersion: string | undefined;
+  let selection: ArtifactSelection = defaultArtifactSelection();
   if (Result.isFailure(context)) configError = context.failure;
   else {
     const resolved = yield* Effect.try({
@@ -38,7 +34,7 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
         );
         if (value !== 15 && value !== 17)
           throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return stackDatabaseVersion({
+        return stackArtifactSelection({
           major_version: value,
           orioledb_version: envOverrideOrioleDBVersion(
             context.success.config.db.orioledb_version,
@@ -47,27 +43,23 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
         });
       },
       catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(Effect.flatMap(Effect.fromResult), Effect.result);
+    }).pipe(
+      Effect.flatMap((selected) => Effect.mapError(selected, (error) => error.message)),
+      Effect.result,
+    );
     if (Result.isFailure(resolved)) configError = resolved.failure;
-    else databaseVersion = resolved.success;
+    else selection = resolved.success;
   }
   yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
-  return yield* Effect.forEach(artifactServiceKinds(), (service) =>
-    Effect.gen(function* () {
-      const artifact = yield* resolveArtifact({
-        service,
-        ...(service === "database" && databaseVersion !== undefined
-          ? { version: postgresVersion(databaseVersion) }
-          : {}),
-      });
-      const name = artifact.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? artifact.image;
-      const remoteName = remoteNames[service];
-      return {
-        name,
-        // A slim revision suffix (`-rN`) repackages the same upstream release.
-        local: upstreamVersionFromTag(artifact.version),
-        remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
-      } satisfies ServiceVersionRow;
-    }),
-  ).pipe(Effect.map((rows) => ({ rows, configError })));
+  const rows = artifactServiceKinds().map((service) => {
+    const pin = selection[service];
+    const name = pin.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? pin.image;
+    const remoteName = remoteNames[service];
+    return {
+      name,
+      local: pin.upstreamVersion,
+      remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
+    } satisfies ServiceVersionRow;
+  });
+  return { rows, configError };
 });

@@ -107,6 +107,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -545,8 +546,8 @@ const serviceCreation = (
     case "database":
       return {
         service,
+        pin: database15,
         config: {
-          version: "15",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make(RESET_JWT),
           jwtExpiry: 3600,
@@ -554,17 +555,33 @@ const serviceCreation = (
         endpoints: {},
       };
     case "auth":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.auth,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
     case "storage":
       return {
         service,
+        pin: selection.storage,
         config: { databaseUrl, filePath: "/tmp/storage", jwtSecret: RESET_JWT },
         endpoints: {},
       };
     case "realtime":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.realtime,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
     case "pooler":
-      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+      return {
+        service,
+        pin: selection.pooler,
+        config: { databaseUrl, jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
   }
 };
 
@@ -846,7 +863,7 @@ function mockResetStackApi(opts: {
               runtime: "native" as const,
               instances: members.map((member) => ({
                 id: member.id,
-                creation: { service: "mail" as const, config: {} },
+                creation: { service: "mail" as const, pin: selection.mail, config: {} },
               })),
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },

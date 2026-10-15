@@ -25,6 +25,7 @@ import { makeProcessRecipe } from "./ProcessRecipe.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -76,6 +77,7 @@ describe("service catalog", () => {
           const recipe = yield* makeServiceRecipe(
             {
               service: "functions",
+              pin: selection.functions,
               config: {
                 functionsRoot,
                 databaseUrl: "postgres://functions-db",
@@ -163,6 +165,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           {
             service: "functions",
+            pin: selection.functions,
             config: { functionsRoot, databaseUrl: "postgres://functions-db" },
           },
           {
@@ -254,6 +257,7 @@ describe("service catalog", () => {
             const recipe = yield* makeServiceRecipe(
               {
                 service: "functions",
+                pin: selection.functions,
                 config: {
                   functionsRoot,
                   verifyJwt: false,
@@ -326,6 +330,7 @@ describe("service catalog", () => {
           const recipe = yield* makeServiceRecipe(
             {
               service: "functions",
+              pin: selection.functions,
               config: {
                 functionsRoot,
                 verifyJwt: false,
@@ -400,6 +405,7 @@ describe("service catalog", () => {
           const recipe = yield* makeServiceRecipe(
             {
               service: "functions",
+              pin: selection.functions,
               config: {
                 functionsRoot,
                 verifyJwt: false,
@@ -497,6 +503,7 @@ for (const runtime of ["native", testEngine] as const) {
           const recipe = yield* makeServiceRecipe(
             {
               service: "functions",
+              pin: selection.functions,
               config: {
                 functionsRoot,
                 filesRoot,
@@ -609,6 +616,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const filesRoot = "C:\\Users\\dev\\project";
       const creation: Functions.Creation = {
         service: "functions",
+        pin: selection.functions,
         config: {
           functionsRoot: `${filesRoot}\\supabase\\functions`,
           filesRoot,

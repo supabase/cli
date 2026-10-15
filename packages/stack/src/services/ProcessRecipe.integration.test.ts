@@ -51,6 +51,7 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
+import { selection } from "../../tests/pins.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -68,6 +69,7 @@ if (postgrestVersion === undefined) {
 
 const creation: TestCreation = {
   service: "rest",
+  pin: selection.rest,
   version: postgrestVersion,
   config: {},
 };
@@ -456,6 +458,7 @@ const startupContainer = (tool: {
 const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   const creation: Realtime.Creation = {
     service: "realtime",
+    pin: selection.realtime,
     config: { databaseUrl: "postgresql://postgres:postgres@host.docker.internal:54322/postgres" },
   };
   const recipe = yield* makeProcessRecipe(
@@ -503,7 +506,10 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
-  const { releaseVersion, natives } = yield* resolveArtifact({ service: artifact.service });
+  const { releaseVersion, natives } = yield* resolveArtifact({
+    service: artifact.service,
+    pin: selection[artifact.service],
+  });
   const request: ArtifactRequest = {
     key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
@@ -954,6 +960,7 @@ describe("process recipe startup", () => {
         yield* Effect.addFinalizer(() => Scope.close(testScope, Exit.void));
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1081,6 +1088,7 @@ describe("process recipe startup", () => {
         const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1219,6 +1227,7 @@ describe("process recipe startup", () => {
         };
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1287,6 +1296,7 @@ describe("process recipe startup", () => {
         const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1397,6 +1407,7 @@ describe("process recipe startup", () => {
         };
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",

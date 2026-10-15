@@ -32,6 +32,7 @@ import * as GatewayLog from "./GatewayLog.ts";
 import type { LogRecord } from "./LogRecord.ts";
 import * as LogForwarder from "./LogForwarder.ts";
 import * as LogStore from "./LogStore.ts";
+import { selection } from "../../tests/pins.ts";
 
 const { flushWindowMillis, pollMillis, postTimeoutMillis, retryMillis, stuckMillis } = LogForwarder;
 
@@ -149,7 +150,11 @@ const analyticsTarget = (port: Effect.Effect<number>) =>
               port: current,
             })),
           ),
-        creation: Effect.succeed({ service: "analytics" as const, config: { apiKey: "test-key" } }),
+        creation: Effect.succeed({
+          service: "analytics" as const,
+          pin: selection.analytics,
+          config: { apiKey: "test-key" },
+        }),
         serving: SubscriptionRef.changes(observation),
       } satisfies LogForwarder.ForwardedInstance,
     };

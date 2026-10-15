@@ -50,7 +50,7 @@ import type { DbStartFlags } from "./start.command.ts";
 import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { postgresVersion } from "@supabase/stack/internal/artifacts";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
   StackCatalogSetup,
   StackCatalogSetupError,
@@ -62,6 +62,7 @@ import {
   type ServiceCreationInput,
   type Stack,
 } from "@supabase/stack/effect";
+import { database15, selection } from "../../../../tests/helpers/pins.ts";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -1628,11 +1629,8 @@ describe("db start stack backend", () => {
   const stackId = "b".repeat(64);
   const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
+    pin: selection.database,
     config: {
-      // Derived from the real catalog's major-17 pin, not hardcoded: `dbStart`'s stack-backend
-      // path resolves the desired version through the same catalog, so a bump would otherwise
-      // make the "resumes the existing database" test below see a spurious version mismatch.
-      version: postgresVersion("17"),
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,
@@ -1647,7 +1645,7 @@ describe("db start stack backend", () => {
       credentialsCalled?: boolean;
     },
     onDestroy: () => void = () => {},
-    version = databaseCreation.config.version,
+    pin: ArtifactPin = databaseCreation.pin,
   ): DatabaseInstance => ({
     id: "database-primary",
     service: "database",
@@ -1669,10 +1667,7 @@ describe("db start stack backend", () => {
       endpoints: state.running
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 54329 }]
         : [],
-      config: {
-        ...databaseCreation,
-        config: { ...databaseCreation.config, version },
-      },
+      config: { ...databaseCreation, pin },
       lifecycle: state.running ? ("running" as const) : ("stopped" as const),
       health: state.running ? ("healthy" as const) : undefined,
       error: undefined,
@@ -1696,7 +1691,7 @@ describe("db start stack backend", () => {
     existing: boolean,
     running = false,
     standalone = false,
-    version = databaseCreation.config.version,
+    pin: ArtifactPin = databaseCreation.pin,
   ) => {
     const state: { running: boolean; destroyed: boolean; credentialsCalled?: boolean } = {
       running,
@@ -1710,7 +1705,7 @@ describe("db start stack backend", () => {
         members = [];
         registered = [];
       },
-      version,
+      pin,
     );
     members = existing && !standalone ? [database] : [];
     registered = existing ? [database] : [];
@@ -1746,7 +1741,7 @@ describe("db start stack backend", () => {
             creations.flatMap((creation) =>
               creation.service === "database" && registered.includes(database)
                 ? [
-                    postgresVersion(creation.config.version) === postgresVersion(version)
+                    creation.pin.image === pin.image
                       ? {
                           id: database.id,
                           service: "database" as const,
@@ -1758,7 +1753,7 @@ describe("db start stack backend", () => {
                           service: "database" as const,
                           member: members.includes(database),
                           change: "incompatible" as const,
-                          paths: ["config.version"],
+                          paths: ["pin"],
                           endpointsOnly: false,
                         },
                   ]
@@ -1875,7 +1870,7 @@ describe("db start stack backend", () => {
 
   it.effect("rejects a different database major when resuming the saved stack", () => {
     const { layer, catalogApplied } = setup({ recordCatalog: true });
-    const fixture = stackFixture(true, false, false, "15.13.0.161");
+    const fixture = stackFixture(true, false, false, database15);
     return Effect.gen(function* () {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(

@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Path, Redacted, Result, Schema } from "effect";
 import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
+import type { ArtifactPin, ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -18,7 +19,7 @@ import type { SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
 import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
-import { stackDatabaseVersion } from "./stack-database-version.ts";
+import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 
 export interface StackShadowAcquiredHandle {
   readonly stack: Stack;
@@ -27,7 +28,7 @@ export interface StackShadowAcquiredHandle {
   readonly host: string;
   readonly port: number;
   readonly runtime: StackRuntime;
-  readonly version: string;
+  readonly databasePin: ArtifactPin;
   /** Cache lineage when a baseline was restored or atomically published by this handle. */
   readonly snapshotKey?: string;
   readonly restoredFromSnapshot: boolean;
@@ -81,7 +82,7 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
 const initialize = Effect.fn("StackShadow.initialize")(function* (
   stack: Stack,
   runtime: StackRuntime,
-  version: string,
+  selection: ArtifactSelection,
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions,
 ) {
@@ -96,8 +97,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   const createDatabase = () =>
     stack.services.create({
       service: "database",
+      pin: selection.database,
       config: {
-        version,
         databasePassword: Redacted.make(input.password),
         jwtSecret: Redacted.make(input.jwtSecret),
         jwtExpiry: input.jwtExpiry,
@@ -113,7 +114,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   const cacheResolution = yield* Effect.result(
     stackShadowCacheEntry(
       input,
-      version,
+      selection,
       runtime,
       runtimeInfo.platform,
       runtimeInfo.arch,
@@ -163,6 +164,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
       target: {
         stack,
         database,
+        selection,
         databaseServices: [
           ...(input.setup.authEnabledForSetup ? ["auth" as const] : []),
           ...(input.setup.storageEnabledForSetup ? ["storage" as const] : []),
@@ -219,7 +221,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
     host: conn.host,
     port: conn.port,
     runtime,
-    version,
+    databasePin: selection.database,
     snapshotKey,
     restoredFromSnapshot: restored,
   } satisfies StackShadowAcquiredHandle;
@@ -235,13 +237,13 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
 ) {
   const output = yield* Output;
   // The shadow runs the project's database line, so it matches the local database.
-  const version = yield* Effect.fromResult(
-    stackDatabaseVersion({
-      major_version: input.setup.majorVersion,
-      orioledb_version: input.db.orioledb_version,
-    }),
-  ).pipe(
-    Effect.mapError((message) => new ShadowDbError({ message, reason: "container_configuration" })),
+  const selection = yield* stackArtifactSelection({
+    major_version: input.setup.majorVersion,
+    orioledb_version: input.db.orioledb_version,
+  }).pipe(
+    Effect.mapError(
+      (error) => new ShadowDbError({ message: error.message, reason: "container_configuration" }),
+    ),
   );
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
@@ -250,7 +252,7 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
       ),
     ),
   );
-  return yield* initialize(namespace.stack, namespace.runtime, version, input, opts);
+  return yield* initialize(namespace.stack, namespace.runtime, selection, input, opts);
 }, Effect.mapError(shadowError));
 
 /** Runs a command against a fresh shadow, then destroys its owned namespace. */

@@ -24,6 +24,7 @@ import { destroyTestStack } from "../../tests/stack-cleanup.ts";
 import { errorCode } from "../internal/sharing-violation.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import * as Paths from "./Paths.ts";
+import { selection } from "../../tests/pins.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -68,7 +69,7 @@ describe("durable registry", () => {
                 ...current,
                 instances: [
                   ...current.instances,
-                  { id, creation: { service: "mail", config: {} } },
+                  { id, creation: { service: "mail", pin: selection.mail, config: {} } },
                 ],
               });
             }),
@@ -284,7 +285,7 @@ describe("durable registry", () => {
           }),
         ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
         yield* store.save(initial);
-        const mail = { service: "mail", config: {} };
+        const mail = { service: "mail", pin: selection.mail, config: {} };
         const invalid = {
           "bad-composition": { composition: { members: "none", dependencies: [] } },
           "bad-creation": { instances: [{ id: "one", creation: { service: "unknown" } }] },

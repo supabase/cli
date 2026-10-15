@@ -1,6 +1,7 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { initialization, type InitializationCommand } from "@supabase/stack/commands";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
@@ -61,6 +62,7 @@ export interface StackCatalogSetupInput {
     readonly stack: Stack;
     readonly database: DatabaseInstance;
     readonly databaseServices: ReadonlyArray<DatabaseService>;
+    readonly selection: ArtifactSelection;
   };
   readonly overlay: StackCatalogOverlay;
 }
@@ -93,19 +95,23 @@ const serviceCommand = (
   service: DatabaseService,
   credentials: ServiceCredentials,
   storagePath: string,
+  selection: ArtifactSelection,
 ): InitializationCommand => {
   switch (service) {
     case "auth":
       return initialization.auth({
+        pin: selection.auth,
         databaseUrl: credentials.authDatabaseUrl,
       });
     case "storage":
       return initialization.storage({
+        pin: selection.storage,
         databaseUrl: credentials.storageDatabaseUrl,
         filePath: storagePath,
       });
     case "realtime":
       return initialization.realtime({
+        pin: selection.realtime,
         databaseUrl: credentials.databaseUrl,
       });
   }
@@ -143,7 +149,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         input.target.databaseServices,
         (service) =>
           input.target.stack.commands
-            .run(serviceCommand(service, serviceCredentials, storagePath))
+            .run(serviceCommand(service, serviceCredentials, storagePath, input.target.selection))
             .pipe(
               Effect.asVoid,
               Effect.mapError(catalogError),

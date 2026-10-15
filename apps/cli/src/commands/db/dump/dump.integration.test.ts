@@ -84,6 +84,7 @@ import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -104,8 +105,8 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
   const id = "m".repeat(64);
   const creation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17.6.1.173",
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,

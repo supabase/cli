@@ -60,6 +60,7 @@ import {
   serviceSchemas,
   type CatalogRecipe,
   type ServiceCreationInput,
+  type ServiceRestartInput,
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
@@ -721,16 +722,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (
 
   const restart = Effect.fn("Owner.restart")(function* (
     id: string,
-    input: ServiceCreationInput | undefined,
+    input: ServiceRestartInput | undefined,
   ) {
     if (input === undefined) return yield* orchestrator.restart(id);
     const previous = yield* Ref.get((yield* orchestrator.get(id)).creation);
-    const next = yield* resolveCredentials(input);
-    if (next.service !== previous.service)
+    if (input.service !== previous.service)
       return yield* new ServiceError({
         operation: "restart",
         message: "Service kind cannot change",
       });
+    const next = yield* resolveCredentials({ ...input, pin: previous.pin });
     return yield* orchestrator.restart(id, next);
   });
 

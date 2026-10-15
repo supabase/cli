@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ArtifactPin } from "./Artifacts.ts";
 import { rejectExcessKeys } from "./internal/reject-excess-keys.ts";
 
 const PgProveMount = Schema.Struct({
@@ -15,21 +16,21 @@ export interface PgProveOptions extends Schema.Schema.Type<typeof PgProveOptions
 
 export const PostgresCommand = Schema.Struct({
   command: Schema.Literals(["pg_dump", "pg_dumpall", "pg_prove", "psql"]),
-  major: Schema.Literals([15, 17]),
+  pin: ArtifactPin,
 });
 export interface PostgresCommand extends Schema.Schema.Type<typeof PostgresCommand> {}
 
 const AuthInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("auth.initialize"),
-    version: Schema.optional(Schema.String),
+    pin: ArtifactPin,
     databaseUrl: Schema.String,
   }),
 );
 const StorageInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("storage.initialize"),
-    version: Schema.optional(Schema.String),
+    pin: ArtifactPin,
     databaseUrl: Schema.String,
     filePath: Schema.String,
   }),
@@ -37,7 +38,7 @@ const StorageInitializationCommand = rejectExcessKeys(
 const RealtimeInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("realtime.initialize"),
-    version: Schema.optional(Schema.String),
+    pin: ArtifactPin,
     databaseUrl: Schema.String,
   }),
 );
@@ -74,7 +75,7 @@ export type CommandInvocation = Schema.Schema.Type<typeof CommandInvocation>;
 
 export interface ResolvedCommand {
   readonly service: "auth" | "storage" | "realtime";
-  readonly version: string;
+  readonly pin: ArtifactPin;
   readonly image: string;
   readonly nativeExecutable: string;
   readonly containerEntrypoint: string;
@@ -91,21 +92,21 @@ export interface ResolvedCommand {
 
 /** Describes PostgreSQL clients without managing a database service. */
 export const postgres = {
-  pgDump: ({ major }: { readonly major: 15 | 17 }): PostgresCommand => ({
+  pgDump: ({ pin }: { readonly pin: ArtifactPin }): PostgresCommand => ({
     command: "pg_dump",
-    major,
+    pin,
   }),
-  pgDumpAll: ({ major }: { readonly major: 15 | 17 }): PostgresCommand => ({
+  pgDumpAll: ({ pin }: { readonly pin: ArtifactPin }): PostgresCommand => ({
     command: "pg_dumpall",
-    major,
+    pin,
   }),
-  pgProve: ({ major }: { readonly major: 15 | 17 }): PostgresCommand => ({
+  pgProve: ({ pin }: { readonly pin: ArtifactPin }): PostgresCommand => ({
     command: "pg_prove",
-    major,
+    pin,
   }),
-  psql: ({ major }: { readonly major: 15 | 17 }): PostgresCommand => ({
+  psql: ({ pin }: { readonly pin: ArtifactPin }): PostgresCommand => ({
     command: "psql",
-    major,
+    pin,
   }),
 };
 

@@ -24,6 +24,7 @@ import {
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const cacheRoot = testArtifactCacheRoot;
 // Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
@@ -80,7 +81,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
       configure: unused,
     };
     const error = yield* makeSupabaseComposition(operations, [
-      { service: "mail", config: {}, endpoints: {} },
+      { service: "mail", pin: selection.mail, config: {}, endpoints: {} },
     ]).pipe(Effect.flip);
     expect(error.message).toContain("mail retained-mail: port is occupied");
     expect(error.message).toContain("retained-mail: cannot remove owned data");
@@ -101,6 +102,7 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
         Effect.gen(function* () {
           const auth = {
             service: "auth" as const,
+            pin: selection.auth,
             config: {
               jwtSecret: "exclude-mail-jwt-secret-with-32-chars",
               jwtExpiry: 3600,
@@ -110,7 +112,12 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
           const members = yield* owner.rpc.supabaseComposition({
             services: [
               auth,
-              { service: "mail", config: {}, endpoints: { smtp: { port: "auto" } } },
+              {
+                service: "mail",
+                pin: selection.mail,
+                config: {},
+                endpoints: { smtp: { port: "auto" } },
+              },
             ],
           });
           const instance = members.find(({ creation }) => creation.service === "auth");
@@ -145,8 +152,8 @@ it.live("cleans created registrations when composition is interrupted", () =>
     const destroyed = yield* Ref.make<ReadonlyArray<string>>([]);
     const database = {
       service: "database" as const,
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("interrupt-password"),
         jwtSecret: Redacted.make("interrupt-jwt-secret-with-32-chars"),
         jwtExpiry: 3600,
@@ -208,8 +215,8 @@ it.live(
           services: [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(jwtSecret),
                 jwtExpiry: 3600,
@@ -218,6 +225,7 @@ it.live(
             },
             {
               service: "auth",
+              pin: selection.auth,
               config: {
                 jwtSecret,
                 jwtExpiry: 3600,
@@ -226,6 +234,7 @@ it.live(
             },
             {
               service: "storage",
+              pin: selection.storage,
               config: {
                 filePath: storageRoot,
                 jwtSecret,
@@ -346,8 +355,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const databaseCreation = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-database-password"),
             jwtSecret: Redacted.make("reuse-database-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -371,6 +380,7 @@ it.live(
             databaseCreation,
             {
               service: "rest",
+              pin: selection.rest,
               config: {},
               endpoints: { http: { port: "auto" } },
             },
@@ -397,6 +407,7 @@ it.live(
             rest.creation,
             {
               service: "auth",
+              pin: selection.auth,
               config: {
                 jwtSecret: Redacted.value(databaseCreation.config.jwtSecret),
                 jwtExpiry: 3600,
@@ -442,8 +453,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const database = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("studio-reuse-password"),
             jwtSecret: Redacted.make("studio-reuse-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -452,16 +463,19 @@ it.live(
         };
         const rest = {
           service: "rest" as const,
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const pgmeta = {
           service: "pgmeta" as const,
+          pin: selection.pgmeta,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const studio = {
           service: "studio" as const,
+          pin: selection.studio,
           config: {
             analyticsApiKey: "studio-reuse-analytics-key",
             jwtSecret: "studio-reuse-jwt-secret-with-32-chars",
@@ -527,8 +541,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const databaseCreation = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-running-password"),
             jwtSecret: Redacted.make("reuse-running-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -571,6 +585,7 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const standaloneMail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -582,8 +597,8 @@ it.live(
         if (mailPort === undefined) return yield* Effect.die("Missing mail http endpoint");
         const database = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-cleanup-password"),
             jwtSecret: Redacted.make("reuse-cleanup-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -594,7 +609,12 @@ it.live(
           .supabaseComposition({
             services: [
               database,
-              { service: "mail", config: {}, endpoints: { http: { port: mailPort } } },
+              {
+                service: "mail",
+                pin: selection.mail,
+                config: {},
+                endpoints: { http: { port: mailPort } },
+              },
             ],
           })
           .pipe(Effect.flip);

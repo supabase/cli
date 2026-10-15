@@ -11,6 +11,10 @@ The Promise entrypoint accepts plain configuration:
 ```ts
 import { create } from "@supabase/stack";
 import { postgres } from "@supabase/stack/commands";
+import { defaultArtifactSelection } from "@supabase/stack/defaults";
+
+// Every service names the exact artifact pin it runs; the defaults are the compiled catalog pins.
+const selection = defaultArtifactSelection();
 
 const stack = await create({
   projectRoot: process.cwd(),
@@ -21,8 +25,8 @@ const stack = await create({
 
 const database = await stack.services.create({
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: "local-password",
     jwtSecret: "local-development-secret-at-least-32-characters",
     jwtExpiry: 3600,
@@ -35,7 +39,7 @@ await database.ready(); // initialization and health completed
 const { databaseUrl } = await database.credentials({ from: "runtime" });
 
 if (databaseUrl === undefined) throw new Error("Database endpoint missing");
-await stack.commands.run(postgres.psql({ major: 17 }), {
+await stack.commands.run(postgres.psql({ pin: selection.database }), {
   args: ["--dbname", databaseUrl, "--command", "SELECT 1"],
   stdout: (bytes) => {
     process.stdout.write(bytes);
@@ -63,7 +67,7 @@ Native public listeners bind to loopback. Container-runtime (Docker and Podman) 
 
 On macOS, Podman runs containers in a `podman machine` VM. A full stack needs about 8 GiB of VM memory (`podman machine set --memory 8192`); the 2 GiB default runs out of memory and the kernel kills services.
 
-Functions use a package-provided, self-contained Edge Runtime main service unless the configuration supplies `bootstrap` source; only an explicit `bootstrap` is saved with the service definition. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
+Functions use a package-provided, self-contained Edge Runtime main service unless the configuration supplies `bootstrap` source; only an explicit `bootstrap` is saved with the service definition. Every creation carries a required top-level `pin` naming its exact artifact (upstream version, revision, content hashes, and image digest); the owner never chooses a version.
 
 On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker mounts project files at a separate runtime path.
 
@@ -139,8 +143,8 @@ Registering a service does not add it to the application composition. For a fres
 const services = await stack.composition.supabase([
   {
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17",
       databasePassword: "local-password",
       jwtSecret: "local-development-secret-at-least-32-characters",
       jwtExpiry: 3600,
@@ -149,6 +153,7 @@ const services = await stack.composition.supabase([
   },
   {
     service: "rest",
+    pin: selection.rest,
     config: {},
     endpoints: { http: { port: "auto" } },
   },
@@ -160,7 +165,7 @@ The factory accepts one instance of each selected recipe, binds its configured p
 
 Inputs that the composition binds or the owner fills from the stack credentials, such as REST's `databaseUrl` or a JWT secret, are optional in creation configuration. Starting or restarting an instance without a required input that was neither bound nor provided fails before any lifecycle change with a `ServiceError` whose `operation` is `"input"` and whose message names the input; a running instance keeps running.
 
-To recompose a stopped stack, pass the IDs to keep in `reuseIds`. `composition.plan(services)` compares requested creations with every saved instance of the same kinds without contacting the owner or changing state. Each entry reports its instance `id`, `service`, whether it is a composition `member`, and a `change`: `unchanged`, `changed` with the differing config `paths`, or `incompatible` with the `paths` of an endpoint, artifact version, or PostgreSQL major-version change that the saved instance cannot adopt. Inputs that the composition or the stack credentials supply are ignored, an automatic API port is compared as the shared fixed port the composition would assign, and a PostgreSQL major alias matches its pinned version. Recomposing with `reuseIds` replaces a `changed` instance's configuration while keeping its identity, data, and ports.
+To recompose a stopped stack, pass the IDs to keep in `reuseIds`. `composition.plan(services)` compares requested creations with every saved instance of the same kinds without contacting the owner or changing state. Each entry reports its instance `id`, `service`, whether it is a composition `member`, and a `change`: `unchanged`, `changed` with the differing config `paths`, or `incompatible` with the `paths` of an endpoint or PostgreSQL release-line change that the saved instance cannot adopt. Inputs that the composition or the stack credentials supply are ignored, an automatic API port is compared as the shared fixed port the composition would assign; a pin change on any other service is a `changed` configuration. Recomposing with `reuseIds` replaces a `changed` instance's configuration while keeping its identity, data, and ports.
 
 The whole-stack E2E suite covers the default lazy lifecycle and reopen, all-eager startup, idle and wake, and parallel stack isolation for native, Docker, and Podman runtimes, split into a `lifecycle` and an `idle-parallel` file per runtime. The Podman files need `SUPABASE_STACK_TEST_ENGINE=podman`; CI runs them, and the container integration suite, on the Linux runner image's rootless Podman. macOS `podman machine` is not covered by CI. Run one runtime with a filter such as `pnpm --filter @supabase/stack test:e2e:run src/whole-stack.native` (matches both native files) or target one file, for example `src/whole-stack.docker.idle-parallel.e2e.test.ts`.
 
@@ -169,6 +174,7 @@ For multiple instances or custom dependencies, configure members and bindings ex
 ```ts
 const rest = await stack.services.create({
   service: "rest",
+  pin: selection.rest,
   config: {},
   endpoints: { http: { port: "auto" } },
 });

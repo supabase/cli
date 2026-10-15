@@ -7,6 +7,7 @@ import { makeStandaloneService } from "./standalone-service.ts";
 import { makeDatabase, type BackendEndpoint } from "../src/services/Database.ts";
 import { makeDockerDatabaseRoot } from "./docker-fixture.ts";
 import { engineTarget, testEngine } from "./engine-target.ts";
+import { selection } from "./pins.ts";
 
 const marker = Schema.Struct({ backend: Schema.Literal("docker"), volume: Schema.String });
 const password = Redacted.make("supabase-test-password");
@@ -84,7 +85,7 @@ describe.runIf(testEngine === "docker")(
             makeStandaloneService(first.definition, {
               id: "docker-fixture-first",
               config: {
-                version: "17",
+                pin: selection.database,
                 databasePassword: password,
                 jwtSecret: Redacted.make("fixture-secret-with-at-least-32-chars"),
                 jwtExpiry: 3600,
@@ -93,7 +94,7 @@ describe.runIf(testEngine === "docker")(
             makeStandaloneService(second.definition, {
               id: "docker-fixture-second",
               config: {
-                version: "17",
+                pin: selection.database,
                 databasePassword: password,
                 jwtSecret: Redacted.make("fixture-secret-with-at-least-32-chars"),
                 jwtExpiry: 3600,

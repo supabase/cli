@@ -98,6 +98,7 @@ import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
+import { selection } from "../../../../../../tests/helpers/pins.ts";
 
 interface SetupOpts {
   experimental?: boolean;
@@ -152,8 +153,8 @@ function syncStackApi(workdir: string, port: number) {
       id: "primary",
       config: {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make("secret"),
           jwtExpiry: 3600,

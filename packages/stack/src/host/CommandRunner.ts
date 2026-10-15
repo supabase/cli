@@ -15,12 +15,7 @@ import {
 import { rmdir } from "node:fs/promises";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
-import {
-  slimImageMirrors,
-  postgresVersion,
-  resolveArtifact,
-  useNativeArtifact,
-} from "../Artifacts.ts";
+import { slimImageMirrors, resolveArtifact, useNativeArtifact } from "../Artifacts.ts";
 import { isSafeId } from "../identity/SafeId.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { borrow } from "../namespace/Paths.ts";
@@ -157,14 +152,17 @@ const makeCommandRunner = (options: {
           const directory = yield* fs
             .makeTempDirectoryScoped({ directory: jobsRoot, prefix: `${jobId}-` })
             .pipe(Effect.mapError(failure));
-          const initialization =
+          const invocation =
             "credentials" in input
-              ? yield* resolveInitializationCommand(input.command, {
-                  runtime: options.runtime,
-                  credentials: input.credentials,
-                }).pipe(Effect.mapError(failure))
-              : undefined;
-          const postgresCommand = "stdin" in input ? input.command : undefined;
+              ? {
+                  initialization: yield* resolveInitializationCommand(input.command, {
+                    runtime: options.runtime,
+                    credentials: input.credentials,
+                  }).pipe(Effect.mapError(failure)),
+                  postgresCommand: undefined,
+                }
+              : { initialization: undefined, postgresCommand: input.command };
+          const { initialization, postgresCommand } = invocation;
           const inputStream = "stdin" in input ? (input.stdin ?? Stream.empty) : Stream.empty;
           if (
             postgresCommand !== undefined &&
@@ -177,15 +175,17 @@ const makeCommandRunner = (options: {
             ...(postgresCommand?.pgProve?.mounts ?? []),
           ])
             yield* borrowCallerPath(mount.source);
-          const version =
-            initialization?.version ?? postgresVersion(String(postgresCommand?.command.major));
+          const pin =
+            invocation.initialization === undefined
+              ? invocation.postgresCommand.command.pin
+              : invocation.initialization.pin;
           const process = yield* Effect.gen(function* () {
             if (container === undefined) {
               // Pins the generation for the life of this job's scope, before the spawn below: the
               // pin is registered ahead of the process, so it releases only after the process's
               // own cleanup finalizer (added later) has run.
               const artifact = yield* useNativeArtifact(
-                { service: initialization?.service ?? "database", version },
+                { service: initialization?.service ?? "database", pin },
                 options.cacheRoot,
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
@@ -236,8 +236,7 @@ const makeCommandRunner = (options: {
               };
             }
             const image =
-              initialization?.image ??
-              (yield* resolveArtifact({ service: "database", version })).image;
+              initialization?.image ?? (yield* resolveArtifact({ service: "database", pin })).image;
             yield* container.prepare(image);
             const child = yield* container
               .launchCommand({

@@ -1,5 +1,5 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
-import { postgresVersion } from "../Artifacts.ts";
+import { postgresLine } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
@@ -281,8 +281,11 @@ const comparable = (
   const config: Record<string, unknown> = Object.fromEntries(
     Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
   );
-  if (creation.service === "database") config.version = postgresVersion(creation.config.version);
-  return { version: creation.version, endpoints: withSharedApiPort(creation, sharedPort), config };
+  return {
+    pin: creation.pin,
+    endpoints: withSharedApiPort(creation, sharedPort),
+    config,
+  };
 };
 
 /** Compares a requested creation with a saved one, ignoring inputs the package supplies. */
@@ -303,13 +306,20 @@ const compareCreation = (
       .map(([input]) => input),
   ]);
   const requestedComparable = comparable(requested, sharedPort, compared);
-  const paths = differences(comparable(saved, undefined, compared), requestedComparable, "");
+  const paths = [
+    ...new Set(
+      differences(comparable(saved, undefined, compared), requestedComparable, "").map((path) =>
+        path.startsWith("pin.") ? "pin" : path,
+      ),
+    ),
+  ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
+  // Initialized data is reusable only within one release line; any other pin change is a restart.
+  const databaseLineChanged =
+    saved.service === "database" &&
+    postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
   const incompatible = paths.filter(
-    (path) =>
-      path === "version" ||
-      isEndpointPath(path) ||
-      (saved.service === "database" && path === "config.version"),
+    (path) => isEndpointPath(path) || (path === "pin" && databaseLineChanged),
   );
   const savedNames = endpointNames(saved);
   const requestedNames = endpointNames({

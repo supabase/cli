@@ -18,7 +18,7 @@ import type {
   ChildProcessHandle,
   ChildProcessSpawner as ChildProcessSpawnerService,
 } from "effect/process/ChildProcessSpawner";
-import { postgresLine, postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { postgresLine, resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
 import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
@@ -80,21 +80,21 @@ export interface DatabaseStorageMount {
 }
 
 export interface DockerDatabaseStorage {
-  readonly prepare: (version: string) => Effect.Effect<void, DockerDatabaseStorageError>;
+  readonly prepare: (pin: ArtifactPin) => Effect.Effect<void, DockerDatabaseStorageError>;
   readonly needsDataChown: Effect.Effect<boolean, DockerDatabaseStorageError>;
   readonly mount: (
-    version: string,
+    pin: ArtifactPin,
   ) => Effect.Effect<DatabaseStorageMount, DockerDatabaseStorageError>;
-  readonly markInitialized: (version: string) => Effect.Effect<void, DockerDatabaseStorageError>;
-  readonly removeData: (version: string) => Effect.Effect<void, DockerDatabaseStorageError>;
-  readonly destroyData: (version: string) => Effect.Effect<void, DockerDatabaseStorageError>;
+  readonly markInitialized: (pin: ArtifactPin) => Effect.Effect<void, DockerDatabaseStorageError>;
+  readonly removeData: (pin: ArtifactPin) => Effect.Effect<void, DockerDatabaseStorageError>;
+  readonly destroyData: (pin: ArtifactPin) => Effect.Effect<void, DockerDatabaseStorageError>;
   readonly saveSnapshot: (
-    version: string,
+    pin: ArtifactPin,
     key: string,
     scope?: SnapshotScope,
   ) => Effect.Effect<void, DockerDatabaseStorageError>;
   readonly restoreSnapshot: (
-    version: string,
+    pin: ArtifactPin,
     key: string,
     scope?: SnapshotScope,
   ) => Effect.Effect<boolean, DockerDatabaseStorageError>;
@@ -711,14 +711,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           Effect.ignore,
         ),
       );
-      const imageForVersion = (version: string, fallback: boolean) =>
-        resolveArtifact({ service: "database", version: postgresVersion(version) }).pipe(
+      const imageForPin = (pin: ArtifactPin) =>
+        resolveArtifact({ service: "database", pin }).pipe(
           Effect.map(({ image }) => image),
-          Effect.catchTag("ArtifactError", (cause) =>
-            fallback
-              ? resolveArtifact({ service: "database" }).pipe(Effect.map(({ image }) => image))
-              : Effect.fail(cause),
-          ),
           Effect.mapError((cause) => errorFor("helper", cause)),
         );
       const acquireHelper = Effect.fn("DockerDatabaseStorage.acquireHelper")(
@@ -828,15 +823,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
         command: string,
         mounts: ReadonlyArray<DatabaseStorageMount>,
-        version: string,
-        fallback = false,
+        pin: ArtifactPin,
       ): Effect.Effect<string, DockerDatabaseStorageError> => {
         const cleanupAfterFailure = Effect.gen(function* () {
           if ((yield* Ref.get(helperId)) === undefined) return;
           yield* Ref.set(helperCleanupPending, true);
           yield* removeHelper();
         });
-        return imageForVersion(version, fallback).pipe(
+        return imageForPin(pin).pipe(
           Effect.flatMap((image) => {
             const sharedKey = volumeHelperKey(mounts, image);
             if (sharedKey !== undefined && options.helpers !== undefined) {
@@ -922,7 +916,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         .pipe(Effect.mapError((cause) => errorFor("reset", cause)));
       /** Unmarked data cannot start, so removal is its only in-product recovery. */
       const removeUnmarkedData = (
-        version: string,
+        pin: ArtifactPin,
         { checkpoints }: { readonly checkpoints: boolean },
       ) =>
         Effect.gen(function* () {
@@ -935,8 +929,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* runHelper(
             `set -eu; rm -rf /instance/data /instance/.supabase-restore${removeCheckpoints ? ` ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}` : ""}`,
             [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
-            version,
-            true,
+            pin,
           );
           yield* removeReadyMarker;
         });
@@ -944,7 +937,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         encodeMarker(marker).pipe(Effect.flatMap((encoded) => publishMarker(encoded)));
       const checkInitialized = Effect.fnUntraced(function* (
         pgVersion: string,
-        version: string,
+        pin: ArtifactPin,
         marker: Marker,
       ) {
         // The database checks a present readiness marker's line before preparing storage.
@@ -952,19 +945,19 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         const reason = unusableDatabaseData(
           {
             major: pgVersion.trim(),
-            line: verified ? postgresLine(version) : marker.line,
+            line: verified ? postgresLine(pin.upstreamVersion) : marker.line,
             initialized: marker.initialized,
           },
-          version,
+          pin.upstreamVersion,
         );
         if (reason !== undefined)
           return yield* errorFor("prepare", `${reason}; ${recreateStackAdvice(options.stackId)}`);
       });
-      const recordLine = (marker: Marker, version: string) =>
-        marker.line === postgresLine(version)
+      const recordLine = (marker: Marker, pin: ArtifactPin) =>
+        marker.line === postgresLine(pin.upstreamVersion)
           ? Effect.void
-          : writeMarker({ ...marker, line: postgresLine(version) });
-      const setup = Effect.fn("DockerDatabaseStorage.prepare")((version: string) =>
+          : writeMarker({ ...marker, line: postgresLine(pin.upstreamVersion) });
+      const setup = Effect.fn("DockerDatabaseStorage.prepare")((pin: ArtifactPin) =>
         Effect.gen(function* () {
           yield* selected;
           const marker = yield* getMarker;
@@ -979,22 +972,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   { source: options.instanceRoot, target: "/instance", readOnly: false },
                   { source: options.cacheRoot, target: "/cache", readOnly: false },
                 ],
-                version,
+                pin,
               );
-              yield* checkInitialized(major, version, marker);
+              yield* checkInitialized(major, pin, marker);
             } else if (yield* options.fs.exists(data)) {
               // An interrupted first start can leave initdb output behind without readiness.
               const major = yield* runHelper(
                 "set -eu; if [ -f /instance/data/PG_VERSION ]; then cat /instance/data/PG_VERSION; fi",
                 [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
-                version,
-                true,
+                pin,
               );
-              if (major.trim() !== "") yield* checkInitialized(major, version, marker);
-              else yield* recordLine(marker, version);
+              if (major.trim() !== "") yield* checkInitialized(major, pin, marker);
+              else yield* recordLine(marker, pin);
             } else {
               yield* options.fs.makeDirectory(data, { recursive: true, mode: 0o700 });
-              yield* recordLine(marker, version);
+              yield* recordLine(marker, pin);
             }
             return;
           }
@@ -1004,24 +996,23 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const major = yield* runHelper(
               `set -eu; if [ ! -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then echo 'Initialized PostgreSQL data is missing PG_VERSION' >&2; exit 1; fi; cat ${shellQuote(`${store}/data/PG_VERSION`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
-              version,
+              pin,
             );
-            yield* checkInitialized(major, version, marker);
+            yield* checkInitialized(major, pin, marker);
           } else {
             const major = yield* runHelper(
               `set -eu; if [ -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then cat ${shellQuote(`${store}/data/PG_VERSION`)}; fi; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
-              version,
-              true,
+              pin,
             );
-            if (major.trim() !== "") yield* checkInitialized(major, version, marker);
-            else yield* recordLine(marker, version);
+            if (major.trim() !== "") yield* checkInitialized(major, pin, marker);
+            else yield* recordLine(marker, pin);
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );
       const majorVersion = (version: string) => version.split(".")[0] ?? version;
 
-      const mount = (_version: string) =>
+      const mount = (_pin: ArtifactPin) =>
         selected.pipe(
           Effect.flatMap(() => getMarker),
           Effect.map((marker) =>
@@ -1046,50 +1037,48 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         Effect.mapError((cause) => errorFor("marker", cause)),
       );
       const markInitialized = Effect.fn("DockerDatabaseStorage.markInitialized")(
-        (version: string) =>
+        (pin: ArtifactPin) =>
           Effect.gen(function* () {
             const marker = yield* getMarker;
             if (marker.backend === "docker") {
               const versionFile = `/store/${marker.namespace}/data/PG_VERSION`;
               yield* runHelper(
-                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
+                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(majorVersion(pin.upstreamVersion))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
                 snapshotPaths(marker).mounts,
-                version,
+                pin,
               );
             }
             yield* writeMarker({ ...marker, initialized: true });
           }).pipe(Effect.mapError((cause) => errorFor("ready", cause))),
       );
-      const removeData = Effect.fn("DockerDatabaseStorage.removeData")((version: string) =>
+      const removeData = Effect.fn("DockerDatabaseStorage.removeData")((pin: ArtifactPin) =>
         Effect.gen(function* () {
           const markerOption = yield* getMarkerForRemoval;
           if (Option.isNone(markerOption))
-            return yield* removeUnmarkedData(version, { checkpoints: false });
+            return yield* removeUnmarkedData(pin, { checkpoints: false });
           const marker = markerOption.value;
           if (marker.backend === "host") {
             yield* runHelper(
               `set -eu; rm -rf /instance/data /instance/.supabase-restore; mkdir -p /instance/data; chown 100:101 /instance/data`,
               snapshotPaths(marker).mounts,
-              version,
-              true,
+              pin,
             );
           } else {
             yield* runHelper(
               `set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}/data`)}; mkdir -p ${shellQuote(`/store/${marker.namespace}/data`)}; chown 100:101 ${shellQuote(`/store/${marker.namespace}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
-              version,
-              true,
+              pin,
             );
           }
           yield* removeReadyMarker;
           yield* writeMarker({ ...marker, initialized: false });
         }).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
       );
-      const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((version: string) =>
+      const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((pin: ArtifactPin) =>
         Effect.gen(function* () {
           const { marker: markerOption, validated } = yield* getMarkerForDestroy;
           if (Option.isNone(markerOption)) {
-            yield* removeUnmarkedData(version, { checkpoints: true });
+            yield* removeUnmarkedData(pin, { checkpoints: true });
             return yield* removeHelper();
           }
           const marker = markerOption.value;
@@ -1097,8 +1086,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             yield* runHelper(
               `set -eu; rm -rf /instance/data /instance/.supabase-restore ${shellQuote(`/instance/${instanceSnapshotsDirectory}`)}`,
               snapshotPaths(marker).mounts,
-              version,
-              true,
+              pin,
             );
             yield* removeReadyMarker;
             yield* removeHelper();
@@ -1118,8 +1106,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* runHelper(
                 `set -eu; rm -rf ${shellQuote(`/store/${marker.namespace}`)}`,
                 [{ source: marker.volume, target: "/store", readOnly: false, type: "volume" }],
-                version,
-                true,
+                pin,
               );
             yield* removeHelper();
           }
@@ -1147,13 +1134,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 { source: options.cacheRoot, target: "/cache", readOnly: false as const },
               ],
             };
-      const snapshots = (store: Marker, version: string) => {
+      const snapshots = (store: Marker, pin: ArtifactPin) => {
         const paths = snapshotPaths(store);
         const host = store.backend === "host";
         const instanceSnapshotRoot = host
           ? `/instance/${instanceSnapshotsDirectory}`
           : `/store/${store.namespace}/snapshots`;
-        const exec = (script: string) => runHelper(script, paths.mounts, version);
+        const exec = (script: string) => runHelper(script, paths.mounts, pin);
         return makeSnapshotStore({
           backends: {
             cache: makeDockerSnapshotBackend({
@@ -1194,7 +1181,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           },
           instanceRoot: options.instanceRoot,
           runtime: options.runtime,
-          version,
+          version: pin.upstreamVersion,
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, options.fs),
           Effect.provideService(Path.Path, options.path),
@@ -1202,22 +1189,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         );
       };
       const saveSnapshot = Effect.fn("DockerDatabaseStorage.saveSnapshot")(
-        (version: string, key: string, scope: SnapshotScope = "cache") =>
+        (pin: ArtifactPin, key: string, scope: SnapshotScope = "cache") =>
           Effect.gen(function* () {
             yield* selected;
             const store = yield* getMarker;
             if (!store.initialized)
               return yield* errorFor("snapshot", "Database is not initialized");
-            yield* (yield* snapshots(store, version)).saveSnapshot(key, scope);
+            yield* (yield* snapshots(store, pin)).saveSnapshot(key, scope);
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       );
       const restoreSnapshot = Effect.fn("DockerDatabaseStorage.restoreSnapshot")(
-        (version: string, key: string, scope: SnapshotScope = "cache") =>
+        (pin: ArtifactPin, key: string, scope: SnapshotScope = "cache") =>
           Effect.gen(function* () {
             yield* selected;
             const store = yield* getMarker;
-            if (!(yield* (yield* snapshots(store, version)).restoreSnapshot(key, scope)))
-              return false;
+            if (!(yield* (yield* snapshots(store, pin)).restoreSnapshot(key, scope))) return false;
             yield* writeMarker({ ...store, initialized: true });
             return true;
           }).pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),

@@ -518,6 +518,7 @@ SsoUpdateMetadataFileError
 SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
+StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError

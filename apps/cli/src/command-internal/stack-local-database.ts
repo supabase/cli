@@ -1,5 +1,6 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -144,9 +145,9 @@ export const stackRequireProjectRuntime: Effect.Effect<
   ),
 );
 
-/** Reads the configured database version from the saved database definition. */
-export const stackProjectDatabaseVersion: Effect.Effect<
-  string | undefined,
+/** Reads the database artifact pin from the saved database definition. */
+export const stackProjectDatabasePin: Effect.Effect<
+  ArtifactPin | undefined,
   never,
   CommandSettings | StackApi | Path.Path
 > = Effect.gen(function* () {
@@ -161,7 +162,7 @@ export const stackProjectDatabaseVersion: Effect.Effect<
   );
   if (database === undefined) return undefined;
   const status = yield* database.status.pipe(Effect.option, Effect.map(Option.getOrUndefined));
-  return status?.config.service === "database" ? status.config.config.version : undefined;
+  return status?.config.service === "database" ? status.config.pin : undefined;
 }).pipe(Effect.scoped);
 
 export class StackNativeEngineError extends Data.TaggedError("StackNativeEngineError")<{
@@ -281,7 +282,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
         (entry) =>
           entry.id === currentDatabase.id &&
           entry.change === "incompatible" &&
-          entry.paths.includes("config.version"),
+          entry.paths.includes("pin"),
       )
     )
       return yield* startFailed({
@@ -330,7 +331,12 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     if (credentials === undefined)
       return yield* startFailed({ message: "stack credentials were not saved" });
     yield* initializeStackDatabase({
-      target: { stack, database, databaseServices: catalogDatabaseServices(creations) },
+      target: {
+        stack,
+        database,
+        databaseServices: catalogDatabaseServices(creations),
+        selection: config.selection,
+      },
       overlay: projectCatalogOverlay(toml, settings.workdir),
       migrations: { workdir: settings.workdir, toml, experimental },
     }).pipe(Effect.mapError(startFailed));

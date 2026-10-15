@@ -62,6 +62,7 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -460,8 +461,8 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
             : [],
         config: {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17.6.1.173",
             databasePassword: Redacted.make("stack-password"),
             jwtSecret: Redacted.make("secret"),
             jwtExpiry: 3600,

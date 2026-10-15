@@ -32,24 +32,30 @@ import {
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import type { StackLogsFlags } from "./logs.command.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
 type SavedInstance = SavedStack["instances"][number];
 const mail = (id: string): SavedInstance => ({
   id,
-  creation: { service: "mail", config: {}, endpoints: {} },
+  creation: { service: "mail", pin: selection.mail, config: {}, endpoints: {} },
 });
 const rest = (id: string): SavedInstance => ({
   id,
-  creation: { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+  creation: {
+    service: "rest",
+    pin: selection.rest,
+    config: {},
+    endpoints: { http: { port: "auto" } },
+  },
 });
 const database = (id: string): SavedInstance => ({
   id,
   creation: {
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17",
       databasePassword: Redacted.make("stack-logs-test"),
       jwtSecret: Redacted.make("stack-logs-test-jwt-secret"),
       jwtExpiry: 3600,

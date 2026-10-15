@@ -4,12 +4,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref, Scope } from "effect";
 import { connect, createServer, type Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
-import { makeDatabase, type DatabaseConfig } from "../services/Database.ts";
+import { makeDatabase, type PinnedDatabaseConfig } from "../services/Database.ts";
 import * as LogflareStorage from "./LogflareStorage.ts";
 
-const config: DatabaseConfig = {
-  version: "17",
+const config: PinnedDatabaseConfig = {
+  pin: selection.database,
   databasePassword: Redacted.make("logflare-storage-password"),
   jwtSecret: Redacted.make("logflare-storage-jwt-secret-with-32-chars"),
   jwtExpiry: 3600,

@@ -12,6 +12,7 @@ import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shar
 import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const live = Layer.provideMerge(
   stackApiLayer,
@@ -85,11 +86,13 @@ describe("stack restart", () => {
             Effect.gen(function* () {
               const member = yield* stack.services.create({
                 service: "mail",
+                pin: selection.mail,
                 config: {},
                 endpoints: { http: { port: "auto" } },
               });
               const standalone = yield* stack.services.create({
                 service: "mail",
+                pin: selection.mail,
                 config: {},
                 endpoints: { http: { port: "auto" } },
               });

@@ -13,6 +13,7 @@ import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -69,8 +70,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -130,6 +131,7 @@ describe("service catalog", () => {
           const restRecipe = yield* makeServiceRecipe(
             {
               service: "rest",
+              pin: selection.rest,
               config: {
                 databaseUrl:
                   "postgresql://supabase_admin:postgres@" +
@@ -212,8 +214,8 @@ describe("service catalog", () => {
         const databaseRecipe = yield* makeServiceRecipe(
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("postgres"),
               jwtSecret: Redacted.make(secret),
               jwtExpiry: 3600,
@@ -254,6 +256,7 @@ describe("service catalog", () => {
         const restRecipe = yield* makeServiceRecipe(
           {
             service: "rest",
+            pin: selection.rest,
             config: {
               databaseUrl:
                 "postgresql://supabase_admin:postgres@127.0.0.1/postgres?host=" +

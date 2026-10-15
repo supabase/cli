@@ -21,7 +21,7 @@ import {
 
 type PreparedCapability = {
   readonly capability: string;
-  readonly version?: string;
+  readonly version: string;
   readonly outcome: "prepared";
 };
 
@@ -38,9 +38,7 @@ const render = (id: string, capabilities: ReadonlyArray<PreparedCapability>) => 
   if (capabilities.length > 0) {
     lines.push("Capabilities:");
     for (const capability of capabilities)
-      lines.push(
-        `  ${capability.capability} ${capability.version ?? "catalog default"} (${capability.outcome})`,
-      );
+      lines.push(`  ${capability.capability} ${capability.version} (${capability.outcome})`);
   }
   return `${lines.join("\n")}\n`;
 };
@@ -170,11 +168,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     );
     const prepared = capabilities.map((creation): PreparedCapability => ({
       capability: creation.service,
-      ...(creation.service === "database"
-        ? { version: creation.config.version }
-        : creation.version === undefined
-          ? {}
-          : { version: creation.version }),
+      version: creation.pin.upstreamVersion,
       outcome: "prepared",
     }));
     if (output.format === "text") yield* output.raw(render(stack.id, prepared));

@@ -81,6 +81,7 @@ import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
+import { selection } from "../../../../../../tests/helpers/pins.ts";
 
 interface SetupOpts {
   experimental?: boolean;
@@ -139,8 +140,8 @@ function generateStackApi(workdir: string) {
       id: "primary",
       config: {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make("secret"),
           jwtExpiry: 3600,

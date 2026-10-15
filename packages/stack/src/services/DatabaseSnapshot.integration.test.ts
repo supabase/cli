@@ -2,7 +2,8 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { resolveArtifact } from "../Artifacts.ts";
+import { selection } from "../../tests/pins.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
@@ -12,7 +13,8 @@ import { testEngine } from "../../tests/test-engine.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
-const version = postgresVersion("17");
+const pin = selection.database;
+const version = pin.upstreamVersion;
 
 class ShellError extends Data.TaggedError("ShellError")<{ readonly message: string }> {}
 
@@ -126,7 +128,7 @@ const native = Effect.fnUntraced(function* () {
         instanceRoot,
         cacheRoot,
         runtime: "native",
-        version,
+        pin,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, overrides.fs ?? fs),
         Effect.provideService(
@@ -183,7 +185,7 @@ const docker = Effect.fnUntraced(function* () {
   const stackId = "snapshot-contract";
   const root = yield* makeDockerDatabaseRoot("database-snapshot-contract-", stackId);
   const cacheRoot = path.resolve(root, "../../../cache");
-  const image = (yield* resolveArtifact({ service: "database", version }).pipe(Effect.orDie)).image;
+  const image = (yield* resolveArtifact({ service: "database", pin }).pipe(Effect.orDie)).image;
   const target = yield* resolveEngineTarget(spawner, "docker");
   const container = yield* makeContainerRuntime({
     target,
@@ -261,8 +263,8 @@ const docker = Effect.fnUntraced(function* () {
         spawner: overrides.partialCopy === true ? partialCopy : spawner,
         helpers,
       }).pipe(Scope.provide(scope));
-      yield* storage.mount(version);
-      if (overrides.fresh !== true) yield* storage.prepare(version);
+      yield* storage.mount(pin);
+      if (overrides.fresh !== true) yield* storage.prepare(pin);
       const marker = yield* fs
         .readFileString(`${instanceRoot}/.supabase-database-storage.json`)
         .pipe(Effect.flatMap(Schema.decodeEffect(StorageMarker)));
@@ -275,23 +277,23 @@ const docker = Effect.fnUntraced(function* () {
         entries: `${cache}/entries`,
         stages: `${cache}/stages`,
         restoreStages: `${cache}/stages`,
-        saveSnapshot: (key, scope) => storage.saveSnapshot(version, key, scope),
-        restoreSnapshot: (key, scope) => storage.restoreSnapshot(version, key, scope),
+        saveSnapshot: (key, scope) => storage.saveSnapshot(pin, key, scope),
+        restoreSnapshot: (key, scope) => storage.restoreSnapshot(pin, key, scope),
         seed: (value) =>
           Effect.gen(function* () {
-            yield* storage.prepare(version);
+            yield* storage.prepare(pin);
             yield* shell(
               `set -eu; /usr/bin/busybox mkdir -p ${shellQuote(`${data}/nested`)}; printf 17 > ${shellQuote(`${data}/PG_VERSION`)}; printf '%s' ${shellQuote(value)} > ${shellQuote(`${data}/fixture`)}; printf '%s' ${shellQuote(value)} > ${shellQuote(`${data}/nested/fixture`)}`,
             );
-            yield* storage.markInitialized(version);
+            yield* storage.markInitialized(pin);
             yield* fs.writeFileString(
               `${instanceRoot}/.supabase-database-ready.json`,
               readyMarker("docker"),
             );
           }).pipe(Effect.orDie),
-        clear: storage.removeData(version).pipe(Effect.orDie),
+        clear: storage.removeData(pin).pipe(Effect.orDie),
         destroy: storage
-          .destroyData(version)
+          .destroyData(pin)
           .pipe(Effect.andThen(fs.remove(instanceRoot, { recursive: true })), Effect.orDie),
       };
       return instance;

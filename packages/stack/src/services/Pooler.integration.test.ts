@@ -9,6 +9,7 @@ import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
@@ -37,8 +38,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -64,6 +65,7 @@ describe("service catalog", () => {
               const poolerRecipe = yield* makeServiceRecipe(
                 {
                   service: "pooler",
+                  pin: selection.pooler,
                   config: {
                     databaseUrl: runtime === "native" ? nativeDatabaseUrl : dockerDatabaseUrl,
                     jwtSecret: secret,

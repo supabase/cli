@@ -2,7 +2,7 @@ import { Config, Crypto, Effect, FileSystem, Option, Path, Ref, Schema, Scope } 
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem exposes no OS temp or home directory path for the shared roots.
 import { homedir, tmpdir, userInfo } from "node:os";
 import type { PlatformError } from "effect/PlatformError";
-import { defaultRuntime } from "./Artifacts.ts";
+import { defaultArtifactSelection, defaultRuntime, type ArtifactPin } from "./Artifacts.ts";
 import * as StackEffect from "./effect.ts";
 import {
   acquire,
@@ -26,12 +26,14 @@ export { planSupabaseComposition } from "./composition/Supabase.ts";
 type Kind = StackEffect.ServiceCreationInput["service"];
 type Creation<K extends Kind> = Extract<StackEffect.ServiceCreationInput, { readonly service: K }>;
 
-/** A service kind to compose, optionally with config and endpoint overrides. */
+/** A service kind to compose, optionally with a pin, config and endpoint overrides. */
 export type TestService<K extends Kind = Kind> = K extends Kind
   ?
       | K
       | {
           readonly service: K;
+          /** Defaults to the compiled default pin of the kind. */
+          readonly pin?: ArtifactPin;
           readonly config?: Partial<Creation<K>["config"]>;
           readonly endpoints?: Creation<K>["endpoints"];
         }
@@ -138,7 +140,7 @@ const localCreation = Effect.fnUntraced(function* (
   });
   const config =
     kind === "database"
-      ? { version: "17", jwtExpiry: 3600 }
+      ? { jwtExpiry: 3600 }
       : kind === "storage" || kind === "imgproxy"
         ? { filePath: yield* directory("storage") }
         : kind === "functions"
@@ -197,6 +199,9 @@ const make = Effect.fn("TestStack.make")(
         const local = yield* localCreation(kind, dataRoot);
         return yield* decode({
           service: kind,
+          pin:
+            (typeof service === "string" ? undefined : service.pin) ??
+            defaultArtifactSelection()[kind],
           config: { ...local.config, ...(typeof service === "string" ? {} : service.config) },
           endpoints: {
             ...local.endpoints,

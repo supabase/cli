@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This fixture exercises the Promise testing API as a non-Effect consumer does. */
 import { discover, postgres, type Stack } from "../src/index.ts";
 import { createTestStack } from "../src/testing.ts";
+import { selection } from "./pins.ts";
 
 const check = (condition: boolean, message: string) => {
   if (!condition) throw new Error(message);
@@ -8,7 +9,7 @@ const check = (condition: boolean, message: string) => {
 
 const sql = async (stack: Stack, databaseUrl: string, command: string) => {
   const errors: Array<string> = [];
-  const result = await stack.commands.run(postgres.psql({ major: 17 }), {
+  const result = await stack.commands.run(postgres.psql({ pin: selection.database }), {
     args: ["--dbname", databaseUrl, "--set", "ON_ERROR_STOP=1", "--command", command],
     stdout: () => {},
     stderr: (bytes) => {

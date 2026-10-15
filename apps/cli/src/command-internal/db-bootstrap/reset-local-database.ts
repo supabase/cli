@@ -160,6 +160,15 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           (service) => config.source[service].enabled,
         )
       : catalogDatabaseServices(members);
+    // The one-shots run the artifacts the saved services were created with.
+    const savedPins = yield* Effect.forEach(members, (member) =>
+      member.status.pipe(
+        Effect.map(({ config: saved }) => [saved.service, saved.pin] as const),
+        Effect.mapError((cause) =>
+          resetFailed(`failed to inspect stack service: ${cause.message}`),
+        ),
+      ),
+    );
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* Effect.gen(function* () {
       yield* opened.value.stack.composition.stop.pipe(
@@ -188,6 +197,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         stack: opened.value.stack,
         database: opened.value.database,
         databaseServices,
+        selection: { ...config.selection, ...Object.fromEntries(savedPins) },
       },
       overlay: projectCatalogOverlay(toml, workdir),
       migrations: {

@@ -22,6 +22,7 @@ import {
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackDestroyCommand } from "./destroy.command.ts";
 import { stackDestroy } from "./destroy.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 const refuseDestroy = (
@@ -290,6 +291,7 @@ describe("stack destroy", () => {
         yield* Effect.acquireUseRelease(
           f.stack.services.create({
             service: "storage",
+            pin: selection.storage,
             config: {
               jwtSecret: "test-secret",
               filePath: uploads,
@@ -298,7 +300,12 @@ describe("stack destroy", () => {
           }),
           () =>
             Effect.gen(function* () {
-              yield* f.stack.services.create({ service: "mail", config: {}, endpoints: {} });
+              yield* f.stack.services.create({
+                service: "mail",
+                pin: selection.mail,
+                config: {},
+                endpoints: {},
+              });
               yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
               expect(yield* f.api.discover(f.locations)).toEqual([]);
               expect(yield* f.fs.readFileString(f.path.join(uploads, "object.txt"))).toBe(
