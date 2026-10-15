@@ -214,6 +214,25 @@ describe("command permission mapping completeness", () => {
     });
   }
 
+  it("keeps every go-delegation allowlist path a real leaf that is declared unmapped", () => {
+    for (const path of GO_DELEGATED_PATHS) {
+      const declared = trees
+        .flatMap(({ tree }) => [tree.get(path)])
+        .filter((node) => node?.isLeaf === true)
+        .map((node) => (node === undefined ? undefined : declarationOf(node)));
+      expect(
+        declared.length,
+        `allowlist path "${path}" is not a leaf in any command tree`,
+      ).toBeGreaterThan(0);
+      for (const permissions of declared) {
+        expect(
+          permissions?.status,
+          `allowlist path "${path}" isn't declared unmapped — remove it from the allowlist if it was mapped`,
+        ).toBe("unmapped");
+      }
+    }
+  });
+
   it("acknowledges only operations that really lack x-fga-permissions in the bundled spec", () => {
     for (const operationId of OPERATIONS_WITHOUT_FGA.keys()) {
       const operation = OPERATIONS.get(operationId);
