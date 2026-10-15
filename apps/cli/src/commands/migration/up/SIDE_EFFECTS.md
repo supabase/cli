@@ -46,7 +46,8 @@
 ### `--output-format text`
 
 Prints `Target: …` to stderr, then `Applying migration <file>...` per pending migration, then
-`Local database is up to date.` to stdout. Connects, lists remote + local
+`Local database is up to date.` (`Remote database is up to date.` for a non-local target) to
+stdout. Connects, lists remote + local
 migrations, computes the pending set, upserts `[db.vault]` secrets, and applies
 each pending migration transactionally. Does **not** seed.
 

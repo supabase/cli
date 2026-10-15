@@ -275,10 +275,12 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
 
     const summary = emptySummary();
 
+    const existingBuckets = yield* gateway.listBuckets;
+
     // A hosted run never prompts per item: one consent covers every overwrite and prune.
     const confirmHostedWrites = projectRef === "" ? undefined : opts.confirmHostedWrites;
     if (confirmHostedWrites !== undefined) {
-      const details = yield* planHostedWrites(gateway, config, bucketPropsByName);
+      const details = yield* planHostedWrites(gateway, config, bucketPropsByName, existingBuckets);
       if (details.length > 0) yield* confirmHostedWrites(details);
     }
     const approved = confirmHostedWrites !== undefined || yes;
@@ -290,6 +292,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
       interactive,
       skipPrompts,
       gateway,
+      existingBuckets,
       bucketPropsByName,
       summary,
     );
@@ -372,6 +375,8 @@ const computeBucketProps = (
       }),
   });
 
+type ExistingBucket = { readonly id: string; readonly name: string };
+
 // `propsByName` is precomputed and size-validated before this runs.
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -379,10 +384,10 @@ const upsertBuckets = Effect.fnUntraced(function* (
   interactive: boolean,
   promptless: boolean,
   gateway: StorageGateway,
+  existing: ReadonlyArray<ExistingBucket>,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listBuckets;
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, props] of propsByName) {
@@ -520,9 +525,10 @@ const planHostedWrites = Effect.fnUntraced(function* (
   gateway: StorageGateway,
   config: CliConfig,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
+  existingBuckets: ReadonlyArray<ExistingBucket>,
 ) {
   const details: Array<string> = [];
-  const existing = new Set((yield* gateway.listBuckets).map((bucket) => bucket.name));
+  const existing = new Set(existingBuckets.map((bucket) => bucket.name));
   const configured = [...propsByName.keys()];
   const create = configured.filter((name) => !existing.has(name));
   const overwrite = configured.filter((name) => existing.has(name));

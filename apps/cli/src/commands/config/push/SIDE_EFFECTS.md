@@ -160,17 +160,9 @@ All diagnostics on **stderr**, no stdout. The `Target:` banner prints first
 (`Target: project <name> (<ref>) · production`, `Target: project <name> (<parent ref>) ·
 branch (<ref>)` for a branch, or `Target: project <ref> · identity unverified` when the
 live probe could not tell). When a `[remotes.<name>]` block matches the target ref,
-`Loading config override: [remotes.<name>]` follows. Then the target-echo block — for a
-plain project, `Pushing config to project: <name> (<ref>)` (degrades to the bare `Pushing
-config to project: <ref>` when no name could be resolved); for a branch, `Pushing config
-to branch: <name> (<ref>)` followed, only when known, by a second line `  Parent project:
-<name> (<ref>)` (either half degrades to a bare ref on its own when its name isn't known;
-the parent line is omitted entirely when no parent could be determined at all); or, when
-the target-detection probe couldn't tell at all (a timeout, a transport failure, or an
-unexpected status), `Pushing config to: <ref> (could not determine whether this is a
-branch or the main project)`. No target shape is gated separately: a branch is confirmed
-through the one consent question below, which names the branch and its parent project,
-whether it was resolved implicitly or named with `--project-ref`.
+`Loading config override: [remotes.<name>]` follows. No target shape is gated separately: a
+branch is confirmed through the one consent question below, which names the branch and its
+parent project, whether it was resolved implicitly or named with `--project-ref`.
 Then `Comparison scope: <present> (not returned:
 <missing>)` — printed EVERY run, not just when a block is missing (family consistency
 with `config diff`/`config pull`). When a `SUPABASE_*` variable supplied any value about to be
@@ -357,7 +349,7 @@ may itself contain a `.`.
 ## Notes
 
 - **`--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked project** (CLI-2289, the same vocabulary `link`/`config diff` already accept). A value that is exactly 20 lowercase letters is always treated as a ref. A name is resolved against the currently linked project (fails if none is linked, or if the linked ref is itself invalid); a UUID resolves directly and needs no linked project at all.
-- **Every invocation detects whether the resolved ref is the linked project, one of its branches, or genuinely undeterminable** (CLI-2168) and always echoes which one before doing anything else — see Output above. When `--project-ref` already named a branch by name/UUID, this is known for free (certain, never re-derived from a live probe); otherwise it's a live `GET /v1/projects/{ref}` probe: 200 is a plain project, 404 confirms a branch, and EVERYTHING else (a TIMEOUT, a transport failure, or any other status) degrades to "unknown" — never "project" (that would assert an identity the probe could not verify) and never a hard failure (this probe is diagnostic-only and must never block a push that would otherwise succeed). A confirmed branch's own name/parent are recovered best-effort from `.temp/linked-project.json`/`.temp/project-ref` and a branch-list lookup. Every target shape goes through the same single consent question before the first write, so a branch resolved implicitly and one named with `--project-ref` are treated alike, and the question names the branch and its parent project. The target-echo line always prints regardless of which shape it is.
+- **Every invocation detects whether the resolved ref is the linked project, one of its branches, or genuinely undeterminable** (CLI-2168) before doing anything else. When `--project-ref` already named a branch by name/UUID, this is known for free (certain, never re-derived from a live probe); otherwise it's a live `GET /v1/projects/{ref}` probe: 200 is a plain project, 404 confirms a branch, and EVERYTHING else (a TIMEOUT, a transport failure, or any other status) degrades to "unknown" — never "project" (that would assert an identity the probe could not verify) and never a hard failure (this probe is diagnostic-only and must never block a push that would otherwise succeed). A confirmed branch's own name/parent are recovered best-effort from `.temp/linked-project.json`/`.temp/project-ref` and a branch-list lookup. Every target shape goes through the same single consent question before the first write, so a branch resolved implicitly and one named with `--project-ref` are treated alike, and the question names the branch and its parent project.
 - **Resolution runs BEFORE the config load**, not after: a `[remotes.<name>]` overlay is merged inside the resolved config load before its one full schema decode, and only one decode may ever run per invocation — reloading with a different `projectRef` a second time would wrongly reject a base document that's only valid once its matching remote's overlay applies. The accepted tradeoff: a branch name/UUID resolution's network call can fire even when the local `config.toml` turns out to be malformed (this only affects `--project-ref <name-or-uuid>`; a ref-shaped or absent target never needs a network call to resolve, so a malformed config there still aborts with zero requests made, matching this command's behavior before CLI-2168/CLI-2289).
 - The post-run linked-project telemetry cache fill (`Effect.ensuring`, unconditional) may issue its own `GET /v1/projects/{ref}` independent of the target-detection probe above — both are best-effort/non-fatal for that fill, so a branch ref 404ing there is expected and harmless.
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.

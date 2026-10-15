@@ -2571,6 +2571,9 @@ describe("seed buckets", () => {
           "Seed storage buckets?",
         ]);
         expect(requests.some((r) => r.method === "PUT")).toBe(true);
+        expect(
+          requests.filter((r) => r.method === "GET" && r.url.endsWith("/storage/v1/bucket")),
+        ).toHaveLength(1);
       }).pipe(seedScenario),
   );
 

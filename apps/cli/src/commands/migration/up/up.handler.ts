@@ -129,7 +129,7 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags) {
         }
 
         if (output.format === "text") {
-          yield* output.raw("Local database is up to date.\n");
+          yield* output.raw(`${cfg.isLocal ? "Local" : "Remote"} database is up to date.\n`);
         } else {
           yield* output.success("Migrations applied", { applied: pending });
         }

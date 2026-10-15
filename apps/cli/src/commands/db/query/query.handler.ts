@@ -18,6 +18,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { ResolvedDbConnection } from "../../../command-internal/db-config.types.ts";
 import {
   DbConnection,
   type DbSession,
@@ -92,6 +93,10 @@ const inReadOnlyTransaction = <A, E, R>(session: DbSession, body: Effect.Effect<
     () => body,
     () => session.queryRaw("ROLLBACK").pipe(Effect.ignore),
   );
+
+type QueryRoute =
+  | { readonly kind: "linked"; readonly ref: string; readonly token: Redacted.Redacted<string> }
+  | { readonly kind: "direct"; readonly connection: ResolvedDbConnection };
 
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
@@ -270,31 +275,31 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // Recorded now so the cache finalizer still fires if a later step fails.
     if (target.kind === "linked") yield* Ref.set(linkedRefForCache, target.ref);
 
-    // Resolved before the token check and before `--file`/stdin are read, so a bad `--db-url`, an
-    // invalid merged config or a connection failure surfaces ahead of a login or missing-file
-    // error. A linked query goes through the Management API, so that resolved connection only
-    // serves those early failures and is otherwise discarded.
-    const connection = yield* resolver.resolveConnection({
-      target,
-      dnsResolver,
-      password: Option.none(),
-      networkBanRemoval: yield* hostedMutationPreapproval,
-    });
-
-    let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
-    if (target.kind === "linked") {
-      const credentials = yield* CommandCredentials;
-      // Routed through `credentials.getAccessToken`, which validates the `sbp_...` shape, rather
-      // than trusting env presence alone and surfacing a confusing status error later.
-      const tokenOpt = yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* new DbQueryLoginRequiredError({
-          message: MISSING_TOKEN_MESSAGE,
-          suggestion: "Run supabase login first.",
-        });
+    // Resolved before `--file`/stdin are read, so a bad `--db-url`, an invalid merged config, a
+    // connection failure or a missing login surfaces ahead of a missing-file error. A linked query
+    // goes through the Management API and never opens a database connection.
+    const route: QueryRoute = yield* Effect.gen(function* () {
+      if (target.kind === "linked") {
+        const credentials = yield* CommandCredentials;
+        // Routed through `credentials.getAccessToken`, which validates the `sbp_...` shape, rather
+        // than trusting env presence alone and surfacing a confusing status error later.
+        const tokenOpt = yield* credentials.getAccessToken;
+        if (Option.isNone(tokenOpt)) {
+          return yield* new DbQueryLoginRequiredError({
+            message: MISSING_TOKEN_MESSAGE,
+            suggestion: "Run supabase login first.",
+          });
+        }
+        return { kind: "linked", token: tokenOpt.value, ref: target.ref } satisfies QueryRoute;
       }
-      linkedAuth = { token: tokenOpt.value, ref: target.ref };
-    }
+      const connection = yield* resolver.resolveConnection({
+        target,
+        dnsResolver,
+        password: Option.none(),
+        networkBanRemoval: yield* hostedMutationPreapproval,
+      });
+      return { kind: "direct", connection } satisfies QueryRoute;
+    });
 
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
@@ -367,24 +372,19 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
 
     // 3. A hosted statement may write, so it needs consent unless `--read-only` confines it.
     if (!flags.readOnly) {
-      yield* requireTargetMutationConsent(connection, {
+      yield* requireTargetMutationConsent(route.kind === "direct" ? route.connection : target, {
         action: "Run a SQL statement",
         details: [`sql: ${sqlPreview(sql)}`],
       });
     }
 
     // 4. Linked queries go through the Management API; local/--db-url connect directly.
-    if (linkedAuth !== undefined) {
-      return yield* runLinked(
-        sql,
-        format,
-        agentMode,
-        linkedAuth.ref,
-        linkedAuth.token,
-        flags.readOnly,
-      ).pipe(Effect.withSpan("db.query.runLinked"));
+    if (route.kind === "linked") {
+      return yield* runLinked(sql, format, agentMode, route.ref, route.token, flags.readOnly).pipe(
+        Effect.withSpan("db.query.runLinked"),
+      );
     }
-    return yield* runLocal(connection, sql, format, agentMode, flags.readOnly).pipe(
+    return yield* runLocal(route.connection, sql, format, agentMode, flags.readOnly).pipe(
       Effect.withSpan("db.query.runLocal"),
     );
   }).pipe(

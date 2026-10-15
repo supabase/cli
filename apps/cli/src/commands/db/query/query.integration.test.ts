@@ -869,7 +869,7 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("mints a login role and queries through the real DB config resolver and cache", () => {
+  it.live("queries a linked project through the real resolver without minting a login role", () => {
     const { layer, httpClient } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
@@ -898,20 +898,11 @@ describe("db query integration", () => {
           projectRef: Option.some(REF),
         }),
       );
-      expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
-        `GET /v1/projects/${REF}/config/database/pooler`,
-        `POST /v1/projects/${REF}/cli/login-role`,
-      ]);
+      expect(resolverRequests).toEqual([]);
       assertPermissionDrift({
         command: "db query",
         activeFlags: { linked: true, "project-ref": REF },
-        requests: [
-          ...resolverRequests.map(({ method, path }) => ({
-            method,
-            url: `https://api.supabase.com${path}`,
-          })),
-          ...httpClient.calls,
-        ],
+        requests: httpClient.calls,
         exact: true,
       });
     }).pipe(
@@ -1030,19 +1021,15 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("resolves the linked DB config before the API call", () => {
+  it.effect("never resolves a database connection for a linked query", () => {
     const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain("failed to parse connection string");
-      expect(out.stdoutText).toBe("");
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+      expect(out.stdoutText).toContain("│ id │");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1173,16 +1160,6 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("surfaces a linked config/connection failure before the missing-token error", () => {
-    const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
-    return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
-        Effect.exit,
-      );
-      expect(failMessage(exit)).toContain("failed to parse connection string");
-      expect(failMessage(exit)).not.toContain("Access token not provided");
-    }).pipe(Effect.provide(layer));
-  });
   describe("--read-only", () => {
     it.effect("brackets the statement in a read-only transaction on a local target", () => {
       const { layer, out, dbConnection } = setup({ result: SELECT_RESULT });

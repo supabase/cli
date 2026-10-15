@@ -1,6 +1,6 @@
 import type { ConfigChange } from "@supabase/config";
 
-import { formatNamedRef, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   configEnvOriginList,
   configEnvOriginPayload,
@@ -430,31 +430,6 @@ export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
           })),
         }),
   };
-}
-
-// Every interpolated ref/name goes through `formatNamedRef`, so an API-provided branch/project
-// name can't inject ANSI/OSC/newline controls into the terminal.
-
-/**
- * The target-echo block, printed to stderr before any further network call. The no-name
- * degradation shape (a project whose name could not be resolved) stays exactly
- * `Pushing config to project: <ref>`, pinned by existing tests.
- */
-export function configPushTargetLines(target: ConfigPushTarget): string {
-  if (target.kind === "project") {
-    return `Pushing config to project: ${formatNamedRef(target.name, target.ref)}\n`;
-  }
-  if (target.kind === "unknown") {
-    return `Pushing config to: ${sanitizeInlineName(target.ref)} (could not determine whether this is a branch or the main project)\n`;
-  }
-
-  const lines: Array<string> = [
-    `Pushing config to branch: ${formatNamedRef(target.branch, target.ref)}`,
-  ];
-  if (target.parentRef !== undefined) {
-    lines.push(`  Parent project: ${formatNamedRef(target.parentName, target.parentRef)}`);
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 const CONSENT_SERVICE_NAME: Readonly<Record<PushResource | "experimental.webhooks", string>> = {

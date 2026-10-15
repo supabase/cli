@@ -80,7 +80,6 @@ import {
 } from "./push.errors.ts";
 import {
   configPushPayloadFields,
-  configPushTargetLines,
   pushConsentAction,
   pushCostLine,
   pushEnvSourcedLine,
@@ -318,7 +317,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       Effect.withSpan("config.push.probeTarget"),
     );
     yield* Effect.annotateCurrentSpan("config.target_kind", target.kind);
-    yield* output.raw(configPushTargetLines(target), "stderr");
 
     // 6. Cost matrix (prices the paid add-ons a push would enable).
     const cost = yield* getCostMatrix(ref);

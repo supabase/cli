@@ -7,7 +7,6 @@ import {
   withCondition,
   withDbTarget,
 } from "../../../command-internal/command-permissions/model.ts";
-import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -56,9 +55,8 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           operations: [
             { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
           ],
-          noApiEffectFlags: ["file", "read-only"],
+          noApiEffectFlags: ["file", "project-ref", "read-only"],
         },
-        dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
       { default: "local" },

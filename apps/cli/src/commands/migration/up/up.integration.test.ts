@@ -366,6 +366,16 @@ describe("migration up", () => {
     },
   );
 
+  it.effect("reports a remote database as up to date for a linked target", () => {
+    const { layer, out } = setup(tmp.current, { remote: ["20240101000000"] });
+    return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* migrationUp(flags({ linked: true }));
+      expect(stripAnsi(out.stdoutText)).toContain("Remote database is up to date.");
+      expect(stripAnsi(out.stdoutText)).not.toContain("Local database is up to date.");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("emits a structured result in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json", remote: [] });
     return Effect.gen(function* () {

@@ -179,9 +179,7 @@ const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 
 /**
  * Schema-valid `V1GetProjectOutput` fixture for the live target-detection probe. The default
- * `project` route response has an empty `name`, which `normalizeApiName` folds to `undefined`, so
- * the target-echo line degrades to the bare `Pushing config to project: <ref>\n` text most
- * scenarios pin. Tests below override `name` to exercise the named-project path.
+ * `project` route response has an empty `name`.
  */
 const PUSH_TEST_PROJECT = {
   id: REF,
@@ -453,7 +451,7 @@ describe("config push integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateStatusError");
       }
-      expect(out.stderrText).toContain(`Pushing config to project: ${REF}`);
+      expect(out.stderrText).toContain(`Target: project ${REF}`);
       expect(out.stderrText).toContain("Updating API service with config:");
     }).pipe(Effect.provide(layer));
   });
@@ -538,7 +536,7 @@ schemas = ["public", "remote_schema"]
       yield* configPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
       expect(out.stderrText.indexOf("Loading config override: [remotes.staging]")).toBeLessThan(
-        out.stderrText.indexOf("Pushing config to project:"),
+        out.stderrText.indexOf("Comparison scope:"),
       );
       const update = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
       expect(update).toBeDefined();
@@ -2955,7 +2953,7 @@ const BRANCH_PUSH_TOML = `project_id = "test"\n[api]\nmax_rows = 2000\n`;
  * The realistic "already ran `supabase link <branch>`" state: `.temp/project-ref` holds the
  * branch's own ref, `.temp/linked-project.json` caches the parent (name "My App"), the live probe
  * 404s, and the parent's branch list confirms it — so the target resolves to `{ kind: "branch",
- * ref: BRANCH_REF, parentRef: PARENT_REF, parentName: "My App", branch: "feat-x" }`.
+ * ref: BRANCH_REF, parentRef: PARENT_REF, branch: "feat-x" }`.
  */
 function setupLinkedBranchPush(
   opts: {
@@ -2981,49 +2979,15 @@ function setupLinkedBranchPush(
 }
 
 describe("config push branch/project target detection (CLI-2168)", () => {
-  it.effect("a plain project push echoes the named project target", () => {
-    const { layer, out, api } = setup({
-      toml: BRANCH_PUSH_TOML,
-      yes: true,
-      project: { status: 200, body: { ...PUSH_TEST_PROJECT, name: "Test Project" } },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(`Pushing config to project: Test Project (${REF})`);
-      expect(out.stderrText).not.toContain("Pushing config to branch");
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
-    "an empty project name from the live probe degrades to the bare-ref target-echo line",
-    () => {
-      // `normalizeApiName` folds an empty `name` into `undefined` before it reaches the target
-      // object — the same degradation every other scenario in this file relies on via
-      // `PUSH_TEST_PROJECT`'s default empty name; this test pins it explicitly.
-      const { layer, out } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        project: { status: 200, body: { ...PUSH_TEST_PROJECT, name: "" } },
-      });
-      return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to project: ${REF}\n`);
-        expect(out.stderrText).not.toContain("project:  (");
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "the realistic 'link <branch>' then flag-less push flow shows both target lines and proceeds",
+    "the realistic 'link <branch>' then flag-less push flow announces the branch and proceeds",
     () => {
       const { layer, out, api } = setupLinkedBranchPush({ yes: true });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to branch: feat-x (${BRANCH_REF})`);
-        expect(out.stderrText).toContain(`  Parent project: My App (${PARENT_REF})`);
+        expect(out.stderrText).toContain(
+          `Target: project My App (${PARENT_REF}) · branch (${BRANCH_REF})`,
+        );
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
         ).toBe(true);
@@ -3050,8 +3014,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to branch: ${BRANCH_REF}`);
-        expect(out.stderrText).toContain(`  Parent project: ${PARENT_REF}`);
+        expect(out.stderrText).toContain(`Target: project ${PARENT_REF} · branch (${BRANCH_REF})`);
         expect(out.stderrText).not.toContain("My App");
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
@@ -3060,24 +3023,20 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     },
   );
 
-  it.effect(
-    "a live 404 with nothing cached degrades to a bare branch line with zero branch lookups",
-    () => {
-      const { layer, out, api } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        projectId: Option.some(PROBE_REF),
-        project: { status: 404, body: {} },
-        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
-      });
-      return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}\n`);
-        expect(out.stderrText).not.toContain("Parent project:");
-        expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("a live 404 with nothing cached makes no branch lookups", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.some(PROBE_REF),
+      project: { status: 404, body: {} },
+      v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(out.stderrText).not.toContain("· branch (");
+      expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("declining a branch push fails before any write and still flushes telemetry", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setupLinkedBranchPush({
@@ -3138,8 +3097,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
-        expect(out.stderrText).not.toContain("Parent project:");
+        expect(out.stderrText).not.toContain(PARENT_REF);
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
         ).toBe(true);
@@ -3158,8 +3116,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
-      expect(out.stderrText).not.toContain("Parent project:");
+      expect(out.stderrText).not.toContain("· branch (");
       expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -3175,8 +3132,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
-      expect(out.stderrText).not.toContain("Parent project:");
+      expect(out.stderrText).not.toContain("not-a-real-ref");
       expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -3195,9 +3151,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(
-          `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
-        );
+        expect(out.stderrText).toContain(`Target: project ${PROBE_REF} · identity unverified`);
         expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
@@ -3232,8 +3186,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
         ).toBe(true);
-        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
-        expect(out.stderrText).not.toContain("Parent project:");
+        expect(out.stderrText).not.toContain("· branch (");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3250,9 +3203,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(
-          `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
-        );
+        expect(out.stderrText).toContain(`Target: project ${PROBE_REF} · identity unverified`);
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
         );
@@ -3301,8 +3252,6 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       });
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.some("staging") });
-        expect(out.stderrText).toContain(`Pushing config to branch: staging (${BRANCH_REF})`);
-        expect(out.stderrText).toContain(`  Parent project: ${REF}`);
         expect(
           api.requests.some(
             (r) => r.method === "GET" && new URL(r.url).pathname === `/v1/projects/${BRANCH_REF}`,
@@ -3324,41 +3273,6 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect(
-    "--project-ref <branch-name> enriches the parent name from a matching linked-project cache",
-    () => {
-      const { layer, out } = setup({
-        seed: writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" }),
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        branchByName: { status: 200, body: BRANCH_BY_NAME },
-        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      });
-      return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.some("staging") });
-        expect(out.stderrText).toContain(`  Parent project: Test Project (${REF})`);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "--project-ref <branch-name> ignores a linked-project cache belonging to a different parent",
-    () => {
-      const { layer, out } = setup({
-        seed: writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" }),
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        branchByName: { status: 200, body: BRANCH_BY_NAME },
-        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      });
-      return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.some("staging") });
-        expect(out.stderrText).toContain(`  Parent project: ${REF}`);
-        expect(out.stderrText).not.toContain("Someone Else");
-      }).pipe(Effect.provide(layer));
-    },
-  );
 
   it.effect(
     "--project-ref <branch-name> resolution works without a spinner in json output mode",
@@ -3395,7 +3309,6 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
         expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}\n`);
         expect(out.stderrText).not.toContain(BRANCH_UUID);
         const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
@@ -3420,7 +3333,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       return Effect.gen(function* () {
         const error = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
+        expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}`);
         expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
