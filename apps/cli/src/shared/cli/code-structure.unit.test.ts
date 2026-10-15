@@ -212,6 +212,119 @@ function findConfigLoaderBypasses(source: string): Array<string> {
   ];
 }
 
+const RAW_TARGET_FLAG =
+  /\bFlag\.(?:Boolean|String)\(\s*["'](?:local|linked|db-url|project-id)["']/g;
+
+/** Raw declarations of the target selector flags, which `command-internal/target/target-flags.ts` owns. */
+export function findRawTargetFlags(source: string): Array<string> {
+  return Array.from(stripComments(source).matchAll(RAW_TARGET_FLAG), (m) => m[0]);
+}
+
+const LEGACY_TARGET_IDENTIFIERS: ReadonlyArray<RegExp> = [
+  /\b(?:resolveDbTargetFlags|changedLinkedLocalFlags|rejectPasswordWithDirectTarget|DbConnType|migrationConfirm|confirmSeedIntoMatchedRemote)\b/g,
+  /\bconnType\s*\?\?/g,
+  /\.loadProjectRef\(/g,
+];
+
+/** Identifiers of the target selection and consent APIs that the shared target module replaces. */
+export function findLegacyTargetIdentifiers(source: string): Array<string> {
+  return LEGACY_TARGET_IDENTIFIERS.flatMap((pattern) =>
+    Array.from(source.matchAll(pattern), (m) => m[0]),
+  );
+}
+
+const NETWORK_BAN_REMOVAL = /\blistAndUnban\b|delete-?network-?bans/gi;
+
+/** Code that clears network bans: the connection resolver and `network-bans remove` own it. */
+export function findNetworkBanRemoval(source: string): Array<string> {
+  return Array.from(stripComments(source).matchAll(NETWORK_BAN_REMOVAL), (m) => m[0]);
+}
+
+const AD_HOC_TARGET_LINE = /Connecting to (?:local|remote|\$\{[^}]*\}) database/g;
+
+/** The per-command connection line that the `Target:` banner replaces. */
+export function findAdHocTargetLines(source: string): Array<string> {
+  return Array.from(stripComments(source).matchAll(AD_HOC_TARGET_LINE), (m) => m[0]);
+}
+
+/** Files that may still declare target flags themselves, with the reason. */
+const TARGET_FLAG_EXEMPT: Readonly<Record<string, string>> = {
+  "command-internal/target/target-flags.ts": "the one declaration of the shared target flags",
+  "commands/db/remote/changes/changes.command.ts":
+    "the removed command keeps its old flags so invocations reach the removal error",
+  "commands/db/remote/commit/commit.command.ts":
+    "the removed command keeps its old flags so invocations reach the removal error",
+  "commands/stop/stop.command.ts": "`--project-id` names the local stack to stop, not a target",
+};
+
+const NETWORK_BAN_REMOVAL_OWNERS: ReadonlyArray<RegExp> = [
+  /^command-internal\/db-config\.layer\.ts$/,
+  /^commands\/network-bans\/remove\//,
+];
+
+const TARGET_GUARD_FILE = "shared/cli/code-structure.unit.test.ts";
+
+/** Files still on the previous target selection and consent APIs; the integration pass empties this list. */
+const TARGET_MIGRATION_PENDING_FILES: ReadonlySet<string> = new Set<string>([
+  "command-internal/db-config.layer.ts",
+  "command-internal/db-config.types.ts",
+  "command-internal/db-pull-run.ts",
+  "command-internal/db-push-core.ts",
+  "command-internal/db-target-flags.ts",
+  "command-internal/db-target-flags.unit.test.ts",
+  "command-internal/migration-fetch-run.ts",
+  "command-internal/seed-remote-consent.ts",
+  "command-internal/test-db.command-handler.ts",
+  "command-internal/test-db.handler.ts",
+  "command-internal/test-db.integration.test.ts",
+  "commands/db/advisors/advisors.command.ts",
+  "commands/db/advisors/advisors.handler.ts",
+  "commands/db/diff/diff.command.ts",
+  "commands/db/diff/diff.handler.ts",
+  "commands/db/dump/dump.command.ts",
+  "commands/db/dump/dump.handler.ts",
+  "commands/db/lint/lint.command.ts",
+  "commands/db/lint/lint.handler.ts",
+  "commands/db/pull/pull.command.ts",
+  "commands/db/push/push.command.ts",
+  "commands/db/push/push.handler.ts",
+  "commands/db/query/query.command.ts",
+  "commands/db/query/query.handler.ts",
+  "commands/db/reset/reset.command.ts",
+  "commands/db/reset/reset.handler.ts",
+  "commands/db/schema/declarative/generate/generate.command.ts",
+  "commands/db/schema/declarative/generate/generate.handler.ts",
+  "commands/db/shared/pooler-fallback.ts",
+  "commands/gen/types/types.command.ts",
+  "commands/inspect/db/inspect-db-command.ts",
+  "commands/inspect/db/inspect-query.ts",
+  "commands/inspect/report/report.command.ts",
+  "commands/inspect/report/report.handler.ts",
+  "commands/migration/down/down.command.ts",
+  "commands/migration/down/down.handler.ts",
+  "commands/migration/fetch/fetch.command.ts",
+  "commands/migration/fetch/fetch.handler.ts",
+  "commands/migration/fetch/fetch.integration.test.ts",
+  "commands/migration/list/list.command.ts",
+  "commands/migration/list/list.handler.ts",
+  "commands/migration/migration.prompt.ts",
+  "commands/migration/repair/repair.command.ts",
+  "commands/migration/repair/repair.handler.ts",
+  "commands/migration/squash/squash.command.ts",
+  "commands/migration/squash/squash.handler.ts",
+  "commands/migration/up/up.command.ts",
+  "commands/migration/up/up.handler.ts",
+  "commands/seed/buckets/buckets.flags.ts",
+  "commands/seed/buckets/buckets.handler.ts",
+  "commands/seed/seed.flags.ts",
+  "commands/storage/cp/cp.handler.ts",
+  "commands/storage/ls/ls.handler.ts",
+  "commands/storage/mv/mv.handler.ts",
+  "commands/storage/rm/rm.handler.ts",
+  "commands/storage/storage.flags.ts",
+  "telemetry/command-telemetry.ts",
+]);
+
 const allSpecifiers = (source: string): Array<string> =>
   Array.from(
     source.matchAll(/(?:from\s+|import\(\s*)["']([^"']+)["']/g),
@@ -391,6 +504,52 @@ layer(BunServices.layer)("code structure", (it) => {
     }),
   );
 
+  it.effect("declares the target selector flags only in the shared target module", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isSourceFile);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        relativePath in TARGET_FLAG_EXEMPT || TARGET_MIGRATION_PENDING_FILES.has(relativePath)
+          ? []
+          : findRawTargetFlags(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps the legacy target selection and consent identifiers out", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isAnyTypeScript);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        relativePath === TARGET_GUARD_FILE || TARGET_MIGRATION_PENDING_FILES.has(relativePath)
+          ? []
+          : findLegacyTargetIdentifiers(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("removes network bans only in the connection resolver and network-bans remove", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isSourceFile);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        NETWORK_BAN_REMOVAL_OWNERS.some((owner) => owner.test(relativePath))
+          ? []
+          : findNetworkBanRemoval(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
+  it.effect("leaves announcing the target to the Target banner", () =>
+    Effect.gen(function* () {
+      const files = (yield* walk(srcDir)).filter(isSourceFile);
+      const violations = yield* scanSource(files, (relativePath, source) =>
+        TARGET_MIGRATION_PENDING_FILES.has(relativePath) ? [] : findAdHocTargetLines(source),
+      );
+      expect(violations).toEqual([]);
+    }),
+  );
+
   it.effect("never imports loadCliProjectEnvironment, even in tests", () =>
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isAnyTypeScript);
@@ -526,5 +685,61 @@ describe("config precedence guard rules", () => {
     expect(
       allSpecifiers('import a from "../command-internal/x.ts"; await import("./y.ts");'),
     ).toEqual(["../command-internal/x.ts", "./y.ts"]);
+  });
+});
+
+describe("target guard rules", () => {
+  it("flags raw declarations of the target selector flags", () => {
+    for (const name of ["local", "linked", "db-url", "project-id"]) {
+      expect(findRawTargetFlags(`Flag.Boolean("${name}")`)).toHaveLength(1);
+      expect(findRawTargetFlags(`x: Flag.String(\n  '${name}',\n)`)).toHaveLength(1);
+    }
+    expect(findRawTargetFlags('Flag.String("project-ref")')).toEqual([]);
+    expect(findRawTargetFlags('// Flag.Boolean("local")')).toEqual([]);
+  });
+
+  it("flags each legacy target identifier", () => {
+    const names = [
+      "resolveDbTargetFlags",
+      "changedLinkedLocalFlags",
+      "rejectPasswordWithDirectTarget",
+      "DbConnType",
+      "migrationConfirm",
+      "confirmSeedIntoMatchedRemote",
+    ];
+    for (const name of names) {
+      expect(findLegacyTargetIdentifiers(`const x = ${name}(y);`)).toEqual([name]);
+    }
+    expect(findLegacyTargetIdentifiers("const t = flags.connType ?? 'local';")).toEqual([
+      "connType ??",
+    ]);
+    expect(findLegacyTargetIdentifiers("yield* resolver.loadProjectRef(flag)")).toEqual([
+      ".loadProjectRef(",
+    ]);
+    expect(
+      findLegacyTargetIdentifiers("resolveTarget(input); const { connTypeLabel } = x;"),
+    ).toEqual([]);
+  });
+
+  it("flags network ban removal outside comments", () => {
+    expect(findNetworkBanRemoval("yield* listAndUnban(ref, true)")).toEqual(["listAndUnban"]);
+    expect(findNetworkBanRemoval("api.v1.deleteNetworkBans({ ref })")).toEqual([
+      "deleteNetworkBans",
+    ]);
+    expect(findNetworkBanRemoval('operationId: "v1-delete-network-bans"')).toEqual([
+      "delete-network-bans",
+    ]);
+    expect(findNetworkBanRemoval("/** Transport failure (`V1DeleteNetworkBans`). */")).toEqual([]);
+  });
+
+  it("flags the per-command connection line, literal or interpolated", () => {
+    expect(findAdHocTargetLines('output.raw("Connecting to remote database...\\n")')).toHaveLength(
+      1,
+    );
+    expect(
+      findAdHocTargetLines('`Connecting to ${isLocal ? "local" : "remote"} database...`'),
+    ).toHaveLength(1);
+    expect(findAdHocTargetLines("`Connecting to ${target.host} ${target.port}`")).toEqual([]);
+    expect(findAdHocTargetLines('// "Connecting to local database"')).toEqual([]);
   });
 });
