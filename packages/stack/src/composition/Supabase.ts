@@ -204,6 +204,8 @@ export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
   readonly keys?: StackKeysInput;
+  /** Keeps unnamed saved members and dependencies; supports rebinding services without an API endpoint. */
+  readonly retainMembers?: boolean;
   /**
    * Starts every member with the composition. By default the database and members without an
    * endpoint start eagerly, and other members start on their first connection.
@@ -314,7 +316,8 @@ const compareCreation = (
     ),
   ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
-  // Initialized data is reusable only within one release line; any other pin change is a restart.
+  // The planner flags a line or major change; Database.prepare enforces the exact build on
+  // initialized data, so any other pin change is planned as a restart.
   const databaseLineChanged =
     saved.service === "database" &&
     postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
@@ -790,6 +793,14 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             return entry;
           }),
         );
+        const requestedIds = new Set(configured.map(({ id }) => id));
+        const retained = options.retainMembers === true;
+        const retainedMembers = retained
+          ? current.members.filter(({ id }) => !requestedIds.has(id))
+          : [];
+        const retainedDependencies = retained
+          ? current.dependencies.filter(({ from, to }) => !dependencyMap.has(`${from}->${to}`))
+          : [];
         const members = configured.map(({ id, creation }) => {
           const lazy =
             options.eager !== true &&
@@ -800,8 +811,8 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({
-          members,
-          dependencies: [...dependencyMap.values()],
+          members: [...members, ...retainedMembers],
+          dependencies: [...dependencyMap.values(), ...retainedDependencies],
         });
         return configured;
       });

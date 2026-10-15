@@ -305,9 +305,28 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       );
       return "already-running" as const;
     }
-    yield* currentDatabase.start.pipe(Effect.mapError(startFailed));
-    yield* currentDatabase.ready.pipe(Effect.mapError(startFailed));
-    yield* applyStackWebhooksOnly(currentDatabase, toml.webhooksEnabled).pipe(
+    const pinChanged = planned.some(
+      (entry) =>
+        entry.id === currentDatabase.id &&
+        entry.change === "changed" &&
+        entry.paths.includes("pin"),
+    );
+    // A stopped database starts the selected pin; the instance id and its data stay.
+    const database = pinChanged
+      ? databaseFor(
+          yield* stack.composition
+            .supabase([databaseCreation], {
+              reuseIds: [currentDatabase.id],
+              retainMembers: true,
+            })
+            .pipe(Effect.mapError(startFailed)),
+        )
+      : currentDatabase;
+    if (database === undefined)
+      return yield* startFailed({ message: "stack did not rebind the database instance" });
+    yield* database.start.pipe(Effect.mapError(startFailed));
+    yield* database.ready.pipe(Effect.mapError(startFailed));
+    yield* applyStackWebhooksOnly(database, toml.webhooksEnabled).pipe(
       Effect.mapError(startFailed),
     );
     return "started" as const;

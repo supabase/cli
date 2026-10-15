@@ -18,8 +18,14 @@ import type {
   ChildProcessHandle,
   ChildProcessSpawner as ChildProcessSpawnerService,
 } from "effect/process/ChildProcessSpawner";
-import { postgresLine, resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
-import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
+import { resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
+import {
+  databaseIdentity,
+  databaseIdentityMismatch,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+  removeDatabaseIdentity,
+} from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import * as Publication from "../namespace/Publication.ts";
@@ -42,8 +48,6 @@ const Marker = Schema.Struct({
   cacheNamespace: Schema.String,
   daemonId: Schema.optionalKey(Schema.String),
   initialized: Schema.Boolean,
-  /** Release line recorded before initdb; markers written before this field have none. */
-  line: Schema.optionalKey(Schema.String),
 });
 type Marker = Schema.Schema.Type<typeof Marker>;
 const DaemonIdentity = Schema.Struct({
@@ -932,31 +936,27 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             pin,
           );
           yield* removeReadyMarker;
+          yield* removeDatabaseIdentity(options.fs, options.path, options.instanceRoot).pipe(
+            Effect.mapError((cause) => errorFor("reset", cause)),
+          );
         });
       const writeMarker = (marker: Marker) =>
         encodeMarker(marker).pipe(Effect.flatMap((encoded) => publishMarker(encoded)));
-      const checkInitialized = Effect.fnUntraced(function* (
-        pgVersion: string,
-        pin: ArtifactPin,
-        marker: Marker,
-      ) {
-        // The database checks a present readiness marker's line before preparing storage.
-        const verified = yield* options.fs.exists(readyMarkerPath);
-        const reason = unusableDatabaseData(
-          {
-            major: pgVersion.trim(),
-            line: verified ? postgresLine(pin.upstreamVersion) : marker.line,
-            initialized: marker.initialized,
-          },
+      const checkInitialized = Effect.fnUntraced(function* (pin: ArtifactPin) {
+        const mismatch = databaseIdentityMismatch(
+          options.stackId,
+          yield* readDatabaseIdentity(options.fs, options.path, options.instanceRoot),
           pin.upstreamVersion,
         );
-        if (reason !== undefined)
-          return yield* errorFor("prepare", `${reason}; ${recreateStackAdvice(options.stackId)}`);
+        if (mismatch !== undefined) return yield* errorFor("prepare", mismatch);
       });
-      const recordLine = (marker: Marker, pin: ArtifactPin) =>
-        marker.line === postgresLine(pin.upstreamVersion)
-          ? Effect.void
-          : writeMarker({ ...marker, line: postgresLine(pin.upstreamVersion) });
+      const recordIdentity = (pin: ArtifactPin) =>
+        recordDatabaseIdentity(
+          options.fs,
+          options.path,
+          options.instanceRoot,
+          databaseIdentity(pin.upstreamVersion),
+        );
       const setup = Effect.fn("DockerDatabaseStorage.prepare")((pin: ArtifactPin) =>
         Effect.gen(function* () {
           yield* selected;
@@ -966,7 +966,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (marker.initialized) {
               if (!(yield* options.fs.exists(data)))
                 return yield* errorFor("prepare", "Initialized database data is missing");
-              const major = yield* runHelper(
+              yield* runHelper(
                 "set -eu; if [ ! -f /instance/data/PG_VERSION ]; then echo 'Initialized PostgreSQL data is missing PG_VERSION' >&2; exit 1; fi; cat /instance/data/PG_VERSION",
                 [
                   { source: options.instanceRoot, target: "/instance", readOnly: false },
@@ -974,7 +974,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ],
                 pin,
               );
-              yield* checkInitialized(major, pin, marker);
+              yield* checkInitialized(pin);
             } else if (yield* options.fs.exists(data)) {
               // An interrupted first start can leave initdb output behind without readiness.
               const major = yield* runHelper(
@@ -982,31 +982,31 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
                 pin,
               );
-              if (major.trim() !== "") yield* checkInitialized(major, pin, marker);
-              else yield* recordLine(marker, pin);
+              if (major.trim() !== "") yield* checkInitialized(pin);
+              else yield* recordIdentity(pin);
             } else {
               yield* options.fs.makeDirectory(data, { recursive: true, mode: 0o700 });
-              yield* recordLine(marker, pin);
+              yield* recordIdentity(pin);
             }
             return;
           }
           const store = `/store/${marker.namespace}`;
           const cache = `/store/${marker.cacheNamespace}`;
           if (marker.initialized) {
-            const major = yield* runHelper(
+            yield* runHelper(
               `set -eu; if [ ! -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then echo 'Initialized PostgreSQL data is missing PG_VERSION' >&2; exit 1; fi; cat ${shellQuote(`${store}/data/PG_VERSION`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               pin,
             );
-            yield* checkInitialized(major, pin, marker);
+            yield* checkInitialized(pin);
           } else {
             const major = yield* runHelper(
               `set -eu; if [ -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then cat ${shellQuote(`${store}/data/PG_VERSION`)}; fi; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               pin,
             );
-            if (major.trim() !== "") yield* checkInitialized(major, pin, marker);
-            else yield* recordLine(marker, pin);
+            if (major.trim() !== "") yield* checkInitialized(pin);
+            else yield* recordIdentity(pin);
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );
@@ -1071,6 +1071,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             );
           }
           yield* removeReadyMarker;
+          yield* removeDatabaseIdentity(options.fs, options.path, options.instanceRoot).pipe(
+            Effect.mapError((cause) => errorFor("reset", cause)),
+          );
           yield* writeMarker({ ...marker, initialized: false });
         }).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
       );

@@ -190,6 +190,8 @@ const classify = (
       );
     case "SupabaseCompositionError":
       return within(value.cause === undefined ? "configuration" : undefined);
+    case "DatabaseIdentityMismatch":
+      return "state";
     case "InvalidStackIdentityError":
     case "InvalidProjectRootError":
     case "SchemaError":

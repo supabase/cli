@@ -195,6 +195,10 @@ service identities. Postgres-only first create skips analytics and
 pooler artifact downloads. If first initialization fails after the database is created, the
 new database is destroyed so the command can be retried after fixing the cause. If cleanup itself
 fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.
+Resuming a stopped database whose saved pin differs from the selected one in anything but a
+slim-services revision rebinds the same instance to the selected pin before starting; its id and
+data stay. Initialized data accepts only a revision of its own build, so another build, line or
+major fails with advice to run `supabase stack destroy`.
 The resident owner process manages the database beyond the CLI invocation. Stack mode rejects
 `--from-backup` with exit code 1.
 

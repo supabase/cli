@@ -225,6 +225,7 @@ export const OwnerRpc = RpcGroup.make(
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
       keys: Schema.optionalKey(StackKeysInput),
       eager: Schema.optionalKey(Schema.Boolean),
+      retainMembers: Schema.optionalKey(Schema.Boolean),
     },
     success: Schema.Array(Definition),
     error: StackError,

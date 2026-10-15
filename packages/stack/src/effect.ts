@@ -858,6 +858,9 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
             ...(options?.keys === undefined ? {} : { keys: options.keys }),
             ...(options?.eager === undefined ? {} : { eager: options.eager }),
+            ...(options?.retainMembers === undefined
+              ? {}
+              : { retainMembers: options.retainMembers }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       plan: (services: ReadonlyArray<ServiceCreationInput>, options?: PlanOptions) =>

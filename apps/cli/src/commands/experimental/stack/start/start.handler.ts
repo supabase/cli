@@ -396,7 +396,7 @@ const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =
       ? `Revert ${editableKeys[0]} to its saved value`
       : "Revert the settings listed to their saved values";
 
-/** Rejects every saved member whose endpoints or database release line the request would change. */
+/** Rejects every saved member whose endpoints or database line or major the request would change. */
 const incompatibleChange = (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,

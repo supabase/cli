@@ -99,8 +99,9 @@ for example `api: 54321 → 26199`, and JSON/stream-json output add an `endpoint
 entry naming the endpoint, the `endpoints` keys it moved in `keys`, and its `from`/`to` port) to the
 success payload, present only when a change applied. A requested fixed port that is already taken
 fails the start with the usual port conflict; the new port stays saved and the previous automatic
-port is released, so starting again succeeds once the port is free. A changed PostgreSQL release line
-still fails, suggesting `supabase stack destroy`. A changed port met by a stack whose owner is still
+port is released, so starting again succeeds once the port is free. A PostgreSQL build, line or major that differs
+from the one that initialized the data still fails, suggesting `supabase stack destroy`; only a new
+revision of the same build reuses it. A changed port met by a stack whose owner is still
 running (for example after `stack prepare`) fails with advice to run `supabase stack stop`, then `supabase stack start`.
 
 ## Exporting environment variables

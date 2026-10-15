@@ -195,11 +195,12 @@ running the stack's exact
 `supabase stack destroy` command to recreate it.
 Switching between stock PostgreSQL and OrioleDB is a release-line change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
-Initialized database data is reused only on its own release line (the PostgreSQL major for stock
-builds, the exact build for OrioleDB, since a newer OrioleDB build may refuse older data). A
-first start records the requested line before initializing data, so a first start interrupted
-before readiness resumes on that line; unmarked data without a recorded line can prove only its
-major, so it is never reused for OrioleDB.
+Initialized database data is reused only by a slim-services revision of the build that created
+it (same line, major and upstream version). Every start that finds initialized data checks this,
+and a different build fails with advice to run `supabase stack destroy`. A first start records its
+identity in `.supabase-database-identity.json` before initializing data, so a first start
+interrupted before readiness resumes only on that build; initialized data with no recorded
+identity is never reused.
 
 ## First startup and retries
 

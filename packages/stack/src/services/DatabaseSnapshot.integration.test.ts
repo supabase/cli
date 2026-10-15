@@ -10,6 +10,11 @@ import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { testEngine } from "../../tests/test-engine.ts";
+import {
+  databaseIdentity,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+} from "../internal/database-reuse.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
@@ -98,11 +103,11 @@ interface Engine {
   readonly instance: (name: string, overrides?: Overrides) => Effect.Effect<Instance>;
 }
 
-const readyMarker = (runtime: string) =>
-  `{"version":"${version}","runtime":"${runtime}","profile":"supabase"}`;
+const readyMarker = (runtime: string) => `{"runtime":"${runtime}","profile":"supabase"}`;
 
 const native = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const services = yield* Effect.context<Services>();
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "database-snapshot-contract-" });
@@ -150,6 +155,7 @@ const native = Effect.fnUntraced(function* () {
             yield* fs.writeFileString(`${data}/PG_VERSION`, "17\n");
             yield* fs.writeFileString(`${data}/fixture`, value);
             yield* fs.writeFileString(`${data}/nested/fixture`, value);
+            yield* recordDatabaseIdentity(fs, path, instanceRoot, databaseIdentity(version));
             yield* fs.writeFileString(
               `${instanceRoot}/.supabase-database-ready.json`,
               readyMarker("native"),
@@ -309,7 +315,6 @@ const engines = [
 ];
 
 const Descriptor = Schema.fromJsonString(Schema.Struct({ logicalKey: Schema.String }));
-const ReadyVersion = Schema.fromJsonString(Schema.Struct({ version: Schema.String }));
 
 const setup = <E>(make: () => Effect.Effect<Engine, E, Services>) =>
   Effect.gen(function* () {
@@ -365,11 +370,9 @@ for (const { name, make } of engines)
           expect(yield* target.restoreSnapshot("key")).toBe(true);
 
           expect(yield* fixture(target)).toBe("saved\nsaved");
-          expect(
-            yield* Schema.decodeEffect(ReadyVersion)(
-              yield* fs.readFileString(`${target.root}/.supabase-database-ready.json`),
-            ),
-          ).toEqual({ version });
+          expect(yield* readDatabaseIdentity(fs, yield* Path.Path, target.root)).toEqual(
+            databaseIdentity(version),
+          );
         }),
       ),
     );

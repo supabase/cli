@@ -435,6 +435,68 @@ it.live(
 );
 
 it.live(
+  "rebinds one stopped member alone and keeps the other members and their dependencies",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-retain-" });
+        const stack = initial("catalog-native-retain");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state,
+          root: `${root}/data`,
+          cacheRoot,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const databaseCreation = {
+          service: "database" as const,
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("retain-database-password"),
+            jwtSecret: Redacted.make("retain-database-jwt-secret-with-32-chars"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" as const } },
+        };
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [
+            databaseCreation,
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
+        });
+        const database = created.find((entry) => entry.creation.service === "database");
+        if (database === undefined) return yield* Effect.die("Database member missing");
+        const saved = yield* state.read(stack.id);
+        const before = saved?.composition;
+        expect(before?.members).toHaveLength(2);
+        expect(before?.dependencies.length).toBeGreaterThan(0);
+
+        yield* owner.rpc.supabaseComposition({
+          services: [databaseCreation],
+          reuseIds: [database.id],
+          retainMembers: true,
+        });
+        expect((yield* state.read(stack.id))?.composition).toEqual(before);
+
+        yield* owner.rpc.supabaseComposition({
+          services: [databaseCreation],
+          reuseIds: [database.id],
+        });
+        expect((yield* state.read(stack.id))?.composition.members).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 180_000 },
+);
+
+it.live(
   "reuses an excluded Studio instance and its fixed port",
   () =>
     Effect.scoped(

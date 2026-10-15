@@ -16,6 +16,13 @@ import {
 import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import type { ArtifactPin } from "../Artifacts.ts";
+import {
+  DatabaseIdentity,
+  databaseIdentity,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+  sameDatabaseIdentity,
+} from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
@@ -104,7 +111,7 @@ const format = "supabase-database-snapshot-v1" as const;
 const runtimes = Schema.Literals(["native", "docker", "podman"]);
 const SnapshotIdentity = Schema.Struct({
   format: Schema.Literal(format),
-  version: Schema.String,
+  identity: DatabaseIdentity,
   runtime: runtimes,
   platform: Schema.String,
   arch: Schema.String,
@@ -113,7 +120,6 @@ const SnapshotIdentity = Schema.Struct({
 });
 const SnapshotDescriptor = Schema.Struct({ ...SnapshotIdentity.fields, keyDigest: Schema.String });
 const ReadyMarker = Schema.Struct({
-  version: Schema.String,
   runtime: runtimes,
   profile: Schema.Literal("supabase"),
 });
@@ -171,7 +177,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
     function* (logicalKey: string) {
       const identity = {
         format,
-        version,
+        identity: databaseIdentity(version),
         runtime,
         platform: process.platform,
         arch: process.arch,
@@ -232,7 +238,12 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
         .readFileString(markerPath)
         .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ReadyMarker)))),
     );
-    if (ready.version !== version || ready.runtime !== runtime)
+    const recorded = yield* mapError("ready", readDatabaseIdentity(fs, path, options.instanceRoot));
+    if (
+      ready.runtime !== runtime ||
+      recorded === undefined ||
+      !sameDatabaseIdentity(recorded, databaseIdentity(version))
+    )
       return yield* errorFor("ready", "Database readiness marker does not match the instance");
     const { keyDigest, descriptor } = yield* describe(logicalKey);
     yield* locked(
@@ -281,11 +292,19 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
     );
   });
 
+  // Recorded after the data is published, because the target's emptiness is proven only inside the
+  // restore program; a crash in between leaves the identity of an earlier interrupted start, if any.
+  const recordIdentity = recordDatabaseIdentity(
+    fs,
+    path,
+    options.instanceRoot,
+    databaseIdentity(version),
+  ).pipe(Effect.mapError((cause) => errorFor("ready", cause)));
+
   const publishReadyMarker = Effect.fnUntraced(
     function* (id: string) {
       const staged = `${markerPath}.${id}`;
       const marker = yield* Schema.encodeEffect(Schema.fromJsonString(ReadyMarker))({
-        version,
         runtime,
         profile: "supabase",
       });
@@ -369,6 +388,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
                   return yield* errorFor("validate", "Snapshot contains a running database");
               }
             }
+            yield* recordIdentity;
             yield* publishReadyMarker(id);
             return true;
           }),

@@ -24,7 +24,6 @@ import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,
-  postgresLine,
   resolveArtifact,
   useNativeArtifact,
   type ArtifactPin,
@@ -90,7 +89,13 @@ import {
   type DockerDatabaseStorage,
   type DockerDatabaseStorageError,
 } from "../storage/DockerDatabaseStorage.ts";
-import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
+import {
+  databaseIdentity,
+  databaseIdentityMismatch,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+  recreateStackAdvice,
+} from "../internal/database-reuse.ts";
 
 export const DatabaseConfig = Schema.Struct({
   databasePassword: Schema.Redacted(Schema.String),
@@ -106,14 +111,9 @@ export const DatabaseConfig = Schema.Struct({
 });
 
 const DatabaseReadyMarker = Schema.Struct({
-  version: Schema.String,
   runtime: Schema.Literals(["native", "docker", "podman"]),
   profile: Schema.Literal("supabase"),
 });
-
-/** Release line a native first start initializes, written before initdb so an interrupted start can resume. */
-const DatabaseLineMarker = Schema.Struct({ line: Schema.String });
-const lineMarkerFile = ".supabase-database-line.json";
 
 // Health reconciles role passwords as supabase_admin, including after a configured password change.
 const NATIVE_HBA_RULES = "local all supabase_admin trust\nlocal all all scram-sha-256\n";
@@ -353,7 +353,6 @@ const health = Effect.fn("Database.health")(function* (
           const readyMarker = yield* Schema.encodeEffect(
             Schema.fromJsonString(DatabaseReadyMarker),
           )({
-            version: context.version,
             runtime: context.runtime,
             profile: "supabase",
           }).pipe(Effect.mapError((cause) => errorFor("bootstrap", cause)));
@@ -743,64 +742,45 @@ export const makeDatabase = (
       );
     });
 
-    /** Records the release line before initdb runs; initialized data keeps the line it has. */
-    const recordLine = Effect.fn("Database.recordLine")(
-      function* (dataPath: string, version: string) {
-        if (yield* fs.exists(path.join(dataPath, "PG_VERSION"))) return;
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DatabaseLineMarker))({
-          line: postgresLine(version),
-        });
-        const stage = yield* fs.makeTempDirectoryScoped({
-          directory: instanceRoot,
-          prefix: ".line-",
-        });
-        yield* fs.writeFileString(path.join(stage, "marker"), encoded, { mode: 0o600 });
-        yield* fs.rename(path.join(stage, "marker"), path.join(instanceRoot, lineMarkerFile));
-      },
-      Effect.scoped,
-      Effect.mapError((cause) => errorFor("launch", cause)),
-    );
-
     /**
-     * Why the instance's data cannot serve `requested`, or `undefined` when it can. Prepare runs
-     * outside the lifecycle gate, so the gated launch checks again before touching the data.
+     * Fails when the instance's initialized data cannot serve `requested`. Prepare runs outside the
+     * lifecycle gate, so the gated launch checks again before touching the data. A Docker volume is
+     * invisible to the host, so Docker data without a readiness marker is checked by its storage.
      */
-    const reuseFailure = Effect.fn("Database.reuseFailure")(function* (requested: string) {
-      const recreate = recreateStackAdvice(String(options.stackId));
+    const checkReuse = Effect.fn("Database.checkReuse")(function* (requested: string) {
       const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
-      if (yield* fs.exists(markerPath)) {
+      const ready = yield* fs.exists(markerPath);
+      if (ready) {
         const marker = yield* fs
           .readFileString(markerPath)
           .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
-        return postgresLine(marker.version) === postgresLine(requested) &&
-          marker.runtime === options.runtime
-          ? undefined
-          : `Initialized database data is ${marker.version} on the ${marker.runtime} runtime, but ${requested} on the ${options.runtime} runtime was requested; ${recreate}`;
+        if (marker.runtime !== options.runtime) {
+          yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "runtime_mismatch" });
+          return yield* errorFor(
+            "prepare",
+            `Initialized database data is for the ${marker.runtime} runtime, but the ${options.runtime} runtime was requested; ${recreateStackAdvice(String(options.stackId))}`,
+          );
+        }
+      } else if (
+        options.runtime !== "native" ||
+        !(yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION")))
+      ) {
+        yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "fresh" });
+        return;
       }
-      const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
-      if (options.runtime !== "native" || !(yield* fs.exists(versionPath))) return undefined;
-      const linePath = path.join(instanceRoot, lineMarkerFile);
-      const recorded = (yield* fs.exists(linePath))
-        ? (yield* fs
-            .readFileString(linePath)
-            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseLineMarker)))))
-            .line
-        : undefined;
-      const reason = unusableDatabaseData(
-        {
-          major: (yield* fs.readFileString(versionPath)).trim(),
-          line: recorded,
-          initialized: false,
-        },
-        requested,
-      );
-      return reason === undefined ? undefined : `${reason}; ${recreate}`;
+      const recorded = yield* readDatabaseIdentity(fs, path, instanceRoot);
+      const mismatch = databaseIdentityMismatch(String(options.stackId), recorded, requested);
+      yield* Effect.annotateCurrentSpan({
+        "database.reuse.outcome": mismatch === undefined ? "reusable" : "mismatch",
+        "database.reuse.recorded_build": recorded?.build ?? "none",
+        "database.reuse.requested_build": requested,
+      });
+      if (mismatch !== undefined) return yield* errorFor("prepare", mismatch);
     });
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: PinnedDatabaseConfig) {
-        const reason = yield* reuseFailure(input.pin.upstreamVersion);
-        if (reason !== undefined) return yield* errorFor("prepare", reason);
+        yield* checkReuse(input.pin.upstreamVersion);
         yield* prepareArtifact(input);
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
@@ -922,10 +902,9 @@ export const makeDatabase = (
             ...context.config,
             rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
           };
-          const reuse = yield* reuseFailure(config.pin.upstreamVersion).pipe(
+          yield* checkReuse(config.pin.upstreamVersion).pipe(
             Effect.mapError((cause) => errorFor("launch", cause)),
           );
-          if (reuse !== undefined) return yield* errorFor("launch", reuse);
           if (storage !== undefined)
             yield* storage
               .prepare(config.pin)
@@ -948,7 +927,16 @@ export const makeDatabase = (
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-            yield* recordLine(dataPath, config.pin.upstreamVersion);
+            const initializing = !(yield* fs
+              .exists(path.join(dataPath, "PG_VERSION"))
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause))));
+            if (initializing)
+              yield* recordDatabaseIdentity(
+                fs,
+                path,
+                instanceRoot,
+                databaseIdentity(config.pin.upstreamVersion),
+              ).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             const rootKeyPath = path.join(nativeRoot, "pgsodium_root.key");
             yield* fs
               .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })

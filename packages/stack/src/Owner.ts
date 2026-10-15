@@ -859,8 +859,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
-    supabaseComposition: ({ services, reuseIds, keys, eager }) =>
-      definitionChange(compose(services, { reuseIds, keys, eager })).pipe(
+    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers }) =>
+      definitionChange(compose(services, { reuseIds, keys, eager, retainMembers })).pipe(
         rpcError("supabaseComposition"),
       ),
     configureComposition: (configuration) =>
