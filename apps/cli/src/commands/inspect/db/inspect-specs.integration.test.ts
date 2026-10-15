@@ -2,9 +2,16 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { bloatSpec } from "./bloat/bloat.query.ts";
 import { blockingSpec } from "./blocking/blocking.query.ts";
@@ -35,12 +42,18 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   let querySql: string | undefined;
   let queryParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    Layer.succeed(CliArgs, { args: [] }),
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-specs-test" }),
+    }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
-      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
+      resolve: () => Effect.die("resolve is not used by this test"),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {
