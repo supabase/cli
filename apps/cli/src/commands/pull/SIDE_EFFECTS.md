@@ -36,7 +36,7 @@ Each executed sub-step also performs its own file reads exactly as documented in
 threads the already-resolved `ref` into each step's existing `--project-ref`-shaped input rather
 than having each step re-resolve it (ADR 0024's "resolve once" decision) — most of a sub-step's own
 target-resolution file reads are therefore skipped in practice (the ref is already ref-shaped, so
-`ProjectRefResolver.loadProjectRef` short-circuits with no file/network access).
+`RemoteTarget.load` short-circuits with no file/network access).
 
 ## Files Written
 

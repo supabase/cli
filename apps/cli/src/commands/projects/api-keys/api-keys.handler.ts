@@ -1,7 +1,7 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -53,12 +53,12 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // `--project-ref` resolution prompts on a TTY and fails when unlinked.
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const fetching =

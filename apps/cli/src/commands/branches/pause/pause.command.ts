@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../../config/remote-target.layer.ts";
 import { branchPrompt } from "../branches.prompt.ts";
 import { branchRef } from "../../../command-internal/branch-ref.resolver.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";

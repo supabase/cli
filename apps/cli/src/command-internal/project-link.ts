@@ -2,10 +2,7 @@ import { NamespaceError, publish } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import type { ExperimentalFeatureFlagError } from "./experimental-feature.ts";
-import { currentProjectStateMode, softProjectStateMode } from "./project-state-mode.ts";
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
-import { readLegacyProjectRef } from "./legacy-project-state.layer.ts";
-import { ProjectRefReadError } from "./legacy-project-state.service.ts";
+import type { ProjectRefReadError } from "./legacy-project-state.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -206,46 +203,9 @@ export const removeProjectLink = Effect.fn("ProjectLink.remove")(function* (work
   );
 });
 
-/** Failures of {@link readLinkedProjectRef}. */
+/** Failures of reading the linked ref in either project-state mode. */
 export type LinkedProjectRefReadError =
   | ProjectRefReadError
   | ProjectLinkMalformedError
   | ProjectLinkIoError
   | ExperimentalFeatureFlagError;
-
-/**
- * The ref commands act on: the legacy `.temp/project-ref` file, or in stack mode the document's
- * `active_branch.ref`. `None` when not linked; any other read failure fails instead of reading
- * as unlinked.
- */
-export const readLinkedProjectRef = Effect.fn("ProjectLink.readLinkedRef")(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-): Effect.fn.Return<Option.Option<string>, LinkedProjectRefReadError> {
-  if ((yield* currentProjectStateMode) === "legacy") {
-    return yield* readLegacyProjectRef(fs, path, workdir);
-  }
-  const link = yield* readProjectLinkFile(fs, path, workdir);
-  return Option.map(link, (value) => value.active_branch.ref);
-});
-
-/**
- * The linked pooler connection string as stored, from `.temp/pooler-url` or the stack-mode
- * document. Callers decide whether an empty value counts as configured.
- */
-export const readLinkedPoolerUrl = Effect.fn("ProjectLink.readLinkedPoolerUrl")(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-): Effect.fn.Return<Option.Option<string>> {
-  if ((yield* softProjectStateMode) === "legacy") {
-    return yield* fs
-      .readFileString(legacyProjectStatePaths(path, workdir).poolerUrl)
-      .pipe(Effect.option);
-  }
-  const link = yield* readProjectLinkFile(fs, path, workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<ProjectLink>()),
-  );
-  return Option.flatMapNullishOr(link, (value) => value.active_branch.pooler_url);
-});

@@ -1395,6 +1395,107 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
   );
 
   it.effect(
+    "a SUPABASE_PROJECT_ID that differs from the link fetches that ref's pooler instead of using the saved pooler URL",
+    () => {
+      const linkedRef = "workdirlinkedrefabcd";
+      const envRef = "envprojectrefabcdefg";
+
+      const previousFetch = globalThis.fetch;
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const dbConnection = Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+      });
+      const fetchMock = Object.assign(
+        (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? input : input.url,
+          );
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          requests.push({ method, path: url.pathname });
+          const connectionString = `postgres://postgres.${envRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`;
+          if (
+            method === "GET" &&
+            url.pathname === `/v1/projects/${envRef}/config/database/pooler`
+          ) {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify([
+                  {
+                    identifier: "primary",
+                    database_type: "PRIMARY",
+                    is_using_scram_auth: true,
+                    db_user: "postgres",
+                    db_host: "db.example",
+                    db_port: 5432,
+                    db_name: "postgres",
+                    connection_string: connectionString,
+                    connectionString,
+                    default_pool_size: null,
+                    max_client_conn: null,
+                    pool_mode: "transaction",
+                  },
+                ]),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            );
+          }
+          return Promise.resolve(
+            new Response(JSON.stringify({ message: "unexpected request" }), {
+              status: 404,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        },
+        { preconnect: previousFetch.preconnect },
+      );
+
+      globalThis.fetch = fetchMock;
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* withWorkdir();
+        yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+        yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", ".temp", "pooler-url"),
+          `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+        );
+        return yield* resolve(dir, linkedFlags, {
+          projectHost: "invalid",
+          dbConnection,
+          configEnv: {
+            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+            SUPABASE_DB_PASSWORD: "ambient-password",
+            SUPABASE_PROJECT_ID: envRef,
+          },
+        });
+      }).pipe(
+        Effect.tap((r) =>
+          Effect.sync(() => {
+            expect(r.conn).toMatchObject({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              user: `postgres.${envRef}`,
+              password: "ambient-password",
+            });
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${envRef}/config/database/pooler` },
+            ]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
     "an explicit --project-ref with no password mints a login role and clears network bans after three failed temp-role connects",
     () => {
       const ref = "banrecoveryrefabcdef";

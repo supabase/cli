@@ -41,7 +41,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
   `inspect report`; and `test db` (and its hidden `db test` alias, which shares
   `test db`'s flag config verbatim). It feeds
-  `ProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
+  `RemoteTarget.load`, keeping Go's precedence (flag >
   `SUPABASE_PROJECT_ID` > `supabase/.temp/project-ref`) and taking effect only on
   the linked path. It shares ONLY that ref-resolution precedence with
   `SUPABASE_PROJECT_ID` — unlike the env var, it does not affect the local
@@ -51,6 +51,18 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   flag, since Go's env var going unused on a non-linked target has no TS-only
   flag counterpart to accidentally discard. Default behavior (omitted flag)
   matches Go exactly.
+- A hosted ref from `SUPABASE_PROJECT_ID` that differs from the linked ref gets
+  its pooler URL from the Management API, like a `--project-ref` flag does. Go
+  reuses the saved `supabase/.temp/pooler-url` whichever ref the env var names.
+  The saved pooler URL, parent project, and branch name apply only when the
+  resolved ref is the linked one.
+- In stack mode the Go-delegated `db remote changes` (which has no `--project-ref`
+  flag) receives the linked ref through `SUPABASE_PROJECT_ID`, since no
+  `.temp/project-ref` exists for the Go binary to read. Go also reads that variable
+  as the local `project_id`, so the delegated command's Docker resource names follow
+  the linked ref rather than the `config.toml` `project_id`. The command accepts no
+  flag that carries the ref instead. `gen keys` has `--project-ref` and uses it, so
+  it is unaffected.
 - `projects api-keys` has a TS-only `--reveal` flag (no Go equivalent). It sends
   `reveal=true` so the Management API returns the full secret keys (`sb_secret_...`) in
   full instead of redacting them, addressing issue #4775. Default behavior (omitted flag)

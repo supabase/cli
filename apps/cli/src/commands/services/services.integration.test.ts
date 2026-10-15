@@ -21,7 +21,7 @@ import {
 import { FetchHttpClient } from "effect/http";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { GLOBAL_FLAGS, OutputFlag } from "../../command-internal/global-flags.ts";
 import { stackBackendLayer } from "../../command-internal/stack-backend.ts";

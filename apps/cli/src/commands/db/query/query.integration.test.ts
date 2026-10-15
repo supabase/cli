@@ -38,10 +38,7 @@ import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { validateAccessToken } from "../../../auth/access-token.ts";
-import {
-  ProjectRefResolver,
-  PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/project-ref.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { ProjectRefReadError } from "../../../command-internal/legacy-project-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
@@ -63,6 +60,7 @@ import {
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { dbQuery } from "./query.handler.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -142,7 +140,7 @@ function mockTelemetryOutputFormat() {
 }
 
 function mockProjectRef(unlinked = false, refReadFails = false) {
-  // `loadProjectRef` mirrors the real preflight: an explicit `--project-ref` flag wins first,
+  // `RemoteTarget.load` mirrors the real preflight: an explicit `--project-ref` flag wins first,
   // then ErrNotLinked when absent, or a read error (ProjectRefReadError) for an unreadable file.
   const loadProjectRef = (flagValue: Option.Option<string>) =>
     Option.isSome(flagValue) && flagValue.value.length > 0
@@ -156,12 +154,12 @@ function mockProjectRef(unlinked = false, refReadFails = false) {
         : unlinked
           ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
           : Effect.succeed(REF);
-  return Layer.succeed(ProjectRefResolver, {
+  return stubRemoteTarget({
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
-    loadProjectRef,
-    promptProjectRef: () => Effect.succeed(REF),
+    load: loadProjectRef,
+    prompt: () => Effect.succeed(REF),
   });
 }
 

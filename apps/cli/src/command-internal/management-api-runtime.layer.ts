@@ -13,8 +13,8 @@ import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { commandPlatformApiLayer } from "../auth/command-platform-api.layer.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
-import { projectRefLayer } from "../config/project-ref.layer.ts";
+import { RemoteTarget } from "../config/remote-target.service.ts";
+import { remoteTargetLayer } from "../config/remote-target.layer.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { dohFetchLayer } from "./http-dns.ts";
@@ -68,7 +68,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
     httpClient,
     credentials,
     cliSettings,
-    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -113,7 +113,7 @@ type ManagementApiServices =
   | HttpClient.HttpClient
   | CommandCredentials
   | CommandSettings
-  | ProjectRefResolver
+  | RemoteTarget
   | LinkedProjectCache
   | TelemetryState
   | CommandRuntime
@@ -143,7 +143,7 @@ export function linkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) 
     httpClient,
     credentials,
     cliSettings,
-    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -154,6 +154,22 @@ export function linkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) 
   );
   return built;
 }
+
+/** Resolves only the hosted target, for commands that delegate to the Go binary. */
+export const remoteTargetRuntimeLayer = (() => {
+  const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+  const credentials = commandCredentialsLayer.pipe(
+    Layer.provide(cliSettings),
+    Layer.provide(debugLoggerLayer),
+  );
+  const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
+    Layer.provide(credentials),
+    Layer.provide(cliSettings),
+    Layer.provide(debugLoggerLayer),
+    Layer.provide(identityStitchLayer),
+  );
+  return remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings));
+})();
 
 type LinkedDbResolverRuntime = ReturnType<typeof linkedDbResolverRuntimeLayer>;
 export type LinkedDbResolverRuntimeRequirements =

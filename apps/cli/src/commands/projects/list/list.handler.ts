@@ -2,13 +2,12 @@ import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import {
   type GoType,
   encodeGoToml,
@@ -66,12 +65,15 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // Loaded purely as a marker for the "linked" column; `resolveOptional` never fails or prompts.
-  const linkedRef = yield* resolver.resolveOptional(Option.none());
+  const linkedRef = Option.map(
+    yield* remoteTarget.resolveOptional(Option.none()),
+    (target) => target.ref,
+  );
 
   yield* Effect.gen(function* () {
     const fetching =
@@ -126,14 +128,14 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
 
     // `markerRef` decides which row shows as linked, since a linked branch's own ref never
     // matches a project row here. An exact match on `linkedRef` wins outright; only when it
-    // misses do we fall back to the parent chain (env → linked-project.json → project-ref file).
+    // misses do we fall back to the parent chain (env, then the recorded parent, then the linked ref).
     let markerRef = linkedRef;
     if (Option.isSome(linkedRef)) {
       const hasExactMatch = parsed.some(
         (project) => readProjectField(project, "id") === linkedRef.value,
       );
       if (!hasExactMatch) {
-        const parent = yield* resolveLinkedParentRef();
+        const parent = yield* remoteTarget.parent;
         markerRef = parent.kind === "resolved" ? Option.some(parent.ref) : Option.none();
       }
     }

@@ -5,7 +5,7 @@ import { commandCredentialsLayer } from "../../../auth/command-credentials.layer
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
-import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
@@ -26,7 +26,7 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  *
  * Instead the project-ref resolver is given the lazy `commandPlatformApiFactoryLayer`, whose
  * `make` is only forced by an interactive project-ref prompt. The linked path resolves the ref
- * via the non-prompting `loadProjectRef`, which never forces the factory; the local path never
+ * via the non-prompting `RemoteTarget.load`, which never forces the factory; the local path never
  * resolves a project ref at all, so no token is resolved there either.
  *
  * `commandSettingsLayer` is provided to each consumer that needs it, since `Layer.provide` does
@@ -47,7 +47,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-const projectRef = projectRefLayer.pipe(
+const projectRef = remoteTargetLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );

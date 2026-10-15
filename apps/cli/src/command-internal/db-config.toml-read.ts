@@ -1,4 +1,3 @@
-import { readLinkedPoolerUrl } from "./project-link.ts";
 import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
 import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
@@ -58,12 +57,6 @@ export interface DbTomlValues {
   readonly shadowPort: number;
   /** `[db] password`, runtime default `"postgres"` (not in the config schema). */
   readonly password: string;
-  /**
-   * Linked pooler connection string, used by the `--linked` pooler fallback.
-   * Read from `supabase/.temp/pooler-url` (written by `supabase link`); not
-   * part of the config schema.
-   */
-  readonly poolerConnectionString: Option.Option<string>;
   /** top-level `project_id`, used to name the local docker network. */
   readonly projectId: Option.Option<string>;
   /** `[db] major_version`, default 17. */
@@ -1259,12 +1252,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // comment for why this is typed narrower than the `ReadonlySet<string>` it wraps.
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
 
-  // Read the linked pooler URL from `.temp/pooler-url` (the link document in stack mode) and
-  // treat it as configured only when present and non-empty.
-  const poolerConnectionString = yield* readLinkedPoolerUrl(fs, path, workdir).pipe(
-    Effect.map(Option.flatMap(nonEmptyString)),
-  );
-
   // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` used to name the local
   // stack's Docker resources, unless a matched `[remotes.<ref>]` block already set
   // `project_id` at override tier — that value must win over a stale/differently-scoped
@@ -2197,7 +2184,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     port,
     shadowPort,
     password: passwordRaw !== undefined ? expandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
-    poolerConnectionString,
     projectId,
     majorVersion,
     orioledbVersion,

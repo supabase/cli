@@ -5,7 +5,7 @@ import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../config/project-ref.service.ts";
+} from "../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
@@ -16,7 +16,7 @@ import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
 import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
-import { readLinkedProjectRef } from "../../command-internal/project-link.ts";
+import { readLinkSnapshot } from "../../command-internal/link-snapshot.ts";
 import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -75,7 +75,8 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     }
 
     if ((yield* currentProjectStateMode) === "stack") {
-      return yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
+      return yield* readLinkSnapshot(fs, path, cliSettings.workdir).pipe(
+        Effect.map((snapshot) => snapshot.ref),
         Effect.catch((cause) =>
           output
             .raw(`failed to load project ref: ${cause.message}\n`, "stderr")

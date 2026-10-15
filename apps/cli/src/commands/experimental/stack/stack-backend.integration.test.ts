@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
-import { readLinkedProjectRef } from "../../../command-internal/project-link.ts";
+import { readLinkSnapshot } from "../../../command-internal/link-snapshot.ts";
 import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
@@ -250,7 +250,8 @@ stack = true
         });
         if (selection.projectState === undefined) return yield* Effect.die("no selection");
 
-        const read = yield* readLinkedProjectRef(fs, path, root).pipe(
+        const read = yield* readLinkSnapshot(fs, path, root).pipe(
+          Effect.map((snapshot) => snapshot.ref),
           Effect.provide(projectStateModeLayer(selection.projectState)),
           Effect.flip,
         );

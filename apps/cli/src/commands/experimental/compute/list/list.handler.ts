@@ -9,7 +9,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { formatApiSize } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import { listCompute, type ComputeRecord } from "../../../../shared/compute/compute-api.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { discoverComputeNames, loadComputeProject } from "../compute.shared.ts";
@@ -96,7 +96,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
   const output = yield* Output;
   const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
@@ -104,7 +104,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const { ref: projectRef } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;

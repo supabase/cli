@@ -2,7 +2,7 @@ import { Effect, Option, Ref } from "effect";
 import { deleteFunction } from "../../../shared/functions/delete.ts";
 import { aqua } from "../../../command-internal/colors.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsDeleteFlags } from "./delete.command.ts";
@@ -11,7 +11,7 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
   flags: FunctionsDeleteFlags,
 ) {
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const resolvedProjectRef = yield* Ref.make(Option.none<string>());
@@ -21,9 +21,10 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
     {
       api,
       resolveProjectRef: (projectRef) =>
-        resolver
-          .resolve(projectRef)
-          .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+        remoteTarget.resolve(projectRef).pipe(
+          Effect.map((target) => target.ref),
+          Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+        ),
       // The "Deleted Function" line is stdout-bound, so the TTY gate must check stdout.
       styleIdentifier: (text) => aqua(text, process.stdout),
     },

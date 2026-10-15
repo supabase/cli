@@ -76,6 +76,7 @@ import {
 } from "../../../../../command-internal/global-flags.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
+import { remoteTargetLayer as realRemoteTargetLayer } from "../../../../../config/remote-target.layer.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../../../command-internal/stack-api.ts";
@@ -385,6 +386,24 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   );
   const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const settings = mockCommandSettings({
+    workdir,
+    projectId: opts.projectId ?? Option.some("test"),
+  });
+  const tty = mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false });
+  const remoteTarget = realRemoteTargetLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        settings,
+        tty,
+        out.layer,
+        Layer.succeed(CommandPlatformApiFactory, {
+          make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
+        }),
+        BunServices.layer,
+      ),
+    ),
+  );
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -405,8 +424,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : resolver,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
-    mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    settings,
+    tty,
+    remoteTarget,
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
     cliArgs,

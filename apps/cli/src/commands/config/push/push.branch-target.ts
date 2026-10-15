@@ -4,9 +4,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { BRANCH_LOOKUP_TIMEOUT, findBranchName } from "../../../command-internal/branch-target.ts";
-import { readLinkedProjectCache } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { readLinkedProjectRef } from "../../../command-internal/project-link.ts";
+import { readLinkSnapshotSoft } from "../../../command-internal/link-snapshot.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
@@ -50,7 +49,7 @@ export type ConfigPushKnownBranch =
 
 /** `V1GetProjectOutput.name`/a branch's `name` are unconstrained strings — an
  * empty (or empty-after-sanitization-adjacent) live value must render as "no
- * name available", matching `parseCachedLinkedProject`'s own
+ * name available", matching the link reader's own
  * empty-filtering convention for cached names. */
 function normalizeApiName(name: string | undefined): string | undefined {
   return name !== undefined && name.length > 0 ? name : undefined;
@@ -79,7 +78,7 @@ const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
  * A known branch name/UUID skips the live probe. Otherwise `GET /v1/projects/{ref}` (bounded at
  * {@link BRANCH_LOOKUP_TIMEOUT}) returns a project on 200, `"unknown"` on any other failure
  * (never blocking the push), or falls into best-effort recovery on a 404:
- * `.temp/linked-project.json` and `.temp/project-ref` supply the parent ref and branch name when
+ * the link's parent record and linked ref supply the parent ref and branch name when
  * they can be trusted, and a bare `{ kind: "branch", ref }` otherwise.
  */
 export function resolveConfigPushTarget(
@@ -94,7 +93,8 @@ export function resolveConfigPushTarget(
     const cliSettings = yield* CommandSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const readCachedParent = readLinkedProjectCache(fs, path, cliSettings.workdir);
+    const readSnapshot = readLinkSnapshotSoft(fs, path, cliSettings.workdir);
+    const readCachedParent = readSnapshot.pipe(Effect.map((snapshot) => snapshot.parent));
 
     // A name target: both fields already known, so just enrich the parent's name from cache
     // when it happens to match.
@@ -154,7 +154,7 @@ export function resolveConfigPushTarget(
     }
 
     // Shared recovery for a confirmed branch whose name/parent aren't known yet. Reads
-    // .temp/project-ref only once there's a cache candidate to correlate it against, so the
+    // the linked ref only once there's a cache candidate to correlate it against, so the
     // common cache-absent path skips a second filesystem read.
     const cached = yield* readCachedParent;
     const candidateParentRef =
@@ -167,9 +167,7 @@ export function resolveConfigPushTarget(
       return { kind: "branch", ref };
     }
 
-    const fileRef = yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
+    const fileRef = (yield* readSnapshot).ref;
     const branchName = normalizeApiName(
       yield* findBranchName(candidateParentRef, ref, {
         spinnerLabel: "Checking branch name...",

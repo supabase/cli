@@ -20,7 +20,7 @@ import {
   readProjectLink,
   writeProjectLink,
 } from "../../command-internal/project-link.ts";
-import { ProjectRefResolver } from "../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../config/remote-target.service.ts";
 import { link } from "./link.handler.ts";
 import type { LinkFlags } from "./link.command.ts";
 
@@ -276,9 +276,9 @@ describe("link integration in stack mode", () => {
         fetchedAt: "2026-01-01T00:00:00.000Z",
       });
 
-      const resolver = yield* ProjectRefResolver;
+      const resolver = yield* RemoteTarget;
 
-      expect(yield* resolver.resolve(Option.none())).toBe(BRANCH_REF);
+      expect((yield* resolver.resolve(Option.none())).ref).toBe(BRANCH_REF);
     }).pipe(Effect.provide(layer));
   });
 
@@ -289,7 +289,7 @@ describe("link integration in stack mode", () => {
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(workdir, "supabase", ".link.json"), "{not json");
-      const resolver = yield* ProjectRefResolver;
+      const resolver = yield* RemoteTarget;
 
       const error = yield* resolver.resolve(Option.none()).pipe(Effect.flip);
 
@@ -304,7 +304,7 @@ describe("link integration in stack mode", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(workdir, "supabase", ".link.json"), { recursive: true });
-      const resolver = yield* ProjectRefResolver;
+      const resolver = yield* RemoteTarget;
 
       const error = yield* resolver.resolve(Option.none()).pipe(Effect.flip);
 

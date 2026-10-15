@@ -33,7 +33,6 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
@@ -58,6 +57,7 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -92,7 +92,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     readonly pipedAnswers?: ReadonlyArray<string>;
     readonly args?: ReadonlyArray<string>;
     readonly yes?: boolean;
-    /** Project ref returned by loadProjectRef for --linked tests. */
+    /** Project ref returned by RemoteTarget.load for --linked tests. */
     readonly projectRef?: string;
     /** API keys response for Management API mock. */
     readonly apiKeys?: ReadonlyArray<{
@@ -101,7 +101,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
       type?: string | null;
       secret_jwt_template?: Record<string, unknown> | null;
     }>;
-    /** When true, loadProjectRef fails with ProjectRefNotLinkedError. */
+    /** When true, RemoteTarget.load fails with ProjectRefNotLinkedError. */
     readonly linkedFails?: boolean;
     /** When set, the Management API `getProjectApiKeys` call fails with this error. */
     readonly apiKeysFail?: HttpClientError.HttpClientError;
@@ -176,7 +176,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
   const linkedCache = mockLinkedProjectCacheTracked();
 
   const projectRefRef = opts.projectRef ?? VALID_REF;
-  const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  const remoteTargetLayer = stubRemoteTarget({
     resolve: () =>
       opts.linkedFails === true
         ? Effect.fail(
@@ -197,7 +197,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     // An explicit `--project-ref` flag takes precedence and short-circuits
     // before `linkedFails`, so a test can prove the flag resolves a ref even
     // for an "unlinked" workdir.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
@@ -207,7 +207,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
               }),
             )
           : Effect.succeed(projectRefRef),
-    promptProjectRef: () => Effect.succeed(projectRefRef),
+    prompt: () => Effect.succeed(projectRefRef),
   });
 
   const defaultApiKeys = [
@@ -257,7 +257,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    projectRefLayer,
+    remoteTargetLayer,
     recorded === undefined
       ? Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),

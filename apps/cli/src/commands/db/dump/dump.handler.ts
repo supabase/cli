@@ -2,7 +2,7 @@ import { Config, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect
 import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -162,12 +162,13 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     }
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward, even on a
-    // connection-resolution failure. `loadProjectRef` validates the ref up front so an
+    // connection-resolution failure. `RemoteTarget.load` validates the ref up front so an
     // unvalidated raw `--project-ref` is never stored for the cache finalizer.
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const refResolver = yield* ProjectRefResolver;
-      const ref = yield* refResolver.loadProjectRef(flags.projectRef);
-      yield* Ref.set(linkedRefForCache, ref);
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      yield* Ref.set(linkedRefForCache, linkedTarget.ref);
     }
     const {
       conn,
@@ -179,6 +180,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       dnsResolver,
       password: flags.password,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
@@ -442,6 +444,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 dnsResolver,
                 password: flags.password,
                 linkedProjectRef: flags.projectRef,
+                target: linkedTarget,
               })
               .pipe(Effect.orElseSucceed(() => Option.none())),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),

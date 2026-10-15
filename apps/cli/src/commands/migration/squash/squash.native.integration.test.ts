@@ -25,10 +25,10 @@ import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts"
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -80,12 +80,12 @@ const testLayer = (root: string) =>
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(YesFlag, true),
     Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
-    Layer.succeed(ProjectRefResolver, {
+    stubRemoteTarget({
       resolve: () => Effect.succeed("abcdefghijklmnopqrst"),
       resolveForLink: () => Effect.succeed("abcdefghijklmnopqrst"),
       resolveOptional: () => Effect.succeed(Option.some("abcdefghijklmnopqrst")),
-      loadProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
-      promptProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+      load: () => Effect.succeed("abcdefghijklmnopqrst"),
+      prompt: () => Effect.succeed("abcdefghijklmnopqrst"),
     }),
     mockStdin(false),
     Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),

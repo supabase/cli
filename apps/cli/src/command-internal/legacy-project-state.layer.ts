@@ -7,28 +7,25 @@ import { LegacyProjectState, ProjectRefReadError } from "./legacy-project-state.
  * Reads the linked project ref, `None` when the file is absent or blank. Any other read error
  * (a directory, permission denied) fails instead of reading as unlinked.
  */
-export const readLegacyProjectRef = (
+export const readLegacyProjectRef = Effect.fn("LegacyProjectState.readProjectRef")(function* (
   fs: FileSystem.FileSystem,
   path: Pick<Path.Path, "join">,
   workdir: string,
-): Effect.Effect<Option.Option<string>, ProjectRefReadError> =>
-  Effect.gen(function* () {
-    const content = yield* fs
-      .readFileString(legacyProjectStatePaths(path, workdir).projectRef)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed("")
-            : Effect.fail(
-                new ProjectRefReadError({
-                  message: `failed to load project ref: ${error.message}`,
-                }),
-              ),
-        ),
-      );
-    const trimmed = content.trim();
-    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-  });
+): Effect.fn.Return<Option.Option<string>, ProjectRefReadError> {
+  const content = yield* fs.readFileString(legacyProjectStatePaths(path, workdir).projectRef).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed("")
+        : Effect.fail(
+            new ProjectRefReadError({
+              message: `failed to load project ref: ${error.message}`,
+            }),
+          ),
+    ),
+  );
+  const trimmed = content.trim();
+  return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
+});
 
 const makeLegacyProjectState = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

@@ -208,7 +208,7 @@ transaction metadata.
   mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
   mutually-exclusive target group (default `--local`).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved

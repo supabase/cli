@@ -3,7 +3,7 @@ import { DateTime, Duration, Effect, Option, Ref, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { RemoteTarget, PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -17,13 +17,14 @@ import {
 } from "../../shared/telemetry/event-catalog.ts";
 import { classifyProjectLookupError } from "../../command-internal/branch-target.ts";
 import {
-  type CachedLinkedProject,
   parentNotLinkedMessage,
   parentRefInvalidMessage,
   parentRefTypoHint,
-  parseCachedLinkedProject,
-  resolveLinkedParentRef,
 } from "../../command-internal/parent-project-ref.ts";
+import {
+  type CachedLinkedProject,
+  parseCachedLinkedProject,
+} from "../../command-internal/link-snapshot.ts";
 import { dashboardUrl } from "../../command-internal/profile.ts";
 import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-keys.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
@@ -145,8 +146,9 @@ function linkBranchNotFoundMessage(
 const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: string) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
+  const remoteTarget = yield* RemoteTarget;
 
-  const parent = yield* resolveLinkedParentRef();
+  const parent = yield* remoteTarget.parent;
   if (parent.kind === "absent") {
     return yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) });
   }
@@ -250,7 +252,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
@@ -290,7 +292,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       ? Option.some(branchResolution.value.projectRef)
       : requested;
 
-    const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
+    const { ref } = yield* resolver.resolveForLink(resolvedRefOrBranch);
     yield* Ref.set(resolvedRef, ref);
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
@@ -417,7 +419,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       // 404 path: `ref` is a branch. The plain-project arm above never writes
       // `linked-project.json` for this ref, and the post-run cache fill (`Effect.ensuring`
       // below) also GETs `ref` and 404s on a branch — so without persisting parent evidence
-      // here, `resolveLinkedParentRef`'s chain can lose it or go stale. Both branches below
+      // here, `RemoteTarget.parent`'s chain can lose it or go stale. Both branches below
       // are best-effort and never affect `link`'s own outcome.
       const cachedParent = stackState
         ? Option.none<CachedLinkedProject>()

@@ -8,8 +8,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
-import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
-import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
+import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
@@ -18,6 +17,7 @@ import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 import { realLinkedProjectCache } from "./permission-real-layers.ts";
+import { stubRemoteTarget } from "./remote-target.ts";
 
 /**
  * Shared scaffolding for the `supabase compute` command integration tests.
@@ -390,7 +390,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const testProjectRefLayer = (linked: boolean) =>
-  Layer.succeed(ProjectRefResolver, {
+  stubRemoteTarget({
     resolve: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue)
         ? Effect.succeed(flagValue.value)
@@ -405,9 +405,9 @@ const testProjectRefLayer = (linked: boolean) =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     resolveOptional: () =>
       Effect.succeed(linked ? Option.some(COMPUTE_PROJECT_REF) : Option.none()),
-    loadProjectRef: () =>
+    load: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
-    promptProjectRef: () =>
+    prompt: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
   });
 
@@ -450,7 +450,7 @@ export interface ComputeSetupOptions {
    */
   readonly signal?: "SIGINT" | "SIGTERM" | "SIGHUP";
   /**
-   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * Runs the real `remoteTargetLayer` (an unlinked workdir reaches its picker) and the real
    * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
    * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
    */
@@ -502,7 +502,7 @@ export function setupCompute(options: ComputeSetupOptions) {
   const cliSettings = testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false);
   const projectRef =
     options.realLayers === true
-      ? projectRefLayer.pipe(
+      ? remoteTargetLayer.pipe(
           Layer.provide(
             Layer.succeed(CommandPlatformApiFactory, {
               make: CommandPlatformApi.pipe(Effect.provide(http.layer)),

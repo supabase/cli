@@ -142,7 +142,7 @@ before any project is created. See `link`'s `SIDE_EFFECTS.md` for the format.
   — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, dryRun: false }`.
   Bootstrap never re-resolves the project ref for push: the earlier `create` step already
   resolved it, and it's reused as-is (passed as a plain value, never re-derived via
-  `ProjectRefResolver`, which keys off `CommandSettings.workdir`, stale after this handler's
+  `RemoteTarget`, which keys off `CommandSettings.workdir`, stale after this handler's
   own `process.chdir` — see the workdir comments in `bootstrap.handler.ts`). The **connection**
   itself, however, is resolved via its own `resolveLinkedConn` call — dial-direct/
   pooler-fallback logic — not reused from the naive `deriveDbConfig(...)` connection already

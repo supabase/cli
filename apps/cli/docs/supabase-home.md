@@ -121,6 +121,11 @@ Auth, telemetry, traces, and downloaded binaries remain machine-global under `SU
 Legacy installer artifacts may coexist under that root, but they are not part of managed stack
 coordination.
 
+In stack mode the post-run linked-project fill writes `<SUPABASE_HOME>/project-cache/<ref>.json`
+atomically after the first successful `GET /v1/projects/{ref}`. It is only a marker that the
+project's analytics groups were identified once per ref on this machine; nothing else reads it.
+Legacy mode keeps `supabase/.temp/linked-project.json`, which `RemoteTarget.parent` also reads.
+
 ## Release check cache
 
 After a successful command, the upgrade notice compares the running version with the latest

@@ -4,7 +4,7 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { failsOn } from "../../../command-internal/fail-on.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -132,6 +132,10 @@ const runLint = Effect.fnUntraced(function* (
   // `Flag.mapTryCatch(parseSchemaFlags)` at the command definition.
   const schemaFlags = flags.schema;
 
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    target.connType === "linked" ? yield* remoteTarget.load(flags.projectRef) : undefined;
+
   const lintBody = Effect.gen(function* () {
     // connType passes straight through; the resolver applies db-url > linked >
     // local precedence and handles `--local`'s default.
@@ -140,6 +144,7 @@ const runLint = Effect.fnUntraced(function* (
       connType: target.connType ?? "local",
       dnsResolver,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
 
     yield* Effect.annotateCurrentSpan({
@@ -216,11 +221,9 @@ const runLint = Effect.fnUntraced(function* (
   // For `--linked`, the ref is resolved up front (non-prompting) and the
   // linked-project cache is refreshed on both success and failure; `--local`/`--db-url`
   // never write it since caching only runs on the linked branch.
-  if (target.connType === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-    return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
   }
   return yield* lintBody;
 });

@@ -21,7 +21,7 @@ counterpart exists for this behavior.
 > read — `link` never falls back to it there. It **is** read for the TS-only branch-name lookup above, which resolves
 > the currently-linked _parent_ project (env `SUPABASE_PROJECT_ID` → `linked-project.json` →
 > `project-ref` file, first ref-shaped candidate wins) before searching its branches. This
-> deliberately does NOT reuse `ProjectRefResolver.resolveOptional` — that resolves the
+> deliberately does NOT reuse `RemoteTarget.resolveOptional` — that resolves the
 > FINAL linked ref, which right after linking a branch would be the branch's own ref, breaking a
 > second `link <other-branch>` (CLI-2167 follow-up). `linked-project.json` works as the parent
 > candidate because `link`'s plain-project arm writes it for a real (non-404) project, and the 404
@@ -32,8 +32,8 @@ counterpart exists for this behavior.
 > lost until a real (non-404) `link` run. `LinkedProjectCache.cache` (the post-run
 > PersistentPostRun-parity fill) never overwrites an EXISTING file either way, so between the two,
 > the cache reliably tracks the last known-good parent project even across subsequent branch links.
-> This parent resolution is hoisted into `command-internal/parent-project-ref.ts`
-> (`resolveLinkedParentRef`), shared with the `branches` command family, which is
+> This parent resolution is `RemoteTarget.parent`
+> in `config/remote-target.layer.ts`, shared with the `branches` command family, which is
 > PARENT-scoped for the same reason — see `branches/list/SIDE_EFFECTS.md`.
 
 ## Files Written
@@ -178,7 +178,9 @@ in `config.toml` with the variable unset), the link target is one gitignored doc
   running `supabase link` again; a read or write failure other than absence is
   `ProjectLinkIoError`.
 - The organization and project `groupIdentify` calls fire from `link` itself, since the post-run
-  linked-project cache fill is a no-op in this mode.
+  linked-project cache fill is a no-op in this mode. For other commands the fill writes
+  `$SUPABASE_HOME/project-cache/<ref>.json` (atomic, once per ref; see `docs/supabase-home.md`)
+  instead of `.temp/linked-project.json`.
 
 ## Known divergence
 

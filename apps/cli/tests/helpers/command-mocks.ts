@@ -56,7 +56,7 @@ import {
   PGDATA_BASELINE_MARKER_NAME,
   PGDATA_PATH,
 } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
-import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
@@ -1396,7 +1396,7 @@ export function mockDockerDaemonCliSpawner(
 }
 
 // Bundles the entire Layer.mergeAll(...) graph that every native-port integration test
-// re-builds, including the easy-to-mis-wire `projectRefLayer.pipe(Layer.provide(...))` subgraph —
+// re-builds, including the easy-to-mis-wire `remoteTargetLayer.pipe(Layer.provide(...))` subgraph —
 // `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
 // subgraph here removes a recurring footgun.
 type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
@@ -1463,7 +1463,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     stdin,
     processControl,
     runtimeInfo,
-    projectRefLayer.pipe(
+    remoteTargetLayer.pipe(
       Layer.provide(
         Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(opts.api.layer)),

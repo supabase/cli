@@ -2,7 +2,7 @@ import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYes } from "../../../command-internal/global-flags.ts";
@@ -40,13 +40,13 @@ const mapUnsetError = mapHttpError({
 export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: SecretsUnsetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
   const yes = yield* resolveYes;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     let names: ReadonlyArray<string> = flags.names;

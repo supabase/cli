@@ -35,6 +35,7 @@ import {
 } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { fetchPoolerUrl, linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { readLinkSnapshotSoft } from "../../command-internal/link-snapshot.ts";
 import {
   type ProjectStateMode,
   ProjectStateModeContext,
@@ -358,6 +359,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       };
       // Falls back to the naive `dbConfig` on `DbConfigIpv6Error` instead of aborting, since a
       // freshly created project's pooler metadata may still be propagating.
+      const linkSnapshot = yield* readLinkSnapshotSoft(fs, path, workdir);
       const resolvedConn = yield* resolveLinkedConn(
         projectRef,
         workdir,
@@ -365,6 +367,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         cliSettings.poolerHost,
         dnsResolver,
         Option.some(created.dbPassword),
+        { poolerUrl: linkSnapshot.poolerUrl },
       ).pipe(
         Effect.catchTag("DbConfigIpv6Error", (error) =>
           output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),

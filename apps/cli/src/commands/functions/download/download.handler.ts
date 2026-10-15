@@ -10,7 +10,7 @@ import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
@@ -20,7 +20,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
 ) {
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
+  const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const proxy = yield* GoProxy;
@@ -44,9 +44,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       // Written to stderr, matching `yellow`'s default TTY gate.
       styleWarning: (text) => yellow(text),
       resolveProjectRef: (projectRef) =>
-        resolver
-          .resolve(projectRef)
-          .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+        remoteTarget.resolve(projectRef).pipe(
+          Effect.map((target) => target.ref),
+          Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+        ),
       // Suppresses the delegated binary's own `cli_command_executed` so a
       // proxied invocation fires exactly one event. In machine-output mode its
       // stdout is captured and discarded instead of inherited, since

@@ -7,9 +7,9 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { InvalidProjectRefError } from "../../../config/project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
-  ProjectRefResolver,
+  RemoteTarget,
   PROJECT_REF_PATTERN,
-} from "../../../config/project-ref.service.ts";
+} from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
@@ -36,7 +36,7 @@ type DeletedProject = typeof V1DeleteAProjectOutput.Type;
 export const projectsDelete = Effect.fn("projects.delete")(function* (flags: ProjectsDeleteFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const cliSettings = yield* CommandSettings;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -56,7 +56,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     if (Option.isSome(flags.ref) && flags.ref.value.length > 0) {
       ref = flags.ref.value;
     } else if (tty.stdinIsTty && output.interactive) {
-      ref = yield* resolver.promptProjectRef("Which project do you want to delete?");
+      ref = yield* resolver.prompt("Which project do you want to delete?");
     } else {
       return yield* new ProjectsDeleteRefRequiredError({
         message: "accepts 1 arg(s), received 0",

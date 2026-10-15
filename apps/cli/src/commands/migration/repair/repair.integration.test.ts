@@ -37,7 +37,6 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -50,6 +49,7 @@ import {
 } from "../migration.errors.ts";
 import { MigrationRepairUpdateError } from "./repair.errors.ts";
 import { migrationRepair, type MigrationRepairInput } from "./repair.handler.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 interface SetupOpts {
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
@@ -126,15 +126,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
   // test can prove the flag drives the linked ref.
-  const projectRef = Layer.succeed(ProjectRefResolver, {
+  const projectRef = stubRemoteTarget({
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.succeed(
         Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(VALID_REF),
+    prompt: () => Effect.succeed(VALID_REF),
   });
 
   const http = recordingProjectHttpClient(VALID_REF);

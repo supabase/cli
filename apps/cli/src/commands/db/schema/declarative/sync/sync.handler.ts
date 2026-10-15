@@ -25,7 +25,10 @@ import {
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
 import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
-import { readLinkedProjectRef } from "../../../../../command-internal/project-link.ts";
+import {
+  RemoteTarget,
+  type ResolvedRemoteTarget,
+} from "../../../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
@@ -95,6 +98,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
+  const remoteTarget = yield* RemoteTarget;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
@@ -205,21 +209,15 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
         (yield* listLocalMigrations(fs, path, migrationsDir).pipe(
           Effect.orElseSucceed((): ReadonlyArray<string> => []),
         )).length > 0;
-      // Only when migrations exist, resolve the ref (config `project_id` → `.temp/project-ref`)
-      // and record it for the finalizer, so a linked-workdir bootstrap caches regardless of the
-      // chosen target.
-      let linkedRef = Option.none<string>();
+      // Only when migrations exist, resolve the target (env, then link) and record its ref for
+      // the finalizer, so a linked-workdir bootstrap caches regardless of the chosen target.
+      let linkedTarget = Option.none<ResolvedRemoteTarget>();
       if (hasMigrations) {
-        // Only decides whether to offer the linked choice, so swallow a broken
-        // `.temp/project-ref` here; `linkedProjectRef` then stays unset so the post-run cache
-        // correctly does not fire.
-        linkedRef = Option.isSome(cliSettings.projectId)
-          ? cliSettings.projectId
-          : yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
-              Effect.orElseSucceed(() => Option.none<string>()),
-            );
-        if (Option.isSome(linkedRef)) {
-          yield* Ref.set(linkedProjectRef, linkedRef.value);
+        // Only decides whether to offer the linked choice, so a broken link omits the choice;
+        // `linkedProjectRef` then stays unset so the post-run cache correctly does not fire.
+        linkedTarget = yield* remoteTarget.resolveOptional(Option.none());
+        if (Option.isSome(linkedTarget)) {
+          yield* Ref.set(linkedProjectRef, linkedTarget.value.ref);
         }
       }
       // sync has no target flags, so reset stays interactive (the prompt fires under the local
@@ -231,7 +229,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
         fs,
         path,
         cliSettings.workdir,
-        linkedRef,
+        linkedTarget,
         ensureLocalPostgresImageCurrent,
       );
       const generated = yield* generateDeclarativeOutput(run, target);

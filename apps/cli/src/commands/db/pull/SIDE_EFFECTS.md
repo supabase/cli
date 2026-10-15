@@ -185,7 +185,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved

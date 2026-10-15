@@ -65,10 +65,7 @@ import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import {
-  ProjectRefResolver,
-  PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/project-ref.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -108,6 +105,7 @@ import {
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -925,7 +923,7 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // Simulates an unlinked workdir: `loadProjectRef` fails with `ProjectRefNotLinkedError`
+    // Simulates an unlinked workdir: `RemoteTarget.load` fails with `ProjectRefNotLinkedError`
     // absent an explicit `--project-ref` flag, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
     stackBackend?: boolean;
@@ -1052,19 +1050,19 @@ function setup(
     // real pipe for the non-interactive bucket-seed prompts instead.
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true }),
     mockStdin(opts.stdinIsTty ?? true, opts.pipedStdin),
-    // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, mirrored here so a
+    // `RemoteTarget.load` gives an explicit `--project-ref` flag top precedence, mirrored here so a
     // test can prove the flag (not just `opts.ref`) drives the linked ref.
-    Layer.succeed(ProjectRefResolver, {
+    stubRemoteTarget({
       resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
       resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
       resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-      loadProjectRef: (flagValue: Option.Option<string>) =>
+      load: (flagValue: Option.Option<string>) =>
         Option.isSome(flagValue) && flagValue.value.length > 0
           ? Effect.succeed(flagValue.value)
           : opts.linkedFails === true
             ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
             : Effect.succeed(opts.ref ?? VALID_REF),
-      promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
+      prompt: () => Effect.succeed(opts.ref ?? VALID_REF),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
