@@ -127,16 +127,15 @@ describe.each(leavesByVariant)(
         sync: "linked",
         selectable: "local",
       };
-      const offenders = withPolicy
-        .flatMap(({ path, node, policy }) => {
-          const permissions = Option.getOrUndefined(readPermissions(node.command));
-          if (permissions?.status !== "mapped" || permissions.dbTargetDefault === undefined)
-            return [];
-          const want = expected[policy.group];
-          return want === undefined || permissions.dbTargetDefault === want
-            ? []
-            : [`${path}: ${policy.group} defaults to ${permissions.dbTargetDefault}`];
-        });
+      const offenders = withPolicy.flatMap(({ path, node, policy }) => {
+        const permissions = Option.getOrUndefined(readPermissions(node.command));
+        if (permissions?.status !== "mapped" || permissions.dbTargetDefault === undefined)
+          return [];
+        const want = expected[policy.group];
+        return want === undefined || permissions.dbTargetDefault === want
+          ? []
+          : [`${path}: ${policy.group} defaults to ${permissions.dbTargetDefault}`];
+      });
       expect(offenders).toEqual([]);
     });
 
@@ -172,9 +171,7 @@ describe.each(leavesByVariant)(
 
 describe("target policy allowlists", () => {
   it("name only real leaves", () => {
-    const stale = [...FLAG_MIGRATION_PENDING].filter(
-      (path) => !everyLeafPath.has(path),
-    );
+    const stale = [...FLAG_MIGRATION_PENDING].filter((path) => !everyLeafPath.has(path));
     expect(stale).toEqual([]);
   });
 
