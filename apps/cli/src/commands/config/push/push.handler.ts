@@ -587,7 +587,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       }
     }
     if (webhooksEnabled) {
-      yield* output.raw(`Would enable webhooks for project: ${sanitizeInlineName(ref)}\n`, "stderr");
+      yield* output.raw(
+        `Would enable webhooks for project: ${sanitizeInlineName(ref)}\n`,
+        "stderr",
+      );
     }
 
     // 11. One consent covers every write; nothing is sent before it.

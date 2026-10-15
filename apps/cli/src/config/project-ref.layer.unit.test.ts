@@ -380,16 +380,19 @@ describe("projectRefLayer", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("never calls a saved ref a branch just because the cache names another project", () => {
-      writeRefFile(tempRoot, ANOTHER_REF);
-      writeLinkedCache(tempRoot, { ref: VALID_REF, name: "alpha" });
-      const { layer, out } = makeLayer({ workdir: tempRoot });
-      return Effect.gen(function* () {
-        const { resolveRef } = yield* ProjectRefResolver;
-        yield* resolveRef(Option.none());
-        expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF}`));
-      }).pipe(Effect.provide(layer));
-    });
+    it.effect(
+      "never calls a saved ref a branch just because the cache names another project",
+      () => {
+        writeRefFile(tempRoot, ANOTHER_REF);
+        writeLinkedCache(tempRoot, { ref: VALID_REF, name: "alpha" });
+        const { layer, out } = makeLayer({ workdir: tempRoot });
+        return Effect.gen(function* () {
+          const { resolveRef } = yield* ProjectRefResolver;
+          yield* resolveRef(Option.none());
+          expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF}`));
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.effect("says a flag ref outside the linked project is not the linked project", () => {
       writeRefFile(tempRoot, VALID_REF);

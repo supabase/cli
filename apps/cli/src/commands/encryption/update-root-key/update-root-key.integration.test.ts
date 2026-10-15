@@ -182,8 +182,7 @@ describe("encryption update-root-key integration", () => {
       expect(success?.data).toEqual({ root_key: "new-key" });
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe(
-        unverifiedTargetBanner() +
-          `Confirmed by --yes: ${ACTION} on project ${VALID_REF}\n`,
+        unverifiedTargetBanner() + `Confirmed by --yes: ${ACTION} on project ${VALID_REF}\n`,
       );
     }).pipe(Effect.provide(layer));
   });

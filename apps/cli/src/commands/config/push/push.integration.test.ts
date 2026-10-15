@@ -3129,21 +3129,22 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("declining a branch-linked push fails before any write and still flushes telemetry", () => {
-    const { layer, out, api, telemetry, linkedProjectCache } = setupLinkedBranchPush({
-      confirm: [false],
-    });
-    return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-      expect(out.promptConfirmCalls[0]?.message).toContain(
-        `on project ${BRANCH_REF}?`,
-      );
-      expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
-      expect(telemetry.flushed).toBe(true);
-      expect(linkedProjectCache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "declining a branch-linked push fails before any write and still flushes telemetry",
+    () => {
+      const { layer, out, api, telemetry, linkedProjectCache } = setupLinkedBranchPush({
+        confirm: [false],
+      });
+      return Effect.gen(function* () {
+        const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+        expect(out.promptConfirmCalls[0]?.message).toContain(`on project ${BRANCH_REF}?`);
+        expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
+        expect(telemetry.flushed).toBe(true);
+        expect(linkedProjectCache.cached).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
     "--yes confirms a branch-linked push and echoes the confirmation with the project ref",

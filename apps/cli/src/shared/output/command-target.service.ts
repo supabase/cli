@@ -3,13 +3,13 @@ import { Context, Effect, Option, Schema } from "effect";
 const LocalTargetJson = Schema.Struct({
   kind: Schema.Literal("local"),
   host: Schema.String,
-  port: Schema.Number,
+  port: Schema.Finite,
 });
 
 const DbUrlTargetJson = Schema.Struct({
   kind: Schema.Literal("db-url"),
   host: Schema.String,
-  port: Schema.Number,
+  port: Schema.Finite,
 });
 
 const LinkedTargetJson = Schema.Struct({

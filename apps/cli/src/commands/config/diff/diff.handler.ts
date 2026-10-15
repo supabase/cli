@@ -203,9 +203,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     if (output.format !== "text") {
       yield* output.success(
         configDiffSummaryMessage(changeSet, scope),
-        yield* withAnnouncedTarget(
-          configDiffPayload(changeSet, scope, context, originFor),
-        ),
+        yield* withAnnouncedTarget(configDiffPayload(changeSet, scope, context, originFor)),
       );
     } else {
       yield* output.raw(renderConfigDiffText(changeSet, scope, originFor));

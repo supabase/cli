@@ -1,10 +1,6 @@
 import { Effect, Layer, Option, Ref, Schema } from "effect";
 
-import {
-  CommandTarget,
-  CommandTargetJson,
-  type RenderedTarget,
-} from "./command-target.service.ts";
+import { CommandTarget, CommandTargetJson, type RenderedTarget } from "./command-target.service.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 

@@ -169,7 +169,10 @@ export const projectRefLayer = Layer.effect(
               }),
             );
           }
-          yield* announceLinked(resolved.ref, resolved.name === undefined ? {} : { name: resolved.name });
+          yield* announceLinked(
+            resolved.ref,
+            resolved.name === undefined ? {} : { name: resolved.name },
+          );
           return resolved.ref;
         }),
       resolveOptional: (flagValue) =>

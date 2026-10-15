@@ -50,8 +50,7 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
 
-const confirmedBy = (action: string) =>
-  `Confirmed by --yes: ${action} on project ${VALID_REF}\n`;
+const confirmedBy = (action: string) => `Confirmed by --yes: ${action} on project ${VALID_REF}\n`;
 const UPDATE_CONFIRMED = confirmedBy("Update the Postgres config overrides");
 const DELETE_CONFIRMED = confirmedBy("Delete Postgres config overrides");
 

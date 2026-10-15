@@ -20,7 +20,11 @@ describe("CommandTargetJson", () => {
   });
 
   it("leaves the optional linked fields out when absent", () => {
-    const linked = { kind: "linked", project_ref: "abcdefghijklmnopqrst", environment: "unverified" };
+    const linked = {
+      kind: "linked",
+      project_ref: "abcdefghijklmnopqrst",
+      environment: "unverified",
+    };
     expect(encode(linked)).toEqual(linked);
   });
 

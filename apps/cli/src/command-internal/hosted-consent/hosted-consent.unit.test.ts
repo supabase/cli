@@ -90,7 +90,10 @@ const harness = (scenario: Scenario) => {
     withShellEnv(
       (scenario.announced === undefined
         ? body
-        : Effect.flatMap(announceTarget({ text: scenario.announced, json: UNVERIFIED_JSON }), () => body)
+        : Effect.flatMap(
+            announceTarget({ text: scenario.announced, json: UNVERIFIED_JSON }),
+            () => body,
+          )
       ).pipe(Effect.provide(layer)),
     );
   return { out, prepare };

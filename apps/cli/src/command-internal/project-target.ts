@@ -37,7 +37,7 @@ export interface ConfigTarget {
 }
 
 /** A {@link ConfigTarget} with the same ref as the linked target connection resolution takes. */
-export interface ResolvedConfigTarget extends ConfigTarget {
+interface ResolvedConfigTarget extends ConfigTarget {
   readonly linked: LinkedTarget;
 }
 

@@ -51,7 +51,10 @@ export const describeLinkedTarget = (input: {
       },
     };
   }
-  const differsFromLinked = Option.exists(input.linkedRef ?? Option.none(), (linked) => linked !== ref);
+  const differsFromLinked = Option.exists(
+    input.linkedRef ?? Option.none(),
+    (linked) => linked !== ref,
+  );
   return {
     text: `project ${named(input.name, ref)}${differsFromLinked ? " (not the linked project)" : ""}`,
     json: {

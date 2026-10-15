@@ -77,7 +77,10 @@ const run = (
       yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
     }
     if (options.savedRef !== undefined) {
-      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), options.savedRef);
+      yield* fs.writeFileString(
+        path.join(dir, "supabase", ".temp", "project-ref"),
+        options.savedRef,
+      );
     }
     if (options.cache !== undefined) {
       yield* fs.writeFileString(
