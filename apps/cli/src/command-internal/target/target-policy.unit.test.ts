@@ -29,6 +29,12 @@ const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
   ],
   ["v1-delete-network-bans", "removes the caller's own ban only when the token permits it"],
   ["v1-list-all-network-bans", "a POST that only reads the ban list"],
+  ["v1-verify-dns-config", "re-runs verification and changes no configuration"],
+  ["v1-check-vanity-subdomain-availability", "a POST that only reads availability"],
+  [
+    "v2-create-notebook",
+    "notebooks pull creates remote notebooks only after an interactive reconcile choice",
+  ],
 ]);
 
 const MUTATING_VERBS: ReadonlySet<string> = new Set([
