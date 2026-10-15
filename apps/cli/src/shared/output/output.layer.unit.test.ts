@@ -4,6 +4,8 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Strea
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { announceTarget } from "./command-target.service.ts";
+import { commandTargetLayer } from "./command-target.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
@@ -1325,6 +1327,185 @@ describe("Output", () => {
         }).pipe(Effect.provide(layer));
       },
     );
+  });
+
+  describe("command target", () => {
+    const localTarget = {
+      text: "local stack (127.0.0.1:54322)",
+      json: { kind: "local", host: "127.0.0.1", port: 54322 },
+    };
+    const linkedTarget = {
+      text: "project abcdefghijklmnopqrst · identity unverified",
+      json: {
+        kind: "linked",
+        project_ref: "abcdefghijklmnopqrst",
+        environment: "unverified",
+      },
+    };
+
+    const layerWith = (
+      outputLayer: ReturnType<typeof outputLayerFor>,
+      mock: ReturnType<typeof mockStdio>,
+    ) =>
+      Layer.mergeAll(
+        commandTargetLayer.pipe(
+          Layer.provideMerge(
+            outputLayer.pipe(
+              Layer.provide(Layer.mergeAll(mock.layer, mockTty({ stdoutIsTty: false }))),
+            ),
+          ),
+        ),
+        machineErrorContextLayer,
+      );
+
+    it.effect("a json object result gains the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ rows: 2 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ rows: 2, target: localTarget.json });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json success payload gains the announced target next to its message", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.success("Done.", { applied: 1 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ applied: 1, message: "Done.", target: linkedTarget.json });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json array result is written unchanged", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result([{ id: 1 }]);
+        expect(mock.stdout).toEqual(['[{"id":1}]\n']);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a handler-owned target in the payload is preserved", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ target: "remote", rows: 1 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ target: "remote", rows: 1 });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json result is unchanged when no target was announced", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ rows: 2 });
+        expect(mock.stdout).toEqual(['{"rows":2}\n']);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json result is unchanged when the cell is not provided", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ rows: 2 });
+        expect(mock.stdout).toEqual(['{"rows":2}\n']);
+      }).pipe(Effect.provide(jsonOutputLayer.pipe(Layer.provide(mock.layer))));
+    });
+
+    it.effect("the json error envelope carries the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          _tag: "Error",
+          error: { code: "E_TEST", message: "failed" },
+          target: linkedTarget.json,
+        });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the stream-json result event gains the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ rows: 2 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.type).toBe("result");
+        expect(parsed.data).toEqual({ rows: 2, target: localTarget.json });
+      }).pipe(Effect.provide(layerWith(streamJsonOutputLayer, mock)));
+    });
+
+    it.effect("the stream-json error event carries the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.type).toBe("error");
+        expect(parsed.target).toEqual(linkedTarget.json);
+      }).pipe(Effect.provide(layerWith(streamJsonOutputLayer, mock)));
+    });
+
+    it.effect("announcing writes the banner to stderr in every output format", () =>
+      Effect.gen(function* () {
+        for (const outputLayer of [jsonOutputLayer, streamJsonOutputLayer, textOutputLayer]) {
+          const mock = mockStdio();
+          yield* announceTarget(localTarget).pipe(Effect.provide(layerWith(outputLayer, mock)));
+          expect(mock.stderr).toEqual(["Target: local stack (127.0.0.1:54322)\n"]);
+          expect(mock.stdout).toEqual([]);
+        }
+      }),
+    );
+
+    it.effect("announcing the same target twice prints one banner", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        yield* announceTarget(localTarget);
+        yield* announceTarget(localTarget);
+        expect(mock.stderr).toEqual(["Target: local stack (127.0.0.1:54322)\n"]);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("two distinct targets print both banners and the json keeps the first", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* announceTarget(localTarget);
+        yield* out.result({ diff: "" });
+        expect(mock.stderr).toEqual([
+          "Target: project abcdefghijklmnopqrst · identity unverified\n",
+          "Target: local stack (127.0.0.1:54322)\n",
+        ]);
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.target).toEqual(linkedTarget.json);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("an error context target set before the announcement is kept", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const context = yield* MachineErrorContext;
+        yield* context.set({ target: { project_ref: "own" } });
+        yield* announceTarget(localTarget);
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.target).toEqual({ project_ref: "own" });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
   });
 
   describe("layerFor", () => {

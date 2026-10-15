@@ -17,6 +17,7 @@ import { styleText } from "node:util";
 import { DateTime, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
+import { CommandTarget } from "./command-target.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
@@ -36,6 +37,21 @@ const encodeJson = (value: unknown) =>
 const readMachineErrorContext = Effect.fnUntraced(function* () {
   const context = yield* Effect.serviceOption(MachineErrorContext);
   return Option.isSome(context) ? yield* context.value.get : {};
+});
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+/** Adds the announced target to a plain-object result; arrays, scalars and a payload's own `target` are left alone. */
+const withCommandTarget = Effect.fnUntraced(function* (data: unknown) {
+  if (!isPlainObject(data) || data.target !== undefined) return data;
+  const cell = yield* Effect.serviceOption(CommandTarget);
+  if (Option.isNone(cell)) return data;
+  const target = yield* cell.value.json;
+  return Option.isSome(target) ? { ...data, target: target.value } : data;
 });
 
 function formatTaskMessage(message: string | undefined): string | undefined {
@@ -494,7 +510,10 @@ export const jsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
-    const result = (data: unknown) => writeStdout(`${JSON.stringify(data)}\n`);
+    const result = (data: unknown) =>
+      withCommandTarget(data).pipe(
+        Effect.flatMap((merged) => writeStdout(`${JSON.stringify(merged)}\n`)),
+      );
 
     return Output.of({
       format: "json" as const,
@@ -575,7 +594,11 @@ export const streamJsonOutputLayer = Layer.effect(
         }),
       );
     const result = (data: unknown) =>
-      emitEvent((timestamp) => ({ type: "result", data, timestamp }));
+      withCommandTarget(data).pipe(
+        Effect.flatMap((merged) =>
+          emitEvent((timestamp) => ({ type: "result", data: merged, timestamp })),
+        ),
+      );
 
     return Output.of({
       format: "stream-json" as const,
