@@ -22,6 +22,8 @@ export type RunMeta = {
   root: string;
   /** Collected report names the run's invocations were expected to write. */
   expectedReports: string[];
+  /** Invocations that exited nonzero, with the collected report names each was expected to write. */
+  failedInvocations: { reports: string[]; exitCode: number }[];
 };
 
 type TestCase = {
@@ -121,7 +123,6 @@ export function aggregate(
     suite.runs.add(meta.run);
     suites.set(meta.suite, suite);
 
-    let sawFailure = false;
     /** Iterations that neither ran a test nor failed, such as a repetition that selected nothing. */
     const emptyIterations: number[] = [];
     const iterations = [...new Set(reports.map((report) => report.iteration))].sort(
@@ -164,7 +165,6 @@ export function aggregate(
         };
         verdict.executions += 1;
         if (testCase.failed) {
-          sawFailure = true;
           iterationFailed = true;
           verdict.failedIn.push({ run: meta.run, iteration });
           verdict.message ??= testCase.message;
@@ -177,11 +177,19 @@ export function aggregate(
     }
 
     const collected = new Set(reports.map((report) => report.name));
+    const withFailure = new Set(
+      reports.filter((report) => report.cases.some((c) => c.failed)).map((report) => report.name),
+    );
+    // A failing test elsewhere in the job does not explain another invocation's nonzero exit.
+    const crashed = meta.failedInvocations.filter(
+      (invocation) => !invocation.reports.some((name) => withFailure.has(name)),
+    );
     const missing = meta.expectedReports.filter((name) => !collected.has(name)).sort();
     if (meta.exitCode === null) {
       runProblems.push({
         name: meta.name,
-        problem: "test step did not run or finish (setup failure, timeout, or cancel)",
+        problem:
+          "test step did not run or finish (setup failure, flaky-check error, timeout, or cancel); see the job log",
       });
     } else if (reports.length === 0) {
       runProblems.push({
@@ -190,10 +198,15 @@ export function aggregate(
       });
     } else if (missing.length > 0) {
       runProblems.push({ name: meta.name, problem: `no report for ${missing.join(", ")}` });
-    } else if (meta.exitCode !== 0 && !sawFailure) {
+    } else if (crashed.length > 0) {
       runProblems.push({
         name: meta.name,
-        problem: `exited ${meta.exitCode} without a failing test (unhandled error or crash)`,
+        problem: crashed
+          .map(
+            (invocation) =>
+              `${invocation.reports.join(", ") || "an invocation"} exited ${invocation.exitCode} without a failing test (unhandled error or crash)`,
+          )
+          .join("; "),
       });
     } else if (emptyIterations.length === iterations.length) {
       if (!allowEmpty.includes(meta.suite)) {

@@ -169,6 +169,7 @@ jobs:
           MATRIX: ${{ toJSON(matrix) }}
           EXIT_CODE: ${{ steps.run.outputs.exit-code }}
           EXPECTED_REPORTS: ${{ steps.run.outputs.expected-reports }}
+          FAILED_INVOCATIONS: ${{ steps.run.outputs.failed-invocations }}
         run: bun "$FLAKY_CLI" collect
 
       - name: Upload results

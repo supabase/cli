@@ -33,15 +33,18 @@ function run(
   reports: Record<string, JsonTestResults>,
   meta: Partial<RunMeta> = {},
 ): RunResult {
+  const exitCode = meta.exitCode === undefined ? 0 : meta.exitCode;
   return {
     meta: {
       name: `flaky-${suite}-run${runNumber}`,
       suite,
       run: runNumber,
       executions: 1,
-      exitCode: 0,
+      exitCode,
       root: "/repo",
       expectedReports: Object.keys(reports),
+      failedInvocations:
+        exitCode === null || exitCode === 0 ? [] : [{ reports: Object.keys(reports), exitCode }],
       ...meta,
     },
     reports: Object.entries(reports).map(([name, results]) => ({
@@ -195,6 +198,18 @@ describe("aggregate", () => {
         run("unit", 2, { [`${API}.1.json`]: clean }, { exitCode: 1 }),
         run("unit", 3, { [`${API}.1.json`]: empty }),
         run("unit", 4, {}, { exitCode: null }),
+        run(
+          "integration",
+          1,
+          { "apps__cli--integration.1.json": iteration2, [`${API}.1.json`]: clean },
+          {
+            exitCode: 1,
+            failedInvocations: [
+              { reports: ["apps__cli--integration.1.json"], exitCode: 1 },
+              { reports: [`${API}.1.json`], exitCode: 1 },
+            ],
+          },
+        ),
         run("focused", 1, { [`${API}.1.json`]: empty }),
         run(
           "focused",
@@ -205,28 +220,36 @@ describe("aggregate", () => {
       ],
       ["1", "2", "3", "4", "5"]
         .map((n) => `flaky-unit-run${n}`)
-        .concat("flaky-focused-run1", "flaky-focused-run2"),
+        .concat("flaky-focused-run1", "flaky-focused-run2", "flaky-integration-run1"),
       ["focused"],
     );
 
     expect(report.runProblems).toEqual([
       { name: "flaky-focused-run2", problem: "ran no tests in iteration 2" },
+      {
+        name: "flaky-integration-run1",
+        problem: `${API}.1.json exited 1 without a failing test (unhandled error or crash)`,
+      },
       { name: "flaky-unit-run1", problem: "no report for apps__cli--unit.1.json" },
       {
         name: "flaky-unit-run2",
-        problem: "exited 1 without a failing test (unhandled error or crash)",
+        problem: `${API}.1.json exited 1 without a failing test (unhandled error or crash)`,
       },
       { name: "flaky-unit-run3", problem: "ran no tests; check the filter" },
       {
         name: "flaky-unit-run4",
-        problem: "test step did not run or finish (setup failure, timeout, or cancel)",
+        problem:
+          "test step did not run or finish (setup failure, flaky-check error, timeout, or cancel); see the job log",
       },
       {
         name: "flaky-unit-run5",
         problem: "no results uploaded (the job failed before collecting, such as in setup)",
       },
     ]);
-    expect([report.flaky, report.failing]).toEqual([[], []]);
+    expect([report.flaky, report.failing.filter((v) => v.suite !== "integration")]).toEqual([
+      [],
+      [],
+    ]);
   });
 });
 

@@ -121,16 +121,25 @@ async function runCommand(): Promise<number> {
   }
   let exitCode = 0;
   const expected: string[] = [];
+  const failedInvocations: RunMeta["failedInvocations"] = [];
   const turboCache = new Map<string, TurboTask[]>();
   for (let iteration = 1; iteration <= entry.executions; iteration += 1) {
     for (const { argv, reports } of commandsFor(entry, iteration, extra)) {
-      expected.push(...expectedReports(reports, turboCache));
+      const names = expectedReports(reports, turboCache);
+      expected.push(...names);
       console.log(`$ ${argv.join(" ")}`);
       const code = await Bun.spawn(argv, { stdout: "inherit", stderr: "inherit" }).exited;
-      exitCode = code === 0 ? exitCode : code;
+      if (code !== 0) {
+        exitCode = code;
+        failedInvocations.push({ reports: names, exitCode: code });
+      }
     }
   }
-  setOutputs({ "exit-code": String(exitCode), "expected-reports": JSON.stringify(expected) });
+  setOutputs({
+    "exit-code": String(exitCode),
+    "expected-reports": JSON.stringify(expected),
+    "failed-invocations": JSON.stringify(failedInvocations),
+  });
   return exitCode;
 }
 
@@ -154,6 +163,7 @@ function collectCommand(): void {
     exitCode: env("EXIT_CODE") === "" ? null : Number(env("EXIT_CODE")),
     root: process.cwd(),
     expectedReports: JSON.parse(env("EXPECTED_REPORTS") || "[]"),
+    failedInvocations: JSON.parse(env("FAILED_INVOCATIONS") || "[]"),
   };
   writeFileSync(join(out, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
   setOutputs({ dir: out });
