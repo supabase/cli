@@ -1,11 +1,16 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Redacted } from "effect";
 import { CliOutput, Command, type Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { unwrapParam } from "../param-introspection.ts";
-import { deprecatedProjectIdFlag, seedTargetGlobalFlags, targetFlags } from "./target-flags.ts";
+import {
+  deprecatedProjectIdFlag,
+  seedTargetGlobalFlags,
+  flagsForTarget,
+  targetFlags,
+} from "./target-flags.ts";
 
 const silentFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
@@ -80,7 +85,7 @@ describe("targetFlags", () => {
     const sync = targetFlags({ group: "sync", subject: "database", dbUrl: true });
     expect(describeFlag(sync.linked).description).toBe("Target the linked project (default).");
     expect(describeFlag(withDbUrl.linked).description).toBe(
-      'Target the linked project. Default when the workspace target is "remote".',
+      'Target the linked project (default when target = "remote" is set in config.toml or SUPABASE_TARGET).',
     );
   });
 
@@ -111,5 +116,33 @@ describe("seedTargetGlobalFlags", () => {
   it("shares the selector flag names with targetFlags", () => {
     expect(describeFlag(seedTargetGlobalFlags.linked.flag).name).toBe("linked");
     expect(describeFlag(seedTargetGlobalFlags.local.flag).name).toBe("local");
+  });
+});
+
+describe("flagsForTarget", () => {
+  it("names the flags that re-select each kind of target without echoing a db-url", () => {
+    expect(flagsForTarget({ kind: "local" })).toBe("--local");
+    expect(flagsForTarget({ kind: "db-url", url: Redacted.make("postgresql://u:pw@h/db") })).toBe(
+      "--db-url <redacted>",
+    );
+    expect(
+      flagsForTarget({
+        kind: "linked",
+        ref: "abcdefghijklmnopqrst",
+        source: "file",
+        matchesLinkedRef: true,
+      }),
+    ).toBe("--linked");
+  });
+
+  it("keeps an explicit ref that is not the linked project", () => {
+    expect(
+      flagsForTarget({
+        kind: "linked",
+        ref: "abcdefghijklmnopqrst",
+        source: "flag",
+        matchesLinkedRef: false,
+      }),
+    ).toBe("--linked --project-ref abcdefghijklmnopqrst");
   });
 });

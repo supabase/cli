@@ -26,7 +26,9 @@ const config = {
 export type InspectReportFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const inspectReportCommand = Command.make("report", config).pipe(
-  Command.withDescription("Generate a CSV output for all inspect commands."),
+  Command.withDescription(
+    "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --linked for the linked project or --db-url for another database.",
+  ),
   Command.withShortDescription("Generate a CSV output for all inspect commands"),
   withPermissions(
     withDbTarget(compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig), {

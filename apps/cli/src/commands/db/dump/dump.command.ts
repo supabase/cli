@@ -99,8 +99,8 @@ const config = {
 export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbDumpCommand = Command.make("dump", config).pipe(
-  Command.withDescription("Dumps data or schemas from the remote database."),
-  Command.withShortDescription("Dumps data or schemas from the remote database"),
+  Command.withDescription("Dumps data or schemas from the target database."),
+  Command.withShortDescription("Dumps data or schemas from the target database"),
   withPermissions(
     withDbTarget(
       compose(

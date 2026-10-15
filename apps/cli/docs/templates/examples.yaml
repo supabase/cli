@@ -111,7 +111,7 @@ supabase-status:
 supabase-migration-list:
   - id: basic-usage
     name: Basic usage
-    code: supabase migration list
+    code: supabase migration list --linked
     response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
@@ -140,20 +140,24 @@ supabase-migration-new:
 supabase-migration-repair:
   - id: basic-usage
     name: Mark a migration as reverted
-    code: supabase migration repair 20230103054303 --status reverted
+    code: supabase migration repair 20230103054303 --status reverted --linked --yes
     response: |
-      Repaired migration history: 20230103054303 => reverted
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      Confirmed by --yes: Mark 1 migration as reverted on project My Project (abcdefghijklmnopqrst) · production
+      Repaired migration history: [20230103054303] => reverted
   - id: mark-applied
     name: Mark a migration as applied
-    code: supabase migration repair 20230222032233 --status applied
+    code: supabase migration repair 20230222032233 --status applied --linked --yes
     response: |
-      Repaired migration history: 20230222032233 => applied
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      Confirmed by --yes: Mark 1 migration as applied on project My Project (abcdefghijklmnopqrst) · production
+      Repaired migration history: [20230222032233] => applied
 supabase-db-diff:
   - id: basic-usage
     name: Basic usage
     code: supabase db diff -f my_table
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Applying migration 20230425064254_remote_commit.sql...
       Diffing schemas: auth,extensions,public,storage
@@ -164,7 +168,7 @@ supabase-db-diff:
     name: Against linked project
     code: supabase db diff -f my_table --linked
     response: |
-      Connecting to local database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Creating shadow database...
       Diffing schemas: auth,extensions,public,storage
       Finished supabase db diff on branch main.
@@ -175,7 +179,7 @@ supabase-db-diff:
     name: For a specific schema
     code: supabase db diff -f my_table --schema auth
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Diffing schemas: auth
       Finished supabase db diff on branch main.
@@ -186,18 +190,28 @@ supabase-db-dump:
     name: Basic usage
     code: supabase db dump -f supabase/schema.sql
     response: |
+      Target: local stack (127.0.0.1:54322)
+      Dumping schemas from local database...
+      Dumped schema to supabase/schema.sql.
+  - id: linked-project
+    name: Dump the linked project
+    code: supabase db dump -f supabase/schema.sql --linked
+    response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping schemas from remote database...
       Dumped schema to supabase/schema.sql.
   - id: role-only
     name: Role only
-    code: supabase db dump -f supabase/roles.sql --role-only
+    code: supabase db dump -f supabase/roles.sql --role-only --linked
     response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping roles from remote database...
       Dumped schema to supabase/roles.sql.
   - id: data-only
     name: Data only
-    code: supabase db dump -f supabase/seed.sql --data-only
+    code: supabase db dump -f supabase/seed.sql --data-only --linked
     response: |
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Dumping data from remote database...
       Dumped schema to supabase/seed.sql.
 supabase-db-lint:
@@ -230,16 +244,17 @@ supabase-db-pull:
     name: Basic usage
     code: supabase db pull
     response: |
-      Connecting to remote database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
+      ◇  Update the remote migration history table on project My Project (abcdefghijklmnopqrst) · production?
+      │  Yes
       Schema written to supabase/migrations/20240414044403_remote_schema.sql
-      Update remote migration history table? [Y/n]
       Repaired migration history: [20240414044403] => applied
       Finished supabase db pull.
   - id: local-studio
     name: Local studio
     code: supabase db pull --local
     response: |
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Creating shadow database...
       Seeding globals from roles.sql...
       Applying migration 20240414044403_remote_schema.sql...
@@ -250,7 +265,7 @@ supabase-db-pull:
     name: Custom schemas
     code: supabase db pull --schema public,extensions
     response: |
-      Connecting to remote database...
+      Target: project My Project (abcdefghijklmnopqrst) · production
       Creating shadow database...
       Seeding globals from roles.sql...
       Applying migration 20240414044403_remote_schema.sql...
@@ -300,7 +315,7 @@ supabase-db-schema-declarative-sync:
       Enter a name for this migration (press Enter to keep 'declarative_sync'): add_updated_at
       Created new migration at supabase/migrations/20260317194051_add_updated_at.sql
       Apply this migration to local database? [Y/n]
-      Connecting to local database...
+      Target: local stack (127.0.0.1:54322)
       Applying migration 20260317194051_add_updated_at.sql...
       Migration applied successfully.
   - id: generate-first
