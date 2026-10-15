@@ -4,10 +4,11 @@ export const RESULTS_DIR = ".flaky-results";
 const SUITES = ["unit", "integration", "focused", "e2e", "stack-e2e"] as const;
 type Suite = (typeof SUITES)[number];
 const CLI_E2E_SHARDS = 5;
+const CLI_E2E_PACKAGE_SHARDS = 2;
 // GitHub rejects a matrix with more jobs than this.
 const MAX_JOBS = 256;
 
-/** One matrix job; the workflow reads its runner, timeout, checkout depth, and Go cache. */
+/** One matrix job; the workflow reads its runner, timeout, and checkout depth. */
 export type Entry = {
   name: string;
   run: number;
@@ -16,7 +17,6 @@ export type Entry = {
   runner: string;
   timeout: number;
   fetchDepth: number;
-  goCache: boolean;
 } & (
   | { suite: "unit" | "integration" | "focused" }
   | { suite: "e2e"; target: "cli" | "cli-e2e"; shard: number }
@@ -76,7 +76,6 @@ function entriesFor(suite: Suite, run: number, repeats: number): Entry[] {
     runner: "blacksmith-8vcpu-ubuntu-2404",
     timeout: 30,
     fetchDepth: 1,
-    goCache: false,
   };
   switch (suite) {
     case "unit":
@@ -99,7 +98,7 @@ function entriesFor(suite: Suite, run: number, repeats: number): Entry[] {
         },
       ];
     case "e2e": {
-      const e2e = { ...job, suite, timeout: 45, fetchDepth: 0, goCache: true };
+      const e2e = { ...job, suite, timeout: 45, fetchDepth: 0 };
       return [
         ...range(CLI_E2E_SHARDS).map((shard) => ({
           ...e2e,
@@ -107,7 +106,12 @@ function entriesFor(suite: Suite, run: number, repeats: number): Entry[] {
           shard,
           name: `flaky-e2e-cli${shard}-run${run}`,
         })),
-        { ...e2e, target: "cli-e2e", shard: 0, name: `flaky-e2e-cli-e2e-run${run}` },
+        ...range(CLI_E2E_PACKAGE_SHARDS).map((shard) => ({
+          ...e2e,
+          target: "cli-e2e" as const,
+          shard,
+          name: `flaky-e2e-cli-e2e${shard}-run${run}`,
+        })),
       ];
     }
     case "stack-e2e":
@@ -266,7 +270,11 @@ export function commandsFor(entry: Entry, iteration: number, extra: string[]): I
               `--shard=${entry.shard}/${CLI_E2E_SHARDS}`,
             ]),
           ]
-        : [turbo(["test:e2e:run", "--only", "--filter=@supabase/cli-e2e"], "e2e.1", [])];
+        : [
+            turbo(["test:e2e:run", "--only", "--filter=@supabase/cli-e2e"], "e2e.1", [
+              `--shard=${entry.shard}/${CLI_E2E_PACKAGE_SHARDS}`,
+            ]),
+          ];
     case "stack-e2e": {
       // Mirrors test.yml, which gives the confinement scenario of the lifecycle file its own job.
       const file = entry.scenario === "idle-parallel" ? "idle-parallel" : "lifecycle";

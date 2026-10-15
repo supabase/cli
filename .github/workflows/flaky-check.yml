@@ -142,27 +142,12 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
-          go-cache: ${{ matrix.goCache }}
           docker-images: ${{ matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker') }}
           native-artifacts: ${{ matrix.runtime == 'native' }}
 
       - name: Setup Podman
         if: matrix.runtime == 'podman'
         uses: ./.github/actions/setup-podman
-
-      - name: Cache Go CLI binary
-        if: matrix.suite == 'e2e'
-        id: cache-go-binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: apps/cli-go/supabase-go
-          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
-            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
-
-      - name: Build Go CLI
-        if: matrix.suite == 'e2e' && steps.cache-go-binary.outputs.cache-hit != 'true'
-        run: go build -o supabase-go .
-        working-directory: apps/cli-go
 
       - name: Build CLI
         if: matrix.suite == 'e2e'
