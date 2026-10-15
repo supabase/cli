@@ -4,19 +4,13 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
 import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
-import {
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-} from "../storage.flags.ts";
+import { storageTargetFlags } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -62,9 +56,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
   src: Argument.String("src").pipe(Argument.withDescription("Source path to copy from.")),
   dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
@@ -90,11 +82,8 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   ]),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below; see requireExperimental's doc comment for why. A
-      // non-uint `--jobs` never reaches here — `Flag.mapTryCatch` rejects it at parse time.
+      // A non-uint `--jobs` never reaches here: `Flag.mapTryCatch` rejects it at parse time.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,

@@ -172,7 +172,10 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   }
 }
 
-/** Conflicting target flags: `--linked` with `--local`, or `--project-ref` with `--local`. */
+/**
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
+ */
 export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "StorageMutuallyExclusiveFlagsError",
 )<{

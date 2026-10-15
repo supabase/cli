@@ -1,64 +1,37 @@
 import { Effect, FileSystem, Option, Ref } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { changedLinkedLocalFlags } from "../../../command-internal/db-target-flags.ts";
+import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
+import { announceLocalStorageTarget } from "../../../command-internal/storage-gateway.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
-import {
-  SeedMissingProjectConfigError,
-  SeedMutuallyExclusiveFlagsError,
-  SeedWorkdirError,
-} from "./buckets.errors.ts";
+import { SeedMissingProjectConfigError, SeedWorkdirError } from "./buckets.errors.ts";
 
 /**
  * `supabase seed buckets` — seeds Storage buckets from
  * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`. The
  * seeding work lives in the hoisted `seedBucketsRun` (shared with `db reset
- * --local`); this handler owns target-flag resolution and telemetry.
+ * --local`); this handler owns target resolution, hosted consent and telemetry.
  */
-export const seedBuckets = Effect.fn("seed.buckets")(function* (
-  // Target (linked vs. local) is selected from the changed-flag set, not the
-  // parsed `linked`/`local` values — only `projectRef` is read directly below.
-  flags: BucketsFlags,
-) {
+export const seedBuckets = Effect.fn("seed.buckets")(function* (flags: BucketsFlags) {
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const cliArgs = yield* CliArgs;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
 
-  // Set once --linked resolves a ref; drives the post-run linked-project cache
-  // write and org/project group identify. Empty on the local path, so the
-  // cache is never written there.
+  // Set once the target resolves to a linked project; drives the post-run linked-project
+  // cache write and org/project group identify. Empty on the local path.
   const linkedRef = yield* Ref.make("");
 
   yield* Effect.gen(function* () {
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new SeedWorkdirError({ message: error.message })),
     );
-
-    // Resolve the project ref for --linked before loading config, so the
-    // matching `[remotes.<name>]` override (whose `project_id == ref`) is
-    // merged over the base config by the resolved config load. `--linked` selects the
-    // linked path whenever it's set, even `--linked=false`.
-    const setFlags = changedLinkedLocalFlags(cliArgs.args);
-    const isLinked = setFlags.includes("linked");
-
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the rationale.
-    if (Option.isSome(flags.projectRef) && !isLinked) {
-      return yield* new SeedMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      });
-    }
 
     // An explicit `--workdir`/`SUPABASE_WORKDIR` with no project config fails
     // here, before any Storage call, instead of authenticating and seeding
@@ -68,15 +41,31 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
       Effect.mapError((error) => new SeedMissingProjectConfigError({ message: error.message })),
     );
 
-    const projectRefResolver = yield* ProjectRefResolver;
-    const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";
+    // Resolved before the config load so the matching `[remotes.<name>]` override
+    // (whose `project_id == ref`) is merged over the base config.
+    const target = yield* resolveTarget({
+      local: flags.local,
+      linked: flags.linked,
+      dbUrl: Option.none(),
+      projectRef: flags.projectRef,
+    });
+    const projectRef = target.kind === "linked" ? target.ref : "";
     yield* Ref.set(linkedRef, projectRef);
 
-    yield* Effect.annotateCurrentSpan({ "db.conn_type": isLinked ? "linked" : "local" });
-    yield* seedBucketsRun({ projectRef, emitSummary: true });
+    yield* Effect.annotateCurrentSpan({ "db.conn_type": target.kind });
+    yield* seedBucketsRun({
+      projectRef,
+      emitSummary: true,
+      announceLocalEndpoint: announceLocalStorageTarget,
+      confirmHostedWrites:
+        target.kind === "linked"
+          ? (details) =>
+              requireTargetMutationConsent(target, { action: "Seed storage buckets", details })
+          : undefined,
+    });
   }).pipe(
     // Caches the linked project and fires org/project group identify — only
-    // on the --linked path, when `linkedRef` is set.
+    // on the linked path, when `linkedRef` is set.
     Effect.ensuring(
       Effect.flatMap(Ref.get(linkedRef), (ref) =>
         ref === "" ? Effect.void : linkedProjectCache.cache(ref),

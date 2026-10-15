@@ -4,11 +4,12 @@ Moves objects within a bucket. Both paths must be `ss://` and resolve to the sam
 A direct move that returns `not_found` falls back to a recursive per-object move when
 `--recursive` is set.
 
-`--local` resolves the Storage gateway through the `experimental.stack`
-feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env precedence as
-[`docs/stack-commands.md`](../../../../docs/stack-commands.md). `--linked`/`--project-ref`
-targeting is unchanged under either backend; see Notes for the stack-backend endpoint,
-credential, capability-state, and error behavior.
+With no target flag the command follows the workspace target (`SUPABASE_TARGET`, then `target` in
+`config.toml`, default `local`; see [ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). `--local` selects
+the local stack; `--linked` or `--project-ref` select the linked project. The local Storage gateway
+resolves through the `experimental.stack` feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env
+precedence as [`docs/stack-commands.md`](../../../../docs/stack-commands.md); see Notes for the
+stack-backend endpoint, credential, capability-state, and error behavior.
 
 ## Files Read
 
@@ -51,15 +52,16 @@ backend — same roles as `storage ls`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                     |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                   |
-| `1`  | invalid/parse url, missing object path (both roots), cross-bucket move, object-not-found (recursive empty), API non-2xx, network, auth, config parse                                                                        |
-| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                                                              |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                             |
-| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`) |
+| Code | Condition                                                                                                                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                            |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                       |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                          |
+| `1`  | invalid/parse url, missing object path (both roots), cross-bucket move, object-not-found (recursive empty), API non-2xx, network, auth, config parse                                                                               |
+| `1`  | `--local` with `--linked`, or `--project-ref` with `--local` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request                    |
+| `1`  | move on a linked project without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is sent |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                    |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)        |
 
 ## Output
 
@@ -90,10 +92,21 @@ backend — same roles as `storage ls`.
 
 ## Notes
 
-- **`--project-ref`** overrides ONLY the linked-ref
-  resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
-  It never implies `--linked`: passing it with `--local` is a hard error
-  rather than a silently discarded flag.
+- **Target.** `--local`, `--linked` and `--project-ref` go through the shared target selector:
+  `--local` and `--linked` are mutually exclusive, `--project-ref` selects the linked project and
+  conflicts with `--local`, and a `false` switch counts as absent. `--project-ref` only supplies the
+  ref (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). With no selector the workspace target decides.
+- **Target banner.** A linked target prints `Target: …` to stderr once its ref resolves; the local
+  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known. Both come
+  before the first Storage request.
+- **Hosted consent.** Moving on a linked project asks once, after the path validation and before any
+  Storage request: `Move <src> to <dst>?`, default No; a recursive move adds a line saying every
+  object under the source path is moved. `--yes` or a shell `SUPABASE_YES` grants it and echoes
+  `Confirmed by --yes: …` to stderr; otherwise only an interactive text-mode terminal is asked, and
+  JSON, piped, agent and non-TTY runs exit 1 with `HostedMutationConsentRequiredError`.
+  A piped answer on stdin and a `SUPABASE_YES` in `supabase/.env` do not count. Declining exits 1 with
+  `HostedMutationDeclinedError` (`context canceled`); no Storage request is sent.
+  A move on the local stack never asks.
 - Both `src` and `dst` must be `ss://` URLs (a stricter parse than the lenient one
   `cp` uses).
 - **Stack backend (`--local`).** The Storage endpoint comes from the selected composition's

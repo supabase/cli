@@ -37,7 +37,7 @@ function lsFlags(
   return {
     path: opts.path === undefined ? Option.none() : Option.some(opts.path),
     recursive: opts.recursive ?? false,
-    linked: true,
+    linked: opts.local === false,
     local: opts.local ?? true,
     projectRef: Option.none(),
   };
@@ -299,7 +299,7 @@ project_id = "env(STAGING_REF)"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+          "--project-ref selects a linked project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);
@@ -475,7 +475,7 @@ describe("stack backend", () => {
   const tmp = useTempWorkdir("supabase-storage-ls-stack-");
 
   it.effect("routes local requests through the stack's api endpoint and JWT", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n[api]\nport = 65000\n',
       local: true,
       stackBackend: true,
@@ -484,6 +484,7 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:59999)\n");
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
       const serviceRoleJwt = generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role");
@@ -884,7 +885,7 @@ describe("stack backend", () => {
   });
 
   it.effect("legacy default still derives the gateway URL from [api] port", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n[api]\nport = 65432\n',
       local: true,
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
@@ -893,6 +894,22 @@ describe("stack backend", () => {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests[0]?.url.includes(":65432")).toBe(true);
+      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:65432)\n");
+    });
+  });
+
+  it.effect("targets the local stack when no target flag is set", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n[api]\nport = 65432\n',
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs({ ...lsFlags(), local: false, linked: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests[0]?.url.startsWith("http://127.0.0.1:65432")).toBe(true);
     });
   });
 });

@@ -2,11 +2,12 @@
 
 Lists objects/buckets by path prefix against the Storage gateway (local stack or linked project).
 
-`--local` resolves the Storage gateway through the `experimental.stack`
-feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env precedence as
-[`docs/stack-commands.md`](../../../../docs/stack-commands.md). `--linked`/`--project-ref`
-targeting is unchanged under either backend; see Notes for the stack-backend endpoint,
-credential, capability-state, and error behavior.
+With no target flag the command follows the workspace target (`SUPABASE_TARGET`, then `target` in
+`config.toml`, default `local`; see [ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). `--local` selects
+the local stack; `--linked` or `--project-ref` select the linked project. The local Storage gateway
+resolves through the `experimental.stack` feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env
+precedence as [`docs/stack-commands.md`](../../../../docs/stack-commands.md); see Notes for the
+stack-backend endpoint, credential, capability-state, and error behavior.
 
 ## Files Read
 
@@ -60,7 +61,7 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                |
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                   |
 | `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                                                                                                                 |
-| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                                                              |
+| `1`  | `--local` with `--linked`, or `--project-ref` with `--local` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request             |
 | `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                             |
 | `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`) |
 
@@ -96,16 +97,18 @@ No custom storage telemetry events.
 - Default path is `ss:///` (all buckets root) → remotePath `/`; recursive file paths
   then carry a leading slash, while an empty bucket is reported bare as `<bucket>/`.
 - `--recursive`/`-r` walks the tree (BFS).
-- **`--project-ref`** overrides ONLY the linked-ref
-  resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
-  It never implies `--linked`: passing it with `--local` is a hard error
-  rather than a silently discarded flag.
-- `--local` / `--linked` are mutually exclusive; `--local` routes to the local stack,
-  otherwise the linked project is used. They are declared **per-leaf** (not as
-  `storage`-group scoped globals) because Effect CLI requires global-flag names to be
-  unique tree-wide and `seed` already owns `linked`/`local`; the only behavioural cost
-  is that they must follow the subcommand token
+- **Target.** `--local`, `--linked` and `--project-ref` go through the shared target selector:
+  `--local` and `--linked` are mutually exclusive, `--project-ref` selects the linked project and
+  conflicts with `--local`, and a `false` switch counts as absent. `--project-ref` only supplies the
+  ref (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). With no selector the workspace target decides.
+- **Target banner.** A linked target prints `Target: …` to stderr once its ref resolves; the local
+  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known. Both come
+  before the first Storage request.
+- `--local` and `--linked` are declared **per-leaf** (not as `storage`-group scoped globals)
+  because Effect CLI requires global-flag names to be unique tree-wide and `seed` already owns
+  `linked`/`local`; the only behavioural cost is that they must follow the subcommand token
   (`storage ls --local`, not `storage --local ls`) — the same shape the `db` family uses.
+- Listing is a read: it never asks for consent.
 - **Stack backend (`--local`).** The Storage endpoint comes from the selected composition's
   Storage member observation, and the service-role JWT is generated from the primary database's
   observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,

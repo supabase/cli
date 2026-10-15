@@ -21,7 +21,9 @@ import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts
 import { unusedGateway } from "./unused-stack.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { generateLocalJwt } from "../../src/command-internal/local-jwt.ts";
-import { YesFlag } from "../../src/command-internal/global-flags.ts";
+import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
@@ -304,34 +306,12 @@ export function buildStorageStackApi(
   return { layer, stackCalls: { findStack: findStackCalls } };
 }
 
-/**
- * Builds the layer and recorded state for a `storage` command integration test:
- * a recording `HttpClient` for the Storage gateway, an on-disk `config.toml`,
- * project-ref resolution, tracked telemetry/linked-project cache, and a lazy
- * Management API factory for api-keys.
- */
-export function setupStorage(workdir: string, opts: SetupStorageOptions) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
-
-  const out = mockOutput({
-    format: opts.format ?? "text",
-    promptConfirmResponses: opts.confirm,
-    promptConfirmFail: opts.promptConfirmFail,
-  });
-
+/** A recording `HttpClient` that answers Storage requests from `routes`, first match first. */
+function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
   const requests: Array<RecordedStorageRequest> = [];
   const consumed = new Set<number>();
-  const routes = opts.routes ?? [];
 
-  const httpLayer = Layer.succeed(
+  const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       let body: unknown;
@@ -379,6 +359,66 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     }),
   );
 
+  return { layer, requests };
+}
+
+/** Storage requests that change state; the object and vector list endpoints are POST reads. */
+const isStorageWrite = (request: { readonly method: string; readonly url: string }) =>
+  request.method !== "GET" &&
+  !request.url.includes("/storage/v1/object/list/") &&
+  !request.url.includes("/storage/v1/vector/ListVectorBuckets");
+
+const STORAGE_TEST_API_KEYS = [
+  {
+    name: "service_role",
+    api_key: "test-service-role-key",
+    type: "secret",
+    secret_jwt_template: { role: "service_role" },
+  },
+];
+
+/** `describeHostedConsent` api option answering the api-keys lookup a hosted Storage run makes. */
+export const storageConsentApi = {
+  byMethod: { GET: { status: 200, body: STORAGE_TEST_API_KEYS } },
+} as const;
+
+/** The Storage-side services a handler needs under `describeHostedConsent`, plus its write count. */
+export function storageConsentServices(workdir: string, routes: ReadonlyArray<StorageRoute>) {
+  const http = recordingStorageHttp(routes);
+  const layer = Layer.mergeAll(
+    http.layer,
+    cliConfigValuesTestLayer,
+    unusedStackServices,
+    buildStorageStackApi(workdir, undefined).layer,
+  );
+  return { layer, writes: () => http.requests.filter(isStorageWrite).length };
+}
+
+/**
+ * Builds the layer and recorded state for a `storage` command integration test:
+ * a recording `HttpClient` for the Storage gateway, an on-disk `config.toml`,
+ * project-ref resolution, tracked telemetry/linked-project cache, and a lazy
+ * Management API factory for api-keys.
+ */
+export function setupStorage(workdir: string, opts: SetupStorageOptions) {
+  if (opts.toml !== undefined) {
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
+  }
+  for (const [rel, content] of Object.entries(opts.files ?? {})) {
+    const abs = join(workdir, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  }
+
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    promptConfirmFail: opts.promptConfirmFail,
+  });
+
+  const { layer: httpLayer, requests } = recordingStorageHttp(opts.routes ?? []);
+
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
 
@@ -390,10 +430,12 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
   const projectRefLayer = Layer.succeed(ProjectRefResolver, {
     resolve: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
-    resolveRef: () =>
-      opts.linkedFails === true
-        ? Effect.fail(notLinked())
-        : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
+    resolveRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed({ ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false })
+        : opts.linkedFails === true
+          ? Effect.fail(notLinked())
+          : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
     resolveForLink: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
@@ -408,17 +450,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 
-  const defaultApiKeys = [
-    {
-      name: "service_role",
-      api_key: "test-service-role-key",
-      type: "secret",
-      secret_jwt_template: { role: "service_role" },
-    },
-  ];
   const managementApi = mockCommandPlatformApiService({
     v1: {
-      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? defaultApiKeys),
+      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? STORAGE_TEST_API_KEYS),
     },
   });
 
@@ -426,6 +460,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
 
   const layer = Layer.mergeAll(
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(OutputFlag, opts.format === "json" ? Option.some("json") : Option.none()),
     httpLayer,
     telemetry.layer,
     linkedCache.layer,

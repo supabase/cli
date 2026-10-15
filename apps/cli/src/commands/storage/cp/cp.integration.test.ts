@@ -1,7 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
-import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+} from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
@@ -29,7 +35,7 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
-    linked: true,
+    linked: opts.local === false,
     local: opts.local ?? true,
     projectRef: Option.none(),
   };
@@ -513,6 +519,7 @@ describe("storage cp", () => {
   it.effect("targets the linked project's Storage host and flushes telemetry on upload", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
@@ -534,11 +541,30 @@ describe("storage cp", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("downloads from the linked project without asking for consent", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      format: "json",
+      routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" }],
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dst = path.join(tmp.current, "out.md");
+      const exit = yield* storageCp(
+        cpFlags({ src: "ss:///private/readme.md", dst, local: false }),
+      ).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(yield* fs.readFileString(dst)).toBe("downloaded-bytes");
+      expect(out.promptConfirmCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("uploads to the project given via --project-ref, overriding VALID_REF", () => {
     // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
     // the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+      yes: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
@@ -576,7 +602,7 @@ describe("storage cp", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+          "--project-ref selects a linked project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);
@@ -773,4 +799,27 @@ describe("stack backend", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("storage cp", {
+  api: storageConsentApi,
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(`${workdir}/readme.md`, "hello world");
+    }),
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "POST", match: OBJECT("private/readme.md"), body: {} },
+    ]);
+    return {
+      run: storageCp({
+        ...cpFlags({ src: `${workdir}/readme.md`, dst: "ss:///private/readme.md" }),
+        local: false,
+        linked: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });
