@@ -156,8 +156,8 @@ describe("applicableOperations", () => {
 describe("declaredPermissions", () => {
   it("tells a path missing from the tree apart from a command with no declaration", () => {
     expect(declaredPermissions("not-a-real-command")).toEqual({ _tag: "NotFound" });
-    expect(declaredPermissions("compute list")).toEqual({ _tag: "NotFound" });
-    expect(declaredPermissions("compute list", { computeEnabled: true })).toEqual({
+    expect(declaredPermissions("stack list")).toEqual({ _tag: "NotFound" });
+    expect(declaredPermissions("stack list", { stackBackend: "stack" })).toEqual({
       _tag: "Undeclared",
     });
   });

@@ -7,6 +7,7 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule } from "effect";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
@@ -165,6 +166,11 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   const decoded = yield* decodeJsonBody(V2ListAllComputeInstancesOutput, operation, response);
   return decoded.data.map(toComputeRecord);
 });
+
+/** The Management API call `getCompute` makes. */
+export const computeRead = block("compute-read", [
+  { operationId: "v2-get-a-compute-instance", kind: "required" },
+]);
 
 /** One compute, or `None` when this project has no record of it — see the 404 notes above. */
 export const getCompute = Effect.fnUntraced(function* (
