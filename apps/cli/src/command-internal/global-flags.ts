@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { VALUE_CONSUMING_LONG_FLAGS, VALUE_CONSUMING_SHORT_FLAGS } from "./db-target-flags.ts";
+import {
+  VALUE_CONSUMING_LONG_FLAGS,
+  VALUE_CONSUMING_SHORT_FLAGS,
+} from "../shared/cli/value-consuming-flags.ts";
 import { supabaseEnvBool, supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
 
 // The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to

@@ -45,7 +45,7 @@ import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
-} from "../command-internal/db-target-flags.ts";
+} from "../shared/cli/value-consuming-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
 import {
