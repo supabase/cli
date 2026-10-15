@@ -14,7 +14,10 @@ import {
  * connection layer — not re-wrapped here.
  */
 
-/** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
+/**
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
+ */
 export class DbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DbLintMutuallyExclusiveFlagsError",
 )<{ readonly message: string }> {

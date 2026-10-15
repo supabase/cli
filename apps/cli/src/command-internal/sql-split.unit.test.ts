@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { findDropStatements, splitAndTrim, splitSql, splitSqlTokens } from "./sql-split.ts";
+import {
+  findDropStatements,
+  splitAndTrim,
+  splitSql,
+  splitSqlTokens,
+  trimLeadingSqlComments,
+} from "./sql-split.ts";
 
 describe("splitAndTrim", () => {
   it("splits simple statements and trims trailing ; + whitespace", () => {
@@ -278,5 +284,31 @@ describe("findDropStatements", () => {
     const sql =
       "CREATE FUNCTION f() AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;\nDROP TABLE real;";
     expect(findDropStatements(sql)).toEqual(["DROP TABLE real"]);
+  });
+});
+
+describe("trimLeadingSqlComments", () => {
+  it.each([
+    ["whitespace", " \t\n\r\f\vSELECT 1"],
+    ["a byte order mark", "\uFEFF  SELECT 1"],
+    ["a line comment", "-- a\nSELECT 1"],
+    ["a carriage-return line comment", "-- a\rSELECT 1"],
+    ["a block comment", "/* a */SELECT 1"],
+    ["a nested block comment", "/* a /* b */ c */ SELECT 1"],
+    ["stacked comments and blanks", "\uFEFF-- a\n /* b */ \n-- c\nSELECT 1"],
+  ])("strips %s", (_name, sql) => {
+    expect(trimLeadingSqlComments(sql)).toBe("SELECT 1");
+  });
+
+  it("keeps comments that are not at the start", () => {
+    expect(trimLeadingSqlComments("SELECT 1 -- a\n")).toBe("SELECT 1 -- a");
+  });
+
+  it.each([
+    ["a line comment without a newline", "-- a"],
+    ["an unterminated block comment", "/* a SELECT 1"],
+    ["only whitespace", " \n"],
+  ])("returns empty for %s", (_name, sql) => {
+    expect(trimLeadingSqlComments(sql)).toBe("");
   });
 });

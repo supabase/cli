@@ -19,7 +19,7 @@ import {
 } from "./migration-history.ts";
 import { parseMigrationContent } from "./migration-file.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
-import { splitSqlTokens } from "./sql-split.ts";
+import { splitSqlTokens, trimLeadingSqlComments } from "./sql-split.ts";
 
 /**
  * A migration file failed to apply. Used by `migration up`/`down`'s migrate-and-seed step; the
@@ -40,9 +40,6 @@ export class MigrationApplyError extends Data.TaggedError("MigrationApplyError")
   }
 }
 
-// Byte order mark (U+FEFF), stripped from the head of a statement.
-const BOM_CODE_POINT = 0xfeff;
-
 // Statements that PostgreSQL refuses to run inside a transaction block / extended-query
 // pipeline (SQLSTATE 25001). Matched against the upper-cased, comment-stripped statement.
 //
@@ -57,31 +54,6 @@ const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
-
-/**
- * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
- * front of a statement so the keyword check below sees the real first token.
- */
-const trimLeadingSqlComments = (sql: string): string => {
-  // Stripped via code point comparison so it isn't relied on to match a whitespace regex class.
-  let trimmed = sql.replace(/^[ \t\n\r]+/u, "");
-  while (trimmed.charCodeAt(0) === BOM_CODE_POINT) {
-    trimmed = trimmed.slice(1).replace(/^[ \t\n\r]+/u, "");
-  }
-  for (;;) {
-    if (trimmed.startsWith("--")) {
-      const idx = trimmed.indexOf("\n");
-      if (idx < 0) return "";
-      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r]+/u, "");
-    } else if (trimmed.startsWith("/*")) {
-      const idx = trimmed.indexOf("*/");
-      if (idx < 0) return trimmed;
-      trimmed = trimmed.slice(idx + 2).replace(/^[ \t\n\r]+/u, "");
-    } else {
-      return trimmed.trim();
-    }
-  }
-};
 
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE [UNIQUE] INDEX

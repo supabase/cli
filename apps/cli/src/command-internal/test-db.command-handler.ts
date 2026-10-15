@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { Argument, Flag } from "effect/cli";
+import { Argument } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withJsonErrorHandling } from "../shared/output/json-error-handling.ts";
@@ -7,6 +7,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import type { TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
+import { targetFlags } from "./target/target-flags.ts";
 import { testDb } from "./test-db.handler.ts";
 
 /** Shared verbatim by both `test db` and its `db test` alias. */
@@ -42,25 +43,7 @@ export const testDbConfig = {
     Argument.withDescription("Paths to test files or directories."),
     Argument.variadic(),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Tests the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Runs pgTAP tests on the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Runs pgTAP tests on the local database."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
 } as const;
 
 export interface TestDbFlags {

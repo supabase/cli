@@ -2,7 +2,7 @@
 
 Diffs schema changes made to the local or remote database.
 
-Requires the local development stack to be running when diffing against the local database. To diff against a remote or self-hosted database, specify the `--linked` or `--db-url` flag respectively.
+Requires the local development stack to be running when diffing against the local database. To diff against a remote or self-hosted database, specify the `--linked` or `--db-url` flag respectively. With no target flag the command diffs the workspace target, which is the local database unless `SUPABASE_TARGET` or `target` in `config.toml` says otherwise. The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
 
 Compares schema differences between the target database and a shadow database, using the bundled pg-delta engine by default. The legacy [djrobstep/migra](https://github.com/djrobstep/migra) engine, which runs in a container, remains available as a fallback (see below). The shadow database is created by applying migrations in local `supabase/migrations` directory in a separate container. Output is written to stdout by default. For convenience, you can also save the schema diff as a new migration file by passing in `-f` flag.
 

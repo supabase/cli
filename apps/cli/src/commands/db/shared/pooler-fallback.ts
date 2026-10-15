@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { isIPv6ConnectivityError } from "../../../command-internal/connect-errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import type { ResolvedTarget } from "../../../command-internal/target/resolve-target.ts";
 import {
   isDirectDbHost,
   runWithPoolerFallback as runWithSharedPoolerFallback,
@@ -18,14 +18,14 @@ interface PoolerFallbackResult {
 }
 
 /**
- * A dump/diff is only rerouted through the pooler when it's a `--linked` run against a
+ * A dump/diff is only rerouted through the pooler when the target is the linked project, on a
  * direct Supabase DB host (`db.<ref>.<projectHost>`, never local/pooler); the `!isLocal`
  * check is belt-and-braces since a direct-host match already implies non-local. Shared by
  * the result-based dump/pull retry ({@link runWithPoolerFallback}) and the error-based diff
  * retry in `db pull`, each ANDing in its own IPv6 classification of the relevant error.
  */
 export const isDirectLinkedHost = (params: {
-  readonly connType: DbConnType;
+  readonly connType: ResolvedTarget["kind"];
   readonly host: string;
   readonly isLocal: boolean;
   readonly projectHost: string;
@@ -44,7 +44,7 @@ export const isDirectLinkedHost = (params: {
 export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <E, RRun>(params: {
   /** The first attempt's result; returned unchanged when no fallback fires. */
   readonly result: PoolerFallbackResult;
-  readonly connType: DbConnType;
+  readonly connType: ResolvedTarget["kind"];
   /** The direct connection host that failed (`resolved.conn.host`). */
   readonly host: string;
   readonly isLocal: boolean;

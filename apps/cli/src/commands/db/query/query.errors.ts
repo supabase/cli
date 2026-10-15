@@ -50,6 +50,18 @@ export class DbQueryLoginRequiredError extends Data.TaggedError("DbQueryLoginReq
   }
 }
 
+/** `--read-only` was combined with SQL that ends the transaction or changes its read-only mode. */
+export class DbQueryReadOnlyStatementError extends Data.TaggedError(
+  "DbQueryReadOnlyStatementError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 /** Query execution failed; message text (`"failed to execute query: " + err`) is an established output contract. */
 export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
   readonly message: string;
@@ -70,9 +82,8 @@ export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
 }
 
 /**
- * More than one of `--db-url` / `--linked` / `--local` was set; message text
- * is an established output contract, so the invocation fails before any SQL
- * runs.
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
  */
 export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DbQueryMutuallyExclusiveFlagsError",

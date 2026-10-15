@@ -3,7 +3,6 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
 
-import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
@@ -11,17 +10,16 @@ import { readDbToml } from "./db-config.toml-read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { resolveDbTargetFlags } from "./db-target-flags.ts";
+import {
+  requireTargetMutationConsent,
+  hostedMutationPreapproval,
+} from "./hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "./target/resolve-target.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import type { TestDbFlags } from "./test-db.command-handler.ts";
-import {
-  TestDbEnablePgtapError,
-  TestDbMutuallyExclusiveFlagsError,
-  TestDbNoTestsError,
-  TestDbRunError,
-} from "./test-db.errors.ts";
+import { TestDbEnablePgtapError, TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
 import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import {
@@ -117,40 +115,22 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const debug = yield* DebugFlag;
   const networkIdFlag = yield* NetworkIdFlag;
   const dnsResolver = yield* DnsResolverFlag;
-  const cliArgs = yield* CliArgs;
 
   yield* Effect.gen(function* () {
-    // Selection is keyed off flag presence, not its boolean value: `--linked=false`
-    // and `--no-linked` both count as explicitly setting `linked`.
-    const target = resolveDbTargetFlags(cliArgs.args);
-    const { setFlags } = target;
-    if (setFlags.length > 1) {
-      return yield* Effect.fail(
-        new TestDbMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-        }),
-      );
-    }
-
-    const connType = target.connType ?? "local";
-
-    // `--project-ref` never implies `--linked`; see push.handler.ts's
-    // identical guard (db push) for the rationale.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new TestDbMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
-    }
-
-    const { conn, isLocal } = yield* resolver.resolve({
+    const target = yield* resolveTarget({
+      local: flags.local,
+      linked: flags.linked,
       dbUrl: flags.dbUrl,
-      connType,
-      dnsResolver,
-      linkedProjectRef: flags.projectRef,
+      projectRef: flags.projectRef,
     });
+
+    const resolved = yield* resolver.resolveConnection({
+      target,
+      dnsResolver,
+      password: Option.none(),
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    });
+    const { conn, isLocal } = resolved;
 
     const args = buildPgProveArgs({
       paths: flags.paths,
@@ -161,7 +141,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
     const backend = yield* currentStackBackend;
     const managedStack =
-      backend.kind === "stack" && connType === "local" ? yield* managedStackFor() : undefined;
+      backend.kind === "stack" && target.kind === "local" ? yield* managedStackFor() : undefined;
     const proveRuntime =
       backend.kind === "stack" && managedStack === undefined
         ? yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch)
@@ -177,7 +157,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         managedStack !== undefined
           ? proveConnection.host
           : useNativeProve
-            ? connType === "local"
+            ? target.kind === "local"
               ? "127.0.0.1"
               : conn.host
             : stackPublishedProve
@@ -217,13 +197,17 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     let lastVerdict = "";
     let lastSummary = "";
 
+    yield* requireTargetMutationConsent(resolved, {
+      action: "Run pgTAP tests",
+      details: [
+        "enable the pgtap extension",
+        `run pg_prove against ${args.hostPaths.join(", ")}`,
+        "drop the pgtap extension afterwards unless it was already installed",
+      ],
+    });
+
     const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
-        // stdout is reserved for the pg_prove TAP stream (forwarded byte-exact
-        // below), so connection diagnostics go to stderr. An `Output.task`
-        // spinner would also corrupt the stream: it writes ANSI to stdout in
-        // text mode, and JSON log events to stdout in stream-json mode.
-        yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
