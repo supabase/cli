@@ -1,5 +1,10 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withKind } from "../../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -33,6 +38,14 @@ export const computeDeleteCommand = Command.make("delete", config).pipe(
       description: "Skip the confirmation prompt (scripts and CI)",
     },
   ]),
+  withPermissions(
+    compose(
+      withKind(computeRead, "best-effort"),
+      { operations: [{ operationId: "v2-delete-a-compute-instance", kind: "required" }] },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     computeDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

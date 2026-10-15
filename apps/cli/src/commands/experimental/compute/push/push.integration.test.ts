@@ -9,6 +9,8 @@ import {
   COMPUTE_PROJECT_REF,
   type ComputeHttpRoutes,
 } from "../../../../../tests/helpers/compute.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -133,6 +135,13 @@ describe("compute push", () => {
           `POST ${computeRoute("/api/deploy")}`,
           `GET ${computeRoute("/api")}`,
         ]);
+        assertPermissionDrift({
+          command: "compute push",
+          variant: { computeEnabled: true },
+          activeFlags: { "no-wait": false },
+          requests: http.driftRequests,
+          exact: true,
+        });
 
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect(yield* decodeDeploy(deploy?.body ?? "{}")).toEqual({
@@ -178,11 +187,71 @@ describe("compute push", () => {
           "PUT /deploy-context/api.tar.gz",
           `POST ${computeRoute("/api/deploy")}`,
         ]);
+        assertPermissionDrift({
+          command: "compute push",
+          variant: { computeEnabled: true },
+          activeFlags: { "no-wait": true },
+          requests: http.driftRequests,
+          exact: true,
+        });
+        expect(() =>
+          assertPermissionDrift({
+            command: "compute push",
+            variant: { computeEnabled: true },
+            activeFlags: { "no-wait": true },
+            requests: [
+              ...http.driftRequests,
+              { method: "GET", url: `https://api.supabase.com${computeRoute("/api")}` },
+            ],
+          }),
+        ).toThrow(/condition doesn't hold/);
 
         expect(out.stdoutText).toContain("Deployed Compute api");
         // No image exists yet, so the row is dropped rather than rendered empty.
         expect(out.stdoutText).not.toContain("Image");
         expect(out.stderrText).toContain("supabase compute status api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, deploys the compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        routes: routes({
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+        }),
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* push({ noWait: true });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          `POST ${computeRoute("/api/uploads")}`,
+          "PUT /deploy-context/api.tar.gz",
+          `POST ${computeRoute("/api/deploy")}`,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("Deployed Compute api");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute push",
+          variant: { computeEnabled: true },
+          activeFlags: { "no-wait": true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

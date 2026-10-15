@@ -5,13 +5,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "completion powershell",
   "completion zsh",
 
-  "compute delete",
-  "compute list",
-  "compute logs",
-  "compute new",
-  "compute push",
-  "compute status",
-
   "db branch create",
   "db branch delete",
   "db branch list",
@@ -20,13 +13,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "feedback add",
   "feedback delete",
-
-  "functions delete",
-  "functions deploy",
-  "functions download",
-  "functions list",
-  "functions new",
-  "functions serve",
 
   "gen keys",
 

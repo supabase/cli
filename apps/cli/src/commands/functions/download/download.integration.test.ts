@@ -13,6 +13,7 @@ import {
   Option,
   Path,
   PlatformError,
+  Schema,
   Sink,
   Stdio,
   Stream,
@@ -33,11 +34,22 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
-import { downloadFunctions } from "../../../shared/functions/download.ts";
+import {
+  downloadFunctions,
+  functionsDownload as functionsDownloadCalls,
+} from "../../../shared/functions/download.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
@@ -47,6 +59,8 @@ import type { FunctionsDownloadFlags } from "./download.command.ts";
 import { functionsDownload } from "./download.handler.ts";
 
 const PROJECT_ID = "abcdefghijklmnopqrst";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Sets the spawner's exit code/stdio only for the `docker run ... unbundle`
@@ -241,6 +255,128 @@ describe("functions download", () => {
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+      ]);
+      assertPermissionDrift({ command: "functions download", requests: api.requests });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project interactively and fills the linked-project cache on --use-api", () => {
+    const out = mockOutput({ format: "text", promptSelectResponses: [PROJECT_ID] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === "https://api.supabase.com/v1/projects"
+            ? jsonResponse(request, 200, [projectResponse(PROJECT_ID)])
+            : request.url === `https://api.supabase.com/v1/projects/${PROJECT_ID}`
+              ? jsonResponse(request, 200, projectResponse(PROJECT_ID))
+              : request.url.endsWith("/body")
+                ? multipartResponse(request)
+                : jsonResponse(request, 200, {}),
+        ),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      mockProxy().layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cachePath = path.join(tempRoot.current, "supabase", ".temp", "linked-project.json");
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}`,
+      ]);
+      expect(out.stderrText).toContain(
+        `Downloaded Function hello-world from project ${PROJECT_ID}.`,
+      );
+      expect(
+        yield* fs.readFileString(
+          path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+        ),
+      ).toBe("console.log('legacy native')");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: PROJECT_ID,
+      });
+      assertPermissionDrift({
+        command: "functions download",
+        activeFlags: { "use-api": true },
+        requests: api.requests,
+      });
+      assertBlockDrift(functionsDownloadCalls, {
+        requests: api.requests.filter(({ url }) => url.includes("/functions")),
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fetches the function metadata when the downloaded body names no entrypoint", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/body")
+          ? Effect.succeed(multipartResponse(request, { metadata: {} }))
+          : Effect.succeed(jsonResponse(request, 200, { entrypoint_path: "source/index.ts" })),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      mockProxy().layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-api",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world`,
+      ]);
+      expect(
+        yield* fs.readFileString(
+          path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+        ),
+      ).toBe("console.log('legacy native')");
+      assertPermissionDrift({
+        command: "functions download",
+        activeFlags: { "use-api": true },
+        requests: api.requests,
+      });
+      assertBlockDrift(functionsDownloadCalls, { requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -514,9 +650,10 @@ describe("functions download", () => {
 
         expect(proxy.calls).toEqual([]);
         expect(proxy.captureCalls).toEqual([]);
-        expect(api.requests.some((request) => request.url.endsWith("/hello-world/body"))).toBe(
-          true,
-        );
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+        ]);
+        assertPermissionDrift({ command: "functions download", requests: api.requests });
         expect(
           child.spawned.some(
             (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
@@ -745,6 +882,12 @@ describe("functions download", () => {
           },
         }),
       );
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions`,
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/goodbye-world/body`,
+      ]);
+      assertPermissionDrift({ command: "functions download", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1890,6 +2033,7 @@ describe("functions download", () => {
           ],
         ]);
         expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
+        expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
   );
