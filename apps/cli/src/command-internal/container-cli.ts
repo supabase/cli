@@ -296,29 +296,35 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
 }
 
 /**
- * Checks whether the daemon's negotiated API version supports `docker volume prune --all`
- * (added in 1.42). Older daemons reject the flag outright instead of ignoring it, so this must be
- * checked via `docker version` before use; there's no persistent Engine API client to ask
- * directly. Does not fall back to Podman, whose `volume prune` has no `--all` flag to gate.
- * Resolves to `false` on any failure to spawn `docker` or read its version — the same effect as
- * omitting `--all` on a pre-1.42 daemon, which already prunes every unused volume without it.
+ * Checks whether both the Docker client and daemon API versions are >= 1.42, the minimum for
+ * `docker volume prune --all`. The flag is client-side and validated against the negotiated
+ * version, so an old client against a new daemon still rejects it. Resolves to `false` on any
+ * failure to spawn `docker` or read its versions; omitting `--all` is the safe fallback. Does not
+ * fall back to Podman, whose `volume prune` has no `--all` flag to gate.
  */
 export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
   Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", ["version", "--format", "{{.Server.APIVersion}}"], {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
-        }),
+        ChildProcess.make(
+          "docker",
+          ["version", "--format", "{{.Client.APIVersion}} {{.Server.APIVersion}}"],
+          {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+          },
+        ),
       );
       const [exitCode, stdout] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;
-      const version = stdout.trim();
-      return version.length > 0 && isDockerApiVersionAtLeast(version, "1.42");
+      const versions = stdout.trim().split(/\s+/);
+      return (
+        versions.length === 2 &&
+        versions.every((version) => isDockerApiVersionAtLeast(version, "1.42"))
+      );
     }),
   ).pipe(Effect.orElseSucceed(() => false));
