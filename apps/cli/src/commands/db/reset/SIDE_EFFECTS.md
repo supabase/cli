@@ -18,6 +18,13 @@ git-branch line are all native TS — including the local target's own
 `--experimental` schema-files apply (`migrateAndSeed`, shared with the remote
 path's branch above).
 
+With no target flag the command follows the workspace target (`SUPABASE_TARGET`, then `target`
+in `config.toml`, default `local`; see
+[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
+`--local` selects the local stack, `--linked` or `--project-ref` the linked project, and
+`--db-url` a custom database. A hosted target (linked, or a remote `--db-url`) asks for one
+confirmation before anything is dropped; the local path never prompts for the reset itself.
+
 The whole local-reset composition is hoisted into `command-internal/db-bootstrap/
 reset-local-database.ts`'s `resetLocalDatabase` (CLI-2062), which this
 handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
@@ -67,7 +74,7 @@ or migrations fail, companion services remain stopped. Fix the reported error an
 | `<workdir>/supabase/config.json` or `config.toml`                                            | JSON / TOML | always, parsed and decoded up front before any destructive work (`config.json` preferred; embedded defaults when neither exists); re-read for local bucket seeding |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file    | dotenv      | always, resolved before the local prelude (config values, bootstrap config)                                                                                        |
 | `<workdir>/.git/HEAD` (walked upward)                                                        | plain text  | local path, for the `Finished … on branch <branch>.` line                                                                                                          |
-| `~/.supabase/<hash>/project-ref`                                                             | plain text  | `--linked`, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                    |
+| `~/.supabase/<hash>/project-ref`                                                             | plain text  | a linked target, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                               |
 | `~/.supabase/access-token`                                                                   | plain text  | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                                                                           |
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                       | SQL         | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                                                                          |
 | schema files from `[db.migrations].schema_paths`                                             | SQL         | when the `--experimental` schema-files branch is taken, either target (see Notes)                                                                                  |
@@ -164,7 +171,8 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_ACCESS_TOKEN`                                                                                              | auth token for the `--linked` resolver path                                                                                                                                                                                                                                                                                                                                         | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`                                                                                               | password for the linked/remote connection; ignored for a target other than the linked project (see Notes)                                                                                                                                                                                                                                                                           | no                                                      |
 | `SUPABASE_DB_SEED_ENABLED`                                                                                           | overrides `[db.seed].enabled` (flag > env > matched `[remotes.*]` > base); honoured on the local and remote paths                                                                                                                                                                                                                                                                   | no                                                      |
-| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt and the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                                                                                                            | no (also `--yes`)                                       |
+| `SUPABASE_YES`                                                                                                       | grants the hosted reset consent (shell only; a `SUPABASE_YES` in `supabase/.env` does not count) and auto-confirms the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                           | no (also `--yes`)                                       |
+| `SUPABASE_TARGET`                                                                                                    | workspace target used when no `--local`/`--linked`/`--db-url` is given (`local` or `remote`; `remote` means the linked project)                                                                                                                                                                                                                                                     | no (→ `target` in `config.toml` → `local`)              |
 | `SUPABASE_EXPERIMENTAL`                                                                                              | selects the schema-files apply branch on either target                                                                                                                                                                                                                                                                                                                              | no (also `--experimental`)                              |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                              | overrides `[experimental.pgdelta].enabled` (default true); `false` opens the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) so `--experimental` applies `schema_paths` files instead of timestamped migrations — switches between two different destructive code paths                                                                              | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                                | overrides `[db.migrations].schema_paths` (beats the config-file value and a matched `[remotes.*]` block) for the schema-files apply branch — genuinely effective on both targets now                                                                                                                                                                                                | no (no dedicated flag — config-file-only otherwise)     |
@@ -192,30 +200,33 @@ echoed, because those may genuinely have reached the server.
 | Code | Condition                                                                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | success                                                                                                                                    |
-| `1`  | mutually exclusive target flags (`[db-url linked local]`)                                                                                  |
+| `1`  | more than one of `--db-url`, `--linked`, `--local` (`TargetSelectorConflictError`)                                                         |
 | `1`  | `--version` + `--last` together (`[last version]`)                                                                                         |
 | `1`  | `--version` not an integer (`invalid version number`)                                                                                      |
 | `1`  | `--version` has no matching migration file                                                                                                 |
 | `1`  | local: database not running (`supabase start is not running.`)                                                                             |
-| `1`  | user declined the reset confirmation (`context canceled`)                                                                                  |
-| `1`  | `--linked` seed consent for a `[remotes.*]` match declined or unattended without `--yes` (`context canceled`, suggests `--yes`)            |
-| `1`  | `--password` with `--db-url` or `--local`                                                                                                  |
+| `1`  | hosted target, reset confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is changed                         |
+| `1`  | hosted target in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`)      |
 | `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                     |
 | `1`  | `config.toml` parse failure                                                                                                                |
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
+| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                             |
 
 Neither target delegates to a child process — every failure is a native, typed error
 surfaced as `1`.
 
 ## Output
 
-The remote path prints `Resetting remote database…` to **stderr**, then either the
-schema-files branch's apply (no per-file progress, CLI-1958) or the migrate/seed
-progress (`Applying migration …`, `Seeding data from …`). There is **no**
-`Connecting to … database…` line and **no** `Finished …` line on the remote path.
+Every target prints a `Target: …` line to **stderr** before the first database change: the
+linked project (`Target: <name> (<ref>)`), `Target: local stack (<host>:<port>)`, or
+`Target: custom Postgres (<host>)`. There is no `Connecting to … database…` line.
+
+The remote path then asks for confirmation (see Notes), prints `Resetting remote database…` to
+**stderr**, then either the schema-files branch's apply (no per-file progress, CLI-1958) or the
+migrate/seed progress (`Applying migration …`, `Seeding data from …`). There is **no**
+`Finished …` line on the remote path.
 
 The local path prints `Resetting local database…` to **stderr**, then
 `Recreating database...` (PG15) or nothing extra (PG14, until the restart step) /
@@ -229,14 +240,14 @@ silent (no-progress-line) `--experimental` schema-files apply.
 
 ### `--output-format json` / `stream-json`
 
-stdout is payload-only; a `result` object is emitted:
+stdout is payload-only; a `result` object is emitted, carrying the announced `target` object:
 
 ```json
-{ "target": "remote" | "local", "version": "<resolved version or empty>" }
+{ "target": { "kind": "local" | "linked" | "db-url", … }, "version": "<resolved version or empty>" }
 ```
 
-In machine modes the remote confirmation prompt is non-interactive and takes its
-default (`false`), so a remote reset is declined unless `--yes` is set. The local
+A remote reset in machine modes cannot prompt, so it needs `--yes` or a shell `SUPABASE_YES`
+and otherwise fails with `HostedMutationConsentRequiredError` before anything is dropped. The local
 path has no reset confirmation, but its bucket-seed step carries the seed-buckets
 overwrite/prune confirmations: in machine modes they take their defaults silently
 (overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
@@ -259,16 +270,19 @@ to those defaults (the usual outcome for an interactive terminal).
   its own suggestion (missing API gateway endpoint, Auth disabled, gateway 502/503), that
   suggestion is the next step instead of the generic one. The stack's service-role JWT is
   never printed or logged.
+- **Target selection.** `--db-url`, `--linked` and `--local` are mutually exclusive and a
+  `false` switch counts as absent; with none set the workspace target decides. `--project-ref`
+  selects the linked project and supplies only the ref (flag > `SUPABASE_PROJECT_ID` >
+  `~/.supabase/<hash>/project-ref`); unlike `SUPABASE_PROJECT_ID`, it does not affect the local
+  container id, and combining it with `--local` or `--db-url` is a hard error.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
-  as a local reset.
-- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
-  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
-  unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
-  never implies `--linked`: passing it with a resolved `--local`/`--db-url`
-  target is a hard error rather than a silently discarded flag (stricter
-  than `SUPABASE_PROJECT_ID`, which simply goes unused on a
-  non-linked target).
+  as a local reset and never prompts.
+- **Hosted consent.** A linked or remote `--db-url` reset asks once, after the plan is known
+  and before the first drop, with default No. The question lists dropping every user schema,
+  the vault upsert count, applying migrations (or the declarative schema files), and the seed
+  plan. A shell `SUPABASE_YES` or `--yes` grants it (`Confirmed by --yes: …`); a `SUPABASE_YES`
+  in `supabase/.env` and a piped answer do not. Stdin is never read for the answer.
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
@@ -277,14 +291,12 @@ to those defaults (the usual outcome for an interactive terminal).
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The linked-database password env is
   withheld when the target differs from `.temp/project-ref`: stderr gets
-  `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted.
-- **Seed consent (remote)**: after the `Do you want to reset the remote database?` prompt and before any change, a `--linked` target that matched a
-  `[remotes.<name>]` block that does not itself declare `db.seed.enabled = true`, with seeding enabled and at least one seed file, asks
-  `Project <ref> matches [remotes.<name>]. Run <n> seed file(s) (<paths>) against it?` (default no). `--yes` or
-  `SUPABASE_YES` answers yes and prints `Seeding enabled by <origin>` (for example `SUPABASE_DB_SEED_ENABLED (shell)`); a TTY stdin with
-  non-interactive output, or machine output on a TTY, fails with `SeedConsentRequiredError`
-  (`Seeding <ref> ([remotes.<name>]) needs confirmation and this run can't prompt. Nothing was changed.`, suggesting `--yes` or `--no-seed`);
-  piped stdin is read for one line, and a pipe that ends without one fails the same way. An answer of no exits 1 with `Seeding cancelled; nothing was changed.`
+  `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).` and a temporary login role is minted.
+- **Seed plan (remote).** The consent question includes the seed line: `seed <n> file(s)`, and for
+  a linked target that matched a `[remotes.<name>]` block it names the block and the origin that
+  enabled seeding (for example `seed 1 file into [remotes.preview] (seeding enabled by --sql-paths)`).
+  There is no separate seed question; declining the reset declines the seeding. `--no-seed`
+  removes the line.
 - `--no-seed` forces seeding off; on the
   local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override
@@ -297,7 +309,6 @@ to those defaults (the usual outcome for an interactive terminal).
   `--linked` / `--db-url`).
 - `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
   version becomes `-` (revert everything). Mutually exclusive with `--version`.
-- `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
 - **`--experimental` schema-files apply** (the `MigrateAndSeed` EXPERIMENTAL
   branch) is taken on
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
@@ -324,7 +335,7 @@ to those defaults (the usual outcome for an interactive terminal).
 - When a versionless `--experimental` reset skips the schema-files branch only because
   pg-delta is enabled and `schema_paths` is non-empty, it prints a stderr warning that
   `schema_paths` is not applied and that `[experimental.pgdelta] enabled = false` restores it
-  (before the confirmation prompt on the remote path).
+  (before the confirmation on the remote path).
 - `db schema declarative`/`db schema sync`'s own local-reset paths call
   `resetLocalDatabase` in-process too, so the reset runs inside a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema

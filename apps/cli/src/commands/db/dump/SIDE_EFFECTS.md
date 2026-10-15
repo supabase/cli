@@ -5,16 +5,22 @@ script run inside the compose Postgres image, or catalog `pg_dump` /
 `pg_dumpall` on the stack backend (native artifact or a one-shot of the same
 image), to stdout or `--file`.
 
+With no target flag the command dumps the workspace target (`SUPABASE_TARGET`, then `target` in
+`config.toml`, default `local`; see
+[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
+`--local` selects the local stack, `--linked` or `--project-ref` the linked project, and `--db-url`
+a custom database. It only reads, so it never asks for confirmation, on any target.
+
 ## Files Read
 
-| Path                                    | Format      | When                                                                                                                                         |
-| --------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase/config.json` or `config.toml` | JSON / TOML | always, `config.json` preferred (db port/password/major_version, project_id)                                                                 |
-| `supabase/.temp/postgres-version`       | plain text  | always (best-effort) — pins the pg image tag when present                                                                                    |
-| `supabase/.temp/pooler-url`             | plain text  | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
-| `~/.supabase/access-token`              | plain text  | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
-| `supabase/.temp/project-ref`            | plain text  | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
-| `supabase/.env*`                        | dotenv      | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`; shell values win)                                                                 |
+| Path                                    | Format      | When                                                                                                                      |
+| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.json` or `config.toml` | JSON / TOML | always, `config.json` preferred (db port/password/major_version, project_id)                                              |
+| `supabase/.temp/postgres-version`       | plain text  | always (best-effort) — pins the pg image tag when present                                                                 |
+| `supabase/.temp/pooler-url`             | plain text  | a linked target when the direct host is unreachable (pooler URL)                                                          |
+| `~/.supabase/access-token`              | plain text  | a linked target when `SUPABASE_ACCESS_TOKEN` unset                                                                        |
+| `supabase/.temp/project-ref`            | plain text  | a linked target — ref resolution, skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
+| `supabase/.env*`                        | dotenv      | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`; shell values win)                                              |
 
 ## Files Written
 
@@ -24,20 +30,21 @@ image), to stdout or `--file`.
 
 ## API Routes
 
-| Method | Path                                       | Auth   | When                                                         |
-| ------ | ------------------------------------------ | ------ | ------------------------------------------------------------ |
-| POST   | `/v1/projects/{ref}/cli/login-role`        | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
-| POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | `--linked` pooler temp-role retry (list bans)                |
-| DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
+| Method | Path                                       | Auth   | When                                                            |
+| ------ | ------------------------------------------ | ------ | --------------------------------------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`        | Bearer | linked target with no `DB_PASSWORD` (mint a temp postgres role) |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | linked pooler temp-role retry (list bans)                       |
+| DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | linked pooler temp-role retry (clear self ban)                  |
 
-(All via the shared `DbConfigResolver` `--linked` path.)
+(All via the shared `DbConfigResolver` linked path.)
 
 ## Environment Variables
 
 | Variable                                             | Purpose                                                                                                                                                                                                                                                          |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_DB_PASSWORD` (`--password`/`-p` overrides) | remote DB password; ignored for a target other than the linked project (see Notes)                                                                                                                                                                               |
-| `SUPABASE_ACCESS_TOKEN`                              | `--linked` auth                                                                                                                                                                                                                                                  |
+| `SUPABASE_ACCESS_TOKEN`                              | linked-target auth                                                                                                                                                                                                                                               |
+| `SUPABASE_TARGET`                                    | workspace target when no `--local`/`--linked`/`--db-url` is given                                                                                                                                                                                                |
 | `BITBUCKET_CLONE_DIR`                                | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                                                    |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                   | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                                                 |
 | `SUPABASE_USE_SLIM_IMAGES`                           | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
@@ -50,14 +57,17 @@ image), to stdout or `--file`.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                              |
-| `1`  | `--password` with `--db-url` or `--local`                                                                                                                             |
+| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`)                                                                                      |
+| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                        |
+| `1`  | `--password` with `--db-url` or `--local` (`TargetPasswordConflictError`)                                                                                             |
 
 ## Output
 
 SQL goes to **stdout** (or `--file`) in **all** `--output-format` modes — there is
 no machine envelope for `db dump` (same rationale as `test db`). Diagnostics go
-to **stderr**: `Dumping {schemas|data| roles} from {local|remote} database...`,
+to **stderr**: the `Target: …` line (linked project `Target: <name> (<ref>)`,
+`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>)`),
+`Dumping {schemas|data| roles} from {local|remote} database...`,
 the `--dry-run` notice, and the `Dumped schema to <abs>.` confirmation when
 `--file` is used. `--dry-run` prints the env-expanded script to stdout without
 running a container; with `--file` it still prints the `Dumped schema to <abs>.`
@@ -89,15 +99,12 @@ shell inherits the suppressing variables and is missed.
   from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with
   `--db-url` or `--local`, which carry their own credentials.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
-  `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
-  `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
-- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and
-  the linked-project cache (flag > `SUPABASE_PROJECT_ID`/config.toml
-  `project_id` > `.temp/project-ref`) — it does not affect any local container
-  id. It never implies `--linked`: passing it with a resolved
-  `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
-  unused on a non-linked target).
+  `--schema` XOR `--role-only`. `--use-copy` / `--exclude` require `--data-only`.
+- **Target selection.** `--db-url`, `--linked` and `--local` are mutually exclusive and a `false`
+  switch counts as absent. `--project-ref` selects the linked project and supplies only the ref
+  (flag > `SUPABASE_PROJECT_ID`/config.toml `project_id` > `.temp/project-ref`) for the connection
+  and the linked-project cache; it does not affect any local container id, and combining it with
+  `--local` or `--db-url` is a hard error.
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is
