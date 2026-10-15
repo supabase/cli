@@ -41,7 +41,7 @@
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — secrets unset from the linked project                                                                                           |
 | `0`  | `--dry-run` — the secrets that would be unset were printed, no DELETE call                                                                |
-| `0`  | `--all` resolved to zero non-`SUPABASE_` secrets (stderr no-op, no DELETE call)                                                           |
+| `0`  | `--all` resolved to zero non-`SUPABASE_` secrets (no DELETE call; text writes the stderr no-op, machine formats an empty result)          |
 | `1`  | `SecretsNoArgumentsError` — no names and no `--all`; fails before the project ref resolves and before any API call                        |
 | `1`  | `SecretsUnsetInputError` — names given together with `--all`; fails before the project ref resolves and before any API call               |
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                 |
@@ -83,9 +83,11 @@ Single JSON object emitted via `Output.success` with `{project_ref, count, names
 
 With `--dry-run`, the message is `Dry run: no secrets were unset.` and `data` is `{project_ref, count, names, dry_run: true}`.
 
+When `--all` resolves to no secrets, the message is `You have not set any function secrets, nothing to do.` and `data` is `{project_ref, count: 0, names: [], dry_run}`.
+
 ### `--output-format stream-json`
 
-One `result` NDJSON event on success containing `{project_ref, count, names, dry_run}`, with the same `--dry-run` message and `dry_run: true`.
+One `result` NDJSON event on success containing `{project_ref, count, names, dry_run}`, with the same `--dry-run` and empty-`--all` messages as `json`.
 
 ## Notes
 

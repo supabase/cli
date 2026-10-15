@@ -333,6 +333,33 @@ describe("secrets unset integration", () => {
       },
     );
 
+    it.effect.each([
+      { format: "json", dryRun: false },
+      { format: "stream-json", dryRun: true },
+    ] as const)(
+      "emits an empty result for $format when --all finds nothing (dryRun: $dryRun)",
+      ({ format, dryRun }) => {
+        const { layer, out, api } = setup({
+          yes: true,
+          format,
+          list: [{ name: "SUPABASE_ONLY", value: "d" }],
+        });
+        return Effect.gen(function* () {
+          yield* unset({ all: true, dryRun });
+          const successes = out.messages.filter((m) => m.type === "success");
+          expect(successes).toEqual([
+            {
+              type: "success",
+              message: "You have not set any function secrets, nothing to do.",
+              data: { project_ref: VALID_REF, count: 0, names: [], dry_run: dryRun },
+            },
+          ]);
+          expect(out.stderrText).toBe("");
+          expect(methods(api)).toEqual(["GET"]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
     it.effect("prints the text Finished line regardless of the --output value", () => {
       const { layer, out } = setup({ yes: true, outputFlag: "json" });
       return Effect.gen(function* () {

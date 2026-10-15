@@ -86,7 +86,17 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     }
 
     if (names.length === 0) {
-      yield* output.raw("You have not set any function secrets, nothing to do.\n", "stderr");
+      const message = "You have not set any function secrets, nothing to do.";
+      if (output.format === "text") {
+        yield* output.raw(`${message}\n`, "stderr");
+        return;
+      }
+      yield* output.success(message, {
+        project_ref: ref,
+        count: 0,
+        names,
+        dry_run: flags.dryRun,
+      });
       return;
     }
 
