@@ -2,15 +2,13 @@
 
 Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, bundled pg-delta or
-migra) or declarative files (`--declarative`, or the deprecated `--experimental`
-gate without `--declarative`). Both export modes run the native pg-delta
-export. The initial-migra pull (no local migrations) seeds the migration file
+migra) or declarative files (`--declarative`). The declarative mode runs the native
+pg-delta export. The initial-migra pull (no local migrations) seeds the migration file
 with a native `pg_dump` of the remote schema (a Docker `pg_dump` container,
 with IPv4 transaction-pooler fallback) and then appends the migra diff.
-`--experimental` without `--declarative` runs the same in-process declarative export (`supabase/schemas` plus
-`.pgdelta-export.json`) and prints a deprecation line pointing at
-`--declarative`. `--experimental --declarative` does not print that line:
-`--declarative` already selected the export.
+`--use-pg-delta` and the `--experimental` structured-dump mode (`--experimental` or
+`SUPABASE_EXPERIMENTAL` resolving true without `--declarative`) are removed — see
+"Removed surfaces" below.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
@@ -37,7 +35,7 @@ disables formatting without disabling safe compaction.
 | Path                                                                                      | Format      | When                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json` or `config.toml`                                         | JSON / TOML | always, `config.json` preferred (db port/password, `[experimental.pgdelta]`)                                                                                                                                                                                                                                                                       |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv      | migration-style pull's shadow provisioning, and declarative / deprecated-`--experimental` export config/env resolution                                                                                                                                                                                                                             |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv      | migration-style pull's shadow provisioning, and declarative export config/env resolution                                                                                                                                                                                                                                                           |
 | `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                    | PEM         | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                                                                                                                                                                                                                         |
 | `<workdir>/supabase/migrations/*.sql`                                                     | SQL         | history reconciliation + shadow provisioning                                                                                                                                                                                                                                                                                                       |
 | `<workdir>/supabase/roles.sql`                                                            | SQL         | migration-style pull only (`--declarative` provisions no shadow); also hashed into the shadow-baseline cache key on every cache-eligible acquire, warm hits included (where no baseline is applied at all); missing file tolerated                                                                                                                 |
@@ -49,18 +47,18 @@ disables formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                                        | Format  | When                                                                                                                                                                                                                                                                                                                                                               |
-| --------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`                 | SQL     | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                                                                                                                                                                                                                                         |
-| `<workdir>/supabase/schemas/**`                                             | SQL     | `--declarative` or deprecated `--experimental` export                                                                                                                                                                                                                                                                                                              |
-| `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON    | bundled declarative / deprecated-`--experimental` export metadata                                                                                                                                                                                                                                                                                                  |
-| `<workdir>/supabase/config.toml`                                            | TOML    | declarative export updates `[db.migrations].schema_paths` only when `[experimental.pgdelta] enabled = false`; skipped when `enabled` resolves true (section absent, `enabled` omitted, or `enabled = true` — the default)                                                                                                                                          |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                                |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot, migration-style pull only (never a declarative / deprecated-`--experimental` export, which provisions no shadow); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
-| managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                                               |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                     |
-| `~/.supabase/<workdir-hash>/linked-project.json`                            | JSON    | linked (post-run cache)                                                                                                                                                                                                                                                                                                                                            |
-| `~/.supabase/telemetry.json`                                                | JSON    | every invocation (post-run)                                                                                                                                                                                                                                                                                                                                        |
+| Path                                                                        | Format  | When                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`                 | SQL     | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                                                                                                                                                                                                           |
+| `<workdir>/supabase/schemas/**`                                             | SQL     | `--declarative` export                                                                                                                                                                                                                                                                                                               |
+| `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON    | bundled declarative export metadata                                                                                                                                                                                                                                                                                                  |
+| `<workdir>/supabase/config.toml`                                            | TOML    | declarative export updates `[db.migrations].schema_paths` only when `[experimental.pgdelta] enabled = false`; skipped when `enabled` resolves true (section absent, `enabled` omitted, or `enabled = true` — the default)                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                  |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot, migration-style pull only (never a declarative export, which provisions no shadow); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
+| managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                 |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                       |
+| `~/.supabase/<workdir-hash>/linked-project.json`                            | JSON    | linked (post-run cache)                                                                                                                                                                                                                                                                                                              |
+| `~/.supabase/telemetry.json`                                                | JSON    | every invocation (post-run)                                                                                                                                                                                                                                                                                                          |
 
 ## Docker
 
@@ -137,15 +135,16 @@ at all, so nothing is cached for it.
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                                                                                                                                                     | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                                                                                                                                                                                                         | no        |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                               | overrides `[experimental.pgdelta].enabled` (default true; `false` selects migra for the migration-style diff unless `--diff-engine` is passed, and lets a declarative export write `schema_paths`); a value that is not a boolean fails the command                                                                                                                                                                           | no        |
-| `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated in-process structured-dump export (same as `--declarative`) when `--declarative` is not set                                                                                                                                                                                                                                                                                                            | no        |
+| `SUPABASE_EXPERIMENTAL`                                                               | resolving true (shell, then project `.env`) without `--declarative` fails the command with the removed structured-dump error; `--experimental=false` overrides it for one invocation                                                                                                                                                                                                                                          | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration written + optional history update; declarative export)                                                                                                                           |
-| `1`  | target mutex; `--declarative`/`--use-pg-delta` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
-| `1`  | `--project-ref` set with a resolved target other than linked                                                                                                                                        |
+| Code | Condition                                                                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration written + optional history update; declarative export)                                                                                                          |
+| `1`  | target mutex; `--declarative` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
+| `1`  | `--use-pg-delta` passed at all (any value, including `=false`); `--experimental`/`SUPABASE_EXPERIMENTAL` resolving true without `--declarative` — removed, see Removed surfaces    |
+| `1`  | `--project-ref` set with a resolved target other than linked                                                                                                                       |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
 > exit** for `db pull`. Instead of the generic
@@ -160,9 +159,7 @@ at all, so nothing is cached for it.
 Progress to stderr. Migration path: `Creating shadow database...`,
 `Diffing schemas[: <list>]`, `Schema written to <path>`. Declarative path:
 `Preparing declarative schema export using pg-delta...`, `Declarative schema
-written to <dir>`. Plus the `--use-pg-delta` deprecation line, the
-`--experimental` structured-dump deprecation line (which names v3), and the history-update
-prompt. On success the PostRun line `Finished supabase db pull.` is printed to
+written to <dir>`. Plus the history-update prompt. On success the PostRun line `Finished supabase db pull.` is printed to
 stdout.
 
 A configured `[db.migrations].schema_paths` also warns on the migration path
@@ -182,7 +179,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   block. The linked-database password env is withheld when the target differs from
   `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
-- `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
+- `--declarative` is mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - `--diff-engine` defaults to pg-delta. Without the flag, migra is selected only by
   `[experimental.pgdelta] enabled = false`; the historical
@@ -193,14 +190,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   id/labels. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
   flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
-  unused on a non-linked target). The deprecated
-  `--experimental` export honors `--project-ref` the same way `--declarative`
-  does.
-- `--use-pg-delta` is hidden, selects the declarative export, and prints
-  `Flag --use-pg-delta has been deprecated, use --declarative instead.`
-  to stderr. It also sets `[experimental.pgdelta].enabled` at the flag tier, so the declarative
-  export leaves `[db.migrations].schema_paths` alone and, if the pull falls back to migration mode
-  (`--use-pg-delta --declarative=false`, last flag wins), the migration diff uses pg-delta.
+  unused on a non-linked target).
 - Migration-style pulls always compare migrations with the live target;
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with
@@ -209,9 +199,27 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   it streams a `pg_dump` of the remote schema into the migration file, then appends
   the migra diff. An empty diff after a non-empty dump is swallowed; an empty dump +
   empty diff is "No schema changes found". Stack-backed pulls never take this path.
-- The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
-  project-`.env` equivalent) now runs the same in-process declarative export
-  as `--declarative`. It is deprecated and will be removed in a future release: a warning pointing
-  at `--declarative` prints to stderr before the export. `--experimental --declarative` does not
-  print that line. Output is the pg-delta declarative tree under
-  `supabase/schemas` (plus `.pgdelta-export.json`).
+
+### Removed surfaces
+
+Both fail with `RemovedSurfaceError` (exit 1). Telemetry records `cli_command_executed` with
+`error_fingerprint` ending in `:removed_flag`; the post-run `telemetry.json` read and write under
+`SUPABASE_HOME` still happens, and `use-pg-delta` stays in the recorded `flags`.
+
+- `--use-pg-delta` (any value, including `=false`; checked first, even alongside `--declarative`)
+  fails before any work, on a runtime that needs no credentials, profile or config. Message:
+  `--use-pg-delta was removed.` Suggestion: "Use --declarative to pull the declarative schema.
+  The diff engine is chosen with --diff-engine or [experimental.pgdelta] enabled in config.toml."
+  The flag stays parsed (hidden, bound to `[experimental.pgdelta].enabled`) only so misuse reaches
+  this error. The migration diff engine is unchanged: pg-delta by default, with migra selected by
+  `--diff-engine migra`, `[experimental.pgdelta] enabled = false` or its env var.
+- The `--experimental` structured-dump mode is the global `--experimental` flag,
+  `SUPABASE_EXPERIMENTAL` in the shell, or `SUPABASE_EXPERIMENTAL` in the project `.env` resolving
+  true (flag > shell env > project `.env`) without `--declarative`. It is rejected
+  before the profile or credentials load, after only the project `.env*` read from the workdir, so a
+  malformed `.env` fails first, but before any config, database or network work. Message: "The --experimental structured-dump mode of db pull was
+  removed." Suggestion: "Use --declarative to pull per-object schema files, or pass
+  --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull."
+  `--experimental --declarative` runs the declarative export without an error, and an explicit
+  `--experimental=false` beats the env. The check lives in the `db pull` command handler, not in
+  the shared pull runner, so `supabase pull` does not reject `SUPABASE_EXPERIMENTAL`.

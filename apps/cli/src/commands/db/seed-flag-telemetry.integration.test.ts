@@ -53,7 +53,7 @@ describe("seed and pg-delta flag telemetry", () => {
   );
 
   it.live("records --use-pg-delta=false as a boolean", () =>
-    capturedFlags(["db", "pull"], ["--use-pg-delta=false"], {
+    capturedFlags(["db", "diff"], ["--use-pg-delta=false"], {
       "use-pg-delta": Option.some(false),
     }).pipe(
       Effect.tap((flags) => Effect.sync(() => expect(flags).toEqual({ "use-pg-delta": false }))),

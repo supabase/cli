@@ -904,42 +904,6 @@ additional_redirect_urls = "http://a,http://b"
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("warns on stderr for a deprecated auth.external provider", () =>
-    Effect.gen(function* () {
-      // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-      // `Console.error` only under the CLI's config-loading semantics.
-      yield* writeSupabaseFile(
-        tempRoot.current,
-        "config.toml",
-        `project_id = "demo"
-
-[auth.external.slack]
-enabled = true
-`,
-      );
-      const { layer } = yield* setup({ skipConfig: true, route: defaultRoute() });
-      const warnings: Array<string> = [];
-      yield* Effect.acquireUseRelease(
-        Effect.sync(() =>
-          vi.spyOn(console, "error").mockImplementation((...args) => {
-            warnings.push(args.map((a) => String(a)).join(" "));
-          }),
-        ),
-        () =>
-          Effect.gen(function* () {
-            yield* stop(flags()).pipe(Effect.provide(layer));
-            expect(
-              warnings.some((m) => m.includes('WARN: disabling deprecated "slack" provider')),
-            ).toBe(true);
-          }),
-        (errorSpy) =>
-          Effect.sync(() => {
-            errorSpy.mockRestore();
-          }),
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect(
     "fails and never spawns docker when config.toml has an unsupported db.major_version",
     () =>

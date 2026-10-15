@@ -119,7 +119,9 @@ artifact preparation.
 When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
 `SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
 provides per-function values from project environment references. Per-function enabled/JWT policies,
-entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
+entrypoints, import maps and static files are forwarded to the worker bootstrap. Without a
+configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a per-function
+`import_map.json` is not read. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
 Running start calls do not refresh Functions from changed project files; stop the stack and start

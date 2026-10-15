@@ -39,20 +39,21 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Exit Codes
 
-| Code | Condition                                                                       |
-| ---- | ------------------------------------------------------------------------------- |
-| `0`  | success                                                                         |
-| `1`  | project ref cannot be resolved / is malformed                                   |
-| `1`  | `create`: hostname has no matching CNAME record (Cloudflare DNS pre-check)      |
-| `1`  | API error — unexpected (non-201/200) response from the custom-hostname endpoint |
-| `1`  | network / connection failure                                                    |
+| Code | Condition                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                   |
+| `1`  | project ref cannot be resolved / is malformed                                             |
+| `1`  | `create`: hostname has no matching CNAME record (Cloudflare DNS pre-check)                |
+| `1`  | API error — unexpected (non-201/200) response from the custom-hostname endpoint           |
+| `1`  | network / connection failure                                                              |
+| `1`  | `--include-raw-output` passed at all (any value, including `=false`) — removed, see Notes |
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                                                  | Notable properties / groups                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe)                           |
-| `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback |
+| Event                   | When                                                                                  | Notable properties / groups                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe); a rejected `--include-raw-output` fails with `error_fingerprint` ending in `:removed_flag` (`RemovedSurfaceError`) |
+| `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback                                                                                           |
 
 ## Output
 
@@ -83,7 +84,7 @@ A `result` event carrying the custom-hostname response object.
 
 ### `-o {json,yaml,toml,env}`
 
-When the `--output`/`-o` flag is set (or `--include-raw-output` forces `json`),
+When the `--output`/`-o` flag is set,
 the full response is encoded to stdout in that format and the human status is
 suppressed on stderr. `delete` ignores `-o`.
 
@@ -93,9 +94,8 @@ suppressed on stderr. `delete` ignores `-o`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
 - All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file.
 - The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
-- `--include-raw-output` is deprecated: passing it with any value (including `--include-raw-output=false`) prints `Flag --include-raw-output is deprecated and will be removed in a future release, use -o json instead.` to stderr before the API call, in every output mode, on all five subcommands (including `delete`). stdout is unaffected.
 - **Notes:**
-  - `--include-raw-output` is declared as an optional boolean **on each subcommand**. Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it is not hidden from help. It forces `-o json` when the value is `true` and `-o` is unset/pretty; on `delete` it is inert.
+  - `--include-raw-output` is removed on every subcommand, `delete` included. Passing it (any value, including `=false`) fails with `--include-raw-output was removed.` and the suggestion `Use -o json instead.`, before credentials are resolved or any API work runs, so it needs no login. `RemovedSurfaceError` records `cli_command_executed` with `error_fingerprint` ending in `:removed_flag`, and the post-run `telemetry.json` read and write under `SUPABASE_HOME` still happens. The flag stays parsed (hidden) only so misuse reaches this error instead of an unknown-flag parse error; its rejection lives in `domains.removed-flag.ts`.
   - The degenerate `validation_records != 1` status message is an approximate struct dump (the exact text is not stable).
   - Text-mode status output is newline-terminated. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
   - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean.

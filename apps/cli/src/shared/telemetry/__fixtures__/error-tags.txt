@@ -41,6 +41,8 @@ BranchesUpdateUnexpectedStatusError
 CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
+CliConfigRemovedEnvError
+CliConfigRemovedKeyError
 CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
@@ -466,6 +468,8 @@ SecretsSetInputError
 SecretsSetNetworkError
 SecretsSetUnexpectedStatusError
 SecretsUnsetCancelledError
+SecretsUnsetConfirmationRequiredError
+SecretsUnsetInputError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError

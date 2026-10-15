@@ -11,6 +11,7 @@ import { Effect, Option, Path, Schema, type SchemaAST } from "effect";
 import { getDocumentValue } from "./cli-config-document.ts";
 import {
   CLI_CONFIG_FAMILIES,
+  CLI_CONFIG_REMOVED_ENV_NAMES,
   CLI_CONFIG_SCHEMA_EXCLUDED,
   CLI_CONFIG_SECTION_ENV_EXEMPT,
   CLI_NON_CONFIG_ENV_NAMES,
@@ -99,6 +100,18 @@ describe("config key registry", () => {
     const collisions = [...registryEnvNames].filter((name) => name in CLI_NON_CONFIG_ENV_NAMES);
 
     expect(collisions).toEqual([]);
+  });
+
+  it("points every removed env name at its replacement key and no longer registers it", () => {
+    const removed = Object.entries(CLI_CONFIG_REMOVED_ENV_NAMES);
+
+    expect(removed.length).toBeGreaterThan(0);
+    expect(removed.filter(([name]) => registryEnvNames.has(name))).toEqual([]);
+    expect(
+      removed.filter(
+        ([, { path, replacement }]) => !cliConfigRegistry.keyAt(path)?.env.includes(replacement),
+      ),
+    ).toEqual([]);
   });
 
   it("accounts for every SUPABASE_* name the CLI source mentions outside the registry files", () => {
@@ -246,8 +259,12 @@ describe("config key registry", () => {
   );
 
   it("keeps every schema leaf in the registry unless it is explicitly excluded", () => {
-    expect(Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED)).toEqual(["experimental.inspect.rules"]);
+    expect(Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED)).toEqual([
+      "experimental.inspect.rules",
+      "experimental.orioledb_version",
+    ]);
     expect(cliConfigRegistry.keyAt("experimental.inspect.rules")).toBeUndefined();
+    expect(cliConfigRegistry.keyAt("experimental.orioledb_version")).toBeUndefined();
     expect(cliConfigRegistry.keyAt("experimental.webhooks.enabled")).toBeDefined();
   });
 

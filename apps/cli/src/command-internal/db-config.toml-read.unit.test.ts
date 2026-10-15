@@ -1654,59 +1654,35 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect(
-    "falls back to a non-empty legacy experimental.orioledb_version when db.orioledb_version is absent",
-    () => {
-      return withConfig(
-        [
-          "[db]",
-          "major_version = 17",
-          "[experimental]",
-          'orioledb_version = "15.1.0.150"',
-          "",
-        ].join("\n"),
-      ).pipe(
-        Effect.flatMap(read),
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.150");
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("rejects a non-empty experimental.orioledb_version, naming db.orioledb_version", () => {
+    return withConfig(
+      ["[db]", "major_version = 17", "[experimental]", 'orioledb_version = "15.1.0.150"', ""].join(
+        "\n",
+      ),
+    ).pipe(
+      Effect.flatMap(read),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "experimental.orioledb_version in supabase/config.toml is no longer supported. Use db.orioledb_version instead.",
+            );
+          }
+        }),
+      ),
+    );
+  });
 
-  it.effect(
-    "falls back to a non-empty legacy experimental.orioledb_version when db.orioledb_version is empty",
-    () => {
-      return withConfig(
-        [
-          "[db]",
-          "major_version = 17",
-          'orioledb_version = ""',
-          "[experimental]",
-          'orioledb_version = "15.1.0.150"',
-          "",
-        ].join("\n"),
-      ).pipe(
-        Effect.flatMap(read),
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.150");
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect("prefers an explicit db.orioledb_version over a non-empty legacy value", () => {
+  it.effect("ignores an empty experimental.orioledb_version", () => {
     return withConfig(
       [
         "[db]",
         "major_version = 17",
         'orioledb_version = "17.0.0.1"',
         "[experimental]",
-        'orioledb_version = "15.1.0.150"',
+        'orioledb_version = ""',
         "",
       ].join("\n"),
     ).pipe(
@@ -1719,60 +1695,52 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect(
-    "a matched remote's legacy experimental.orioledb_version overrides the base db.orioledb_version",
-    () => {
-      // Matches `@supabase/config`'s loader precedence: each `[remotes.*]` block's own legacy
-      // value is promoted before the remote merge, so it can override the base canonical value.
-      const ref = "abcdefghijklmnopqrst";
-      return withConfig(
-        [
-          "[db]",
-          "major_version = 17",
-          'orioledb_version = "A"',
-          "[remotes.prod]",
-          `project_id = "${ref}"`,
-          "[remotes.prod.experimental]",
-          'orioledb_version = "B"',
-          "",
-        ].join("\n"),
-      ).pipe(
-        Effect.flatMap((dir) => readRef(dir, ref)),
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(Option.getOrNull(v.orioledbVersion)).toBe("B");
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("a matched remote's db.orioledb_version overrides the base db.orioledb_version", () => {
+    const ref = "abcdefghijklmnopqrst";
+    return withConfig(
+      [
+        "[db]",
+        "major_version = 17",
+        'orioledb_version = "A"',
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.db]",
+        'orioledb_version = "B"',
+        "",
+      ].join("\n"),
+    ).pipe(
+      Effect.flatMap((dir) => readRef(dir, ref)),
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.orioledbVersion)).toBe("B");
+        }),
+      ),
+    );
+  });
 
-  it.effect(
-    "SUPABASE_DB_ORIOLEDB_VERSION beats a matched remote's legacy experimental.orioledb_version",
-    () => {
-      const ref = "abcdefghijklmnopqrst";
-      return withConfig(
-        [
-          "[db]",
-          "major_version = 17",
-          'orioledb_version = "A"',
-          "[remotes.prod]",
-          `project_id = "${ref}"`,
-          "[remotes.prod.experimental]",
-          'orioledb_version = "B"',
-          "",
-        ].join("\n"),
-      ).pipe(
-        Effect.flatMap((dir) => readRef(dir, ref)),
-        Effect.tap((v) =>
-          Effect.sync(() => {
-            expect(Option.getOrNull(v.orioledbVersion)).toBe("env-value");
-          }),
-        ),
-        withEnv({ SUPABASE_DB_ORIOLEDB_VERSION: "env-value" }),
-      );
-    },
-  );
+  it.effect("SUPABASE_DB_ORIOLEDB_VERSION beats a matched remote's db.orioledb_version", () => {
+    const ref = "abcdefghijklmnopqrst";
+    return withConfig(
+      [
+        "[db]",
+        "major_version = 17",
+        'orioledb_version = "A"',
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.db]",
+        'orioledb_version = "B"',
+        "",
+      ].join("\n"),
+    ).pipe(
+      Effect.flatMap((dir) => readRef(dir, ref)),
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.orioledbVersion)).toBe("env-value");
+        }),
+      ),
+      withEnv({ SUPABASE_DB_ORIOLEDB_VERSION: "env-value" }),
+    );
+  });
 
   it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
     const writes: Array<string> = [];
@@ -2546,8 +2514,11 @@ describe("readDbToml auth.Enabled validation", () => {
   it.effect("exempts apple/google from the external secret requirement", () =>
     succeeds(["[auth.external.apple]", "enabled = true", 'client_id = "a"']),
   );
-  it.effect("never validates the deprecated linkedin/slack providers", () =>
-    succeeds(["[auth.external.linkedin]", "enabled = true"]),
+  it.effect("rejects the removed linkedin provider, naming linkedin_oidc", () =>
+    failsWith(
+      ["[auth.external.linkedin]", "enabled = true"],
+      "[auth.external.linkedin] in supabase/config.toml is no longer supported. Use [auth.external.linkedin_oidc] instead.",
+    ),
   );
 
   it.effect("rejects an enabled firebase third_party without project_id", () =>

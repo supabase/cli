@@ -2114,11 +2114,13 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
     readonly importMapOverride: Option.Option<string>;
     readonly noVerifyJwtOverride: Option.Option<boolean>;
+    /** Skips the fallback-import-map warning, for a resolve whose result is discarded. */
+    readonly quiet?: boolean;
   }) {
     const output = yield* Output;
     const path = yield* Path.Path;
     const functionsDir = path.join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
-    const seenDeprecatedImportMap = new Set<string>();
+    const unsupportedImportMaps = new Map<string, string>();
     const seenFallbackImportMap = new Set<string>();
     const resolved: ResolvedDeployFunctionConfig[] = [];
 
@@ -2176,20 +2178,23 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
           const functionDir = path.dirname(entrypoint);
           const denoJson = path.join(functionDir, "deno.json");
           const denoJsonc = path.join(functionDir, "deno.jsonc");
-          const deprecatedImportMap = path.join(functionDir, "import_map.json");
+          const unsupportedImportMap = path.join(functionDir, "import_map.json");
 
           if (yield* isFile(denoJson)) {
             importMap = denoJson;
           } else if (yield* isFile(denoJsonc)) {
             importMap = denoJsonc;
-          } else if (yield* isFile(deprecatedImportMap)) {
-            importMap = deprecatedImportMap;
-            seenDeprecatedImportMap.add(slug);
-          } else if (fallbackExists) {
-            if (fallbackExists) {
-              importMap = fallbackImportMapPath;
-              seenFallbackImportMap.add(slug);
+          } else if (
+            // An entrypoint directly under `functions/` shares its directory with the fallback map.
+            unsupportedImportMap !== path.resolve(fallbackImportMapPath) &&
+            (yield* isFile(unsupportedImportMap))
+          ) {
+            if (enabled) {
+              unsupportedImportMaps.set(slug, unsupportedImportMap);
             }
+          } else if (fallbackExists) {
+            importMap = fallbackImportMapPath;
+            seenFallbackImportMap.add(slug);
           }
         }
       }
@@ -2209,14 +2214,21 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
       });
     }
 
-    if (seenDeprecatedImportMap.size > 0) {
-      yield* output.raw(
-        `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
-        "stderr",
-      );
+    const [firstUnsupported] = unsupportedImportMaps;
+    if (firstUnsupported !== undefined) {
+      const [slug, importMapPath] = firstUnsupported;
+      const relativePath = path
+        .relative(input.supabaseDir, importMapPath)
+        .split(path.sep)
+        .join("/");
+      const configPath = relativePath.startsWith("../") ? relativePath : `./${relativePath}`;
+      return yield* new FunctionDeployError({
+        message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
+        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
+      });
     }
 
-    if (seenFallbackImportMap.size > 0) {
+    if (seenFallbackImportMap.size > 0 && input.quiet !== true) {
       yield* output.raw(
         `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
         "stderr",

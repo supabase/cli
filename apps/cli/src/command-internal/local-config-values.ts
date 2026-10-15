@@ -616,9 +616,6 @@ export function resolveAuthSms(sms: CliConfig["auth"]["sms"]): CliConfig["auth"]
   };
 }
 
-/** Deleted external providers, warned on if still enabled, never validated. */
-const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
-
 /** Matches `GotrueExternalProviderInput`'s fields, kept separate to avoid a command-specific import. */
 export interface ResolvedAuthExternalProvider {
   readonly enabled: boolean;
@@ -674,7 +671,6 @@ export function resolveAuthExternalProviders(
   const decodedProviders = new Map(Object.entries(external));
   const providerNames = new Set([...Object.keys(externalDoc ?? {}), "apple"]);
   for (const name of providerNames) {
-    if (DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
     const provider = decodedProviders.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc?.[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;

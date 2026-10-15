@@ -693,31 +693,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       (message) => new StartInvalidConfigError({ message }),
     ).pipe(Effect.withSpan("start.resolveBootstrapConfig"));
 
-    // 7. Resolve every image that will actually be pulled before any container is created.
-    const slim = yield* slimImagesEnabled;
-    const imagePlan = resolveStartImagePlan(gates, slim, serviceVersionOverrides);
-    // Edge Runtime doesn't go through `resolveStartImagePlan` (see `start.gates.ts`'s header),
-    // so its default image is resolved independently, pre-pulled when enabled and not excluded.
-    const edgeRuntimeDefaultImage = gates.edgeRuntime
-      ? yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
-      : undefined;
-    // Pre-pull only touches non-excluded services; the one-shot setup-job images are resolved
-    // lazily, only when the fresh-DB setup job actually runs.
-    const resolvedImages = yield* ensureImagesCached(
-      spawner,
-      [
-        postgresImage,
-        ...imagePlan.map((entry) => entry.image),
-        ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
-      ],
-      projectEnvValues,
-    );
-    const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
-
-    // Studio's bind mounts are resolved unconditionally of `config.edge_runtime.enabled`, since
-    // `buildSpecForService`'s "studio" case needs them regardless of whether Edge Runtime itself
-    // is enabled.
-    //
     // `config.functions.<slug>.env.<VAR>` is schema-marked deferred and only gets its literal
     // interpolated by `resolveConfigSubtree` — without this, a configured `env` entry reaches
     // Edge Runtime as the literal string `"env(API_KEY)"` instead of the real secret.
@@ -740,20 +715,44 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       ),
     );
     const rawConfigFunctions = rawFunctionConfigRecord(context.document);
-    // Resolve once during preflight so a missing function source cannot fail only after stopped
-    // containers have been removed. Studio consumes the cached binds later during bring-up.
-    const studioFunctionBinds = gates.studio
-      ? yield* resolveFunctionBindMounts(
-          projectId,
-          cliSettings.workdir,
-          `${cliSettings.workdir}/supabase`,
-          { configDeclaredFunctions, configFunctions, rawConfigFunctions },
-          Option.none(),
-          Option.none(),
-          cliSettings.workdir,
-          projectEnvValues,
-        )
-      : new Set<string>();
+    // Resolve before any image pull or container change so a missing function source or an
+    // unsupported per-function import map fails fast. Studio consumes the binds during bring-up;
+    // without Studio, Edge Runtime prints the resolution diagnostics itself.
+    const preflightFunctionBinds =
+      gates.studio || gates.edgeRuntime
+        ? yield* resolveFunctionBindMounts(
+            projectId,
+            cliSettings.workdir,
+            `${cliSettings.workdir}/supabase`,
+            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+            Option.none(),
+            Option.none(),
+            cliSettings.workdir,
+            projectEnvValues,
+            !gates.studio,
+          )
+        : new Set<string>();
+
+    // 7. Resolve every image that will actually be pulled before any container is created.
+    const slim = yield* slimImagesEnabled;
+    const imagePlan = resolveStartImagePlan(gates, slim, serviceVersionOverrides);
+    // Edge Runtime doesn't go through `resolveStartImagePlan` (see `start.gates.ts`'s header),
+    // so its default image is resolved independently, pre-pulled when enabled and not excluded.
+    const edgeRuntimeDefaultImage = gates.edgeRuntime
+      ? yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
+      : undefined;
+    // Pre-pull only touches non-excluded services; the one-shot setup-job images are resolved
+    // lazily, only when the fresh-DB setup job actually runs.
+    const resolvedImages = yield* ensureImagesCached(
+      spawner,
+      [
+        postgresImage,
+        ...imagePlan.map((entry) => entry.image),
+        ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
+      ],
+      projectEnvValues,
+    );
+    const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
     /* Docker creates a missing bind source, but `podman create -v` rejects it. */
     if (gates.studio)
       yield* fs
@@ -1078,7 +1077,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 port: values.studioPort,
                 // Computed whenever Studio is enabled, independently of Edge Runtime.
                 // Resolved during preflight above so recovery teardown remains reversible.
-                functionBinds: [...studioFunctionBinds],
+                functionBinds: [...preflightFunctionBinds],
                 env: {
                   dbPassword,
                   workdir: cliSettings.workdir,

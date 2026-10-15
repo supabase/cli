@@ -66,7 +66,8 @@ const runCommand = (entry: WalkedCommand, selector: "db-url" | "local" | "none")
       ...selectorArgs(selector),
       "--workdir",
       home,
-      "--experimental",
+      // `db pull` rejects `--experimental` without `--declarative` before it validates the password.
+      ...(entry.path.join(" ") === "db pull" ? [] : ["--experimental"]),
     ];
     const exit = yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
       Effect.provide(
