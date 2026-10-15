@@ -9,7 +9,6 @@ import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
 import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
-import { PENDING_COMMANDS } from "../../../tests/helpers/permission-pending-commands.ts";
 import { DB_TARGET_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
@@ -68,39 +67,17 @@ function declarationOf(node: TreeNode): CommandPermissions | undefined {
 
 describe("command permission mapping completeness", () => {
   const trees = VARIANTS.map(({ name, variant }) => ({ name, tree: commandTreeFor(variant) }));
-  const everyLeafPath = new Set(
-    trees.flatMap(({ tree }) => [...tree].filter(([, node]) => node.isLeaf).map(([path]) => path)),
-  );
   const everyRealFlag = new Set(
     trees.flatMap(({ tree }) => [...tree.values()].flatMap((node) => [...node.flags])),
   );
-  const pendingPaths = new Set(PENDING_COMMANDS);
-
-  it("lists every pending path once, and only paths that are real leaves", () => {
-    expect(pendingPaths.size, "PENDING_COMMANDS has a duplicate entry").toBe(
-      PENDING_COMMANDS.length,
-    );
-    for (const path of pendingPaths) {
-      expect(
-        everyLeafPath.has(path),
-        `pending path "${path}" is not a leaf in any command tree`,
-      ).toBe(true);
-    }
-  });
 
   for (const { name, tree } of trees) {
     describe(name, () => {
       const leaves = [...tree].filter(([, node]) => node.isLeaf);
 
-      it("declares or pends every leaf, never both", () => {
+      it("declares permissions on every leaf", () => {
         for (const [path, node] of leaves) {
-          const isDeclared = declarationOf(node) !== undefined;
-          const isPending = pendingPaths.has(path);
-          expect(isDeclared || isPending, `"${path}" is neither declared nor pending`).toBe(true);
-          expect(
-            isDeclared && isPending,
-            `"${path}" is both declared and pending — remove it from PENDING_COMMANDS`,
-          ).toBe(false);
+          expect(declarationOf(node), `"${path}" declares no permissions`).toBeDefined();
         }
       });
 

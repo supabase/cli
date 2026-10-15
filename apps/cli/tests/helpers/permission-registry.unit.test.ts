@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
-import { commandTreeFor } from "./command-flags.ts";
-import { PENDING_COMMANDS } from "./permission-pending-commands.ts";
 import { applicableOperations, declaredPermissions } from "./permission-registry.ts";
 
 describe("applicableOperations", () => {
@@ -160,15 +158,5 @@ describe("declaredPermissions", () => {
     expect(declaredPermissions("not-a-real-command")).toEqual({ _tag: "NotFound" });
     expect(declaredPermissions("stack list")).toEqual({ _tag: "NotFound" });
     expect(declaredPermissions("stack list", { stackBackend: "stack" })._tag).toBe("Declared");
-  });
-
-  it("reports a command in the tree that has no declaration as undeclared", () => {
-    const tree = commandTreeFor({});
-    const pendingInTree = PENDING_COMMANDS.filter((path) => tree.has(path));
-    // Fails when the last pending command is mapped; delete this test then.
-    expect(pendingInTree.length).toBeGreaterThan(0);
-    for (const path of pendingInTree) {
-      expect(declaredPermissions(path)).toEqual({ _tag: "Undeclared" });
-    }
   });
 });
