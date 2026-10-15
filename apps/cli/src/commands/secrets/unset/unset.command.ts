@@ -1,9 +1,7 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Argument, Command, Flag } from "effect/cli";
 
-import { Layer } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsUnset } from "./unset.handler.ts";
@@ -56,7 +54,6 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withHandler((flags) =>
     secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `promptYesNo` requires `Stdin` even though the handler fails before its non-TTY branch.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["secrets", "unset"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );
