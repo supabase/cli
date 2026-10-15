@@ -123,13 +123,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         suggestion: `Pass a non-empty file path or glob pattern to ${aqua("--sql-paths")}.`,
       });
     }
-    // A remote target flag + --sql-paths warns about the seed override.
+    // A remote target + --sql-paths warns about the seed override.
     if (
       flags.sqlPaths.length > 0 &&
       (target.connType === "linked" || target.connType === "db-url")
     ) {
       yield* output.raw(
-        `${yellow("WARNING:")} --sql-paths overrides [db.seed].sql_paths and seeds the remote database selected by --linked or --db-url.\n`,
+        `${yellow("WARNING:")} --sql-paths overrides [db.seed].sql_paths and seeds the remote database this reset targets.\n`,
         "stderr",
       );
     }

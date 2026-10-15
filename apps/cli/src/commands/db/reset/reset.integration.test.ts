@@ -2619,6 +2619,26 @@ describe("db reset", () => {
         });
       });
 
+      it.effect("target = remote warns about the --sql-paths seed override", () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: remoteTargetToml,
+          args: ["db", "reset", "--sql-paths", "custom-seed.sql"],
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, sqlPaths: ["custom-seed.sql"] }).pipe(
+            Effect.provide(Layer.mergeAll(layer, pinnedEnv)),
+          );
+          expect(out.stderrText).toContain(
+            "--sql-paths overrides [db.seed].sql_paths and seeds the remote database this reset targets.",
+          );
+        });
+      });
+
       it.effect("target = remote resets the linked project once the prompt is confirmed", () => {
         const { layer, out, conn, linkedCache } = setup(tmp.current, {
           toml: remoteTargetToml,
@@ -3544,7 +3564,9 @@ describe("db reset", () => {
           linked: true,
           sqlPaths: ["custom-seed.sql"],
         }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("--sql-paths overrides [db.seed].sql_paths");
+        expect(out.stderrText).toContain(
+          "--sql-paths overrides [db.seed].sql_paths and seeds the remote database this reset targets.",
+        );
         expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
       });
     });
