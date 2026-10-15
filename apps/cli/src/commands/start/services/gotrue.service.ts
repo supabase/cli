@@ -192,7 +192,7 @@ export interface BuildGotrueEnvInput {
   /**
    * `config.local_smtp`, present iff `local_smtp.enabled` AND {@link smtp}
    * is unset. `adminEmail`/`senderName` default to the literals below when
-   * unset, since `@supabase/config`'s `inbucket.ts` schema has no default
+   * unset, since `@supabase/config`'s `local_smtp` schema has no default
    * for either.
    */
   readonly mailpit?: {

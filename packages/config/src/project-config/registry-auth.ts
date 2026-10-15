@@ -921,7 +921,7 @@ const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap
 // API field for workos specifically — both despite the schema declaring those fields for every
 // provider. `skip_nonce_check` has no API field for any provider except google (handled
 // separately below). Plain "slack" (unlike `slack_oidc`) has a real API field set but isn't a
-// schema member: `../io.ts` strips `[auth.external.slack]` from a config before this schema sees it.
+// schema member: `[auth.external.slack]` in a config is rejected on load.
 
 interface ExternalProviderSpec {
   readonly id: string;

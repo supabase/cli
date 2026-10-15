@@ -1908,24 +1908,22 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
   });
 
   it.effect(
-    "aborts on an undecryptable secret in a deprecated [auth.external.slack] block (CLI-1881)",
+    "aborts before any request when config.toml uses a removed [auth.external.slack]",
     () => {
       const toml = `project_id = "test"
 [auth.external.slack]
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withEnvVar(
-        "DOTENV_PRIVATE_KEY",
-        undefined,
-        Effect.gen(function* () {
-          const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
-          );
-          expect(message).toBe("failed to parse config: missing private key");
-          expect(api.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer)),
-      );
+      return Effect.gen(function* () {
+        const message = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe(
+          "[auth.external.slack] in supabase/config.toml is no longer supported. Use [auth.external.slack_oidc] instead.",
+        );
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
     },
   );
 

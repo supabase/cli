@@ -2422,7 +2422,8 @@
         },
         "orioledb_version": {
           "type": "string",
-          "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
+          "enum": [""],
+          "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
         },
         "s3_host": {
           "type": "string",
@@ -4941,7 +4942,8 @@
                       },
                       "orioledb_version": {
                         "type": "string",
-                        "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
+                        "enum": [""],
+                        "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
                       },
                       "s3_host": {
                         "type": "string",

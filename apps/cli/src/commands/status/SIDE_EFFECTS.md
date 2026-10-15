@@ -86,7 +86,7 @@ convention used elsewhere in config loading, and take precedence over the corres
 | `0`  | **`--ignore-health-check` is set** — skips the health assertion below entirely, so an unhealthy/not-running db never fails the command                                                                                                                                                                                                                          |
 | `1`  | `supabase/config.toml` missing or malformed                                                                                                                                                                                                                                                                                                                     |
 | `1`  | malformed CSV in an `--override-name`/`--exclude` value — fails during flag parsing, before the handler and telemetry, with the exact diagnostic text on stderr (e.g. `invalid argument "\"api.url=FOO" for "--override-name" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
-| `1`  | a malformed `--override-name` entry                                                                                                                                                                                                                                                                                                                             |
+| `1`  | a malformed `--override-name` entry, or the removed `inbucket.url` key (the message names `mailpit.url`)                                                                                                                                                                                                                                                        |
 | `1`  | listing running containers failed (Docker daemon unreachable, etc.)                                                                                                                                                                                                                                                                                             |
 | `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                       |
 | `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                         |
@@ -288,7 +288,7 @@ branch-linked state:
 A degraded/unresolved branch-linked lookup emits the same object minus `branch` only — every
 other field the cache knows is still present, matching the machine-format guarantee above.
 
-`--override-name` CAN rename one of the 18 known fields to literally `linked_project` (or, for
+`--override-name` CAN rename one of the 17 known fields to literally `linked_project` (or, for
 `-o env|json|toml|yaml`, to one of the `linked_*` keys below) — the existing/overridden `values`
 key always wins that collision, never this extension (PR #6168 review; see `valuesWithLinkedState`
 and the structured-payload `output.success` call in `status.handler.ts`).
@@ -355,9 +355,10 @@ print nothing but the red stderr message on failure (no payload at all). The add
   it is set. `-o pretty` (or `-o`
   unset) falls through to `--output-format`'s text/json/stream-json handling.
 - `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` remaps a single field's output KEY; the
-  value and group layout are unaffected. An unknown key or a malformed (non `KEY=VALUE`) entry
-  fails with `StatusOverrideParseError`. This only affects the `env`/`json`/`toml`/`yaml`
-  (`printStatus`) output path — the pretty table (`-o pretty` or unset) always
+  value and group layout are unaffected. The removed `inbucket.url` key fails with
+  `StatusOverrideParseError` naming `mailpit.url` as its replacement, as does a malformed (non
+  `KEY=VALUE`) entry; any other unknown key is ignored. This only
+  affects the `env`/`json`/`toml`/`yaml` (`printStatus`) output path — the pretty table (`-o pretty` or unset) always
   renders with un-overridden names.
   An override that renames a field to collide with one of the additive `linked_*`/`linked_project`
   keys never loses to this extension — see the `-o json`/`--output-format json` callouts above

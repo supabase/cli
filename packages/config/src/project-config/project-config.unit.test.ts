@@ -490,7 +490,6 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const document = decodeCliConfig({
       experimental: {
         stack: true,
-        orioledb_version: "1.0",
         s3_host: "bucket.s3.example.com",
         s3_region: "us-east-1",
         pgdelta: { enabled: true },
@@ -501,7 +500,6 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const projected = fromConfigDocument(document);
     expect(Object.hasOwn(projected.experimental ?? {}, "stack")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "compute")).toBe(false);
-    expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "pgdelta")).toBe(false);
@@ -589,7 +587,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       experimental: {
         compute: true,
         stack: true,
-        orioledb_version: "1.0",
+        orioledb_version: "",
         s3_host: "host",
         s3_region: "region",
         pgdelta: { enabled: true },

@@ -185,6 +185,7 @@ Every runtime and type export of the pure `.` entrypoint, grouped by category:
 | Export                                                          | What it is                                                              |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `CliConfigParseError`                                           | A malformed `supabase/config.toml`/`.json`.                             |
+| `CliConfigRemovedKeyError`                                      | A config using removed keys, each named with its replacement.           |
 | `CliProjectEnvParseError`                                       | A malformed `.env`/`.env.local` file.                                   |
 | `DuplicateRemoteProjectIdError` / `InvalidRemoteProjectIdError` | A `[remotes.*]` block problem.                                          |
 | `ProjectConfigParseError`                                       | A Management API v2 response, or a caller argument, that failed to map. |
@@ -306,17 +307,21 @@ A rejected `loadCliConfig`, `loadCliConfigFile`, or `saveCliConfig` call from `.
 with any of:
 
 - `CliConfigParseError` — a malformed `supabase/config.toml`/`.json`
+- `CliConfigRemovedKeyError` — a config using removed keys (`[inbucket]`,
+  `[auth.external.linkedin]`, `[auth.external.slack]`, a non-empty `experimental.orioledb_version`);
+  `removedKeys` lists every one with its replacement
 - `DuplicateRemoteProjectIdError` — two `[remotes.*]` blocks declare the same `project_id`
 - `InvalidRemoteProjectIdError` — a `[remotes.*]` block's `project_id` isn't a valid project ref
 - `CliProjectEnvParseError` — a malformed `.env`/`.env.local` file
 - `PlatformError` (from `effect/PlatformError`) — a host/OS failure surfaced by the underlying
   `FileSystem` service
 
-The four package-owned classes are plain Effect `Data.TaggedError` classes; `PlatformError` is
-Effect's own error class rather than one of this package's — but all five are classes, so a catch
+The five package-owned classes are plain Effect `Data.TaggedError` classes; `PlatformError` is
+Effect's own error class rather than one of this package's — but all six are classes, so a catch
 block can distinguish any of them with `instanceof`. What each carries:
 
-- `DuplicateRemoteProjectIdError` and `InvalidRemoteProjectIdError` set a real `error.message`.
+- `DuplicateRemoteProjectIdError`, `InvalidRemoteProjectIdError` and `CliConfigRemovedKeyError` set
+  a real `error.message`.
 - `PlatformError` sets `error.message` too, describing the failing filesystem operation, alongside
   `.module`/`.method`/`.description`.
 - `CliConfigParseError` and `CliProjectEnvParseError` carry structured fields instead of prose —

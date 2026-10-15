@@ -12,7 +12,11 @@ import type { CliConfigLoadError } from "../shared/config/cli-config-load.errors
 import type { CliConfigFamilyId } from "./cli-config-key-annotations.ts";
 import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import type { CliConfigKey, CliConfigKeyOrigin, CliConfigValue } from "./cli-config-key.ts";
-import type { CliConfigFlagConflictError, CliConfigValueError } from "./cli-config.errors.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigRemovedEnvError,
+  CliConfigValueError,
+} from "./cli-config.errors.ts";
 
 interface CliConfigLoadTarget {
   readonly workdir: string;
@@ -52,6 +56,7 @@ type CliConfigLoadFailure =
   | CliConfigPackageError
   | CliConfigLoadError
   | CliConfigValueError
+  | CliConfigRemovedEnvError
   | CliConfigFlagConflictError
   | ProjectRefReadError;
 

@@ -6,7 +6,6 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
-  CLI_CONFIG_ENV_EXCLUDED,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
   CLI_CONFIG_LINKED_KEYS,
@@ -341,7 +340,6 @@ describe("config key annotations", () => {
     const annotated: Readonly<Record<string, ReadonlyArray<string>>> = {
       codecOverrides: Object.keys(CLI_CONFIG_CODEC_OVERRIDES),
       schemaExcluded: Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED),
-      envExcluded: Object.keys(CLI_CONFIG_ENV_EXCLUDED),
       contextDefaults: Object.keys(CLI_CONFIG_CONTEXT_DEFAULTS),
       normalizers: Object.keys(CLI_CONFIG_NORMALIZERS),
       flags: Object.keys(CLI_CONFIG_FLAGS),

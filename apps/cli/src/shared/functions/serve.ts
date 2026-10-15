@@ -1489,6 +1489,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
   importMapOverride: Option.Option<string>,
   noVerifyJwtOverride: Option.Option<boolean>,
   flagCwd: string,
+  quiet = false,
 ) {
   const slugs = yield* discoverFunctionSlugs(projectRoot, config.configDeclaredFunctions);
   return yield* resolveFunctionConfigs({
@@ -1501,6 +1502,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
     rawConfigFunctions: config.rawConfigFunctions,
     importMapOverride,
     noVerifyJwtOverride,
+    quiet,
   });
 });
 
@@ -1512,7 +1514,9 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
  *
  * Logs `Skipped serving Function: <slug>` unconditionally for every disabled
  * function, so the message double-prints when both Edge Runtime and Studio
- * are enabled — established behavior, not a bug to dedupe.
+ * are enabled — established behavior, not a bug to dedupe. `quiet` skips
+ * that log and the fallback-import-map warning for a call whose binds are
+ * discarded.
  *
  * The returned set is not run through `pruneRedundantDockerBinds`: Studio's
  * bring-up never `docker cp`s into its container, and pruning is limited to
@@ -1531,6 +1535,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     noVerifyJwtOverride: Option.Option<boolean>,
     flagCwd: string,
     projectEnvValues?: Readonly<Record<string, string>>,
+    quiet = false,
   ) {
     const path = yield* Path.Path;
     const output = yield* Output;
@@ -1541,6 +1546,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       importMapOverride,
       noVerifyJwtOverride,
       flagCwd,
+      quiet,
     );
 
     const functionsDir = path.join(projectRoot, "supabase", "functions");
@@ -1549,7 +1555,9 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
 
     for (const fnConfig of functionConfigs) {
       if (!fnConfig.enabled) {
-        yield* output.raw(`Skipped serving Function: ${fnConfig.slug}\n`, "stderr");
+        if (!quiet) {
+          yield* output.raw(`Skipped serving Function: ${fnConfig.slug}\n`, "stderr");
+        }
         continue;
       }
 

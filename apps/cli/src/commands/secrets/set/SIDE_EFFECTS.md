@@ -9,7 +9,7 @@
 | keyring `"Supabase CLI"` / `access-token`         | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                                                                                                                        |
 | `~/.supabase/access-token`                        | plain text (token string) | last-resort fallback after env + keyring miss                                                                                                                                                                                   |
 | `<workdir>/supabase/.temp/project-ref`            | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                                                                                                                                                   |
-| `<workdir>/supabase/config.json` or `config.toml` | JSON / TOML               | always (for `[edge_runtime.secrets]`, `config.json` preferred) — via the `CliConfigValues` resolved config, with a matching `[remotes.*]` block applied; a parse failure is logged to the debug logger and tolerated, not fatal |
+| `<workdir>/supabase/config.json` or `config.toml` | JSON / TOML               | always (for `[edge_runtime.secrets]`, `config.json` preferred) — via the `CliConfigValues` resolved config, with a matching `[remotes.*]` block applied; a parse failure is debug-logged and tolerated, a removed key is fatal. |
 | `<workdir>/.env*`, `<workdir>/supabase/.env*`     | dotenv                    | always — project env files selected by `SUPABASE_ENV` (default `development`), context for `env(VAR)` interpolation in `[edge_runtime.secrets]` values; a variable the shell sets is never taken from a file                    |
 | `<env-file>` (absolute or CWD-relative)           | dotenv                    | when `--env-file` flag is provided                                                                                                                                                                                              |
 
@@ -52,6 +52,8 @@
 | `1`  | `SecretsEnvFileParseError` — `--env-file` cannot be parsed                              |
 | `1`  | `SecretsSetUnexpectedStatusError` — non-2xx response from POST                          |
 | `1`  | `SecretsSetNetworkError` — transport-level network failure                              |
+| `1`  | `CliConfigRemovedKeyError` — config uses a removed key, named with its replacement      |
+| `1`  | `CliConfigRemovedEnvError` — non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set     |
 
 ## Telemetry Events Fired
 
@@ -80,5 +82,6 @@ One `result` NDJSON event on success containing `{project_ref, count}`.
 - Source order for merging entries: `[edge_runtime.secrets]` from `config.toml` (only resolved entries — see below) → `--env-file` (overrides config) → CLI args (overrides env-file).
 - `SUPABASE_`-prefixed entries are skipped post-merge with a stderr warning.
 - `[edge_runtime.secrets]` from config.toml is read through the `CliConfigValues` resolved config (shell env > project `.env*` > config for `env(VAR)` references) + `resolveCliSubtree`. Resolved secret values arrive wrapped in `Redacted<string>`; unresolved `env(VAR)` literals (env var unset) stay as plain strings and are filtered out at the handler (secrets whose value never resolved past the literal `env(VAR)` form are dropped).
+- A removed config key or a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` **does** abort the command (exit 1, before any request) instead of being tolerated: silently dropping the config's `[edge_runtime.secrets]` would send a partial secret set.
 - A malformed `config.toml` does **not** abort the command — the error is logged to the debug logger and the command proceeds. `--env-file` and positional `NAME=VALUE` secrets always still apply. What happens to config-declared secrets depends on the failure class: a raw TOML/JSON syntax error drops everything (no `EdgeRuntime.Secrets`), but a schema-type error on an _unrelated_ field (e.g. `analytics.port` being a string) still leaves a valid `[edge_runtime.secrets]` section usable — the handler recovers it by re-decoding just that subtree. Pass `--debug` to see the logged parse error.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

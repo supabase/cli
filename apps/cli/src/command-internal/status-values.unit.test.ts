@@ -339,7 +339,7 @@ describe("statusValues", () => {
   });
 
   describe("inbucket/mailpit gating", () => {
-    it("includes MAILPIT_URL and the deprecated INBUCKET_URL alias when local_smtp.enabled", () => {
+    it("emits MAILPIT_URL and no INBUCKET_URL when local_smtp.enabled", () => {
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -349,17 +349,16 @@ describe("statusValues", () => {
         WORKDIR,
       );
       expect(values.MAILPIT_URL).toBeDefined();
-      expect(values.INBUCKET_URL).toBe(values.MAILPIT_URL);
-    });
-
-    it("omits MAILPIT_URL/INBUCKET_URL when local_smtp.enabled is false", () => {
-      const config = baseConfig({ local_smtp: { enabled: false } });
-      const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
-      expect(values.MAILPIT_URL).toBeUndefined();
       expect(values.INBUCKET_URL).toBeUndefined();
     });
 
-    it("omits MAILPIT_URL/INBUCKET_URL when the inbucket container id is excluded", () => {
+    it("omits MAILPIT_URL when local_smtp.enabled is false", () => {
+      const config = baseConfig({ local_smtp: { enabled: false } });
+      const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
+      expect(values.MAILPIT_URL).toBeUndefined();
+    });
+
+    it("omits MAILPIT_URL when the inbucket container id is excluded", () => {
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -371,7 +370,7 @@ describe("statusValues", () => {
       expect(values.MAILPIT_URL).toBeUndefined();
     });
 
-    it("omits MAILPIT_URL/INBUCKET_URL when the mailpit image short name is excluded", () => {
+    it("omits MAILPIT_URL when the mailpit image short name is excluded", () => {
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -507,21 +506,6 @@ describe("statusValues", () => {
       expect(values.JWT_SECRET).toBeUndefined();
       expect(values.ANON_KEY).toBeUndefined();
       expect(values.SERVICE_ROLE_KEY).toBeUndefined();
-    });
-
-    it("remaps the deprecated inbucket.url key independently of mailpit.url", () => {
-      const overrides = new Map([["inbucket.url", "CUSTOM_INBUCKET_URL"]]);
-      const { values } = statusValues(
-        baseConfig(),
-        CONTAINER_IDS,
-        HOSTNAME,
-        NONE,
-        overrides,
-        WORKDIR,
-      );
-      expect(values.CUSTOM_INBUCKET_URL).toBeDefined();
-      expect(values.MAILPIT_URL).toBeDefined();
-      expect(values.INBUCKET_URL).toBeUndefined();
     });
   });
 

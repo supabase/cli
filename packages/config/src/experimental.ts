@@ -46,9 +46,9 @@ export const experimental = Schema.Struct({
     }),
   ),
   orioledb_version: Schema.optionalKey(
-    Schema.String.annotate({
+    Schema.Literal("").annotate({
       description:
-        "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB.",
+        "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files.",
       tags,
     }),
   ),
