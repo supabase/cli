@@ -15,10 +15,7 @@ import {
   type ConfigPullSource,
 } from "../../command-internal/config-pull-run.ts";
 import { runDbPull, type DbPullRunFlags } from "../../command-internal/db-pull-run.ts";
-import {
-  runMigrationFetch,
-  type MigrationFetchFlags,
-} from "../../command-internal/migration-fetch-run.ts";
+import { runMigrationFetch } from "../../command-internal/migration-fetch-run.ts";
 import type {
   PullConfigStepOutcome,
   PullDbStepOutcome,
@@ -56,21 +53,14 @@ export const pullConfigStep = Effect.fnUntraced(function* (input: {
 
 /**
  * `migration_history` step: fetches the remote migration history table into
- * `supabase/migrations`, targeting the already-resolved `context.ref` directly (ADR 0024) and
+ * `supabase/migrations`, targeting the already-resolved `context.target` directly (ADR 0024) and
  * suppressing its own overwrite prompt with `assumeYes` since the orchestrator's confirmation
  * already covers it.
  */
 export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
-  const flags: MigrationFetchFlags = {
-    dbUrl: Option.none(),
-    linked: true,
-    local: false,
-    projectRef: Option.some(context.ref),
-  };
   const outcome = yield* runMigrationFetch({
-    flags,
-    target: { setFlags: [], connType: "linked" },
+    target: context.target,
     assumeYes: context.assumeYes,
   });
   return {
@@ -81,8 +71,8 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 });
 
 /**
- * `db` step: pulls the linked project's schema in migration mode, targeting `context.ref`
- * directly and suppressing `db pull`'s remote-history-update prompt with `assumeYes`.
+ * `db` step: pulls the linked project's schema in migration mode, targeting `context.target`
+ * directly and reusing the orchestrator's consent for the remote-history update.
  * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
  * `pull` level (ADR 0024).
  */
@@ -94,13 +84,9 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
     diffEngine: Option.none(),
     strictCoverage: false,
     schema: [],
-    dbUrl: Option.none(),
-    linked: Option.none(),
-    local: Option.none(),
-    projectRef: Option.some(context.ref),
     password: Option.none(),
   };
-  return yield* runDbPull(flags, { assumeYes: context.assumeYes }).pipe(
+  return yield* runDbPull(flags, context.target, { preapproved: context.preapproved }).pipe(
     Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",
       outcome,

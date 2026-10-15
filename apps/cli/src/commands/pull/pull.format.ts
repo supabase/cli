@@ -34,6 +34,7 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
   return {
     schema_version: PULL_PAYLOAD_VERSION,
     target: {
+      ...aggregate.targetIdentity,
       project_ref: aggregate.ref,
       ...(aggregate.branch === undefined ? {} : { branch: aggregate.branch }),
     },
@@ -55,15 +56,12 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
 
 /**
  * One-line `message` for `output.success`. Every branch names its own disposition up front
- * (dry-run, declined, partial-failure, or complete) so an agent reading just `.message` can't
+ * (dry-run, partial-failure, or complete) so an agent reading just `.message` can't
  * mistake one for a completed pull.
  */
 export function pullSummaryMessage(aggregate: PullAggregate): string {
   const counts = pullCounts(aggregate.results);
   const countsText = `${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.skipped} skipped, ${counts.planned} planned, ${counts.failed} failed`;
-  if (!aggregate.confirmed && !aggregate.dryRun) {
-    return `Pull declined: nothing was changed (${countsText}).`;
-  }
   if (aggregate.dryRun) {
     return `Pull preview (dry run): nothing was changed (${countsText}).`;
   }
