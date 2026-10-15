@@ -7,3 +7,5 @@ This command displays indexes that have < 50 scans recorded against them, and ar
 ─────────────────────┼────────────────────────────────────────────┼────────────┼──────────────
  public.users        │ user_id_created_at_idx                     │ 97 MB      │           0
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.

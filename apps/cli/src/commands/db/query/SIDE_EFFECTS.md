@@ -30,10 +30,21 @@ the result as a table or JSON.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                              |
-| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent` |
+| Variable                | Purpose                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                                                                          |
+| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                             |
+| `SUPABASE_TARGET`       | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml` |
+
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
+is only read for the target when no selector flag is given; an unreadable config counts as unset.
+No deprecation warning is written: the local default is unchanged.
 
 ## Exit Codes
 

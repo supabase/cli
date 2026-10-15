@@ -8,6 +8,7 @@ import { experimental } from "./experimental.ts";
 import { functions } from "./functions.ts";
 import { inbucket } from "./inbucket.ts";
 import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
+import { stringEnum } from "./lib/schema.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
 import { studio } from "./studio.ts";
@@ -21,6 +22,14 @@ const projectId = Schema.optionalKey(
   }),
 );
 
+const target = Schema.optionalKey(
+  stringEnum(["local", "remote"] as const, {
+    description:
+      'Which instance commands that can run against either the local stack or the linked project use by default: "local" or "remote". Overridden by `SUPABASE_TARGET`.',
+    tags: ["general"],
+  }),
+);
+
 const remoteProjectId = Schema.String.annotate({
   default: "",
   description: "Remote project reference.",
@@ -29,6 +38,7 @@ const remoteProjectId = Schema.String.annotate({
 
 const baseCliConfigFields = {
   project_id: projectId,
+  target,
   analytics,
   api,
   auth,

@@ -549,7 +549,11 @@ describe("inspect report", () => {
   );
 
   it.effect("emits a structured result and writes CSVs but no table in json mode", () => {
-    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({
+      format: "json",
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local"],
+    });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
@@ -563,6 +567,19 @@ describe("inspect report", () => {
       expect(data?.rules).toHaveLength(13);
       expect((yield* dateFolderContents(base)).files.length).toBe(14);
       expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns on stderr only, in json mode, that the default target will flip", () => {
+    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
+    return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* inspectReport(flags({ outputDir: base }));
+      expect(out.stdoutText).toBe("");
+      expect(out.stderrText).toContain(
+        "Warning: supabase inspect report will target the local database by default in the next major version.",
+      );
+      expect(out.messages.filter((m) => m.type === "warn")).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

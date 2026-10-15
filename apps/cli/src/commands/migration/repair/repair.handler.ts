@@ -16,6 +16,10 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import {
+  resolveDbTarget,
+  type ResolvedDbTarget,
+} from "../../../command-internal/workspace-target.ts";
+import {
   DELETE_MIGRATION_VERSION,
   type MigrationFile,
   createMigrationTable,
@@ -109,7 +113,7 @@ const updateMigrationTable = Effect.fn("MigrationRepair.updateMigrationTable")(f
 
 const runRepair = Effect.fnUntraced(function* (
   input: MigrationRepairInput,
-  target: ReturnType<typeof resolveDbTargetFlags>,
+  target: ResolvedDbTarget,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -133,7 +137,7 @@ const runRepair = Effect.fnUntraced(function* (
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;
-  const connType = target.connType ?? "linked";
+  const connType = target.connType;
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.
@@ -242,6 +246,11 @@ export const migrationRepair = Effect.fn("migration.repair")(function* (
 ) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
+  const target = yield* resolveDbTarget({
+    command: "migration repair",
+    selection: resolveDbTargetFlags(cliArgs.args),
+    projectRefSet: Option.isSome(input.projectRef),
+    legacyDefault: "linked",
+  });
   yield* runRepair(input, target).pipe(Effect.ensuring(telemetryState.flush));
 });

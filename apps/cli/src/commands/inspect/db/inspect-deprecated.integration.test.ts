@@ -1,8 +1,12 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -41,6 +45,8 @@ function setup() {
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
+    BunServices.layer,
+    mockCommandSettings({ workdir: "/tmp/inspect-deprecated-int" }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {

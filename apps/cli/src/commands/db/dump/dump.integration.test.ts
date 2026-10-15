@@ -1490,4 +1490,94 @@ describe("db dump permissions through the real resolver and cache", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
+  describe("workspace target", () => {
+    const FLIP_WARNING =
+      'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.';
+
+    const writeTarget = (target: string) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${tmp.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${tmp.current}/supabase/config.toml`,
+          `project_id = "demo"\ntarget = "${target}"\n`,
+        );
+      });
+
+    it.effect(
+      "warns on stderr and keeps targeting the linked project when nothing selects one",
+      () => {
+        const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+        return Effect.gen(function* () {
+          yield* dbDump(flags({ dryRun: true }));
+          expect(resolver.calls[0]?.connType).toBe("linked");
+          expect(out.stderrText).toContain(FLIP_WARNING);
+          expect(out.stderrText.match(/Warning: supabase db dump/g)).toHaveLength(1);
+          expect(out.stdoutText).not.toContain("Warning:");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("keeps the warning on stderr in json mode", () => {
+      const { layer, out } = setup({ workdir: tmp.current, isLocal: false, format: "json" });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ dryRun: true }));
+        expect(out.stderrText).toContain(FLIP_WARNING);
+        expect(out.stdoutText).not.toContain("Warning:");
+        expect(out.messages.filter((m) => m.type === "warn")).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("does not warn when a selector flag is passed", () => {
+      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ dryRun: true, linked: Option.some(true) }));
+        expect(resolver.calls[0]?.connType).toBe("linked");
+        expect(out.stderrText).not.toContain("Warning: supabase db dump");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("targets the linked project without warning when target = remote", () => {
+      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbDump(flags({ dryRun: true }));
+        expect(resolver.calls[0]?.connType).toBe("linked");
+        expect(out.stderrText).not.toContain("Warning: supabase db dump");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("targets the local database without warning when target = local", () => {
+      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: true });
+      return Effect.gen(function* () {
+        yield* writeTarget("local");
+        yield* dbDump(flags({ dryRun: true }));
+        expect(resolver.calls[0]?.connType).toBe("local");
+        expect(out.stderrText).toContain("Dumping schemas from local database...");
+        expect(out.stderrText).not.toContain("Warning: supabase db dump");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("lets SUPABASE_TARGET override the config target", () => {
+      const { layer, resolver } = setup({
+        workdir: tmp.current,
+        isLocal: true,
+        env: { SUPABASE_TARGET: "local" },
+      });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbDump(flags({ dryRun: true }));
+        expect(resolver.calls[0]?.connType).toBe("local");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("lets an explicit --local override target = remote", () => {
+      const { layer, resolver } = setup({ workdir: tmp.current, isLocal: true });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
+        expect(resolver.calls[0]?.connType).toBe("local");
+      }).pipe(Effect.provide(layer));
+    });
+  });
 });

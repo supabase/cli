@@ -1,8 +1,12 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { Flag } from "effect/cli";
 
 import { compose, withCondition } from "../../command-internal/command-permissions/model.ts";
-import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.ts";
+import {
+  changedLinkedLocalFlags,
+  dbTargetSelectionOf,
+} from "../../command-internal/db-target-flags.ts";
+import { resolveDbTarget } from "../../command-internal/workspace-target.ts";
 import { storageCredentials } from "../../command-internal/storage-credentials.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
@@ -51,4 +55,29 @@ export const assertStorageTargetsExclusive = Effect.fnUntraced(function* (
       message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
     });
   }
+});
+
+/**
+ * The effective `--local` value for a storage leaf: the explicit selector flags when given,
+ * otherwise the workspace target, otherwise the parsed flag (linked by default, with a warning).
+ */
+export const resolveStorageTarget = Effect.fnUntraced(function* (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly local: boolean;
+  readonly projectRef: Option.Option<string>;
+}) {
+  const setFlags = changedLinkedLocalFlags(input.args);
+  const resolved = yield* resolveDbTarget({
+    command: input.command,
+    selection: dbTargetSelectionOf({
+      dbUrl: false,
+      linked: setFlags.includes("linked"),
+      local: setFlags.includes("local"),
+    }),
+    projectRefSet: Option.isSome(input.projectRef),
+    legacyDefault: "linked",
+    localLabel: "local stack",
+  });
+  return resolved.source === "workspace" ? resolved.connType === "local" : input.local;
 });

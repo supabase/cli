@@ -12,3 +12,5 @@ On smaller compute plans (free, small, medium), a ratio of below 99% can indicat
     index hit rate │ 0.996621
     table hit rate │ 0.999341
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.

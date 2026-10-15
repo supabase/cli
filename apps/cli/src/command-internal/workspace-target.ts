@@ -1,0 +1,166 @@
+import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
+import { Data, Effect, FileSystem, Path, Schema } from "effect";
+import * as SmolToml from "smol-toml";
+import { CommandSettings } from "../config/command-settings.service.ts";
+import { Output } from "../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
+import { yellow } from "./colors.ts";
+import { loadProjectEnv } from "./db-config.toml-read.ts";
+import type { DbConnType, DbTargetSelection } from "./db-target-flags.ts";
+import { shouldSearchAncestors } from "./workdir-search.ts";
+import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+
+export type WorkspaceTarget = "local" | "remote";
+
+/** Where a resolved target came from: an explicit selector, the workspace setting, or the pre-`target` default. */
+type TargetSource = "selector" | "workspace" | "legacy";
+
+export class WorkspaceTargetError extends Data.TaggedError("WorkspaceTargetError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+export interface ResolvedDbTarget extends DbTargetSelection {
+  readonly connType: DbConnType;
+  readonly source: TargetSource;
+  /** True when the default is about to flip from linked to the workspace target and nothing pinned it. */
+  readonly warn: boolean;
+}
+
+const targetConfigSchema = Schema.Struct({ target: CliConfigSchema.fields.target });
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+
+const isWorkspaceTarget = (value: string): value is WorkspaceTarget =>
+  value === "local" || value === "remote";
+
+/** Picks the connection type: explicit selector, then the workspace target, then `legacyDefault`. */
+export const selectDbTarget = (input: {
+  readonly selection: DbTargetSelection;
+  readonly projectRefSet: boolean;
+  readonly workspaceTarget: WorkspaceTarget | undefined;
+  readonly legacyDefault: "linked" | "local";
+}): ResolvedDbTarget => {
+  const { selection, legacyDefault } = input;
+  if (selection.connType !== undefined || input.projectRefSet) {
+    return {
+      ...selection,
+      connType: selection.connType ?? legacyDefault,
+      source: "selector",
+      warn: false,
+    };
+  }
+  if (input.workspaceTarget !== undefined) {
+    return {
+      ...selection,
+      connType: input.workspaceTarget === "remote" ? "linked" : "local",
+      source: "workspace",
+      warn: false,
+    };
+  }
+  return {
+    ...selection,
+    connType: legacyDefault,
+    source: "legacy",
+    warn: legacyDefault === "linked",
+  };
+};
+
+const readEnvTarget = Effect.fnUntraced(function* (projectEnv: Record<string, string>) {
+  const raw = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", projectEnv);
+  if (raw === "") return undefined;
+  if (!isWorkspaceTarget(raw)) {
+    return yield* new WorkspaceTargetError({
+      message: `SUPABASE_TARGET must be "local" or "remote" when set, got "${raw}"`,
+    });
+  }
+  return raw;
+});
+
+const readConfigTarget = Effect.fnUntraced(function* (settings: {
+  readonly workdir: string;
+  readonly explicitWorkdir: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const loaded = yield* Effect.gen(function* () {
+    const project = yield* findCliProjectPaths(settings.workdir, {
+      search: shouldSearchAncestors(settings),
+    });
+    if (project === null) return undefined;
+    const content = yield* fs.readFileString(project.configPath);
+    const document = project.configPath.endsWith(".json")
+      ? yield* Schema.decodeEffect(UnknownFromJsonString)(content)
+      : yield* Effect.try(() => SmolToml.parse(content));
+    return { configPath: project.configPath, document };
+  }).pipe(Effect.orElseSucceed(() => undefined));
+  if (loaded === undefined) return undefined;
+  const decoded = yield* Schema.decodeUnknownEffect(targetConfigSchema)(loaded.document).pipe(
+    Effect.mapError(
+      () =>
+        new WorkspaceTargetError({
+          message: `target in ${loaded.configPath} must be "local" or "remote"`,
+        }),
+    ),
+  );
+  return decoded.target;
+});
+
+/**
+ * Reads the workspace `target`: `SUPABASE_TARGET` (shell env, then project `.env*`), then the
+ * `target` key of the config file. An unreadable config is treated as unset; an invalid value fails.
+ */
+export const readWorkspaceTarget = Effect.fn("WorkspaceTarget.read")(function* () {
+  const settings = yield* CommandSettings;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectEnv: Record<string, string> = yield* loadProjectEnv(fs, path, settings.workdir).pipe(
+    Effect.orElseSucceed((): Record<string, string> => ({})),
+  );
+  const fromEnv = yield* readEnvTarget(projectEnv);
+  if (fromEnv !== undefined) return fromEnv;
+  return yield* readConfigTarget(settings);
+});
+
+const emitTargetDefaultFlipWarning = (command: string, localLabel = "local database") =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    yield* output.raw(
+      `${yellow(
+        `Warning: supabase ${command} will target the ${localLabel} by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.`,
+      )}\n`,
+      "stderr",
+    );
+  });
+
+/**
+ * Resolves the connection type for a selectable-instance command and warns on stderr when a
+ * linked default is about to flip. The workspace target is only read when no selector was given.
+ */
+export const resolveDbTarget = Effect.fn("WorkspaceTarget.resolve")(function* (input: {
+  readonly command: string;
+  readonly selection: DbTargetSelection;
+  readonly projectRefSet: boolean;
+  readonly legacyDefault: "linked" | "local";
+  readonly localLabel?: string;
+}) {
+  const pinned = input.selection.connType !== undefined || input.projectRefSet;
+  const workspaceTarget = pinned ? undefined : yield* readWorkspaceTarget();
+  const resolved = selectDbTarget({
+    selection: input.selection,
+    projectRefSet: input.projectRefSet,
+    workspaceTarget,
+    legacyDefault: input.legacyDefault,
+  });
+  yield* Effect.annotateCurrentSpan({
+    "target.source": resolved.source,
+    "target.conn_type": resolved.connType,
+  });
+  if (resolved.warn) yield* emitTargetDefaultFlipWarning(input.command, input.localLabel);
+  return resolved;
+});

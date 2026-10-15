@@ -36,12 +36,13 @@ no new config reads.
 
 ## Environment Variables
 
-| Variable                                             | Purpose                                                               | Required?                               |
-| ---------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------- |
-| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)                                      | no (prompts / config fallback)          |
-| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                     | no (falls back to keyring / token file) |
-| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set | no (config resolution fallback)         |
-| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                       | no                                      |
+| Variable                                             | Purpose                                                                                                                  | Required?                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)                                                                                         | no (prompts / config fallback)                               |
+| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                                                                        | no (falls back to keyring / token file)                      |
+| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set                                                    | no (config resolution fallback)                              |
+| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                                                                          | no                                                           |
+| `SUPABASE_TARGET`                                    | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml` | no (falls back to config `target`, then the command default) |
 
 ## Database Queries
 
@@ -71,6 +72,25 @@ Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `role-configs`/`role-connections`→role-stats. (`table-record-counts` warns
 "table-stats" but runs index-stats — an inconsistency inherited from the old
 Go CLI, preserved verbatim.)
+
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`). `remote` targets the linked project through the existing linked path; `local`
+targets the local database. An explicit selector flag always wins over the target. An invalid
+`SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config is only read for
+the target when no selector flag is given; an unreadable config counts as unset. `<name>` is the invoked subcommand.
+
+When neither is set the command keeps targeting the linked project and writes one warning to
+**stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
+working while the next major version moves it to the local database:
+
+```
+Warning: supabase inspect db <name> will target the local database by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.
+```
+
+No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.
 
 ## Exit Codes
 

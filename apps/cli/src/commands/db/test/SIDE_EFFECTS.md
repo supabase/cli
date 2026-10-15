@@ -46,6 +46,11 @@ Identical to `test db`. See
 Identical to `test db`. See
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#environment-variables).
 
+## Target selection
+
+Identical to `test db`. See
+[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#target-selection).
+
 ## Exit Codes
 
 Identical to `test db`. See

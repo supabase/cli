@@ -10,3 +10,5 @@ This command is useful to check that the amount of replication lag is as low as 
     supabase_realtime_replication_slot         │ t      │ N/A     │ N/A                        │                  0
     datastream                                 │ t      │ catchup │ 24.201.24.106              │                 45
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.

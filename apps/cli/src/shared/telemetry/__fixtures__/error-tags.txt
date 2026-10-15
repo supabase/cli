@@ -600,3 +600,4 @@ WhoamiOutputFlagUnsupportedError
 WhoamiUnexpectedStatusError
 WorkdirProjectMissingError
 WorkdirValidationError
+WorkspaceTargetError

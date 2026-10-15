@@ -12,3 +12,5 @@ This command displays the size of each each index in the database. It is calcula
     users_instance_id_idx       │ 0 bytes
     buckets_pkey                │ 0 bytes
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.

@@ -15,3 +15,5 @@ The command lists when the last vacuum and last auto vacuum took place, the row 
  supabase_migrations  │ schema_migrations                │             │                  │             No stats │              0 │ no
 
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.

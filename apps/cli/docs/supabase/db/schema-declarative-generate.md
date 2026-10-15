@@ -9,3 +9,5 @@ The bundled pg-delta engine writes one directory per schema at the root of that 
 Emitted SQL uses the same default format as `db pull` (uppercase keywords, indent 2, width 180, column-aligned). Override with `[experimental.pgdelta] format_options`, or set `format_options = "null"` for raw statements.
 
 Requires `--experimental` flag or `[experimental.pgdelta] enabled = true` in config.
+
+Without `--local`, `--linked` or `--db-url`, the command targets the local database, unless the workspace target is set to `remote` with `target = "remote"` in `supabase/config.toml` or `SUPABASE_TARGET=remote`, in which case it targets the linked project like `--linked`. A selector flag always wins.

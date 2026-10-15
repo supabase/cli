@@ -18,6 +18,10 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import {
+  resolveDbTarget,
+  type ResolvedDbTarget,
+} from "../../../command-internal/workspace-target.ts";
 import { dropUserSchemas } from "../../../command-internal/drop-objects.ts";
 import { migrateAndSeed } from "../../../command-internal/migrate-and-seed.ts";
 import { listRemoteMigrations } from "../../../command-internal/migration-history.ts";
@@ -36,10 +40,7 @@ const confirmResetAll = (pending: ReadonlyArray<string>): string => {
   return title;
 };
 
-const runDown = Effect.fnUntraced(function* (
-  flags: MigrationDownFlags,
-  target: ReturnType<typeof resolveDbTargetFlags>,
-) {
+const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags, target: ResolvedDbTarget) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const connection = yield* DbConnection;
@@ -55,7 +56,7 @@ const runDown = Effect.fnUntraced(function* (
     });
   }
 
-  const connType = target.connType ?? "local";
+  const connType = target.connType;
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.
@@ -160,6 +161,11 @@ const runDown = Effect.fnUntraced(function* (
 export const migrationDown = Effect.fn("migration.down")(function* (flags: MigrationDownFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
+  const target = yield* resolveDbTarget({
+    command: "migration down",
+    selection: resolveDbTargetFlags(cliArgs.args),
+    projectRefSet: Option.isSome(flags.projectRef),
+    legacyDefault: "local",
+  });
   yield* runDown(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

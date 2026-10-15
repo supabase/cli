@@ -14,6 +14,10 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import {
+  resolveDbTarget,
+  type ResolvedDbTarget,
+} from "../../../command-internal/workspace-target.ts";
+import {
   MigrationApplyError,
   applyMigrationFile,
 } from "../../../command-internal/migration-apply.ts";
@@ -35,10 +39,7 @@ const suggestIgnoreFlag = (paths: ReadonlyArray<string>): string =>
   "\nRerun the command with --include-all flag to apply these migrations:\n" +
   `${bold(paths.join("\n"))}\n`;
 
-const runUp = Effect.fnUntraced(function* (
-  flags: MigrationUpFlags,
-  target: ReturnType<typeof resolveDbTargetFlags>,
-) {
+const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags, target: ResolvedDbTarget) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const connection = yield* DbConnection;
@@ -55,7 +56,7 @@ const runUp = Effect.fnUntraced(function* (
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.
-  if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
+  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
     return yield* new MigrationTargetFlagsError({
       message:
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
@@ -67,7 +68,7 @@ const runUp = Effect.fnUntraced(function* (
   const upBody = Effect.gen(function* () {
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      connType: target.connType ?? "local",
+      connType: target.connType,
       dnsResolver,
       linkedProjectRef: flags.projectRef,
     });
@@ -75,7 +76,7 @@ const runUp = Effect.fnUntraced(function* (
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
     yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
     yield* Effect.annotateCurrentSpan({
-      "db.conn_type": target.connType ?? "local",
+      "db.conn_type": target.connType,
       "db.is_local": cfg.isLocal,
     });
 
@@ -98,10 +99,7 @@ const runUp = Effect.fnUntraced(function* (
               Effect.fail(
                 new MigrationMissingLocalError({
                   message: "Remote migration versions not found in local migrations directory.",
-                  suggestion: suggestRevertHistory(
-                    result.versions,
-                    (target.connType ?? "local") === "local",
-                  ),
+                  suggestion: suggestRevertHistory(result.versions, target.connType === "local"),
                 }),
               ),
             "missing-remote": (result) => {
@@ -149,7 +147,7 @@ const runUp = Effect.fnUntraced(function* (
     );
   });
 
-  if ((target.connType ?? "local") === "linked") {
+  if (target.connType === "linked") {
     const projectRef = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;
     const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
@@ -161,6 +159,11 @@ const runUp = Effect.fnUntraced(function* (
 export const migrationUp = Effect.fn("migration.up")(function* (flags: MigrationUpFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
+  const target = yield* resolveDbTarget({
+    command: "migration up",
+    selection: resolveDbTargetFlags(cliArgs.args),
+    projectRefSet: Option.isSome(flags.projectRef),
+    legacyDefault: "local",
+  });
   yield* runUp(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

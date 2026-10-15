@@ -299,6 +299,7 @@ function setup(opts: SetupOpts = {}) {
     api.factoryLayer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    BunServices.layer,
   );
   return {
     layer,

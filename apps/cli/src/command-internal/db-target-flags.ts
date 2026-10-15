@@ -278,17 +278,26 @@ export function resolveDbTargetFlags(args: ReadonlyArray<string>): DbTargetSelec
     }
   }
 
+  return dbTargetSelectionOf({ dbUrl: dbUrlChanged, linked: linkedChanged, local: localChanged });
+}
+
+/** Builds a {@link DbTargetSelection} from which selector flags were explicitly set. */
+export function dbTargetSelectionOf(changed: {
+  readonly dbUrl: boolean;
+  readonly linked: boolean;
+  readonly local: boolean;
+}): DbTargetSelection {
   const setFlags: Array<string> = [];
-  if (dbUrlChanged) setFlags.push("db-url");
-  if (linkedChanged) setFlags.push("linked");
-  if (localChanged) setFlags.push("local");
+  if (changed.dbUrl) setFlags.push("db-url");
+  if (changed.linked) setFlags.push("linked");
+  if (changed.local) setFlags.push("local");
 
   let connType: DbConnType | undefined;
-  if (dbUrlChanged) {
+  if (changed.dbUrl) {
     connType = "db-url";
-  } else if (localChanged) {
+  } else if (changed.local) {
     connType = "local";
-  } else if (linkedChanged) {
+  } else if (changed.linked) {
     connType = "linked";
   }
 

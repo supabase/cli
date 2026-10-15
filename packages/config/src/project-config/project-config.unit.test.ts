@@ -167,6 +167,7 @@ describe("fromConfigDocument", () => {
     // Local-only sections never appear, however they're spelled on `CliConfig`.
     for (const droppedKey of [
       "project_id",
+      "target",
       "studio",
       "edge_runtime",
       "analytics",

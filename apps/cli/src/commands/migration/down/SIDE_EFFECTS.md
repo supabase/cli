@@ -22,11 +22,22 @@
 
 ## Environment Variables
 
-| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`                  | auth token for `--linked` mode                                                                                                                                                                                                             | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DOTENV_PRIVATE_KEY[_*]`                 | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert                                                                                                                                                          | no (required only if a `[db.vault]` value is encrypted) |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                      |
+| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN`                  | auth token for `--linked` mode                                                                                                                                                                                                             | no (falls back to keyring → `~/.supabase/access-token`)      |
+| `DOTENV_PRIVATE_KEY[_*]`                 | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert                                                                                                                                                          | no (required only if a `[db.vault]` value is encrypted)      |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                           |
+| `SUPABASE_TARGET`                        | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml`                                                                                                                   | no (falls back to config `target`, then the command default) |
+
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
+is only read for the target when no selector flag is given; an unreadable config counts as unset.
+No deprecation warning is written: the local default is unchanged.
 
 ## Exit Codes
 

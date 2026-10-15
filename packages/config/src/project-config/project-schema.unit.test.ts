@@ -434,6 +434,7 @@ describe("ProjectConfigSchema local-only sections", () => {
     const result = decodeProjectConfig(getDefaultCliConfig());
     for (const localOnlyKey of [
       "project_id",
+      "target",
       "studio",
       "edge_runtime",
       "analytics",

@@ -13,6 +13,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 
 /**
@@ -148,16 +149,19 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
 
   // Mutual exclusivity is keyed off raw argv (which flags were explicitly passed), not the
   // parsed boolean value — `--local=false` counts as explicitly set.
-  const target = resolveDbTargetFlags(cliArgs.args);
+  const target = yield* resolveDbTarget({
+    command: `inspect db ${spec.name}`,
+    selection: resolveDbTargetFlags(cliArgs.args),
+    projectRefSet: Option.isSome(flags.projectRef),
+    legacyDefault: "linked",
+  });
   if (target.setFlags.length > 1) {
     return yield* new InspectMutuallyExclusiveFlagsError({
       message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
     });
   }
 
-  // `--linked` is the default; exclusivity above is already keyed off the raw flags, so
-  // deriving the connType here does not re-trigger it.
-  const connType = target.connType ?? "linked";
+  const connType = target.connType;
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target — see push.handler.ts's identical guard

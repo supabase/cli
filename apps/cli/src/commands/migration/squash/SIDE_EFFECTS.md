@@ -90,6 +90,16 @@ live shadow available.
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB tags the catalog does not pin, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
 `SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
 
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
+is only read for the target when no selector flag is given; an unreadable config counts as unset.
+No deprecation warning is written: the local default is unchanged.
+
 ## Exit Codes
 
 | Code  | Condition                                                                                                                                                                                                                                                     |

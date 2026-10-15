@@ -47,12 +47,23 @@ container stacks can enable it. Compose uses the Compose Postgres image.
 
 ## Environment Variables
 
-| Variable                | Purpose                                  | Required?                                 |
-| ----------------------- | ---------------------------------------- | ----------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` resolution     | no (keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | linked direct-DB password                | no                                        |
-| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path) | no                                        |
-| `PGHOST` / `PGPORT` / … | connection overrides                     | no                                        |
+| Variable                | Purpose                                                                                                                  | Required?                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` resolution                                                                                     | no (keyring → `~/.supabase/access-token`)                    |
+| `SUPABASE_DB_PASSWORD`  | linked direct-DB password                                                                                                | no                                                           |
+| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                                                                                 | no                                                           |
+| `PGHOST` / `PGPORT` / … | connection overrides                                                                                                     | no                                                           |
+| `SUPABASE_TARGET`       | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml` | no (falls back to config `target`, then the command default) |
+
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
+is only read for the target when no selector flag is given; an unreadable config counts as unset.
+No deprecation warning is written: the local default is unchanged.
 
 ## Exit Codes
 

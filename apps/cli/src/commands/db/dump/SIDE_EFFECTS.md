@@ -45,6 +45,26 @@ image), to stdout or `--file`.
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                                                           |
 | `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                                              |
+| `SUPABASE_TARGET`                                                             | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml`                                                                                                                                         |
+
+## Target selection
+
+With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+`config.json`). `remote` targets the linked project through the existing linked path; `local`
+targets the local database. An explicit selector flag always wins over the target. An invalid
+`SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config is only read for
+the target when no selector flag is given; an unreadable config counts as unset.
+
+When neither is set the command keeps targeting the linked project and writes one warning to
+**stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
+working while the next major version moves it to the local database:
+
+```
+Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.
+```
+
+No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.
 
 ## Exit Codes
 

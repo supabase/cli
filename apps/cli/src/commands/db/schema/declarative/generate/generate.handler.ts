@@ -6,6 +6,8 @@ import {
   resolveYesWithProjectEnv,
 } from "../../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
+import { dbTargetSelectionOf } from "../../../../../command-internal/db-target-flags.ts";
+import { resolveDbTarget } from "../../../../../command-internal/workspace-target.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
@@ -98,14 +100,29 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       });
     }
 
-    // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
-    // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
-    // "Linked project" choice does not re-load, so only `flags.linked` triggers this.
+    const resolvedTarget = yield* resolveDbTarget({
+      command: "db schema declarative generate",
+      selection: dbTargetSelectionOf({
+        dbUrl: Option.isSome(flags.dbUrl),
+        linked: Option.isSome(flags.linked),
+        local: Option.isSome(flags.local),
+      }),
+      projectRefSet: false,
+      legacyDefault: "local",
+    });
+    const workspaceConnType =
+      resolvedTarget.source === "workspace" ? resolvedTarget.connType : undefined;
+    const linkedSelected = Option.isSome(flags.linked) || workspaceConnType === "linked";
+    const localSelected = Option.isSome(flags.local) || workspaceConnType === "local";
+
+    // An explicit linked target re-loads config with the resolved ref, so a matching
+    // `[remotes.<ref>]` block overrides `experimental.pgdelta.*` downstream only, not the gate
+    // above. Smart-mode's "Linked project" choice does not re-load.
     let toml = baseToml;
     // The resolved linked ref (explicit `--linked` only) is threaded into the raw-shadow export
     // source, so its platform setup uses the remote-merged config, and into the post-run
     // linked-project cache finalizer below.
-    if (Option.isSome(flags.linked)) {
+    if (linkedSelected) {
       const linkedRef = Option.isSome(cliSettings.projectId)
         ? cliSettings.projectId
         : yield* readProjectRefFile(fs, path, cliSettings.workdir);
@@ -166,8 +183,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         : {}),
     };
 
-    const hasExplicitTarget =
-      Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
+    const hasExplicitTarget = localSelected || linkedSelected || Option.isSome(flags.dbUrl);
     yield* Effect.annotateCurrentSpan({
       "declarative.target_mode": hasExplicitTarget ? "explicit" : "smart",
       "schema.count": flags.schema.length,
@@ -177,11 +193,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     let overwrite: boolean;
     if (hasExplicitTarget) {
       const seam = yield* DeclarativeSeam;
-      if (Option.isSome(flags.local)) {
+      if (localSelected) {
         // Target selection keys off flag presence, but auto-start gates on the boolean value, so
         // `--local=false` selects the local target but must not start a stopped stack.
         yield* seam.ensureLocalPostgresImageCurrent;
-        if (Option.getOrElse(flags.local, () => false)) {
+        if (Option.getOrElse(flags.local, () => true)) {
           yield* seam.ensureLocalDatabaseStarted;
         }
         target = yield* resolveLocalTargetEndpoint(local, dnsResolver);

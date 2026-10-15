@@ -12,3 +12,5 @@ Tables with a high bloat ratio should be investigated to see if there are vacuum
     table │ public      │ happy_table                │   1.0 │ 1472 kB
     index │ public      │ happy_table::my_nice_index │   0.7 │ 880 kB
 ```
+
+Without `--local`, `--linked` or `--db-url`, the command targets the linked project, unless the workspace target is set with `target = "local"` or `target = "remote"` in `supabase/config.toml` or the `SUPABASE_TARGET` environment variable. A selector flag always wins. In the next major version the default moves to the local database; until you pass a flag or set a target, the command prints a deprecation warning on stderr.
