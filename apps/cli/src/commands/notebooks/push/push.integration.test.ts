@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
-import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir, VALID_REF } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   notebookListPage,
   notebookResource,
@@ -13,7 +14,9 @@ import {
   NotebookNameConflictError,
   NotebookNotFoundError,
 } from "../notebooks.errors.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { notebooksPushHandler as notebooksPush } from "./push.command.ts";
+import { notebooksPush as notebooksPushCore } from "./push.handler.ts";
 import type { NotebooksPushFlags } from "./push.command.ts";
 
 const SALES_ID = "44444444-4444-4444-8444-444444444444";
@@ -323,4 +326,83 @@ describe("notebooks push", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("asks once for the uploads and the deletion, and changes nothing when declined", () => {
+    const repo = project();
+    const { layer, http, out } = setupNotebooks({
+      command: "push",
+      workdir: repo.dir,
+      yes: false,
+      promptSelectResponses: ["delete"],
+      promptConfirmResponses: [false],
+      routes: {
+        [`GET ${notebooksRoute()}`]: {
+          status: 200,
+          body: notebookListPage({
+            notebooks: [
+              { id: SALES_ID, name: "kept" },
+              { id: ERRORS_ID, name: "stale" },
+            ],
+          }),
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* repo.write("kept", '{"content":{"cells":[]}}');
+      const error = yield* notebooksPush(flags()).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+      expect(out.promptConfirmCalls).toHaveLength(1);
+      expect(out.stderrText).toContain("Update kept");
+      expect(out.stderrText).toContain("Delete stale");
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("asks nothing when there is nothing to upload or delete", () => {
+    const repo = project();
+    const { layer, out } = setupNotebooks({
+      command: "push",
+      workdir: repo.dir,
+      yes: false,
+      routes: {
+        [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* notebooksPush(flags());
+
+      expect(out.promptConfirmCalls).toEqual([]);
+      expect(out.stdoutText).toContain("No notebooks in");
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describeHostedConsent("notebooks push", {
+  setup: (workdir) =>
+    notebooksProject(workdir)
+      .write("brand-new", '{"content":{"cells":[]}}')
+      .pipe(Effect.provide(Path.layer)),
+  invoke: ({ workdir }) => {
+    const { http } = setupNotebooks({
+      command: "push",
+      workdir,
+      routes: {
+        [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
+        [`POST ${notebooksRoute()}`]: {
+          status: 201,
+          body: { data: notebookResource({ id: ERRORS_ID, name: "brand-new" }) },
+        },
+      },
+    });
+    return {
+      run: notebooksPushCore({
+        notebookName: Option.none(),
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(http.layer)),
+      mutations: () => http.requests.filter((request) => request.method !== "GET").length,
+    };
+  },
 });

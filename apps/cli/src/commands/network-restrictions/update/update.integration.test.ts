@@ -4,9 +4,10 @@ import {
   type V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -18,6 +19,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   type NetworkRestrictionsUpdateFlags,
   networkRestrictionsUpdateDbAllowCidrFlag,
@@ -67,6 +70,11 @@ const PATCH_APPLIED: typeof V1PatchNetworkRestrictionsOutput.Type = {
   status: "applied",
 };
 
+const consentApproved = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
@@ -93,12 +101,15 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi(apiOpts(opts));
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentApproved,
+  );
   return { layer, out, api };
 }
 
@@ -108,13 +119,16 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+    }),
+    consentApproved,
+  );
   return { layer, out, api, telemetry, cache };
 }
 
@@ -679,4 +693,15 @@ describe("network-restrictions update integration", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("network-restrictions update", {
+  api: { byMethod: { POST: { status: 201, body: POST_APPLIED } } },
+  invoke: () => ({
+    run: networkRestrictionsUpdate({
+      ...baseFlags,
+      projectRef: Option.some(VALID_REF),
+      dbAllowCidr: ["12.3.4.5/32"],
+    }),
+  }),
 });

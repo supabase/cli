@@ -1,4 +1,6 @@
 import { Effect, Option } from "effect";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -114,9 +116,24 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
             )
           : [];
 
+      const remoteByName = new Map(remote.map((notebook) => [notebook.name, notebook]));
+      if (files.length > 0 || choice === "delete") {
+        yield* requireHostedMutationConsent({
+          action: `Push ${files.length} notebook(s)${choice === "delete" ? ` and delete ${remoteOnly.length} from the project` : ""}`,
+          details: [
+            ...files.map(
+              ({ name }) =>
+                `${remoteByName.has(name) ? "Update" : "Create"} ${sanitizeInlineName(name)}`,
+            ),
+            ...(choice === "delete"
+              ? remoteOnly.map((notebook) => `Delete ${sanitizeInlineName(notebook.name)}`)
+              : []),
+          ],
+        });
+      }
+
       const created: Array<string> = [];
       const updated: Array<string> = [];
-      const remoteByName = new Map(remote.map((notebook) => [notebook.name, notebook]));
       for (const { name, file } of files) {
         const result = yield* uploadNotebook({
           api,

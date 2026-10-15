@@ -8,6 +8,7 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -15,6 +16,7 @@ import {
   scanArgvFlags,
 } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import {
   encodeSortedJson,
   encodeSortedJsonBody,
@@ -300,8 +302,10 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     });
 
     yield* Effect.gen(function* () {
-      const fetching =
-        output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Updating SSO provider...") : Effect.undefined,
+      );
+      const fetching = yield* startTask;
 
       // The typed client bakes the layer's apiUrl in at construction, so when
       // the reconciled profile differs, the GET must be issued raw against
@@ -422,17 +426,30 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         body["attribute_mapping"] = mapping;
       }
 
-      if (domains.length > 0) {
-        body["domains"] = [...domains];
-      } else {
-        // `domains` is always recomputed and sent, even when no domain flag
-        // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
-        body["domains"] = mergeDomains(existing.domains, addDomains, removeDomains);
-      }
+      // `domains` is always recomputed and sent, even when no domain flag
+      // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
+      const finalDomains =
+        domains.length > 0
+          ? [...domains]
+          : mergeDomains(existing.domains, addDomains, removeDomains);
+      body["domains"] = finalDomains;
 
       if (Option.isSome(nameIdFormat)) {
         body["name_id_format"] = nameIdFormat.value;
       }
+
+      yield* fetching?.clear ?? Effect.void;
+      yield* requireHostedMutationConsent({
+        action: `Update SSO provider ${providerId}`,
+        details: [
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(Option.isSome(attributeMappingFile) ? ["Attribute mapping: replaced"] : []),
+          ...(Option.isSome(nameIdFormat) ? [`Name ID format: ${nameIdFormat.value}`] : []),
+          `Domains: ${finalDomains.join(", ") || "(none)"}`,
+        ],
+      });
+      const updating = yield* startTask;
 
       const tokenOpt =
         reconciledTokenCached !== undefined
@@ -456,7 +473,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       );
 
       const response = yield* httpClient.execute(request).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.tapError(() => updating?.fail() ?? Effect.void),
         Effect.mapError(
           (cause) =>
             new SsoUpdateNetworkError({
@@ -479,7 +496,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
             token !== undefined ? { accessToken: token } : {},
           )),
         });
-        yield* fetching?.fail() ?? Effect.void;
+        yield* updating?.fail() ?? Effect.void;
         // Reuses the GET error message even for PUT.
         return yield* new SsoUpdateUnexpectedStatusError({
           status: response.status,
@@ -490,7 +507,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       }
 
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-      yield* fetching?.clear ?? Effect.void;
+      yield* updating?.clear ?? Effect.void;
 
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 

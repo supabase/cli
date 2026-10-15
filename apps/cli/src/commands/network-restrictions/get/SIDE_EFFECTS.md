@@ -96,3 +96,4 @@ One `result` event whose `data` is the full response object.
   whether the subsequent API call succeeds.
 - `telemetry.json` is written on every invocation past the `--experimental` gate, including
   failures. A closed gate writes nothing.
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.

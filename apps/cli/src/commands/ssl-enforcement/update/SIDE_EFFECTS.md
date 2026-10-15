@@ -22,12 +22,13 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                                      |
-| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
+| Variable                | Purpose                                                                                               | Required?                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`)        |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                    | no (falls back to `supabase/.temp/project-ref` → prompt)       |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                              | no (pass `--experimental` instead; one of the two is required) |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                      |
 
 ## Exit Codes
 
@@ -40,6 +41,8 @@
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                                                                           |
 | `1`  | API non-200 (`SslEnforcementUpdateUnexpectedStatusError`)                                                                                                                                |
 | `1`  | transport failure (`SslEnforcementUpdateNetworkError`)                                                                                                                                   |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                             |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                               |
 
 ## Telemetry Events Fired
 
@@ -101,3 +104,5 @@ One `result` event:
   A closed gate exits 1 before the enable/disable mutex check, project-ref
   resolution, the API call, the `linked-project.json` write, the `telemetry.json` write, and the
   `cli_command_executed` event.
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- Asks `Enable SSL enforcement for database connections on <target>?` (`Disable SSL enforcement for database connections on <target>?` with `--disable-db-ssl-enforcement`; default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

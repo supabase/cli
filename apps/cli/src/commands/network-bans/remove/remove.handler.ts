@@ -6,6 +6,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
@@ -42,6 +43,15 @@ export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
           return yield* new NetworkBansInvalidIpError({ input: ip });
         }
       }
+
+      yield* requireHostedMutationConsent({
+        action: "Remove network bans",
+        details: [
+          flags.dbUnbanIp.length === 0
+            ? "Unban: this machine's IP address"
+            : `Unban: ${flags.dbUnbanIp.join(", ")}`,
+        ],
+      });
 
       yield* api.v1
         .deleteNetworkBans({

@@ -1,9 +1,11 @@
 import { Effect } from "effect";
 
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import {
   PostgresConfigDeleteNetworkError,
   PostgresConfigDeleteSerializeError,
@@ -29,20 +31,34 @@ export const postgresConfigDelete = Effect.fn("postgres-config.delete")(function
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      const deleting =
-        output.format === "text" ? yield* output.task("Deleting Postgres config...") : undefined;
-      const currentConfig = yield* fetchCurrentPostgresConfig(ref).pipe(
-        Effect.tapError(() => deleting?.fail() ?? Effect.void),
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Deleting Postgres config...") : Effect.undefined,
       );
 
-      for (const key of flags.config) {
-        delete currentConfig[key.trim()];
+      const fetching = yield* startTask;
+      const currentConfig = yield* fetchCurrentPostgresConfig(ref).pipe(
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      );
+      yield* fetching?.clear ?? Effect.void;
+
+      const keys = flags.config.map((key) => key.trim());
+      for (const key of keys) {
+        delete currentConfig[key];
       }
 
       if (flags.noRestart) {
         currentConfig["restart_database"] = false;
       }
 
+      yield* requireHostedMutationConsent({
+        action: "Delete Postgres config overrides",
+        details: [
+          ...keys.map((key) => `Delete ${key}`),
+          ...(flags.noRestart ? ["Does not restart the database"] : []),
+        ],
+      });
+
+      const deleting = yield* startTask;
       const updated = yield* putPostgresConfig(ref, currentConfig, {
         serializeError: (args) => new PostgresConfigDeleteSerializeError(args),
         networkError: (args) => new PostgresConfigDeleteNetworkError(args),

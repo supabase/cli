@@ -34,10 +34,11 @@ GET still uses the typed client.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)   | no (defaults to `supabase`)                             |
+| Variable                | Purpose                                                                                               | Required?                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)                                                    | no (defaults to `supabase`)                             |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)               |
 
 ## Exit Codes
 
@@ -57,6 +58,8 @@ GET still uses the typed client.
 | `1`  | `SsoUpdateNotFoundError` — 404 from GET                                                                                                                                                                                                                                                                                                 |
 | `1`  | `SsoUpdateUnexpectedStatusError` — non-2xx from GET or PUT                                                                                                                                                                                                                                                                              |
 | `1`  | `SsoUpdateNetworkError` — transport-level failure                                                                                                                                                                                                                                                                                       |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                                                            |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                                                                                                                                              |
 
 ## Telemetry Events Fired
 
@@ -98,3 +101,6 @@ Single `success` event with the parsed response as data.
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error.` (single trailing period; differs from `sso add`'s variant which omits the trailing period).
 - The `## Attribute Mapping` / `## SAML 2.0 Metadata XML` sections are emitted as plain markdown (heading + fence). The headings carry no extra styling; the XML body inside the fence is formatted by `formatSsoMetadataXml`.
 - **PUT failure message reuses the GET error string**: a non-2xx PUT response produces `unexpected error fetching identity provider: <body>` — note "fetching" not "updating".
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- Asks `Update SSO provider <id> on <target>?` (default No) before the first write, after printing the changed metadata, attribute mapping, name ID format and the resulting domain set. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- The provider is fetched (a read) before the confirmation so the resulting domain set is known; the `PUT` happens only after it.

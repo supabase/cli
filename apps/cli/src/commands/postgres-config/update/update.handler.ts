@@ -1,9 +1,11 @@
 import { Effect } from "effect";
 
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import {
   PostgresConfigInvalidConfigValueError,
   PostgresConfigUpdateNetworkError,
@@ -41,14 +43,17 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      const updating =
-        output.format === "text" ? yield* output.task("Updating Postgres config...") : undefined;
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Updating Postgres config...") : Effect.undefined,
+      );
 
+      const fetching = flags.replaceExistingOverrides ? undefined : yield* startTask;
       const finalOverrides = flags.replaceExistingOverrides
         ? {}
         : yield* fetchCurrentPostgresConfig(ref).pipe(
-            Effect.tapError(() => updating?.fail() ?? Effect.void),
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
           );
+      yield* fetching?.clear ?? Effect.void;
 
       for (const [key, value] of Object.entries(nextOverrides)) {
         finalOverrides[key] = parseConfigValue(value);
@@ -60,6 +65,16 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
 
       normalizeTimeoutConfig(finalOverrides);
 
+      yield* requireHostedMutationConsent({
+        action: "Update the Postgres config overrides",
+        details: [
+          ...(flags.replaceExistingOverrides ? ["Replaces all existing overrides"] : []),
+          ...Object.entries(nextOverrides).map(([key, value]) => `Set ${key} = ${value}`),
+          ...(flags.noRestart ? ["Does not restart the database"] : []),
+        ],
+      });
+
+      const updating = yield* startTask;
       const updated = yield* putPostgresConfig(ref, finalOverrides, {
         serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
         networkError: (args) => new PostgresConfigUpdateNetworkError(args),

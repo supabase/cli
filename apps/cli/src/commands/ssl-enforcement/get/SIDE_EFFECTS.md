@@ -103,3 +103,4 @@ One `result` event:
   (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API call, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.

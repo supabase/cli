@@ -4,6 +4,7 @@ import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Stdio 
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -15,7 +16,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoAddFlags } from "./add.command.ts";
@@ -159,6 +161,8 @@ function setup(opts: SetupOpts = {}) {
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
     }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -1187,4 +1191,13 @@ describe("sso add integration", () => {
         }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("sso add", {
+  api: { response: { status: 201, body: RESPONSE_PROVIDER } },
+  invoke: () => ({
+    run: ssoAdd({ ...defaultFlags, projectRef: Option.some(VALID_REF) }).pipe(
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) })),
+    ),
+  }),
 });
