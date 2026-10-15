@@ -27,21 +27,22 @@ subcommand's own `SIDE_EFFECTS.md`.
 
 ## API Routes
 
-| Method   | Path                          | Auth         | Request body                                                                 | Response (used fields)                                                       |
-| -------- | ----------------------------- | ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects`                | Bearer token | —                                                                            | `[{id, ref, organization_slug, name, region, created_at, status, database}]` |
-| `POST`   | `/v1/projects`                | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`             |
-| `DELETE` | `/v1/projects/{ref}`          | Bearer token | —                                                                            | `{id, ref, name}`; `404` → does-not-exist                                    |
-| `GET`    | `/v1/projects/{ref}/api-keys` | Bearer token | —                                                                            | `[{name, api_key?}]`                                                         |
-| `GET`    | `/v1/organizations`           | Bearer token | —                                                                            | `[{id, slug, name}]` — `create` interactive org prompt only                  |
+| Method   | Path                          | Auth         | Request body                                                                                                                         | Response (used fields)                                                       |
+| -------- | ----------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                | Bearer token | —                                                                                                                                    | `[{id, ref, organization_slug, name, region, created_at, status, database}]` |
+| `POST`   | `/v1/projects`                | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?, release_channel?, postgres_engine?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`             |
+| `DELETE` | `/v1/projects/{ref}`          | Bearer token | —                                                                                                                                    | `{id, ref, name}`; `404` → does-not-exist                                    |
+| `GET`    | `/v1/projects/{ref}/api-keys` | Bearer token | —                                                                                                                                    | `[{name, api_key?}]`                                                         |
+| `GET`    | `/v1/projects/{ref}`          | Bearer token | —                                                                                                                                    | linked-project cache fill, best-effort (`Effect.ensuring`)                   |
+| `GET`    | `/v1/organizations`           | Bearer token | —                                                                                                                                    | `[{id, slug, name}]` — `create` interactive org prompt only                  |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                     |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)       |
-| `SUPABASE_PROJECT_REF`  | linked project ref (via the config layer)            | no (used by `list` marker / `api-keys` ref / `delete` unlink) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)        |
+| Variable                | Purpose                                              | Required?                                                                                                              |
+| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)                                                                |
+| `SUPABASE_PROJECT_ID`   | linked project ref (via the config layer)            | no (used by the `list` marker and the `api-keys` ref; `delete` ignores it and reads only `supabase/.temp/project-ref`) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                 |
 
 > `DB_PASSWORD` is **not** consumed by `projects create`.
 
@@ -82,8 +83,8 @@ subcommand's own `SIDE_EFFECTS.md`.
   the interactive-terminal appearance differs.
 - **`create` linked cache:** the new project ref is cached on success;
   `delete` also caches the resolved ref, even though the project is gone — the
-  cache is a telemetry-group record, separate from the `supabase/.temp` link
-  removed during unlink.
+  cache file is `supabase/.temp/linked-project.json`, which `delete` removes along
+  with the rest of `supabase/.temp` when the deleted ref is the linked one.
 - **`create` non-interactive errors:** consolidates what used to be per-flag
   "required flag(s) … not set" errors into a single `ProjectsCreateMissingArgError`
   that lists every missing item at once (a deliberate UX improvement over the
