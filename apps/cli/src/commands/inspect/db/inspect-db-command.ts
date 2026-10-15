@@ -35,7 +35,7 @@ export const INSPECT_DB_FLAGS = {
 } as const;
 
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
-export const INSPECT_DB_PERMISSIONS = withDbTarget(dbConfig, { default: "linked" });
+export const INSPECT_DB_PERMISSIONS = withDbTarget(dbConfig, { default: "local" });
 /** Target policy shared by every `inspect db` command. */
 export const withInspectDbTargetPolicy = withTargetPolicy({ group: "selectable", consent: "none" });
 

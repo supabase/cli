@@ -58,7 +58,7 @@ export const migrationListCommand = Command.make("list", config).pipe(
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>

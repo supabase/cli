@@ -27,9 +27,6 @@ const FLAG_MIGRATION_PENDING: ReadonlySet<string> = new Set([
   "db schema declarative generate",
 ]);
 
-/** Selectable leaves whose declared database-target default is still `linked`. */
-const DB_TARGET_DEFAULT_PENDING: ReadonlySet<string> = new Set(["db dump"]);
-
 /** Non-GET operations a leaf may call without hosted-mutation consent, with the reason. */
 const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
   [
@@ -131,7 +128,6 @@ describe.each(leavesByVariant)(
         selectable: "local",
       };
       const offenders = withPolicy
-        .filter(({ path }) => !DB_TARGET_DEFAULT_PENDING.has(path))
         .flatMap(({ path, node, policy }) => {
           const permissions = Option.getOrUndefined(readPermissions(node.command));
           if (permissions?.status !== "mapped" || permissions.dbTargetDefault === undefined)
@@ -176,7 +172,7 @@ describe.each(leavesByVariant)(
 
 describe("target policy allowlists", () => {
   it("name only real leaves", () => {
-    const stale = [...FLAG_MIGRATION_PENDING, ...DB_TARGET_DEFAULT_PENDING].filter(
+    const stale = [...FLAG_MIGRATION_PENDING].filter(
       (path) => !everyLeafPath.has(path),
     );
     expect(stale).toEqual([]);

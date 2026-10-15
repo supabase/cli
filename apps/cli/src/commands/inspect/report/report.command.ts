@@ -47,7 +47,7 @@ export const inspectReportCommand = Command.make("report", config).pipe(
   Command.withShortDescription("Generate a CSV output for all inspect commands"),
   withPermissions(
     withDbTarget(compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig), {
-      default: "linked",
+      default: "local",
     }),
   ),
   Command.withHandler((flags) =>

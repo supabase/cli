@@ -62,7 +62,7 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>

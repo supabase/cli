@@ -139,7 +139,7 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
         dbConfigPoolerFallback,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
