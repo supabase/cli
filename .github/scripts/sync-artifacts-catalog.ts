@@ -812,6 +812,16 @@ export interface PlanSlimUpdatesResult {
   readonly warnings: ReadonlyArray<string>;
 }
 
+/**
+ * Services whose pinned upstream must not be upgraded automatically, with the reason surfaced in
+ * the planner warning. Hotfix revisions of the pinned upstream still apply; delete the entry to
+ * resume upgrades.
+ */
+const UPGRADE_HOLDS: Readonly<Record<string, string>> = {
+  analytics:
+    "Logflare 1.52+ breaks Postgres-backend endpoint queries (https://github.com/Logflare/logflare/issues/4158)",
+};
+
 /** Groups every candidate release tag under one bucket, for a service with no additional pins. */
 const SINGLE_LINE_KEY = "*";
 
@@ -931,7 +941,18 @@ export function planSlimUpdates(
       (upstream) => compareOnLine(upstream, pinned.upstream) !== undefined,
     );
 
-    if (best !== undefined && compareOnLine(best.upstream, pinned.upstream) === 1) {
+    const isUpgrade = best !== undefined && compareOnLine(best.upstream, pinned.upstream) === 1;
+    const hold = UPGRADE_HOLDS[service];
+    if (isUpgrade && hold !== undefined) {
+      warnings.push(
+        workflowCommand(
+          "warning",
+          `${service} upgrade to ${best.upstream}-r${best.revision} held at ${pinned.upstream}: ${hold}.`,
+        ),
+      );
+    }
+
+    if (isUpgrade && hold === undefined) {
       updates.push(
         buildUpdate("upgrade", service, line, hasLines, pinned, best.upstream, best.revision),
       );
