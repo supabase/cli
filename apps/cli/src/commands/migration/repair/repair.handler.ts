@@ -25,10 +25,7 @@ import { parseMigrationVersion } from "../../../command-internal/migration-times
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  MigrationFileNotFoundError,
-  MigrationInvalidVersionError,
-} from "../migration.errors.ts";
+import { MigrationFileNotFoundError, MigrationInvalidVersionError } from "../migration.errors.ts";
 import { MigrationRepairUpdateError } from "./repair.errors.ts";
 
 export interface MigrationRepairInput {
@@ -142,9 +139,7 @@ const runRepair = Effect.fnUntraced(function* (input: MigrationRepairInput) {
       }
     }
 
-    const versions = repairAll
-      ? yield* loadLocalVersions(fs, path, migrationsDir)
-      : input.versions;
+    const versions = repairAll ? yield* loadLocalVersions(fs, path, migrationsDir) : input.versions;
 
     // Every file is read before the first write, so a missing file aborts with no DB mutation.
     const appliedFiles: Array<MigrationFile> = [];

@@ -46,6 +46,7 @@ import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
+  TargetPasswordConflictError,
   TargetProjectRefConflictError,
   TargetSelectorConflictError,
 } from "../../../command-internal/target/target.errors.ts";
@@ -206,16 +207,19 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.effect("lists the linked project and fills the cache when the workspace target is remote", () => {
-    const ctx = setup(tmp.current, { remote: ["20240101000000"] });
-    return Effect.gen(function* () {
-      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
-      yield* writeConfig(tmp.current, 'target = "remote"\n');
-      yield* migrationList(flags());
-      expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
-      expect(ctx.cache.cachedRef).toBe(VALID_REF);
-    }).pipe(Effect.provide(ctx.layer));
-  });
+  it.effect(
+    "lists the linked project and fills the cache when the workspace target is remote",
+    () => {
+      const ctx = setup(tmp.current, { remote: ["20240101000000"] });
+      return Effect.gen(function* () {
+        yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
+        yield* writeConfig(tmp.current, 'target = "remote"\n');
+        yield* migrationList(flags());
+        expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
+        expect(ctx.cache.cachedRef).toBe(VALID_REF);
+      }).pipe(Effect.provide(ctx.layer));
+    },
+  );
 
   it.effect("shows an empty Remote column when the history table is absent (42P01)", () => {
     const { layer, out } = setup(tmp.current, {
@@ -384,6 +388,16 @@ describe("migration list", () => {
       Effect.provide(ctx.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
+  });
+
+  it.effect("rejects --password combined with --db-url through the real resolver", () => {
+    const ctx = setup(tmp.current, { realLayers: true });
+    return Effect.gen(function* () {
+      const error = yield* migrationList(
+        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TargetPasswordConflictError);
+    }).pipe(Effect.scoped, Effect.provide(ctx.layer));
   });
 
   it.effect("fetches the pooler config but mints no login role when --password is given", () => {

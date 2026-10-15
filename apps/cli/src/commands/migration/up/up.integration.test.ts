@@ -351,17 +351,23 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("applies nothing and asks for no consent on a linked project that is up to date", () => {
-    const { layer, out, queries } = setup(tmp.current, { format: "json", remote: ["20240101000000"] });
-    return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationUp(flags({ linked: true }));
-      expect(insertedVersions(queries)).toEqual([]);
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "success", message: "Migrations applied" }),
-      );
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "applies nothing and asks for no consent on a linked project that is up to date",
+    () => {
+      const { layer, out, queries } = setup(tmp.current, {
+        format: "json",
+        remote: ["20240101000000"],
+      });
+      return Effect.gen(function* () {
+        yield* seed(tmp.current, "20240101000000_a.sql");
+        yield* migrationUp(flags({ linked: true }));
+        expect(insertedVersions(queries)).toEqual([]);
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({ type: "success", message: "Migrations applied" }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("emits a structured result in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json", remote: [] });

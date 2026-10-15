@@ -106,7 +106,9 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags) {
             details: [
               ...pending.map((migrationPath) => `Apply migration ${path.basename(migrationPath)}`),
               ...(vaultSecrets.length > 0
-                ? [`Update ${vaultSecrets.length} vault ${vaultSecrets.length === 1 ? "secret" : "secrets"}`]
+                ? [
+                    `Update ${vaultSecrets.length} vault ${vaultSecrets.length === 1 ? "secret" : "secrets"}`,
+                  ]
                 : []),
             ],
           });

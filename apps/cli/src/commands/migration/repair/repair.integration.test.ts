@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -49,6 +49,7 @@ import { type DbSession, DbConnection } from "../../../command-internal/db-conne
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
+  TargetPasswordConflictError,
   TargetProjectRefConflictError,
   TargetSelectorConflictError,
 } from "../../../command-internal/target/target.errors.ts";
@@ -278,16 +279,19 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("repair-all truncates and reapplies local files on the local database without prompting", () => {
-    const { layer, execs, queries, out } = setup(tmp.current);
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-      yield* migrationRepair(input({ versions: [], status: "applied" }));
-      expect(out.promptConfirmCalls).toEqual([]);
-      expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
-      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "repair-all truncates and reapplies local files on the local database without prompting",
+    () => {
+      const { layer, execs, queries, out } = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+        yield* migrationRepair(input({ versions: [], status: "applied" }));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+        expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
     "repair-all with --status reverted wipes the whole history (no upserts, no deletes)",
@@ -508,6 +512,23 @@ describe("migration repair", () => {
     );
   });
 
+  it.effect("rejects --password combined with --db-url through the real resolver", () => {
+    const ctx = setup(tmp.current, { realLayers: true });
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      const error = yield* migrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          dbUrl: Option.some("postgresql://x"),
+          password: Option.some("pw"),
+        }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TargetPasswordConflictError);
+      expect(ctx.execs).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(ctx.layer));
+  });
+
   it.effect("fetches the pooler config but mints no login role when --password is given", () => {
     const ctx = setup(tmp.current, { realLayers: true, yes: true });
     const requests: Array<StubbedRequest> = [];
@@ -540,8 +561,7 @@ describe("migration repair", () => {
 });
 
 describeHostedConsent("migration repair", {
-  setup: (workdir) =>
-    seedMigration(workdir, "20240101000000_init.sql", "create table a;\n"),
+  setup: (workdir) => seedMigration(workdir, "20240101000000_init.sql", "create table a;\n"),
   invoke: () => {
     const db = fakeDatabase();
     return {

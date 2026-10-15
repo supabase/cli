@@ -27,7 +27,7 @@ test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
           "select 1;\n",
         );
         const seeded = yield* cliEffect(
-          ["migration", "repair", version, "--status", "applied", ...targetArgs],
+          ["migration", "repair", version, "--status", "applied", "--yes", ...targetArgs],
           { cwd: seedDir },
         );
         requireLiveSuccess(seeded, "migration repair setup");

@@ -9,3 +9,5 @@ However, one limitation is that data manipulation statements, such as insert, up
 By default, the latest `<timestamp>_<name>.sql` file will be updated to contain the squashed migration. You can override the target version using the `--version <timestamp>` flag.
 
 If your `supabase/migrations` directory is empty, running `supabase squash` will do nothing.
+
+Squashing rewrites your local migration files. When the target is a hosted database (`--linked`, `--project-ref`, or a non-local `--db-url`), it also resets the remote migration history table to the squashed migration. That asks for confirmation before any file is changed (the default answer is No); pass `--yes` to confirm in scripts and other non-interactive runs. With the default local target it only squashes the files and suggests running `supabase migration repair --status applied` for the remote history.
