@@ -16,8 +16,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "gen keys",
 
-  "init",
-
   "issue bug",
   "issue docs",
   "issue feature",
@@ -28,11 +26,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "pull",
 
-  "stack destroy",
-  "stack list",
-  "stack logs",
-  "stack prepare",
-  "stack restart",
   "stack start",
   "stack status",
   "stack stop",

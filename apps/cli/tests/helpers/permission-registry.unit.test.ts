@@ -154,11 +154,9 @@ describe("applicableOperations", () => {
 });
 
 describe("declaredPermissions", () => {
-  it("tells a path missing from the tree apart from a command with no declaration", () => {
+  it("finds a declared leaf only in the tree that includes it, and reports an absent path as not found", () => {
     expect(declaredPermissions("not-a-real-command")).toEqual({ _tag: "NotFound" });
     expect(declaredPermissions("stack list")).toEqual({ _tag: "NotFound" });
-    expect(declaredPermissions("stack list", { stackBackend: "stack" })).toEqual({
-      _tag: "Undeclared",
-    });
+    expect(declaredPermissions("stack list", { stackBackend: "stack" })._tag).toBe("Declared");
   });
 });
