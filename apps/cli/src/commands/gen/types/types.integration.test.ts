@@ -3227,11 +3227,11 @@ describe("gen types permissions through the real layers", () => {
   );
 
   it.effect(
-    "the implicit linked fallback generates from the saved ref when --local=false is named",
+    "the implicit linked fallback generates from the saved ref when no target flag is given",
     () =>
       Effect.gen(function* () {
         const ctx = yield* setupRecorded({
-          args: ["gen", "types", "--local=false"],
+          args: ["gen", "types"],
           projectRefFile: VALID_REF,
         });
         yield* ctx.run(genTypes(defaultFlags()));
@@ -3241,83 +3241,73 @@ describe("gen types permissions through the real layers", () => {
         ]);
         assertPermissionDrift({
           command: "gen types",
-          activeFlags: { ...DEFAULT_SWITCHES, local: false, lang: "typescript" },
+          activeFlags: { ...DEFAULT_SWITCHES, lang: "typescript" },
           requests: ctx.recordedRequests(),
           exact: true,
         });
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("makes no Management API request for --local", () =>
-    Effect.gen(function* () {
-      const ctx = yield* setupRecorded({ args: ["gen", "types", "--local"] });
-      yield* ctx.run(genTypes(defaultFlags({ local: true })));
+  const NO_API_SCENARIOS = [
+    {
+      name: "--local",
+      args: ["gen", "types", "--local"],
+      flags: defaultFlags({ local: true }),
+      activeFlags: { ...DEFAULT_SWITCHES, local: true, lang: "typescript" },
+      generates: true,
+    },
+    {
+      name: "--db-url, whatever the language",
+      args: [
+        "gen",
+        "types",
+        "--db-url",
+        "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+        "--lang",
+        "go",
+      ],
+      flags: defaultFlags({
+        dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
+        lang: "go",
+      }),
+      activeFlags: { ...DEFAULT_SWITCHES, "db-url": true, lang: "go" },
+      generates: true,
+    },
+    {
+      name: "--postgrest-v9-compat without --db-url, which fails first",
+      args: ["gen", "types", "--project-id", VALID_REF, "--postgrest-v9-compat"],
+      flags: defaultFlags({ projectId: Option.some(VALID_REF), postgrestV9Compat: true }),
+      activeFlags: {
+        ...DEFAULT_SWITCHES,
+        "postgrest-v9-compat": true,
+        "project-id": true,
+        lang: "typescript",
+      },
+      generates: false,
+    },
+  ] as const;
 
-      expect(ctx.generator.calls).toHaveLength(1);
-      expect(ctx.recordedRequests()).toEqual([]);
-      assertPermissionDrift({
-        command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, local: true, lang: "typescript" },
-        requests: ctx.recordedRequests(),
-        exact: true,
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+  for (const scenario of NO_API_SCENARIOS) {
+    it.effect(`makes no Management API request for ${scenario.name}`, () =>
+      Effect.gen(function* () {
+        const ctx = yield* setupRecorded({ args: scenario.args });
+        const exit = yield* ctx.run(genTypes(scenario.flags)).pipe(Effect.exit);
 
-  it.effect("makes no Management API request for --db-url, whatever the language", () =>
-    Effect.gen(function* () {
-      const ctx = yield* setupRecorded({
-        args: [
-          "gen",
-          "types",
-          "--db-url",
-          "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
-          "--lang",
-          "go",
-        ],
-      });
-      yield* ctx.run(
-        genTypes(
-          defaultFlags({
-            dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
-            lang: "go",
-          }),
-        ),
-      );
-
-      expect(ctx.generator.calls).toHaveLength(1);
-      expect(ctx.recordedRequests()).toEqual([]);
-      assertPermissionDrift({
-        command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, "db-url": true, lang: "go" },
-        requests: ctx.recordedRequests(),
-        exact: true,
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("makes no Management API request when --postgrest-v9-compat lacks --db-url", () =>
-    Effect.gen(function* () {
-      const ctx = yield* setupRecorded({
-        args: ["gen", "types", "--project-id", VALID_REF, "--postgrest-v9-compat"],
-      });
-      const error = yield* ctx
-        .run(genTypes(defaultFlags({ projectId: Option.some(VALID_REF), postgrestV9Compat: true })))
-        .pipe(Effect.flip);
-
-      expect(error.message).toContain("--postgrest-v9-compat must used together with --db-url");
-      expect(ctx.recordedRequests()).toEqual([]);
-      assertPermissionDrift({
-        command: "gen types",
-        activeFlags: {
-          ...DEFAULT_SWITCHES,
-          "postgrest-v9-compat": true,
-          "project-id": true,
-          lang: "typescript",
-        },
-        requests: ctx.recordedRequests(),
-        exact: true,
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+        expect(Exit.isSuccess(exit)).toBe(scenario.generates);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "--postgrest-v9-compat must used together with --db-url",
+          );
+        }
+        expect(ctx.generator.calls).toHaveLength(scenario.generates ? 1 : 0);
+        expect(ctx.recordedRequests()).toEqual([]);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: scenario.activeFlags,
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  }
 });
