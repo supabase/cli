@@ -218,7 +218,7 @@ export type CreationChange =
   | { readonly change: "unchanged" }
   | { readonly change: "changed"; readonly paths: ReadonlyArray<string> }
   | {
-      /** The instance cannot adopt the request: its endpoints, artifact or data version differ. */
+      /** The instance cannot adopt the request: its endpoints or database line differ. */
       readonly change: "incompatible";
       readonly paths: ReadonlyArray<string>;
       /**
@@ -465,7 +465,7 @@ const endpointRewrite = (
 /**
  * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
  * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
- * reassignment (an artifact or database version change, or an added or removed endpoint), so the
+ * reassignment (a database line change, or an added or removed endpoint), so the
  * caller leaves that case to the existing incompatible-change rejection.
  *
  * A requested kind with no saved member and no compatible stopped instance also has its sole

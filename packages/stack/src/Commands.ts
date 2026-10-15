@@ -24,6 +24,8 @@ const AuthInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("auth.initialize"),
     pin: ArtifactPin,
+    /** The database instance whose schemas this initialization writes. */
+    databaseId: Schema.String,
     databaseUrl: Schema.String,
   }),
 );
@@ -31,6 +33,8 @@ const StorageInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("storage.initialize"),
     pin: ArtifactPin,
+    /** The database instance whose schemas this initialization writes. */
+    databaseId: Schema.String,
     databaseUrl: Schema.String,
     filePath: Schema.String,
   }),
@@ -39,6 +43,8 @@ const RealtimeInitializationCommand = rejectExcessKeys(
   Schema.Struct({
     type: Schema.Literal("realtime.initialize"),
     pin: ArtifactPin,
+    /** The database instance whose schemas this initialization writes. */
+    databaseId: Schema.String,
     databaseUrl: Schema.String,
   }),
 );

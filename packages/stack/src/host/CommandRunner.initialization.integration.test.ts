@@ -61,7 +61,12 @@ const prepareAuthArtifact = Effect.fn(function* (
   yield* store.prepare(request);
 });
 
+const databaseId = "database";
+
 const makeRunner = Effect.fn(function* (root: string, cacheRoot: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(root, databaseId), { recursive: true });
   const layer = CommandRunner.layer({
     stackId: "initialization-command-test",
     root,
@@ -106,6 +111,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
           .run({
             command: initialization.auth({
               pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -156,6 +162,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const result = yield* runner.run({
           command: initialization.auth({
             pin,
+            databaseId,
             databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
           }),
           credentials,
@@ -165,6 +172,62 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
 
         expect(result.exitCode).toBe(0);
         expect(output.join("")).toContain("selected pin ran");
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ),
+);
+
+it.live.skipIf(target === undefined || process.platform === "win32")(
+  "refuses an initialization command older than the one that last migrated the database",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (target === undefined) return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "initialization-command-guard-" });
+        const cacheRoot = path.join(root, "cache");
+        const pinAt = (upstreamVersion: string, digest: string): ArtifactPin => ({
+          ...selection.auth,
+          upstreamVersion,
+          revision: 1,
+          natives: {
+            ...selection.auth.natives,
+            [target]: { archive: digest.repeat(64), manifest: digest.repeat(64) },
+          },
+        });
+        const newer = pinAt("v2.300.0", "c");
+        const older = pinAt("v2.299.0", "d");
+        yield* prepareAuthArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.log("ran newer");\n`,
+          newer,
+        );
+        yield* prepareAuthArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.log("ran older");\n`,
+          older,
+        );
+        const runner = yield* makeRunner(root, cacheRoot);
+        const output: string[] = [];
+        const run = (pin: ArtifactPin) =>
+          runner.run({
+            command: initialization.auth({
+              pin,
+              databaseId,
+              databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
+            }),
+            credentials,
+            stdout: (bytes) => Effect.sync(() => output.push(new TextDecoder().decode(bytes))),
+            stderr: () => Effect.void,
+          });
+
+        expect((yield* run(newer)).exitCode).toBe(0);
+        const refused = yield* run(older).pipe(Effect.flip);
+        expect(refused.message).toContain("auth v2.299.0 is older than v2.300.0");
+        expect(refused.message).toContain("supabase stack destroy --stack-id");
+        expect((yield* run(newer)).exitCode).toBe(0);
+
+        expect(output.join("")).toBe("ran newer\nran newer\n");
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
 );
@@ -191,6 +254,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
           .run({
             command: initialization.auth({
               pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -249,6 +313,7 @@ it.effect.skipIf(target === undefined || process.platform === "win32")(
           .run({
             command: initialization.auth({
               pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,

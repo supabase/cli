@@ -24,6 +24,15 @@ import {
   sameDatabaseIdentity,
 } from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
+import {
+  decodeSchemaWriters,
+  encodeSchemaWriters,
+  holdSchemaWriterLeases,
+  raiseSchemaWritersTo,
+  readSchemaWriters,
+  schemaWritersFile,
+  setSchemaWriters,
+} from "../internal/schema-writers.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
@@ -53,7 +62,7 @@ export const decodeSnapshotStop = Schema.decodeUnknownEffect(SnapshotStop);
  * instead of failing. `Rename` creates the destination's parent and refuses to replace
  * anything but an empty directory; an optional rename runs only when its source exists and
  * its destination does not. `Recover` moves each `retired-<digest>-<token>` stage back to
- * its entry when that entry is missing.
+ * its entry when that entry is missing. `Read` ends the program, completing it with the file's text.
  */
 export type SnapshotStep = Data.TaggedEnum<{
   Ensure: { readonly directory: string };
@@ -65,6 +74,7 @@ export type SnapshotStep = Data.TaggedEnum<{
   Copy: { readonly from: string; readonly to: string };
   Adopt: { readonly directory: string };
   Write: { readonly file: string; readonly text: string };
+  Read: { readonly file: string };
   Rename: { readonly from: string; readonly to: string; readonly optional: boolean };
   Remove: { readonly path: string };
   Touch: { readonly path: string };
@@ -72,9 +82,9 @@ export type SnapshotStep = Data.TaggedEnum<{
 }>;
 export const SnapshotStep = Data.taggedEnum<SnapshotStep>();
 
-/** Result of a snapshot program; a stopped `ExpectText` carries the file's actual text. */
+/** Result of a snapshot program; a completed `Read` or a stopped `ExpectText` carries a file's text. */
 export type SnapshotRun = Data.TaggedEnum<{
-  Completed: {};
+  Completed: { readonly text: string };
   Stopped: { readonly outcome: SnapshotStop; readonly text: string };
 }>;
 export const SnapshotRun = Data.taggedEnum<SnapshotRun>();
@@ -167,10 +177,10 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
   const crypto = yield* Crypto.Crypto;
   const { backends, runtime, version } = options;
   const { Adopt, Clear, Copy, Ensure, Expect, ExpectEmpty, ExpectText } = SnapshotStep;
-  const { Prune, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
+  const { Prune, Read, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
   const major = version.split(".")[0] ?? version;
   const markerPath = path.join(options.instanceRoot, ".supabase-database-ready.json");
-  const mapError = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+  const mapError = <A, E, R>(operation: string, effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.mapError((cause) => errorFor(operation, cause)));
 
   const describe = Effect.fnUntraced(
@@ -246,6 +256,10 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
     )
       return yield* errorFor("ready", "Database readiness marker does not match the instance");
     const { keyDigest, descriptor } = yield* describe(logicalKey);
+    const writers = yield* mapError(
+      "schema-writers",
+      readSchemaWriters(fs, path, options.instanceRoot).pipe(Effect.flatMap(encodeSchemaWriters)),
+    );
     yield* locked(
       backend,
       Effect.gen(function* () {
@@ -270,6 +284,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
             Ensure({ directory: stage }),
             Copy({ from: backend.data, to: backend.join(stage, "data") }),
             Write({ file: backend.join(stage, "descriptor.json"), text: descriptor }),
+            Write({ file: backend.join(stage, schemaWritersFile), text: writers }),
             Rename({ from: target, to: retired, optional: true }),
             Rename({ from: stage, to: target, optional: false }),
             Remove({ path: retired }),
@@ -337,7 +352,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
         ];
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const result = yield* restore(
+            const checked = yield* restore(
               backend.run([
                 Ensure({ directory: backend.entries }),
                 ...reclaimStages(backend),
@@ -358,21 +373,22 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
                   present: false,
                   otherwise: "running",
                 }),
-                Copy({ from: backend.join(entry, "data"), to: stage }),
-                Adopt({ directory: stage }),
-                Touch({ path: entry }),
-                Write({ file: published, text: id }),
-                Rename({ from: stage, to: backend.data, optional: false }),
+                Expect({
+                  path: backend.join(entry, schemaWritersFile),
+                  present: true,
+                  otherwise: "miss",
+                }),
+                Read({ file: backend.join(entry, schemaWritersFile) }),
               ]),
             );
-            if (result._tag === "Stopped") {
-              switch (result.outcome) {
+            if (checked._tag === "Stopped") {
+              switch (checked.outcome) {
                 case "miss":
                   return false;
                 case "descriptor":
                   // A well-formed descriptor for another identity is a miss; anything else is corrupt.
                   return yield* Schema.decodeEffect(Schema.fromJsonString(SnapshotDescriptor))(
-                    result.text,
+                    checked.text,
                   ).pipe(
                     Effect.as(false),
                     Effect.mapError((cause) => errorFor("descriptor", cause)),
@@ -388,6 +404,36 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
                   return yield* errorFor("validate", "Snapshot contains a running database");
               }
             }
+            const writers = yield* mapError("schema-writers", decodeSchemaWriters(checked.text));
+            // The record is raised and fsynced before the data is published, and set to the
+            // snapshot's afterwards, so a crash between steps leaves it at least as new as the data.
+            // The leases keep a writer admitted meanwhile from having its raise overwritten below.
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* restore(
+                  mapError("schema-writers", holdSchemaWriterLeases(path, options.instanceRoot)),
+                );
+                yield* restore(
+                  mapError(
+                    "schema-writers",
+                    raiseSchemaWritersTo(fs, path, options.instanceRoot, writers),
+                  ),
+                );
+                yield* restore(
+                  backend.run([
+                    Copy({ from: backend.join(entry, "data"), to: stage }),
+                    Adopt({ directory: stage }),
+                    Touch({ path: entry }),
+                    Write({ file: published, text: id }),
+                    Rename({ from: stage, to: backend.data, optional: false }),
+                  ]),
+                );
+                yield* mapError(
+                  "schema-writers",
+                  setSchemaWriters(fs, path, options.instanceRoot, writers),
+                );
+              }),
+            );
             yield* recordIdentity;
             yield* publishReadyMarker(id);
             return true;
@@ -472,6 +518,10 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (options: {
       Adopt: () => Effect.succeedNone,
       Write: ({ file, text }) =>
         fs.writeFileString(file, text, { mode: 0o600 }).pipe(Effect.as(proceed)),
+      Read: ({ file }) =>
+        fs
+          .readFileString(file)
+          .pipe(Effect.map((text) => Option.some(SnapshotRun.Completed({ text })))),
       Rename: ({ from, to, optional }) =>
         Effect.gen(function* () {
           const destination = yield* exists(to);
@@ -526,7 +576,7 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (options: {
         );
         if (Option.isSome(stopped)) return stopped.value;
       }
-      return SnapshotRun.Completed();
+      return SnapshotRun.Completed({ text: "" });
     }),
   };
   return backend;

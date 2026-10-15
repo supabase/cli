@@ -286,7 +286,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       )
     )
       return yield* startFailed({
-        message: "The requested database version does not match the saved stack binding",
+        message: `The requested database version does not match the saved stack binding. Recreate the local database: supabase stack destroy --stack-id ${stack.id}`,
       });
     const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
     if (

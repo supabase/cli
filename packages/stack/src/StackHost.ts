@@ -224,7 +224,8 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                 stdout: input.stdout,
                 stderr: input.stderr,
               })
-            : owner.getStackCredentials.pipe(
+            : owner.requireDatabase(input.command.databaseId).pipe(
+                Effect.andThen(owner.getStackCredentials),
                 Effect.mapError(
                   (cause) => new CommandRunner.CommandError({ message: cause.message, cause }),
                 ),

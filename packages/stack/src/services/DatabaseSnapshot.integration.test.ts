@@ -1,9 +1,23 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
+import {
+  Clock,
+  Crypto,
+  Data,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Path,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveArtifact } from "../Artifacts.ts";
 import { selection } from "../../tests/pins.ts";
+import { makeManualClock } from "../../tests/manual-clock.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
@@ -15,6 +29,7 @@ import {
   readDatabaseIdentity,
   recordDatabaseIdentity,
 } from "../internal/database-reuse.ts";
+import { holdSchemaWriter, readSchemaWriters } from "../internal/schema-writers.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
@@ -75,6 +90,7 @@ interface Overrides {
 
 interface SnapshotError {
   readonly operation: string;
+  readonly message: string;
 }
 
 interface Instance {
@@ -388,6 +404,76 @@ for (const { name, make } of engines)
           const target = yield* engine.instance("target", { fresh: true });
           expect(yield* target.restoreSnapshot("key")).toBe(true);
           expect(yield* fixture(target)).toBe("saved\nsaved");
+        }),
+      ),
+    );
+
+    it.live("restores the schema-writers record that was saved with the snapshot", () =>
+      live(
+        Effect.gen(function* () {
+          const { fs, engine } = yield* setup(make);
+          const path = yield* Path.Path;
+          const source = yield* engine.instance("source");
+          yield* source.seed("saved");
+          yield* fs.writeFileString(
+            `${source.root}/schema-writers.json`,
+            '{"auth":"v2.197.0","storage":"v1.30.0"}',
+          );
+          yield* source.saveSnapshot("key");
+          yield* fs.writeFileString(
+            `${source.root}/schema-writers.json`,
+            '{"auth":"v2.400.0","storage":"v1.99.0"}',
+          );
+
+          const target = yield* engine.instance("target");
+          yield* fs.writeFileString(
+            `${target.root}/schema-writers.json`,
+            '{"auth":"v2.300.0","realtime":"v2.9.0"}',
+          );
+          expect(yield* target.restoreSnapshot("key")).toBe(true);
+
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual({
+            auth: "v2.197.0",
+            storage: "v1.30.0",
+          });
+        }),
+      ),
+    );
+
+    it.live("waits for an admitted schema writer before replacing the record", () =>
+      live(
+        Effect.gen(function* () {
+          const { fs, engine, contents } = yield* setup(make);
+          const path = yield* Path.Path;
+          const source = yield* engine.instance("source");
+          yield* source.seed("saved");
+          yield* fs.writeFileString(`${source.root}/schema-writers.json`, '{"auth":"v2.197.0"}');
+          yield* source.saveSnapshot("key");
+          const target = yield* engine.instance("target");
+          yield* fs.writeFileString(`${target.root}/schema-writers.json`, '{"auth":"v2.200.0"}');
+
+          const migrating = yield* Scope.make();
+          yield* holdSchemaWriter(fs, path, {
+            stackId: "snapshot-contract",
+            instanceRoot: target.root,
+            service: "storage",
+            version: "v1.31.0",
+          }).pipe(Scope.provide(migrating));
+          const admitted = { auth: "v2.200.0", storage: "v1.31.0" };
+
+          const manual = yield* makeManualClock;
+          const blocked = yield* target
+            .restoreSnapshot("key")
+            .pipe(Effect.provideService(Clock.Clock, manual.clock), Effect.flip, Effect.forkChild);
+          yield* manual.sleeping(50);
+          yield* manual.advance(61_000);
+          expect((yield* Fiber.join(blocked)).message).toContain("locked by another operation");
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual(admitted);
+          expect(yield* contents(target.data)).toBe("");
+
+          yield* Scope.close(migrating, Exit.void);
+          expect(yield* target.restoreSnapshot("key")).toBe(true);
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual({ auth: "v2.197.0" });
         }),
       ),
     );

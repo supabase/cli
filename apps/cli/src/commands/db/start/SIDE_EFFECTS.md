@@ -198,7 +198,9 @@ fails, stderr identifies the incomplete instance and recommends `supabase stack 
 Resuming a stopped database whose saved pin differs from the selected one in anything but a
 slim-services revision rebinds the same instance to the selected pin before starting; its id and
 data stay. Initialized data accepts only a revision of its own build, so another build, line or
-major fails with advice to run `supabase stack destroy`.
+major fails with advice to run `supabase stack destroy`. Auth, Storage and Realtime must not be
+selected at an older upstream than one that already migrated the database (recorded in
+`schema-writers.json` in the instance data directory); such a start fails with the same advice.
 The resident owner process manages the database beyond the CLI invocation. Stack mode rejects
 `--from-backup` with exit code 1.
 

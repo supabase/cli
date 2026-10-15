@@ -96,6 +96,12 @@ import {
   recordDatabaseIdentity,
   recreateStackAdvice,
 } from "../internal/database-reuse.ts";
+import {
+  removeSchemaWriters,
+  schemaWriterLockFiles,
+  schemaWritersFile,
+  withSchemaWriterLeases,
+} from "../internal/schema-writers.ts";
 
 export const DatabaseConfig = Schema.Struct({
   databasePassword: Schema.Redacted(Schema.String),
@@ -1147,9 +1153,21 @@ export const makeDatabase = (
         storage === undefined
           ? destroyOwnedRoot(fs, path, instanceRoot, options.root, Effect.void, errorFor, [
               instanceSnapshotsDirectory,
-            ])
+              schemaWritersFile,
+              ...schemaWriterLockFiles,
+            ]).pipe(
+              // Forgotten last, so a crash leaves the record at least as new as the data.
+              Effect.andThen(
+                removeSchemaWriters(fs, path, instanceRoot).pipe(
+                  Effect.mapError((cause) => errorFor("reset", cause)),
+                ),
+              ),
+            )
           : storage.removeData(context.config.pin);
-      return clear.pipe(Effect.mapError((cause) => errorFor("reset", cause)));
+      // An admitted writer's raised record must not be forgotten while it still migrates.
+      return withSchemaWriterLeases(path, instanceRoot, clear).pipe(
+        Effect.mapError((cause) => errorFor("reset", cause)),
+      );
     });
     return {
       definition,

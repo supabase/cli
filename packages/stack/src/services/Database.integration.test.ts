@@ -2,10 +2,12 @@ import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Clock,
   ConfigProvider,
   Context,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -15,6 +17,7 @@ import {
   Redacted,
   Ref,
   Schema,
+  Scope,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/http";
@@ -23,12 +26,14 @@ import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { databaseIdentity, recordDatabaseIdentity } from "../internal/database-reuse.ts";
+import { holdSchemaWriter, readSchemaWriters } from "../internal/schema-writers.ts";
 import { makeDatabase, type BackendEndpoint, type PinnedDatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runEngine } from "../../tests/docker-fixture.ts";
 import { observeContainerStop, cleanStopEvents } from "../../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 import { database15, orioledb, selection } from "../../tests/pins.ts";
+import { makeManualClock } from "../../tests/manual-clock.ts";
 
 const config: PinnedDatabaseConfig = {
   pin: selection.database,
@@ -229,6 +234,56 @@ describe("database component", { timeout: 180_000 }, () => {
         );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("keeps a reset from forgetting the record of a writer that is still migrating", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-reset-" });
+      const recipe = yield* makeDatabase({
+        stackId: "database-reset-test",
+        instanceId: "database",
+        root,
+        cacheRoot: artifactCacheRoot,
+        runtime: "native",
+      });
+      const instanceRoot = path.join(root, "database");
+      const scope = yield* Scope.make();
+      const reset = recipe.resetData({ id: "database", config, scope });
+      yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
+      yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+
+      const migrating = yield* Scope.make();
+      yield* holdSchemaWriter(fs, path, {
+        stackId: "database-reset-test",
+        instanceRoot,
+        service: "auth",
+        version: "v2.198.0",
+      }).pipe(Scope.provide(migrating));
+
+      const manual = yield* makeManualClock;
+      const blocked = yield* reset.pipe(
+        Effect.provideService(Clock.Clock, manual.clock),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* manual.sleeping(50);
+      yield* manual.advance(61_000);
+      expect((yield* Fiber.join(blocked)).message).toContain("locked by another operation");
+      expect(yield* readSchemaWriters(fs, path, instanceRoot)).toEqual({ auth: "v2.198.0" });
+      expect(yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION"))).toBe(true);
+
+      yield* Scope.close(migrating, Exit.void);
+      yield* reset;
+      expect(yield* readSchemaWriters(fs, path, instanceRoot)).toEqual({});
+      expect(yield* fs.exists(path.join(instanceRoot, "data"))).toBe(false);
+      for (const name of ["schema-writers.lock", "schema-writer-auth.lock"])
+        expect(yield* fs.exists(path.join(instanceRoot, name)), name).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
   );
 
   it.live("resumes an interrupted stock native first start and refuses it for OrioleDB", () =>

@@ -189,10 +189,11 @@ fails before modifying the stopped composition, naming the key or env var behind
 saved and requested values and suggesting reverting it. Only a database release-line change (the
 stock PostgreSQL major, or the exact OrioleDB build; path `pin`) or an endpoint change is
 incompatible; any other pin change, such as another service's catalog build or a same-major
-PostgreSQL build, restarts the service and does not block the start. A saved OrioleDB build the
-catalog no longer carries is reported as non-editable, with no revert advice. Either way the failure suggests
-running the stack's exact
-`supabase stack destroy` command to recreate it.
+PostgreSQL build, restarts the service and does not block the start, except that a schema-owning
+service never moves to an older upstream than one that already migrated the database (see below).
+A saved OrioleDB build the catalog no longer carries is reported as non-editable, with no revert
+advice. Either way the failure suggests running the stack's exact `supabase stack destroy` command
+to recreate it.
 Switching between stock PostgreSQL and OrioleDB is a release-line change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
 Initialized database data is reused only by a slim-services revision of the build that created
@@ -201,6 +202,17 @@ and a different build fails with advice to run `supabase stack destroy`. A first
 identity in `.supabase-database-identity.json` before initializing data, so a first start
 interrupted before readiness resumes only on that build; initialized data with no recorded
 identity is never reused.
+Auth, Storage, Realtime, Analytics and the pooler own schemas in the database. The database
+instance root records the newest upstream version of each in `schema-writers.json`, raised under a
+per-database lock before a service or its one-shot initialization command migrates. A start whose
+selected upstream is older than the recorded one fails, naming the version and advising
+`supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
+(`v2.196.0`, `2026.10.05-sha-...`, `17.6.1.054`); a suffix is ignored and an unparseable version
+sorts oldest. Services without schemas (REST, imgproxy, Functions, Studio, pg-meta, mail) accept any
+version change. A missing record means no schema owner has migrated yet. Saving a snapshot stores
+the record with it; restoring raises the record to the newer of the two, publishes the data, then
+sets the snapshot's record, so a crash between those steps never leaves older writers allowed. A
+reset of database data removes the record. A service on an external database has no local record.
 
 ## First startup and retries
 

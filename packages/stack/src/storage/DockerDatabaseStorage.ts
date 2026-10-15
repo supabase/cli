@@ -27,6 +27,7 @@ import {
   removeDatabaseIdentity,
 } from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
+import { removeSchemaWriters } from "../internal/schema-writers.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import * as Publication from "../namespace/Publication.ts";
 import type { ContainerRuntime, EngineTarget } from "../runtime/Container.ts";
@@ -918,6 +919,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const removeReadyMarker = options.fs
         .remove(readyMarkerPath, { force: true })
         .pipe(Effect.mapError((cause) => errorFor("reset", cause)));
+      // Forgotten after the data, so a crash leaves the record at least as new as the data.
+      const removeWriters = removeSchemaWriters(
+        options.fs,
+        options.path,
+        options.instanceRoot,
+      ).pipe(Effect.mapError((cause) => errorFor("reset", cause)));
       /** Unmarked data cannot start, so removal is its only in-product recovery. */
       const removeUnmarkedData = (
         pin: ArtifactPin,
@@ -939,6 +946,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* removeDatabaseIdentity(options.fs, options.path, options.instanceRoot).pipe(
             Effect.mapError((cause) => errorFor("reset", cause)),
           );
+          yield* removeWriters;
         });
       const writeMarker = (marker: Marker) =>
         encodeMarker(marker).pipe(Effect.flatMap((encoded) => publishMarker(encoded)));
@@ -1074,6 +1082,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* removeDatabaseIdentity(options.fs, options.path, options.instanceRoot).pipe(
             Effect.mapError((cause) => errorFor("reset", cause)),
           );
+          yield* removeWriters;
           yield* writeMarker({ ...marker, initialized: false });
         }).pipe(Effect.mapError((cause) => errorFor("reset", cause))),
       );

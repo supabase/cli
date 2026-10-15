@@ -93,6 +93,7 @@ const credential = (
 
 const serviceCommand = (
   service: DatabaseService,
+  databaseId: string,
   credentials: ServiceCredentials,
   storagePath: string,
   selection: ArtifactSelection,
@@ -101,17 +102,20 @@ const serviceCommand = (
     case "auth":
       return initialization.auth({
         pin: selection.auth,
+        databaseId,
         databaseUrl: credentials.authDatabaseUrl,
       });
     case "storage":
       return initialization.storage({
         pin: selection.storage,
+        databaseId,
         databaseUrl: credentials.storageDatabaseUrl,
         filePath: storagePath,
       });
     case "realtime":
       return initialization.realtime({
         pin: selection.realtime,
+        databaseId,
         databaseUrl: credentials.databaseUrl,
       });
   }
@@ -149,7 +153,15 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         input.target.databaseServices,
         (service) =>
           input.target.stack.commands
-            .run(serviceCommand(service, serviceCredentials, storagePath, input.target.selection))
+            .run(
+              serviceCommand(
+                service,
+                input.target.database.id,
+                serviceCredentials,
+                storagePath,
+                input.target.selection,
+              ),
+            )
             .pipe(
               Effect.asVoid,
               Effect.mapError(catalogError),

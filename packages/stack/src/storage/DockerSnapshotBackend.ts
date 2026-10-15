@@ -37,6 +37,7 @@ const stepScript = (step: SnapshotStep, adoptOwner: string | undefined): string 
     Adopt: ({ directory }) =>
       adoptOwner === undefined ? ":" : `${busybox} chown -R ${adoptOwner} ${shellQuote(directory)}`,
     Write: ({ file, text }) => `printf '%s' ${shellQuote(text)} > ${shellQuote(file)}`,
+    Read: ({ file }) => `echo ${doneMarker}; ${busybox} cat ${shellQuote(file)}; exit 0`,
     Rename: ({ from, to, optional }) =>
       optional
         ? `if [ -e ${shellQuote(from)} ] && [ ! -e ${shellQuote(to)} ]; then ${busybox} mv ${shellQuote(from)} ${shellQuote(to)}; fi`
@@ -74,7 +75,7 @@ const helperError = (message: string, cause: unknown) => {
 const parseRun = (output: string) =>
   Effect.gen(function* () {
     const [first = "", ...rest] = output.split("\n");
-    if (first === doneMarker) return SnapshotRun.Completed();
+    if (first === doneMarker) return SnapshotRun.Completed({ text: rest.join("\n") });
     if (!first.startsWith(stopMarker))
       return yield* new DatabaseSnapshotError({
         operation: "helper",

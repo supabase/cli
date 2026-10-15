@@ -344,7 +344,11 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
           if (runtime === "native") {
             const existingServices = yield* current.services.list;
             const initialized = yield* current.commands.run(
-              initialization.realtime({ pin: selection.realtime, databaseUrl: targetUrl }),
+              initialization.realtime({
+                pin: selection.realtime,
+                databaseId: target.id,
+                databaseUrl: targetUrl,
+              }),
             );
             expect(initialized.exitCode).toBe(0);
             expect((yield* current.services.list).map((service) => service.id)).toEqual(

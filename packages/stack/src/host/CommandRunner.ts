@@ -17,6 +17,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
 import { slimImageMirrors, resolveArtifact, useNativeArtifact } from "../Artifacts.ts";
 import { isSafeId } from "../identity/SafeId.ts";
+import { holdSchemaWriter } from "../internal/schema-writers.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { borrow } from "../namespace/Paths.ts";
 import { makeContainerRuntime, type EngineTarget, type HostGateway } from "../runtime/Container.ts";
@@ -163,6 +164,17 @@ const makeCommandRunner = (options: {
                 }
               : { initialization: undefined, postgresCommand: input.command };
           const { initialization, postgresCommand } = invocation;
+          if (initialization !== undefined && "credentials" in input) {
+            const databaseId = input.command.databaseId;
+            if (!isSafeId(databaseId)) return yield* failure("Invalid database instance id");
+            // Held for the whole job, so the migration finishes before another writer of the service starts.
+            yield* holdSchemaWriter(fs, path, {
+              stackId: options.stackId,
+              instanceRoot: path.join(options.root, databaseId),
+              service: initialization.service,
+              version: initialization.pin.upstreamVersion,
+            }).pipe(Effect.mapError(failure));
+          }
           const inputStream = "stdin" in input ? (input.stdin ?? Stream.empty) : Stream.empty;
           if (
             postgresCommand !== undefined &&
