@@ -2,16 +2,20 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
-import { withConfigEnv, withEmptyConfigEnv } from "../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
+import {
+  mockCommandSettings,
+  withConfigEnv,
+  withEmptyConfigEnv,
+} from "../../../tests/helpers/command-mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
+import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
-import { loadProjectEnvValues } from "../db-config.toml-read.ts";
 import type { ResolvedDbConfig } from "../db-config.types.ts";
-import { OutputFlag, YesFlag } from "../global-flags.ts";
+import { AgentFlag, OutputFlag, YesFlag } from "../global-flags.ts";
 import type { ResolvedTarget } from "../target/resolve-target.ts";
 import { TargetPolicy } from "../target/target-policy.ts";
 import type { TargetPolicyShape } from "../target/target-policy.ts";
@@ -40,11 +44,17 @@ interface Scenario {
   readonly textResponses?: ReadonlyArray<string>;
   readonly promptFails?: boolean;
   readonly shellYes?: string;
+  readonly env?: Readonly<Record<string, string>>;
   readonly announced?: string;
+  readonly agent?: "auto" | "yes" | "no";
+  readonly aiTool?: string;
+  readonly cwd?: string;
+  readonly workdir?: string;
+  readonly withoutFilesystem?: boolean;
 }
 
 const REQUEST: HostedMutationRequest = {
-  action: "apply 3 migrations",
+  action: "Apply 3 migrations",
   details: ["  20240101_a.sql", "  20240102_b.sql"],
 };
 
@@ -72,11 +82,24 @@ const harness = (scenario: Scenario) => {
       scenario.outputFlag === undefined ? Option.none() : Option.some(scenario.outputFlag),
     ),
     Layer.succeed(TargetPolicy, scenario.policy ?? { group: "hosted", consent: "no" }),
+    scenario.agent === undefined ? Layer.empty : Layer.succeed(AgentFlag, scenario.agent),
+    scenario.aiTool === undefined
+      ? Layer.empty
+      : Layer.succeed(AiTool, { name: Option.some(scenario.aiTool) }),
+    scenario.withoutFilesystem === true
+      ? Layer.empty
+      : Layer.merge(BunServices.layer, mockRuntimeInfo({ cwd: scenario.cwd ?? "/test/project" })),
+    scenario.workdir === undefined
+      ? Layer.empty
+      : mockCommandSettings({ workdir: scenario.workdir }),
   );
+  const shellEnv = {
+    NODE_ENV: "",
+    ...(scenario.shellYes === undefined ? {} : { SUPABASE_YES: scenario.shellYes }),
+    ...scenario.env,
+  };
   const withShellEnv = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-    scenario.shellYes === undefined
-      ? withEmptyConfigEnv(body)
-      : withConfigEnv({ SUPABASE_YES: scenario.shellYes }, body);
+    withEmptyConfigEnv(withConfigEnv(shellEnv, body));
   const prepare = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     withShellEnv(
       (scenario.announced === undefined
@@ -122,7 +145,7 @@ describe("requireHostedMutationConsent", () => {
           });
           yield* run.exit;
           expect(run.out.promptConfirmCalls).toEqual([
-            { message: "apply 3 migrations?", opts: { defaultValue: expected } },
+            { message: "Apply 3 migrations?", opts: { defaultValue: expected } },
           ]);
         }),
     );
@@ -147,10 +170,10 @@ describe("requireHostedMutationConsent", () => {
           announced: "project abcdefghijklmnopqrst",
         });
         const token = successOf(yield* run.exit);
-        expect(token).toMatchObject({ action: "apply 3 migrations", via: "yes" });
+        expect(token).toMatchObject({ action: "Apply 3 migrations", via: "yes" });
         expect(run.out.promptConfirmCalls).toEqual([]);
         expect(run.out.stderrText).toContain(
-          "Confirmed by --yes: apply 3 migrations on project abcdefghijklmnopqrst\n",
+          "Confirmed by --yes: Apply 3 migrations on project abcdefghijklmnopqrst\n",
         );
       }),
     );
@@ -159,7 +182,7 @@ describe("requireHostedMutationConsent", () => {
       Effect.gen(function* () {
         const run = consent({ yes: true });
         yield* run.exit;
-        expect(run.out.stderrText).toBe("Confirmed by --yes: apply 3 migrations\n");
+        expect(run.out.stderrText).toBe("Confirmed by --yes: Apply 3 migrations\n");
       }),
     );
 
@@ -184,39 +207,134 @@ describe("requireHostedMutationConsent", () => {
   });
 
   describe("SUPABASE_YES", () => {
-    it.effect("grants when set in the shell environment", () =>
-      Effect.gen(function* () {
-        const run = consent({ shellYes: "1", format: "json" });
-        const token = successOf(yield* run.exit);
-        expect(token.via).toBe("yes");
-        expect(run.out.stderrText).toContain("Confirmed by --yes: apply 3 migrations");
-      }),
-    );
-
-    it.effect("does not grant when it is only in the project .env", () =>
+    const withDotenvDir = <A, E, R>(
+      files: Readonly<Record<string, string>>,
+      body: (dir: string) => Effect.Effect<A, E, R>,
+    ) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
-        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
-        yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), "SUPABASE_YES=1\n");
-        expect(yield* loadProjectEnvValues(fs, path, workdir)).toMatchObject({ SUPABASE_YES: "1" });
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
+        for (const [name, contents] of Object.entries(files)) {
+          yield* fs.makeDirectory(path.dirname(path.join(dir, name)), { recursive: true });
+          yield* fs.writeFileString(path.join(dir, name), contents);
+        }
+        return yield* body(dir);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
-        const exit = yield* consent({}).exit;
+    it.effect(
+      "grants when set in the shell environment and echoes SUPABASE_YES as the source",
+      () =>
+        Effect.gen(function* () {
+          const run = consent({ shellYes: "1", format: "json" });
+          const token = successOf(yield* run.exit);
+          expect(token.via).toBe("yes");
+          expect(run.out.stderrText).toContain("Confirmed by SUPABASE_YES: Apply 3 migrations");
+        }),
+    );
+
+    it.effect("does not grant when it is only in the project .env", () =>
+      withDotenvDir({ "supabase/.env": "SUPABASE_YES=1\n" }, (dir) =>
+        Effect.gen(function* () {
+          const exit = yield* consent({ cwd: dir, workdir: dir }).exit;
+          expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+        }),
+      ),
+    );
+
+    it.effect.each([".env", ".env.local", ".env.development", ".env.development.local"])(
+      "does not grant a shell value that matches %s in the working directory",
+      (name) =>
+        withDotenvDir({ [name]: "SUPABASE_YES=1\n" }, (cwd) =>
+          Effect.gen(function* () {
+            const exit = yield* consent({ shellYes: "1", cwd }).exit;
+            expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+          }),
+        ),
+    );
+
+    it.effect("checks the dotenv files NODE_ENV selects", () =>
+      withDotenvDir({ ".env.production": "SUPABASE_YES=1\n" }, (cwd) =>
+        Effect.gen(function* () {
+          const production = yield* consent({
+            shellYes: "1",
+            cwd,
+            env: { NODE_ENV: "production" },
+          }).exit;
+          expect(failureOf(production)).toBeInstanceOf(HostedMutationConsentRequiredError);
+          const development = yield* consent({ shellYes: "1", cwd }).exit;
+          expect(successOf(development).via).toBe("yes");
+        }),
+      ),
+    );
+
+    it.effect("grants a shell value that differs from the working directory's file", () =>
+      withDotenvDir({ ".env": "SUPABASE_YES=true\n" }, (cwd) =>
+        Effect.gen(function* () {
+          const exit = yield* consent({ shellYes: "1", cwd }).exit;
+          expect(successOf(exit).via).toBe("yes");
+        }),
+      ),
+    );
+
+    it.effect("grants when the working directory's dotenv files do not mention it", () =>
+      withDotenvDir({ ".env": "OTHER=1\n" }, (cwd) =>
+        Effect.gen(function* () {
+          const exit = yield* consent({ shellYes: "1", cwd }).exit;
+          expect(successOf(exit).via).toBe("yes");
+        }),
+      ),
+    );
+
+    it.effect("does not grant when a dotenv file that does not parse mentions it", () =>
+      withDotenvDir({ ".env": "SUPABASE_YES=1\n!!!\n" }, (cwd) =>
+        Effect.gen(function* () {
+          const exit = yield* consent({ shellYes: "1", cwd }).exit;
+          expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+        }),
+      ),
+    );
+
+    it.effect("does not grant when the filesystem cannot be checked", () =>
+      Effect.gen(function* () {
+        const exit = yield* consent({ shellYes: "1", withoutFilesystem: true }).exit;
         expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }),
+    );
+
+    it.effect("still grants --yes when a working-directory .env sets the variable", () =>
+      withDotenvDir({ ".env": "SUPABASE_YES=1\n" }, (cwd) =>
+        Effect.gen(function* () {
+          const run = consent({ yes: true, cwd });
+          expect(successOf(yield* run.exit).via).toBe("yes");
+          expect(run.out.stderrText).toContain("Confirmed by --yes: Apply 3 migrations");
+        }),
+      ),
     );
   });
 
   describe("when the run cannot prompt", () => {
     it.effect.each([
-      { name: "json output", scenario: { format: "json", stdinIsTty: true } },
-      { name: "stream-json output", scenario: { format: "stream-json", stdinIsTty: true } },
+      {
+        name: "json output",
+        scenario: { format: "json", stdinIsTty: true },
+        reason: "its output format is json",
+      },
+      {
+        name: "stream-json output",
+        scenario: { format: "stream-json", stdinIsTty: true },
+        reason: "its output format is stream-json",
+      },
       {
         name: "-o yaml in a terminal",
         scenario: { ...interactiveTerminal, outputFlag: "yaml" },
+        reason: "it writes machine-readable -o yaml output",
       },
-      { name: "-o json in a terminal", scenario: { ...interactiveTerminal, outputFlag: "json" } },
+      {
+        name: "-o json in a terminal",
+        scenario: { ...interactiveTerminal, outputFlag: "json" },
+        reason: "it writes machine-readable -o json output",
+      },
       {
         name: "piped stdin carrying an affirmative answer",
         scenario: {
@@ -225,33 +343,126 @@ describe("requireHostedMutationConsent", () => {
           stdinIsTty: false,
           confirmResponses: [true],
         },
+        reason: "stdin is not a terminal",
       },
       {
         name: "a non-interactive stdout",
         scenario: { format: "text", interactive: false, stdinIsTty: true },
+        reason: "stdout is not a terminal",
       },
-    ] as const satisfies ReadonlyArray<{ name: string; scenario: Scenario }>)(
+    ] as const satisfies ReadonlyArray<{ name: string; scenario: Scenario; reason: string }>)(
       "fails with ConsentRequiredError for $name and never asks",
-      ({ scenario }) =>
+      ({ scenario, reason }) =>
         Effect.gen(function* () {
           const run = consent({ ...scenario, announced: "project abcdefghijklmnopqrst" });
           const error = failureOf(yield* run.exit);
           expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
           expect(error).toMatchObject({
-            message:
-              "apply 3 migrations on project abcdefghijklmnopqrst needs confirmation, and this run can't prompt. Nothing was changed.",
-            suggestion:
-              "Re-run with --yes to confirm apply 3 migrations, or run it in an interactive terminal.",
+            message: `Confirmation required: Apply 3 migrations (target: project abcdefghijklmnopqrst). This run can't ask because ${reason}. Nothing was changed.`,
+            suggestion: "Re-run with --yes to confirm.",
           });
           expect(run.out.promptConfirmCalls).toEqual([]);
           expect(run.out.promptTextCalls).toEqual([]);
         }),
     );
 
+    it.effect("leaves the target out of the message when nothing was announced", () =>
+      Effect.gen(function* () {
+        const error = failureOf(yield* consent({ format: "json" }).exit);
+        expect(error).toMatchObject({
+          message:
+            "Confirmation required: Apply 3 migrations. This run can't ask because its output format is json. Nothing was changed.",
+        });
+      }),
+    );
+
     it.effect("fails with ConsentRequiredError when the prompt turns out to be unavailable", () =>
       Effect.gen(function* () {
-        const exit = yield* consent({ ...interactiveTerminal, promptFails: true }).exit;
-        expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+        const error = failureOf(yield* consent({ ...interactiveTerminal, promptFails: true }).exit);
+        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+        expect(error).toMatchObject({
+          message: expect.stringContaining("because no prompt is available"),
+        });
+      }),
+    );
+
+    it.effect("suggests --read-only when the command has a read-only mode", () =>
+      Effect.gen(function* () {
+        const error = failureOf(
+          yield* consent({ format: "json" }, { ...REQUEST, readOnlyAlternative: true }).exit,
+        );
+        expect(error).toMatchObject({
+          suggestion:
+            "Re-run with --yes to confirm. For a read-only statement, pass --read-only instead.",
+        });
+      }),
+    );
+
+    it.effect("says a project .env SUPABASE_YES does not confirm hosted changes", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
+        yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(dir, "supabase", ".env"), "SUPABASE_YES=1\n");
+        const error = failureOf(yield* consent({ format: "json", cwd: dir, workdir: dir }).exit);
+        expect(error).toMatchObject({
+          suggestion:
+            "Re-run with --yes to confirm. SUPABASE_YES in supabase/.env does not confirm hosted changes; pass --yes.",
+        });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("says a working-directory .env SUPABASE_YES does not confirm hosted changes", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
+        yield* fs.writeFileString(path.join(dir, ".env"), "SUPABASE_YES=1\n");
+        const error = failureOf(yield* consent({ format: "json", shellYes: "1", cwd: dir }).exit);
+        expect(error).toMatchObject({
+          suggestion:
+            "Re-run with --yes to confirm. SUPABASE_YES in .env does not confirm hosted changes; pass --yes.",
+        });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("agents", () => {
+    it.effect.each([
+      { name: "--agent yes", scenario: { agent: "yes" } },
+      { name: "a detected agent", scenario: { agent: "auto", aiTool: "claude_code" } },
+    ] as const satisfies ReadonlyArray<{ name: string; scenario: Scenario }>)(
+      "refuses to prompt for $name in an interactive terminal",
+      ({ scenario }) =>
+        Effect.gen(function* () {
+          const run = consent({ ...interactiveTerminal, ...scenario, confirmResponses: [true] });
+          const error = failureOf(yield* run.exit);
+          expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+          expect(error).toMatchObject({
+            message: expect.stringContaining("because it is running in agent mode"),
+            suggestion: "This is an agent run: ask the user before re-running with --yes.",
+          });
+          expect(run.out.promptConfirmCalls).toEqual([]);
+        }),
+    );
+
+    it.effect("prompts when --agent no overrides a detected agent", () =>
+      Effect.gen(function* () {
+        const run = consent({
+          ...interactiveTerminal,
+          agent: "no",
+          aiTool: "claude_code",
+          confirmResponses: [true],
+        });
+        expect(successOf(yield* run.exit).via).toBe("prompt");
+      }),
+    );
+
+    it.effect("grants --yes to an agent", () =>
+      Effect.gen(function* () {
+        const run = consent({ ...interactiveTerminal, yes: true, agent: "yes" });
+        expect(successOf(yield* run.exit).via).toBe("yes");
       }),
     );
   });
@@ -265,12 +476,12 @@ describe("requireHostedMutationConsent", () => {
           announced: "project abcdefghijklmnopqrst",
         });
         const token = successOf(yield* run.exit);
-        expect(token).toMatchObject({ action: "apply 3 migrations", via: "prompt" });
+        expect(token).toMatchObject({ action: "Apply 3 migrations", via: "prompt" });
         expect(run.out.stderrText).toBe(
           "Target: project abcdefghijklmnopqrst\n  20240101_a.sql\n  20240102_b.sql\n",
         );
         expect(run.out.promptConfirmCalls.map((call) => call.message)).toEqual([
-          "apply 3 migrations on project abcdefghijklmnopqrst?",
+          "Apply 3 migrations on project abcdefghijklmnopqrst?",
         ]);
       }),
     );
@@ -361,6 +572,16 @@ describe("hostedMutationPreapproval", () => {
         true,
       );
     }),
+  );
+
+  it.effect("is None for a shell value that a working-directory .env also sets", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
+      yield* fs.writeFileString(path.join(cwd, ".env.local"), "SUPABASE_YES=1\n");
+      expect(Option.isNone(yield* preapproval({ shellYes: "1", cwd }))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });
 

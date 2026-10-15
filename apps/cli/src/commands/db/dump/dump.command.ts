@@ -153,5 +153,9 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
   Command.provide(dbDumpRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only a local dump",
+  }),
 );

@@ -70,7 +70,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
 
     // The row is never read, so consent is asked before its existence is known; a wrong token
     // is reported as "not found" after the DELETE matches zero rows.
-    yield* requireHostedMutationConsent({ action: "permanently delete this feedback" });
+    yield* requireHostedMutationConsent({ action: "Permanently delete this feedback" });
 
     const deleting = yield* output.task("Deleting feedback...");
     const { deleted } = yield* client.delete(token, rowContext).pipe(settleFeedbackTask(deleting));

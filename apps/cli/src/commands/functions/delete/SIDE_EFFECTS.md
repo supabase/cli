@@ -58,7 +58,7 @@
 
 ### `--output-format text`
 
-Prints a success message after the function is deleted. Stderr carries the `Target:` banner, then either the confirmation question (`delete Function <slug> on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: delete Function <slug> on <target>` under `--yes`.
+Prints a success message after the function is deleted. Stderr carries the `Target:` banner, then either the confirmation question (`Delete Function <slug> on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: Delete Function <slug> on <target>` under `--yes`.
 
 ### `--output-format json`
 
@@ -73,7 +73,7 @@ Prints the same structured success result, including `target`, and needs `--yes`
 - Requires exactly one argument: the function slug/name.
 - Does NOT remove the function from the local filesystem.
 - Requires a linked project (`--project-ref` or linked project config).
-- Asks one question before the DELETE request: `delete Function <slug>` on the announced target, default No. The slug is validated and the project resolved first, so a usage error never prompts.
+- Asks one question before the DELETE request: `Delete Function <slug>` on the announced target, default No. The slug is validated and the project resolved first, so a usage error never prompts.
 - `--yes` or a `SUPABASE_YES` set in the shell skips the question. A `SUPABASE_YES` in a project `.env*` file does not count, and piped stdin answers are never read.
 - Runs natively in TypeScript through the Management API.
 - Telemetry state is flushed on success and failure. The linked-project cache is filled post-run only under the conditions listed in Files Written.

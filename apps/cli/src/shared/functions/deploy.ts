@@ -2484,8 +2484,12 @@ const functionCount = (count: number) => `${count} ${count === 1 ? "Function" : 
 const requireDeployConsent = (toDeploy: ReadonlyArray<string>, toPrune: ReadonlyArray<string>) =>
   requireHostedMutationConsent({
     action: [
-      ...(toDeploy.length > 0 ? [`deploy ${functionCount(toDeploy.length)}`] : []),
-      ...(toPrune.length > 0 ? [`delete ${functionCount(toPrune.length)} with --prune`] : []),
+      ...(toDeploy.length > 0 ? [`Deploy ${functionCount(toDeploy.length)}`] : []),
+      ...(toPrune.length > 0
+        ? [
+            `${toDeploy.length > 0 ? "delete" : "Delete"} ${functionCount(toPrune.length)} with --prune`,
+          ]
+        : []),
     ].join(" and "),
     details: [
       ...(toDeploy.length > 0

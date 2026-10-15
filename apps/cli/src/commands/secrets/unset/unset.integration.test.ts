@@ -147,7 +147,7 @@ describe("secrets unset integration", () => {
         expect(methods(api)).toEqual(["DELETE"]);
         expect(api.requests[0]?.body).toEqual(["FOO", "BAR"]);
         expect(out.stderrText).toBe(
-          `${unverifiedTargetBanner()}Confirmed by --yes: unset 2 secrets on ${ON_TARGET}\n`,
+          `${unverifiedTargetBanner()}Confirmed by --yes: Unset 2 secrets on ${ON_TARGET}\n`,
         );
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
         assertPermissionDrift({
@@ -167,7 +167,7 @@ describe("secrets unset integration", () => {
         Effect.gen(function* () {
           yield* unset({ names: ["FOO"] });
           expect(out.stderrText).toBe(
-            `${unverifiedTargetBanner()}Confirmed by --yes: unset 1 secret on ${ON_TARGET}\n`,
+            `${unverifiedTargetBanner()}Confirmed by SUPABASE_YES: Unset 1 secret on ${ON_TARGET}\n`,
           );
           expect(methods(api)).toEqual(["DELETE"]);
         }).pipe(Effect.provide(layer)),
@@ -179,7 +179,7 @@ describe("secrets unset integration", () => {
       return Effect.gen(function* () {
         yield* unset({ names: ["FOO"] });
         expect(out.promptConfirmCalls).toEqual([
-          { message: `unset 1 secret on ${ON_TARGET}?`, opts: { defaultValue: false } },
+          { message: `Unset 1 secret on ${ON_TARGET}?`, opts: { defaultValue: false } },
         ]);
         expect(out.stderrText).toContain("Secrets to unset:\n • FOO\n");
         expect(methods(api)).toEqual(["DELETE"]);
@@ -280,7 +280,7 @@ describe("secrets unset integration", () => {
           exact: true,
         });
         expect(out.stderrText).toBe(
-          `${unverifiedTargetBanner()}Confirmed by --yes: unset 2 secrets on ${ON_TARGET}\n`,
+          `${unverifiedTargetBanner()}Confirmed by --yes: Unset 2 secrets on ${ON_TARGET}\n`,
         );
       }).pipe(Effect.provide(layer));
     });

@@ -95,5 +95,9 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.provide(dbAdvisorsRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
 );

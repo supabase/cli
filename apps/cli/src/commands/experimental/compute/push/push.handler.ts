@@ -595,7 +595,7 @@ export const computePush = Effect.fn("compute.push")(function* (
     yield* rejectComputeEnvOutput();
 
     yield* requireHostedMutationConsent({
-      action: `deploy compute ${names.join(", ")}`,
+      action: `Deploy compute ${names.join(", ")}`,
     });
 
     const machineOutput = yield* computeMachineOutputRequested();

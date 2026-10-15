@@ -302,7 +302,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     );
 
     yield* requireHostedMutationConsent({
-      action: `set ${body.length} ${body.length === 1 ? "secret" : "secrets"}`,
+      action: `Set ${body.length} ${body.length === 1 ? "secret" : "secrets"}`,
       details: ["Secrets to set:", ...body.map(({ name }) => ` • ${sanitizeInlineName(name)}`)],
     });
 

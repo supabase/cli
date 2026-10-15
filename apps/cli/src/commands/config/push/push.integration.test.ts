@@ -884,7 +884,7 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
       expect(out.promptConfirmCalls).toHaveLength(1);
-      expect(out.promptConfirmCalls[0]?.message).toContain("push config changes to API and Auth");
+      expect(out.promptConfirmCalls[0]?.message).toContain("Push config changes to API and Auth");
       expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
       expect(api.requests.filter((r) => r.method === "PATCH")).toHaveLength(2);
     }).pipe(Effect.provide(layer));
@@ -912,7 +912,7 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        `Confirmed by --yes: push config changes to API on project ${REF}`,
+        `Confirmed by --yes: Push config changes to API on project ${REF}`,
       );
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         true,
@@ -1676,7 +1676,7 @@ secret = "my-plaintext-secret"
         expect(out.stderrText).toMatch(
           /\n\nauth\.captcha\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(not set\)\n\n/,
         );
-        expect(out.stderrText).toContain("Confirmed by --yes: push config changes to Auth on ");
+        expect(out.stderrText).toContain("Confirmed by --yes: Push config changes to Auth on ");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1988,7 +1988,7 @@ allowed_cidrs_v6 = ["::1/128"]
       const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(out.stderrText).toContain("Enabling webhooks for project:");
-      expect(out.promptConfirmCalls[0]?.message).toContain("push config changes to Webhooks");
+      expect(out.promptConfirmCalls[0]?.message).toContain("Push config changes to Webhooks");
       expect(methodsOf(apiMock)).not.toContain("enableDatabaseWebhook");
     }).pipe(Effect.provide(layer));
   });
@@ -3146,7 +3146,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       return Effect.gen(function* () {
         yield* configPush({ projectRef: Option.none() });
         expect(out.stderrText).toContain(
-          `Confirmed by --yes: push config changes to API on project My App (${PARENT_REF}) · branch (${BRANCH_REF})`,
+          `Confirmed by --yes: Push config changes to API on project My App (${PARENT_REF}) · branch (${BRANCH_REF})`,
         );
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,

@@ -21,7 +21,11 @@ export const INSPECT_DB_FLAGS = targetFlags({
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
 export const INSPECT_DB_PERMISSIONS = withDbTarget(dbConfig, { default: "local" });
 /** Target policy shared by every `inspect db` command. */
-export const withInspectDbTargetPolicy = withTargetPolicy({ group: "selectable", consent: "none" });
+export const withInspectDbTargetPolicy = withTargetPolicy({
+  group: "selectable",
+  consent: "none",
+  consentExemptReason: "read-only",
+});
 
 /**
  * Wraps an `inspect db` handler with the standard command-level pipeline: telemetry

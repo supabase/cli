@@ -194,5 +194,5 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.provide(genTypesRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(commandConfig),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

@@ -33,7 +33,7 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    yield* requireHostedMutationConsent({ action: `create organization "${flags.name}"` });
+    yield* requireHostedMutationConsent({ action: `Create organization "${flags.name}"` });
 
     // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
     // gates on output.format rather than outputFlagFormat because --output pretty keeps the format

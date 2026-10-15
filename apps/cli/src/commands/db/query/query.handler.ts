@@ -371,6 +371,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     if (!flags.readOnly) {
       yield* requireTargetMutationConsent(route.kind === "direct" ? route.connection : target, {
         action: "Run a SQL statement",
+        readOnlyAlternative: true,
         details: [`sql: ${sqlPreview(sql)}`],
       });
     }

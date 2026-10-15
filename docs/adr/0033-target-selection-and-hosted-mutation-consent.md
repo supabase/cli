@@ -34,10 +34,11 @@ truth for the default target and for the consent default.
 - `local-only`: `start`, `stop`, `status`, `stack *`, `init`, `unlink`, `functions serve`,
   `migration new`, `gen signing-key`, `db schema declarative sync`. They act on the local stack or
   the checkout and have no target flags.
-- `account`: `login`, `logout`, `whoami`, `orgs *`, `projects *`, `bootstrap`, `feedback`. They act on
-  the account or an organisation and have no default project.
-- `hosted`: `functions deploy`, `secrets *`, `config *`, `branches *`, `link` and the other platform
-  resource commands. They act on the linked project and have no `--local`, `--linked` or `--db-url`.
+- `account`: `login`, `logout`, `whoami`, `orgs *`, `projects` (except `projects api-keys`),
+  `bootstrap`, `feedback`. They act on the account or an organisation and have no default project.
+- `hosted`: `functions deploy`, `secrets *`, `config *`, `branches *`, `projects api-keys`, `link` and
+  the other platform resource commands. They act on the linked project and have no `--local`,
+  `--linked` or `--db-url`.
 - `sync`: `db push`, `db pull`, `migration fetch`. They default to the linked project; `--local` and
   `--db-url` select another database.
 - `selectable`: `db reset`, `db query`, `db lint`, `db advisors`, `db dump`, `db diff`, `test db`,
@@ -133,13 +134,19 @@ hosted.
   `projects create`, `orgs create`, `branches create`, `domains create` and `bootstrap`. Everything
   that replaces or deletes live state, and all arbitrary SQL, migration, seed and storage writes,
   default to No.
-- **Approval.** Only `--yes` or a `SUPABASE_YES` in the shell environment counts. A `SUPABASE_YES` in
-  the project `supabase/.env` does not, because the checkout must not pre-approve its collaborators'
-  and agents' production writes. `--yes=false` wins over the environment.
+- **Approval.** Only `--yes` or a `SUPABASE_YES` in the shell environment counts, and the
+  confirmation line names which one. A `SUPABASE_YES` in the project `supabase/.env` does not,
+  because the checkout must not pre-approve its collaborators' and agents' production writes. The
+  compiled binary also loads `.env`, `.env.local` and `.env.$NODE_ENV[.local]` from the working
+  directory into the environment, so a `SUPABASE_YES` that any of those files also defines with the
+  same value is treated as the file's; a shell export of that value then needs `--yes` as well.
+  `--yes=false` wins over the environment.
 - **No stdin.** The CLI never reads stdin for consent. A piped `y` does nothing.
 - **Interactive only.** A prompt appears only for text output on an interactive stdout with a TTY
-  stdin. JSON, stream-json, `-o json|yaml|toml|env`, detected agents and non-TTY runs fail with
-  `HostedMutationConsentRequiredError` unless `--yes` is set.
+  stdin. JSON, stream-json, `-o json|yaml|toml|env`, agents (`--agent`, or an AI tool detected from
+  the environment) and non-TTY runs fail with `HostedMutationConsentRequiredError` unless `--yes` is
+  set. The error names the action and target, says why the run can't ask, and tells an agent to ask
+  the user before passing `--yes`.
 - **Decline.** A declined prompt fails with `HostedMutationDeclinedError` ("context canceled"). It
   replaces the per-command cancelled errors. `compute delete` keeps its typed-name confirmation
   through the same service.
@@ -156,12 +163,20 @@ hosted.
 - **Reads never prompt.** `db query --read-only` is a read: it sends `read_only: true` to the
   Management API for a linked target, and runs the statement in a read-only transaction for a local
   or `--db-url` target. It skips consent.
-- **Exemptions.** These leaves declare `consent: "none"` with a reason: `login` (mints the caller's
-  own token), `feedback add` (sending the message is the command's purpose), `domains reverify`
-  (re-runs verification and changes no configuration), `telemetry disable` (a local preference) and
-  the removed commands. Three operations are exempt in the tree test: the temporary login role,
-  network-ban removal during connection setup (token-gated as above) and the network-ban list, a
-  POST that only reads.
+- **Exemptions.** A leaf that never asks declares `consent: "none"`. A `sync` or `selectable` leaf
+  must also give a `consentExemptReason`, enforced by the type of `withTargetPolicy` and by the tree
+  test, because it can reach a hosted database: they are reads or write only local files (`db lint`,
+  `db advisors`, `db dump`, `db diff`, `db schema declarative generate`, `gen types`, `storage ls`,
+  `inspect *`, `migration fetch`, `migration list`). Other leaves with a reason are `login` (mints
+  the caller's own token), `feedback add` (sending the message is the command's purpose),
+  `domains reverify` (re-runs verification and changes no configuration), `telemetry disable` (a
+  local preference), `notebooks pull` and the removed commands.
+- **Consent-free operations.** The tree test lets a `consent: "none"` leaf call five non-GET
+  operations: the temporary login role, network-ban removal during connection setup (token-gated as
+  above), the network-ban list and the vanity-subdomain availability check, which are POSTs that
+  only read, and DNS verification, which re-runs a check. A sixth, creating a notebook, is allowed
+  for `notebooks pull` alone: it only creates, and asks through the same prompt check as consent
+  before it does.
 - **Local prompts.** An explicitly requested local reset does not prompt: `migration down` and
   `migration repair --all` lose their local prompts. Incidental resets, `stack destroy`, checkout
   overwrites and `storage rm` keep theirs. Local prompts still honour a project `.env`
@@ -218,17 +233,19 @@ to No makes the Enter key safe.
   - a `sync` or `selectable` leaf lacks `--local`, `--linked` or `--project-ref`;
   - a declared database-target default disagrees with the group;
   - a leaf with `consent: "none"` calls a non-GET operation outside the reviewed consent-free map;
-  - a leaf named for a mutating verb has `consent: "none"` and no exemption reason.
+  - a leaf named for a mutating verb has `consent: "none"` and no exemption reason;
+  - a `sync` or `selectable` leaf has `consent: "none"` and no exemption reason;
+  - a leaf-scoped consent-free operation belongs to a leaf without an exemption reason.
 - `code-structure.unit.test.ts` fails when:
   - `--local`, `--linked`, `--db-url` or `--project-id` is declared with a raw `Flag.*` outside the
     shared target flags;
   - the old per-command resolvers and defaults return;
   - network-ban removal is called outside connection setup and `network-bans remove`;
   - a handler prints its own `Connecting to local|remote database` line.
-- Every leaf with `consent !== "none"` has a `describeHostedConsent` test. It runs six cases:
-  JSON without `--yes`, a piped `y`, a declined prompt, `--yes`, a shell `SUPABASE_YES`, and
-  `SUPABASE_YES` only in `supabase/.env`. A coverage test requires the set of consent leaves to
-  equal the set of leaves under test.
+- Every leaf with `consent !== "none"` has a `describeHostedConsent` test. It runs seven cases:
+  JSON without `--yes`, a piped `y`, a declined prompt, an agent in an interactive terminal,
+  `--yes`, a shell `SUPABASE_YES`, and `SUPABASE_YES` only in `supabase/.env`. A coverage test
+  requires the set of consent leaves to equal the set of leaves under test.
 
 ## Alternatives Considered
 

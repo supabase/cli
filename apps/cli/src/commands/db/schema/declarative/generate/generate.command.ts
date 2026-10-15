@@ -143,5 +143,9 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local declarative files",
+  }),
 );

@@ -116,7 +116,7 @@ The `--output`/`-o` flag does not change deploy output.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - Prints the `Target:` banner (project name, ref and, for a branch, the parent project) before
   anything else.
-- **Consent:** one question, `deploy N Function(s)` on the target, asked after planning and
+- **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
   before the first bundle, upload or delete. The default answer is No. `--prune` adds
   `delete N Function(s) with --prune` to the same question, so a deploy with pruning never asks
   twice. The question lists the Function slugs on stderr.

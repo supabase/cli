@@ -213,10 +213,10 @@ full plan.
 
 When at least one resource (or the webhooks enable) will be written, a price line
 `Enabling <name> will cost you <price>.` prints for each paid add-on the push would
-switch on, then one question is asked: `push config changes to <API, DB and Auth…> on
+switch on, then one question is asked: `Push config changes to <API, DB and Auth…> on
 <target>?` — the services are the ones that will be written, in push order — with a
 default answer of **no**. `--yes` or a `SUPABASE_YES` set in the shell skips the question
-and echoes `Confirmed by --yes: push config changes to … on <target>` to stderr; a
+and echoes `Confirmed by --yes: Push config changes to … on <target>` to stderr; a
 `SUPABASE_YES` in a project `.env*` file does not count. Piped answers are never read, and
 a run that cannot prompt (stdin not a TTY, redirected stdout, or machine output) fails
 without `--yes`. A push with nothing to write never asks. Declining fails the command

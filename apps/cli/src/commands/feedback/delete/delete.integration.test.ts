@@ -169,7 +169,7 @@ describe("feedback delete", () => {
       // The CLI never reads the row: nothing is shown ahead of the prompt.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
       expect(out.promptConfirmCalls).toEqual([
-        { message: "permanently delete this feedback?", opts: { defaultValue: false } },
+        { message: "Permanently delete this feedback?", opts: { defaultValue: false } },
       ]);
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
       expect(out.messages).toContainEqual(

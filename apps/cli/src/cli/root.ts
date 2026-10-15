@@ -232,6 +232,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
               : stackBackendLayer(options.stackBackend),
             commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
             machineErrorContextLayer,
+            Layer.succeed(AiTool, aiTool),
           );
         }),
       ),

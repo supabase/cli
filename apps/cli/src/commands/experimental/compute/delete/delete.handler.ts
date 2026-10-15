@@ -117,7 +117,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
             ? `${declared} declared instance${declared === 1 ? "" : "s"} will be terminated.`
             : undefined;
       yield* requireHostedMutationConsent({
-        action: `permanently delete compute "${name}"`,
+        action: `Permanently delete compute "${name}"`,
         ...(terminating === undefined ? {} : { details: [terminating] }),
         confirm: { kind: "typed", expected: name },
       });

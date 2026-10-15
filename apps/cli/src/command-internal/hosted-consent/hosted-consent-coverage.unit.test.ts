@@ -36,6 +36,19 @@ const testFiles = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
 
 const callsByLeaf = new Map<string, Array<string>>();
 const nonLiteralCallSites: Array<string> = [];
+const lowercaseActions: Array<string> = [];
+
+const sourceFiles = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
+  .filter((file) => file.endsWith(".ts") && !file.includes(".test."))
+  .map((file) => file.split(sep).join("/"));
+
+const LOWERCASE_ACTION = /\baction:\s*[`"'][a-z]/;
+for (const file of sourceFiles) {
+  const source = readFileSync(join(srcDir, file), "utf8");
+  if (source.includes("hosted-consent.ts") && LOWERCASE_ACTION.test(source)) {
+    lowercaseActions.push(file);
+  }
+}
 
 for (const file of testFiles) {
   const source = readFileSync(join(srcDir, file), "utf8");
@@ -72,5 +85,9 @@ describe("hosted consent coverage", () => {
 
   it("names the leaf as a string literal at every call site so the scan can see it", () => {
     expect(nonLiteralCallSites).toEqual([]);
+  });
+
+  it("starts every consent action literal with a capital letter", () => {
+    expect(lowercaseActions).toEqual([]);
   });
 });
